@@ -178,13 +178,13 @@ impl TablePositions {
     /// Places tables in a spiral.
     ///
     /// Fills in gaps from released tables.
-    pub fn acquire_position(&mut self) -> Vec3 {
+    pub fn acquire_position(&mut self, y: f32) -> Vec3 {
         let mut angle: f32 = 0.0;
         let mut radius = 0.0;
         let mut position: Vec3;
         let spread = 8.0;
         loop {
-            position = Vec3::new(radius * angle.cos(), 0.0, radius * angle.sin());
+            position = Vec3::new(radius * angle.cos(), y, radius * angle.sin());
             if self
                 .positions
                 .iter()
@@ -235,7 +235,7 @@ fn handle_spawn_table_events(
 ) {
     for event in spawn_events.read() {
         // Reserve the table position
-        let table_position = table_positions.acquire_position();
+        let table_position = table_positions.acquire_position(handles.table_shape.half_height);
 
         // Spawn the players in a circle around the table
         let mut players = Vec::new();
@@ -267,13 +267,17 @@ fn handle_spawn_table_events(
         // Choose a dealer (for simplicity, choosing the first player as the dealer)
         let dealer = players[0];
 
-        // Spawn the deck and position it relative to the dealer
-        let deck_position = dealer.1
-            + Vec3::new(
-                seating_radius * 0.3 * (std::f32::consts::PI / 2.0).cos(),
-                0.0,
-                seating_radius * 0.3 * (std::f32::consts::PI / 2.0).sin(),
-            );
+        // Spawn the deck and position on the table a little to the right of the dealer
+        let deck_position = 
+            // start at the dealer
+            table_position
+            // move towards the dealer
+            + (dealer.1 - table_position).xz().normalize().extend(0.0).xzy() * (handles.table_shape.radius * 0.8)
+            // move to the side a little
+            + Vec3::Z.cross(dealer.1 - table_position).normalize() * 0.5
+            // adjust height
+            + Vec3::Y * handles.deck_shape.half_size.y
+            ;
 
         // Spawn the deck
         let deck = commands
@@ -323,7 +327,7 @@ fn setup(
     mut handles: ResMut<Handles>,
 ) {
     // table
-    handles.table_shape = Cylinder::new(2.0, 2.0);
+    handles.table_shape = Cylinder::new(2.0, 1.0);
     handles.table_mesh = meshes.add(handles.table_shape.clone());
     handles.table_material = materials.add(StandardMaterial {
         base_color: Color::rgb(0.8, 0.7, 0.6),
@@ -331,7 +335,13 @@ fn setup(
     });
 
     // deck
-    handles.deck_shape = Cuboid::new(0.5, 0.1, 0.7);
+    let card_tex_width = 655.0;
+    let card_tex_height = 930.0;
+    let card_aspect = card_tex_width / card_tex_height;
+    // let card_width = 0.25;
+    let card_width = 0.3;
+    let card_height = card_width * card_aspect;
+    handles.deck_shape = Cuboid::new(card_width, 0.1, card_height);
     handles.deck_mesh = meshes.add(handles.deck_shape.clone());
     handles.deck_material = materials.add(StandardMaterial {
         base_color: Color::rgb(0.0, 0.0, 0.0),
@@ -381,13 +391,15 @@ fn setup(
         PbrBundle {
             mesh: meshes.add(Plane3d::default().mesh().size(80.0, 80.0)),
             material: materials.add(StandardMaterial {
-                base_color: Color::rgb(0.0, 0.5, 0.0),
+                base_color: Color::rgba(0.0, 0.5, 0.0, 0.1),
                 perceptual_roughness: 0.9,
+                alpha_mode: AlphaMode::Blend,
                 ..default()
             }),
             ..default()
         },
         Ground,
+        Name::new("Ground"),
     ));
 
     // spawn the first table
