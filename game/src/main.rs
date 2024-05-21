@@ -1,3 +1,26 @@
+/*
+In the game Poche my family plays, the dealer is chosen by dealing a card to each player, high card deals.
+If tied, deal to tied player, high card deals, repeat until no tie.
+Each player pays a quarter into the pot at the start of the game.
+Each round, the dealer deals cards clockwise, starting at their left, until each player has n cards where n is 1..7..1[round].
+The top card of the deck is revealed, the suit of the card becomes trump. Trump cards are higher than non-trump cards.
+The player to the left of the dealer starts the bidding.
+Players bid how many tricks they think their hand will take.
+The scorekeeper writes the bid below their name in a table.
+Clockwise, every player places their bid.
+Then, the player to the left of the dealer will lead the first hand.
+The suit of the first card lead is the suit of the hand.
+Players must play a card of the same suit if they have one.
+The highest card takes the "trick".
+The player who takes the trick leads the next hand.
+After the last card is played, the scorekeeper updates each player's bid.
+If you don't poche (you get the amount of tricks you said you would) your bid is prepended with a 1.
+If you take all the tricks of the hand, a 2 is prepended instead.
+If you poche, your bid is colored into a dot and you pay 10 cents to the pot; "ten cents a lesson".
+The dealer rotates left.
+Whoever has the most points at the end wins. 
+*/
+
 use bevy::{input::common_conditions::input_toggle_active, prelude::*, window::Cursor};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_rts_camera::{Ground, RtsCamera, RtsCameraControls, RtsCameraPlugin};
@@ -187,6 +210,7 @@ impl TablePositions {
 pub struct Table {
     players: Vec<Entity>,
     deck: Entity,
+    dealer: Entity,
 }
 
 #[derive(Component, Debug, Eq, PartialEq, Clone, Reflect, Default)]
@@ -213,33 +237,17 @@ fn handle_spawn_table_events(
         // Reserve the table position
         let table_position = table_positions.acquire_position();
 
-        // Spawn the deck
-        let deck = commands
-            .spawn((
-                PbrBundle {
-                    mesh: handles.deck_mesh.clone(),
-                    material: handles.deck_material.clone(),
-                    transform: Transform::from_translation(
-                        table_position
-                            + Vec3::Y * handles.table_shape.half_height
-                            + Vec3::Y * handles.deck_shape.half_size.y,
-                    ),
-                    ..default()
-                },
-                Deck::default(),
-                Name::new("Deck"),
-            ))
-            .id();
-
         // Spawn the players in a circle around the table
         let mut players = Vec::new();
         let seating_radius = handles.table_shape.radius + 0.7;
         for i in 0..event.num_players {
             let player_position = table_position
                 + Vec3::new(
-                    seating_radius * (std::f32::consts::TAU * i as f32 / event.num_players as f32).cos(),
+                    seating_radius
+                        * (std::f32::consts::TAU * i as f32 / event.num_players as f32).cos(),
                     handles.table_shape.half_height + handles.player_shape.half_length,
-                    seating_radius * (std::f32::consts::TAU * i as f32 / event.num_players as f32).sin(),
+                    seating_radius
+                        * (std::f32::consts::TAU * i as f32 / event.num_players as f32).sin(),
                 );
             let player = commands
                 .spawn((
@@ -253,8 +261,33 @@ fn handle_spawn_table_events(
                     Name::new("Player"),
                 ))
                 .id();
-            players.push(player);
+            players.push((player, player_position));
         }
+
+        // Choose a dealer (for simplicity, choosing the first player as the dealer)
+        let dealer = players[0];
+
+        // Spawn the deck and position it relative to the dealer
+        let deck_position = dealer.1
+            + Vec3::new(
+                seating_radius * 0.3 * (std::f32::consts::PI / 2.0).cos(),
+                0.0,
+                seating_radius * 0.3 * (std::f32::consts::PI / 2.0).sin(),
+            );
+
+        // Spawn the deck
+        let deck = commands
+            .spawn((
+                PbrBundle {
+                    mesh: handles.deck_mesh.clone(),
+                    material: handles.deck_material.clone(),
+                    transform: Transform::from_translation(deck_position),
+                    ..default()
+                },
+                Deck::default(),
+                Name::new("Deck"),
+            ))
+            .id();
 
         // Spawn the table
         let _table = commands
@@ -266,16 +299,19 @@ fn handle_spawn_table_events(
                     ..default()
                 },
                 Name::new("Table"),
-                Table { deck, players },
+                Table {
+                    deck,
+                    players: players.into_iter().map(|x| x.0).collect(),
+                    dealer: dealer.0,
+                },
             ))
             .id();
-        
+
         // light
         commands.spawn(PointLightBundle {
             transform: Transform::from_translation(table_position + Vec3::Y * 4.0),
             ..default()
         });
-
     }
 }
 
