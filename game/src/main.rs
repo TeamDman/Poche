@@ -150,7 +150,7 @@ pub struct TablePositions {
     pub positions: Vec<Vec3>,
 }
 impl TablePositions {
-    /// Get a position that is about 100 units away from all other tables.
+    /// Get a position that is separated from all other tables.
     ///
     /// Places tables in a spiral.
     ///
@@ -159,19 +159,20 @@ impl TablePositions {
         let mut angle: f32 = 0.0;
         let mut radius = 0.0;
         let mut position: Vec3;
+        let spread = 8.0;
         loop {
             position = Vec3::new(radius * angle.cos(), 0.0, radius * angle.sin());
             if self
                 .positions
                 .iter()
-                .all(|&p| (p - position).length() > 100.0)
+                .all(|&p| (p - position).length() > spread)
             {
                 break;
             }
             angle += 0.1;
             if angle > std::f32::consts::PI * 2.0 {
                 angle = 0.0;
-                radius += 100.0;
+                radius += spread;
             }
         }
         self.positions.push(position);
@@ -347,4 +348,8 @@ fn setup(
 
     // spawn the first table
     reset_events.send(SpawnTableEvent { num_players: 5 });
+    reset_events.send(SpawnTableEvent { num_players: 4 });
+    reset_events.send(SpawnTableEvent { num_players: 3 });
+    reset_events.send(SpawnTableEvent { num_players: 2 });
+    reset_events.send(SpawnTableEvent { num_players: 1 });
 }
