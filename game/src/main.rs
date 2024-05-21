@@ -134,7 +134,7 @@ impl Default for Deck {
 
 #[derive(Resource, Debug, Reflect, Default)]
 pub struct Handles {
-    pub table_shape: Cuboid,
+    pub table_shape: Cylinder,
     pub table_mesh: Handle<Mesh>,
     pub table_material: Handle<StandardMaterial>,
     pub deck_shape: Cuboid,
@@ -221,7 +221,7 @@ fn handle_spawn_table_events(
                     material: handles.deck_material.clone(),
                     transform: Transform::from_translation(
                         table_position
-                            + Vec3::Y * handles.table_shape.half_size.y
+                            + Vec3::Y * handles.table_shape.half_height
                             + Vec3::Y * handles.deck_shape.half_size.y,
                     ),
                     ..default()
@@ -233,16 +233,22 @@ fn handle_spawn_table_events(
 
         // Spawn the players in a circle around the table
         let mut players = Vec::new();
+        let seating_radius = handles.table_shape.radius + 0.7;
         for i in 0..event.num_players {
             let player_position = table_position
                 + Vec3::new(
-                    2.0 * (std::f32::consts::PI * i as f32 / event.num_players as f32).cos(),
-                    0.0,
-                    2.0 * (std::f32::consts::PI * i as f32 / event.num_players as f32).sin(),
+                    seating_radius * (std::f32::consts::TAU * i as f32 / event.num_players as f32).cos(),
+                    handles.table_shape.half_height + handles.player_shape.half_length,
+                    seating_radius * (std::f32::consts::TAU * i as f32 / event.num_players as f32).sin(),
                 );
             let player = commands
                 .spawn((
-                    Transform::from_translation(player_position),
+                    PbrBundle {
+                        mesh: handles.player_mesh.clone(),
+                        material: handles.player_material.clone(),
+                        transform: Transform::from_translation(player_position),
+                        ..default()
+                    },
                     Player::default(),
                     Name::new("Player"),
                 ))
@@ -263,6 +269,13 @@ fn handle_spawn_table_events(
                 Table { deck, players },
             ))
             .id();
+        
+        // light
+        commands.spawn(PointLightBundle {
+            transform: Transform::from_translation(table_position + Vec3::Y * 4.0),
+            ..default()
+        });
+
     }
 }
 
@@ -274,7 +287,7 @@ fn setup(
     mut handles: ResMut<Handles>,
 ) {
     // table
-    handles.table_shape = Cuboid::new(2.0, 2.0, 2.0);
+    handles.table_shape = Cylinder::new(2.0, 2.0);
     handles.table_mesh = meshes.add(handles.table_shape.clone());
     handles.table_material = materials.add(StandardMaterial {
         base_color: Color::rgb(0.8, 0.7, 0.6),
@@ -294,12 +307,6 @@ fn setup(
     handles.player_mesh = meshes.add(handles.player_shape.clone());
     handles.player_material = materials.add(StandardMaterial {
         base_color: Color::rgb(0.0, 0.0, 1.0),
-        ..default()
-    });
-
-    // light
-    commands.spawn(PointLightBundle {
-        transform: Transform::from_xyz(4.0, 5.0, -4.0),
         ..default()
     });
 
@@ -339,6 +346,7 @@ fn setup(
             mesh: meshes.add(Plane3d::default().mesh().size(80.0, 80.0)),
             material: materials.add(StandardMaterial {
                 base_color: Color::rgb(0.0, 0.5, 0.0),
+                perceptual_roughness: 0.9,
                 ..default()
             }),
             ..default()
