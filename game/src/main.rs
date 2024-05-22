@@ -942,7 +942,6 @@ fn handle_cards_positioning_cards_in_deck(
                         continue;
                     };
                     let table_transform = table;
-                    debug!("Placing bottom card on table");
                     (
                         table_transform.translation
                             + Vec3::Y
@@ -1244,8 +1243,20 @@ fn setup(
 
     // spawn the first table
     reset_events.send(SpawnTableEvent { num_players: 5 });
-    // reset_events.send(SpawnTableEvent { num_players: 4 });
-    // reset_events.send(SpawnTableEvent { num_players: 3 });
+    reset_events.send(SpawnTableEvent { num_players: 4 });
+    reset_events.send(SpawnTableEvent { num_players: 3 });
+    reset_events.send(SpawnTableEvent { num_players: 5 });
+    reset_events.send(SpawnTableEvent { num_players: 4 });
+    reset_events.send(SpawnTableEvent { num_players: 3 });
+    reset_events.send(SpawnTableEvent { num_players: 5 });
+    reset_events.send(SpawnTableEvent { num_players: 4 });
+    reset_events.send(SpawnTableEvent { num_players: 3 });
+    reset_events.send(SpawnTableEvent { num_players: 5 });
+    reset_events.send(SpawnTableEvent { num_players: 4 });
+    reset_events.send(SpawnTableEvent { num_players: 3 });
+    reset_events.send(SpawnTableEvent { num_players: 5 });
+    reset_events.send(SpawnTableEvent { num_players: 4 });
+    reset_events.send(SpawnTableEvent { num_players: 3 });
 }
 
 fn handle_sleeping_key_press(
