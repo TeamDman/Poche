@@ -1,3 +1,4 @@
+use std::f32::consts::PI;
 use std::time::Instant;
 
 use bevy::app::AppExit;
@@ -51,6 +52,7 @@ fn main() {
     app.register_type::<Table>();
     app.register_type::<Player>();
     app.register_type::<SpawnTableEvent>();
+    app.register_type::<BelongsToPlayer>();
     app.register_type::<Handles>();
     app.register_type::<Sleeping>();
     app.register_type::<TablePositions>();
@@ -111,6 +113,9 @@ fn main() {
     );
     app.add_systems(Update, handle_quit_key_press);
     app.add_systems(Update, handle_deal_key_press);
+    app.add_systems(Update, handle_sleeping_key_press);
+    app.add_systems(Update, handle_shuffle_back_in_key_press);
+    app.add_systems(Update, update_card_names);
 
     app.run();
 }
@@ -221,13 +226,17 @@ impl Card {
 }
 
 #[derive(Component, Debug, Eq, PartialEq, Clone, Reflect, Default)]
-pub struct InHand(usize);
+pub struct InHand {
+    index_from_left: usize,
+}
 
 #[derive(Component, Debug, Eq, PartialEq, Clone, Reflect, Default)]
 pub struct Played;
 
 #[derive(Component, Debug, Eq, PartialEq, Clone, Reflect, Default)]
-pub struct InDeck(usize);
+pub struct InDeck {
+    index_from_bottom: usize,
+}
 
 #[derive(Component, Debug, Eq, PartialEq, Clone, Reflect, Default)]
 pub struct Trump;
@@ -266,9 +275,12 @@ pub struct Handles {
     pub card_shape: Cuboid,
     pub card_mesh: Handle<Mesh>,
     pub card_materials: HashMap<Card, Handle<StandardMaterial>>,
-    pub player_shape: Capsule3d,
-    pub player_mesh: Handle<Mesh>,
-    pub player_material: Handle<StandardMaterial>,
+    pub player_body_shape: Capsule3d,
+    pub player_body_mesh: Handle<Mesh>,
+    pub player_body_material: Handle<StandardMaterial>,
+    pub player_eye_shape: Sphere,
+    pub player_eye_mesh: Handle<Mesh>,
+    pub player_eye_material: Handle<StandardMaterial>,
 }
 
 ////////////////////////////
@@ -417,25 +429,60 @@ fn handle_spawn_table_events(
         let mut players = Vec::new();
         let seating_radius = handles.table_shape.radius + 0.7;
         for i in 0..event.num_players {
+            // Get the angle from the center of the table to the player
+            let player_angle = Quat::from_rotation_y(
+                std::f32::consts::PI * 2.0 * i as f32 / event.num_players as f32,
+            );
+
+            // Get the position of the player
             let player_position = table_position
-                + Vec3::new(
-                    seating_radius
-                        * (std::f32::consts::TAU * i as f32 / event.num_players as f32).cos(),
-                    handles.table_shape.half_height + handles.player_shape.half_length,
-                    seating_radius
-                        * (std::f32::consts::TAU * i as f32 / event.num_players as f32).sin(),
-                );
+                + player_angle.mul_vec3(Vec3::X * seating_radius)
+                + Vec3::Y
+                    * (handles.table_shape.half_height
+                        + handles.player_body_shape.half_length / 2.0);
+
+            // Get angle so player faces center of table
+            let player_rotation = Quat::from_rotation_y(
+                (player_position - table_position)
+                    .x
+                    .atan2((player_position - table_position).z),
+            );
+
             let player = commands
                 .spawn((
                     PbrBundle {
-                        mesh: handles.player_mesh.clone(),
-                        material: handles.player_material.clone(),
-                        transform: Transform::from_translation(player_position),
+                        mesh: handles.player_body_mesh.clone(),
+                        material: handles.player_body_material.clone(),
+                        transform: Transform::from_rotation(player_rotation)
+                            .with_translation(player_position),
                         ..default()
                     },
                     Player::default(),
                     Name::new("Player"),
                 ))
+                .with_children(|parent| {
+                    // spawn the eyes
+                    parent.spawn(PbrBundle {
+                        mesh: handles.player_eye_mesh.clone(),
+                        material: handles.player_eye_material.clone(),
+                        transform: Transform::from_xyz(
+                            0.1,
+                            handles.player_body_shape.half_length * 0.8,
+                            -handles.player_body_shape.radius,
+                        ),
+                        ..default()
+                    });
+                    parent.spawn(PbrBundle {
+                        mesh: handles.player_eye_mesh.clone(),
+                        material: handles.player_eye_material.clone(),
+                        transform: Transform::from_xyz(
+                            -0.1,
+                            handles.player_body_shape.half_length * 0.8,
+                            -handles.player_body_shape.radius,
+                        ),
+                        ..default()
+                    });
+                })
                 .id();
             players.push((player, player_position));
         }
@@ -527,7 +574,9 @@ fn handle_spawn_deck_events(
                     },
                     card,
                     Name::new("Card"),
-                    InDeck(i),
+                    InDeck {
+                        index_from_bottom: i,
+                    },
                 ))
                 .id();
             session.card_ids.insert(card_id);
@@ -725,11 +774,15 @@ fn handle_deal_cards_events(
 
                 // Put it in the player's hand
                 let hand_size = hand_sizes.get(player_id).unwrap_or(&0);
-                commands.entity(card_id).insert(InHand(*hand_size));
+                commands.entity(card_id).insert(InHand {
+                    index_from_left: *hand_size,
+                });
                 hand_sizes.get_mut(player_id).map(|size| *size += 1);
 
                 // Wake it up
                 commands.entity(card_id).remove::<Sleeping>();
+
+                info!("Dealt card {:?} to player {:?}", card_id, player_id);
             });
 
         info!("Dealt cards to players");
@@ -794,13 +847,19 @@ fn determine_card_positioning_behaviours(
         } {
             Some(behaviour) => {
                 if card_positioning_behaviour != Some(&behaviour) {
-                    debug!("Card {:?} changed behaviour to {:?}", card_id, behaviour);
+                    debug!(
+                        "Card {:?} changed now using positioning behaviour: {:?}",
+                        card_id, behaviour
+                    );
                 }
                 commands.entity(card_id).insert(behaviour);
             }
             None => {
                 if card_positioning_behaviour.is_some() {
-                    warn!("Card {:?} changed behaviour to None", card_id);
+                    warn!(
+                        "Card {:?} changed now using positioning behaviour: None",
+                        card_id
+                    );
                 }
                 commands
                     .entity(card_id)
@@ -821,9 +880,12 @@ fn handle_cards_positioning_cards_in_deck(
             &mut Transform,
             &InDeck,
             Option<&TravelTime>,
+            Option<&Sleeping>,
         ),
-        Without<Sleeping>,
+        With<Card>,
     >,
+    table_query: Query<&Transform, (With<Table>, Without<Card>)>,
+    handles: Res<Handles>,
 ) {
     for session in session_query.iter() {
         let mut cards_in_deck = session
@@ -835,11 +897,9 @@ fn handle_cards_positioning_cards_in_deck(
                 };
                 Some((card_id, card))
             })
-            .sorted_by_key(|(_card_id, (_, _, in_deck, ..))| in_deck.0)
-            .rev()
-            .map(|(card_id, (behaviour, ..))| (card_id, behaviour));
-
-        let bottom_card_id = match cards_in_deck.next() {
+            .sorted_by_key(|(_card_id, (_, _, in_deck, ..))| in_deck.index_from_bottom)
+            .peekable();
+        let bottom_card_id = match cards_in_deck.peek() {
             Some((card_id, _)) => *card_id,
             None => {
                 // no cards in deck
@@ -848,12 +908,16 @@ fn handle_cards_positioning_cards_in_deck(
         };
 
         let cards_to_position = cards_in_deck
-            .filter(|(_, behaviour)| matches!(behaviour, CardPositioningBehaviour::InDeck))
+            .filter(
+                |(_card_id, (behaviour, _transform, _in_deck, _travel_time, sleeping))| {
+                    sleeping.is_none() && matches!(behaviour, CardPositioningBehaviour::InDeck)
+                },
+            )
             .map(|(card_id, _)| card_id)
             .cloned()
             .collect_vec();
 
-        let Ok((_, bottom_card_transform, ..)) = cards_in_decks_query.get(bottom_card_id) else {
+        let Ok((_, bottom_card_transform, ..)) = cards_in_decks_query.get(*bottom_card_id) else {
             // bottom card not found
             continue;
         };
@@ -865,13 +929,35 @@ fn handle_cards_positioning_cards_in_deck(
                 continue;
             };
             // get values
-            let i = card.2 .0;
+            let i = card.2.index_from_bottom;
             let card_transform = &mut *card.1;
             let travel_time = card.3;
 
             // calculate positions
-            let desired_pos = bottom_card_transform.translation + Vec3::Y * i as f32 * 0.01;
-            let desired_rot = bottom_card_transform.rotation;
+            let (desired_pos, desired_rot) = match i {
+                0 => {
+                    // bottom card is at table surface
+                    let Ok(table) = table_query.get(session.table_id) else {
+                        warn!("Table not found for deck positioning");
+                        continue;
+                    };
+                    let table_transform = table;
+                    debug!("Placing bottom card on table");
+                    (
+                        table_transform.translation
+                            + Vec3::Y
+                                * (handles.table_shape.half_height
+                                    + handles.card_shape.half_size.y),
+                        Quat::from_euler(EulerRot::XYZ, 0.0, 0.0, 0.0),
+                    )
+                }
+                _ => {
+                    // other cards are stacked on top
+                    let desired_pos = bottom_card_transform.translation + Vec3::Y * i as f32 * 0.01;
+                    let desired_rot = bottom_card_transform.rotation;
+                    (desired_pos, desired_rot)
+                }
+            };
 
             let current_pos = card_transform.translation;
             let current_rot = card_transform.rotation;
@@ -917,8 +1003,9 @@ fn handle_cards_positioning_cards_in_hand(
             &InHand,
             &BelongsToPlayer,
             Option<&TravelTime>,
+            Option<&Sleeping>,
         ),
-        (With<Card>, Without<Player>, Without<Sleeping>),
+        (With<Card>, Without<Player>),
     >,
     player_query: Query<&Transform, (With<Player>, Without<Card>)>,
 ) {
@@ -935,6 +1022,7 @@ fn handle_cards_positioning_cards_in_hand(
                 .card_ids
                 .iter()
                 .filter_map(|card_id| {
+                    // Get card
                     let Ok(card) = cards_in_hands_query.get(*card_id) else {
                         return None;
                     };
@@ -942,14 +1030,25 @@ fn handle_cards_positioning_cards_in_hand(
                         _card_positioning_behaviour,
                         _card_transform,
                         in_hand,
-                        _belongs_to_player,
+                        belongs_to_player,
                         _travel_start_time,
+                        sleeping,
                     ) = card;
-                    Some((card_id, _card_positioning_behaviour, in_hand))
+
+                    // Check if the card belongs to the player
+                    if belongs_to_player.0 != *player_id {
+                        return None;
+                    }
+
+                    Some((card_id, _card_positioning_behaviour, in_hand, sleeping))
                 })
-                .sorted_by_key(|(_card_id, _card_positioning_behaviour, in_hand)| in_hand.0)
-                .map(|(card_id, card_positioning_behaviour, ..)| {
-                    (card_id, card_positioning_behaviour)
+                .sorted_by_key(
+                    |(_card_id, _card_positioning_behaviour, in_hand, _sleeping)| {
+                        in_hand.index_from_left
+                    },
+                )
+                .map(|(card_id, card_positioning_behaviour, _, sleeping, ..)| {
+                    (card_id, card_positioning_behaviour, sleeping)
                 })
                 .peekable();
 
@@ -966,10 +1065,11 @@ fn handle_cards_positioning_cards_in_hand(
 
             // Get the cards set to this behaviour
             let cards_to_position = cards_in_hand
-                .filter(|(_card_id, card_positioning_behaviour)| {
-                    matches!(card_positioning_behaviour, CardPositioningBehaviour::InHand)
+                .filter(|(_card_id, card_positioning_behaviour, sleeping)| {
+                    sleeping.is_none()
+                        && matches!(card_positioning_behaviour, CardPositioningBehaviour::InHand)
                 })
-                .map(|(card_id, _)| card_id)
+                .map(|(card_id, ..)| card_id)
                 .cloned()
                 .collect_vec();
 
@@ -985,7 +1085,7 @@ fn handle_cards_positioning_cards_in_hand(
                     continue;
                 };
                 // get values
-                let i = card.2 .0;
+                let i = card.2.index_from_left;
                 let card_transform = &mut *card.1;
                 let travel_time = card.4;
 
@@ -995,12 +1095,13 @@ fn handle_cards_positioning_cards_in_hand(
                         // the leftmost card starts in front of the player
                         (
                             player_transform.translation + player_transform.forward() * 0.5,
-                            player_transform.rotation,
+                            player_transform.rotation
+                                * Quat::from_euler(EulerRot::XYZ, PI / 2.0, 0.0, 0.0),
                         )
                     }
                     _ => {
-                        let desired_pos =
-                            left_card_transform.translation + Vec3::X * i as f32 * 0.01;
+                        let desired_pos = left_card_transform.translation
+                            + left_card_transform.right() * i as f32 * 0.1;
                         let desired_rot = left_card_transform.rotation;
                         (desired_pos, desired_rot)
                     }
@@ -1064,7 +1165,7 @@ fn setup(
     // let card_width = 0.25;
     let card_width = 0.3;
     let card_height = card_width * card_aspect;
-    handles.card_shape = Cuboid::new(card_width, 0.005, card_height);
+    handles.card_shape = Cuboid::new(card_height, 0.005, card_width);
     handles.card_mesh = meshes.add(handles.card_shape.clone());
     handles.card_materials = Card::get_new_deck()
         .into_iter()
@@ -1082,10 +1183,16 @@ fn setup(
         .collect();
 
     // player
-    handles.player_shape = Capsule3d::new(0.2, 0.5);
-    handles.player_mesh = meshes.add(handles.player_shape.clone());
-    handles.player_material = materials.add(StandardMaterial {
+    handles.player_body_shape = Capsule3d::new(0.2, 0.5);
+    handles.player_body_mesh = meshes.add(handles.player_body_shape.clone());
+    handles.player_body_material = materials.add(StandardMaterial {
         base_color: Color::rgb(0.0, 0.0, 1.0),
+        ..default()
+    });
+    handles.player_eye_shape = Sphere::new(0.05);
+    handles.player_eye_mesh = meshes.add(handles.player_eye_shape.clone());
+    handles.player_eye_material = materials.add(StandardMaterial {
+        base_color: Color::rgb(1.0, 1.0, 1.0),
         ..default()
     });
 
@@ -1139,4 +1246,59 @@ fn setup(
     reset_events.send(SpawnTableEvent { num_players: 5 });
     // reset_events.send(SpawnTableEvent { num_players: 4 });
     // reset_events.send(SpawnTableEvent { num_players: 3 });
+}
+
+fn handle_sleeping_key_press(
+    mut commands: Commands,
+    input: Res<ButtonInput<KeyCode>>,
+    sleeping_query: Query<Entity, With<Sleeping>>,
+) {
+    if input.just_pressed(KeyCode::KeyF) {
+        let mut n = 0;
+        for sleeping in sleeping_query.iter() {
+            commands.entity(sleeping).remove::<Sleeping>();
+            n += 1;
+        }
+        info!("Woke up {} entities", n);
+    }
+}
+
+fn handle_shuffle_back_in_key_press(
+    mut commands: Commands,
+    input: Res<ButtonInput<KeyCode>>,
+    session_query: Query<&Session>,
+) {
+    if input.just_pressed(KeyCode::KeyR) {
+        // Move all cards to the deck
+        for session in session_query.iter() {
+            let mut count = 0;
+            for (i, card_id) in session.card_ids.iter().enumerate() {
+                // Remove from play
+                commands.entity(*card_id).remove::<InHand>();
+                commands.entity(*card_id).remove::<Played>();
+                commands.entity(*card_id).remove::<Trump>();
+                commands.entity(*card_id).remove::<BelongsToPlayer>();
+
+                // Add to deck
+                commands.entity(*card_id).insert(InDeck {
+                    index_from_bottom: i,
+                });
+
+                // Wake up
+                commands.entity(*card_id).remove::<Sleeping>();
+
+                count += 1;
+            }
+            info!("Moved {} cards back into the deck", count);
+        }
+    }
+}
+
+fn update_card_names(
+    mut card_query: Query<(&mut Name, Option<&InHand>, Option<&InDeck>), With<Card>>,
+) {
+    for card in card_query.iter_mut() {
+        let (mut name, in_hand, in_deck) = card;
+        *name = Name::new(format!("Card ({in_hand:?},{in_deck:?})"));
+    }
 }
