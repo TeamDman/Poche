@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use bevy::app::AppExit;
 /*
 In the game Poche my family plays, the dealer is chosen by dealing a card to each player, high card deals.
 If tied, deal to tied players, high card deals, repeat until no tie.
@@ -23,9 +24,10 @@ The dealer rotates left.
 Whoever has the most points at the end wins.
 */
 use bevy::input::common_conditions::input_toggle_active;
+use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use bevy::utils::HashMap;
-use bevy::window::Cursor;
+use bevy::utils::HashSet;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_rts_camera::Ground;
 use bevy_rts_camera::RtsCamera;
@@ -39,28 +41,55 @@ use itertools::Itertools;
 
 fn main() {
     let mut app = App::new();
+    app.register_type::<Session>();
     app.register_type::<Card>();
+    app.register_type::<InHand>();
+    app.register_type::<InDeck>();
+    app.register_type::<Trump>();
+    app.register_type::<Played>();
+    app.register_type::<CardPositioningBehaviour>();
     app.register_type::<Table>();
     app.register_type::<Player>();
     app.register_type::<SpawnTableEvent>();
     app.register_type::<Handles>();
+    app.register_type::<Sleeping>();
     app.register_type::<TablePositions>();
 
     app.init_resource::<Handles>();
     app.init_resource::<TablePositions>();
 
     app.add_event::<SpawnTableEvent>();
+    app.add_event::<SpawnDeckEvent>();
+    app.add_event::<DealCardsEvent>();
 
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            cursor: Cursor {
-                grab_mode: bevy::window::CursorGrabMode::Confined,
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    // cursor: bevy::window::Cursor {
+                    //     grab_mode: bevy::window::CursorGrabMode::Confined,
+                    //     ..default()
+                    // },
+                    ..default()
+                }),
                 ..default()
-            },
-            ..default()
-        }),
-        ..default()
-    }));
+            })
+            .set(LogPlugin {
+                level: bevy::log::Level::INFO,
+                filter: "
+                    wgpu=error
+                    poche=debug
+                "
+                .lines()
+                .map(|line| line.trim())
+                .filter(|line| !line.starts_with("//"))
+                .filter(|line| !line.is_empty())
+                .join(",")
+                .trim()
+                .into(),
+                ..default()
+            }),
+    );
     app.add_plugins(
         WorldInspectorPlugin::default().run_if(input_toggle_active(false, KeyCode::Backquote)),
     );
@@ -72,12 +101,16 @@ fn main() {
         (
             handle_spawn_table_events,
             handle_spawn_deck_events,
+            handle_tables_needing_dealer,
             handle_deal_cards_events,
             determine_card_positioning_behaviours,
             handle_cards_positioning_cards_in_deck,
+            handle_cards_positioning_cards_in_hand,
         )
             .chain(),
     );
+    app.add_systems(Update, handle_quit_key_press);
+    app.add_systems(Update, handle_deal_key_press);
 
     app.run();
 }
@@ -188,7 +221,7 @@ impl Card {
 }
 
 #[derive(Component, Debug, Eq, PartialEq, Clone, Reflect, Default)]
-pub struct InHand;
+pub struct InHand(usize);
 
 #[derive(Component, Debug, Eq, PartialEq, Clone, Reflect, Default)]
 pub struct Played;
@@ -213,7 +246,14 @@ pub enum CardPositioningBehaviour {
 }
 
 #[derive(Component, Debug, Eq, PartialEq, Clone, Reflect)]
-pub struct TravelStartTime(Instant);
+pub struct TravelTime {
+    start_time: Instant,
+}
+
+#[derive(Component, Debug, Eq, PartialEq, Clone, Reflect)]
+pub struct Sleeping {
+    start_time: Instant,
+}
 
 ////////////////////////////
 /// HANDLES
@@ -285,9 +325,9 @@ pub struct NeedsDealer;
 
 #[derive(Component, Debug, Eq, PartialEq, Clone, Reflect)]
 pub struct Session {
-    table: Entity,
-    players: Vec<Entity>,
-    cards: Vec<Entity>,
+    table_id: Entity,
+    player_ids: HashSet<Entity>,
+    card_ids: HashSet<Entity>,
 }
 
 #[derive(Component, Debug, Eq, PartialEq, Clone, Reflect)]
@@ -319,10 +359,11 @@ pub struct Dealer;
 /// EVENTS
 ////////////////////////////
 
+/// You can deal to the same player multiple times.
 #[derive(Event, Debug, Eq, PartialEq, Clone, Reflect)]
 pub struct DealCardsEvent {
-    pub session: Entity,
-    pub players: Vec<Entity>,
+    pub session_id: Entity,
+    pub player_ids: Vec<Entity>,
 }
 
 #[derive(Event, Debug, Reflect)]
@@ -331,12 +372,35 @@ pub struct SpawnTableEvent {
 }
 #[derive(Event, Debug, Reflect)]
 pub struct SpawnDeckEvent {
-    pub table: Entity,
+    pub session_id: Entity,
 }
 
 ////////////////////////////
 /// SYSTEMS
 ////////////////////////////
+fn handle_quit_key_press(mut exit: ResMut<Events<AppExit>>, input: Res<ButtonInput<KeyCode>>) {
+    if input.just_pressed(KeyCode::Escape) {
+        exit.send(AppExit);
+    }
+}
+
+fn handle_deal_key_press(
+    mut events: EventWriter<DealCardsEvent>,
+    input: Res<ButtonInput<KeyCode>>,
+    session_query: Query<(Entity, &Session)>,
+) {
+    if input.just_pressed(KeyCode::Digit1) {
+        for session in session_query.iter() {
+            let (session_id, session) = session;
+            let player_ids = session.player_ids.iter().cloned().collect_vec();
+            info!("Dealing cards to all players in session {session_id:?} because of key press");
+            events.send(DealCardsEvent {
+                session_id,
+                player_ids,
+            });
+        }
+    }
+}
 
 fn handle_spawn_table_events(
     mut commands: Commands,
@@ -392,40 +456,51 @@ fn handle_spawn_table_events(
             .id();
 
         // Create the session
-        let session = commands
-            .spawn((Session {
-                table,
-                players: players.iter().map(|(p, _)| *p).collect(),
-                cards: Vec::new(),
-            },))
+        let session_id = commands
+            .spawn((
+                Session {
+                    table_id: table,
+                    player_ids: players.iter().map(|(p, _)| *p).collect(),
+                    card_ids: Default::default(),
+                },
+                Name::new("Session"),
+            ))
             .id();
 
         // Attach session
         for player in players {
-            commands.entity(player.0).insert(SessionRef(session));
+            commands.entity(player.0).insert(SessionRef(session_id));
         }
-        commands.entity(table).insert(SessionRef(session));
+        commands.entity(table).insert(SessionRef(session_id));
 
         // Spawn the deck
-        spawn_deck_events.send(SpawnDeckEvent { table });
+        spawn_deck_events.send(SpawnDeckEvent { session_id });
 
         // Spawn the light
         commands.spawn(PointLightBundle {
             transform: Transform::from_translation(table_position + Vec3::Y * 4.0),
             ..default()
         });
+
+        info!("Table spawned with {} players", event.num_players);
     }
 }
 
 fn handle_spawn_deck_events(
     mut commands: Commands,
     mut spawn_deck_events: EventReader<SpawnDeckEvent>,
+    mut session_query: Query<&mut Session>,
     table_query: Query<&Transform, With<Table>>,
     handles: Res<Handles>,
 ) {
     for event in spawn_deck_events.read() {
+        let Ok(mut session) = session_query.get_mut(event.session_id) else {
+            warn!("Session not found for deck spawn event");
+            continue;
+        };
+
         // Get the table transform
-        let Ok(table) = table_query.get(event.table) else {
+        let Ok(table) = table_query.get(session.table_id) else {
             warn!("Table not found for deck spawn event");
             continue;
         };
@@ -442,19 +517,25 @@ fn handle_spawn_deck_events(
         let cards = Card::get_new_deck();
         for (i, card) in cards.into_iter().enumerate() {
             let card_position = deck_position + Vec3::Y * y;
-            commands.spawn((
-                PbrBundle {
-                    mesh: handles.card_mesh.clone(),
-                    material: handles.card_materials.get(&card).unwrap().clone(),
-                    transform: Transform::from_translation(card_position),
-                    ..default()
-                },
-                card,
-                Name::new("Card"),
-                InDeck(i),
-            ));
+            let card_id = commands
+                .spawn((
+                    PbrBundle {
+                        mesh: handles.card_mesh.clone(),
+                        material: handles.card_materials.get(&card).unwrap().clone(),
+                        transform: Transform::from_translation(card_position),
+                        ..default()
+                    },
+                    card,
+                    Name::new("Card"),
+                    InDeck(i),
+                ))
+                .id();
+            session.card_ids.insert(card_id);
+
             y += y_increment;
         }
+
+        info!("Deck spawned");
     }
 }
 
@@ -465,46 +546,48 @@ fn handle_spawn_deck_events(
 /// If all players
 fn handle_tables_needing_dealer(
     mut commands: Commands,
-    table_query: Query<&SessionRef, (With<NeedsDealer>, With<Table>)>,
+    table_query: Query<(Entity, &SessionRef), (With<NeedsDealer>, With<Table>)>,
     session_query: Query<&Session>,
     cards_in_hands_query: Query<(&Card, Option<&BelongsToPlayer>), With<InHand>>,
     mut deal_card_events: EventWriter<DealCardsEvent>,
 ) {
-    for table_session_id in table_query.iter() {
+    for table in table_query.iter() {
+        let (table_id, table_session_id) = table;
         // Get the session
         let Ok(session) = session_query.get(**table_session_id) else {
-            warn!("Session not found for table needing dealer");
+            warn!("Session {table_session_id:?} not found for table {table_id:?} needing dealer");
             continue;
         };
 
-        if session.players.len() < 2 {
+        if session.player_ids.len() < 2 {
             warn!("Table has less than 2 players, not starting dealer selection");
             continue;
         }
 
         // Identify the cards in each hand
-        let cards_by_player = session
-            .cards
-            .iter()
-            .fold(HashMap::default(), |mut map, card_id| {
-                // Get card
-                let Ok((card, player_id)) = cards_in_hands_query.get(*card_id) else {
-                    return map;
-                };
-                // Add to player's hand
-                if let Some(player_id) = player_id {
-                    map.entry(player_id.0)
-                        .or_insert_with(Vec::new)
-                        .push((card_id, card));
-                }
+        let cards_by_player =
+            session
+                .card_ids
+                .iter()
+                .fold(HashMap::default(), |mut map, card_id| {
+                    // Get card
+                    let Ok((card, player_id)) = cards_in_hands_query.get(*card_id) else {
+                        return map;
+                    };
+                    // Add to player's hand
+                    if let Some(player_id) = player_id {
+                        map.entry(player_id.0)
+                            .or_insert_with(Vec::new)
+                            .push((card_id, card));
+                    }
 
-                map
-            });
+                    map
+                });
 
         {
             // Find players with no cards in hand
             let no_cards_in_hand = session
-                .players
+                .player_ids
                 .iter()
                 .filter(|player_id| {
                     cards_by_player
@@ -517,9 +600,10 @@ fn handle_tables_needing_dealer(
             // If any, deal and continue
             if !no_cards_in_hand.is_empty() {
                 // Deal cards to those players
+                info!("Dealing cards to players with no cards in hand");
                 deal_card_events.send(DealCardsEvent {
-                    session: session.table,
-                    players: no_cards_in_hand,
+                    session_id: **table_session_id,
+                    player_ids: no_cards_in_hand,
                 });
                 continue;
             }
@@ -561,15 +645,17 @@ fn handle_tables_needing_dealer(
 
             // solo winner becomes dealer
             if players_with_max_value.len() == 1 {
-                commands.entity(session.table).remove::<NeedsDealer>();
+                commands.entity(session.table_id).remove::<NeedsDealer>();
                 commands.entity(players_with_max_value[0]).insert(Dealer);
+                info!("Dealer selected");
                 continue;
             }
 
             // tied winners must draw again
+            info!("Tie for dealer, dealing again");
             deal_card_events.send(DealCardsEvent {
-                session: **table_session_id,
-                players: players_with_max_value,
+                session_id: **table_session_id,
+                player_ids: players_with_max_value,
             });
         }
     }
@@ -578,22 +664,36 @@ fn handle_tables_needing_dealer(
 fn handle_deal_cards_events(
     mut commands: Commands,
     cards_in_decks_query: Query<&Transform, With<InDeck>>,
+    cards_in_hands_query: Query<(&BelongsToPlayer, &InHand), With<Card>>,
     mut deal_cards_events: EventReader<DealCardsEvent>,
     session_query: Query<&Session>,
 ) {
+    if deal_cards_events.is_empty() {
+        return;
+    }
+
+    // Get the size of hands for each player so we know what index to start at
+    let mut hand_sizes =
+        cards_in_hands_query
+            .iter()
+            .fold(HashMap::default(), |mut map, (player, _)| {
+                *map.entry(player.0).or_insert(0) += 1;
+                map
+            });
+
     for event in deal_cards_events.read() {
-        let players = &event.players;
+        let players = &event.player_ids;
 
         // Get the session
-        let session = event.session;
-        let Ok(session) = session_query.get(session) else {
-            warn!("Session not found for deal cards event");
+        let session_id = event.session_id;
+        let Ok(session) = session_query.get(session_id) else {
+            warn!("Session {session_id:?} not found for deal cards event");
             continue;
         };
 
         // Get cards from the top of the deck
         let top_cards = session
-            .cards
+            .card_ids
             .iter()
             .filter_map(|card_id| {
                 let Ok(card_transform) = cards_in_decks_query.get(*card_id) else {
@@ -606,16 +706,33 @@ fn handle_deal_cards_events(
             .map(|(card_id, _)| *card_id);
 
         // Check if there are enough cards to deal
-        if players.len() != top_cards.len() {
+        if players.len() > top_cards.len() {
             warn!("A deal was started with insufficient amount of cards!");
+            debug!("Players: {:?}", players);
+            debug!("Top cards: {:?}", top_cards);
         }
 
         // Update state
-        players.iter().zip(top_cards).for_each(|(player, card)| {
-            commands.entity(card).remove::<InDeck>();
-            commands.entity(card).insert(BelongsToPlayer(*player));
-            commands.entity(card).insert(InHand);
-        });
+        players
+            .iter()
+            .zip(top_cards)
+            .for_each(|(player_id, card_id)| {
+                // Take it out of the deck
+                commands.entity(card_id).remove::<InDeck>();
+
+                // Make it belong to the player
+                commands.entity(card_id).insert(BelongsToPlayer(*player_id));
+
+                // Put it in the player's hand
+                let hand_size = hand_sizes.get(player_id).unwrap_or(&0);
+                commands.entity(card_id).insert(InHand(*hand_size));
+                hand_sizes.get_mut(player_id).map(|size| *size += 1);
+
+                // Wake it up
+                commands.entity(card_id).remove::<Sleeping>();
+            });
+
+        info!("Dealt cards to players");
     }
 }
 
@@ -624,6 +741,7 @@ fn determine_card_positioning_behaviours(
     card_query: Query<
         (
             Entity,
+            Option<&CardPositioningBehaviour>,
             Option<&BelongsToPlayer>,
             Option<&InDeck>,
             Option<&InHand>,
@@ -634,7 +752,15 @@ fn determine_card_positioning_behaviours(
     >,
 ) {
     for card in card_query.iter() {
-        let (card_id, card_player, card_in_deck, card_in_hand, card_played, card_trump) = card;
+        let (
+            card_id,
+            card_positioning_behaviour,
+            card_player,
+            card_in_deck,
+            card_in_hand,
+            card_played,
+            card_trump,
+        ) = card;
 
         struct Decision {
             has_player: bool,
@@ -667,9 +793,15 @@ fn determine_card_positioning_behaviours(
             _ => None,
         } {
             Some(behaviour) => {
+                if card_positioning_behaviour != Some(&behaviour) {
+                    debug!("Card {:?} changed behaviour to {:?}", card_id, behaviour);
+                }
                 commands.entity(card_id).insert(behaviour);
             }
             None => {
+                if card_positioning_behaviour.is_some() {
+                    warn!("Card {:?} changed behaviour to None", card_id);
+                }
                 commands
                     .entity(card_id)
                     .remove::<CardPositioningBehaviour>();
@@ -678,14 +810,24 @@ fn determine_card_positioning_behaviours(
     }
 }
 
+// todo: add a "Sleeping" component to avoid movement calculations on entities at rest
+
 fn handle_cards_positioning_cards_in_deck(
     mut commands: Commands,
     session_query: Query<&Session>,
-    mut cards_in_decks_query: Query<(&mut Transform, &InDeck, Option<&TravelStartTime>)>,
+    mut cards_in_decks_query: Query<
+        (
+            &CardPositioningBehaviour,
+            &mut Transform,
+            &InDeck,
+            Option<&TravelTime>,
+        ),
+        Without<Sleeping>,
+    >,
 ) {
     for session in session_query.iter() {
         let mut cards_in_deck = session
-            .cards
+            .card_ids
             .iter()
             .filter_map(|card_id| {
                 let Ok(card) = cards_in_decks_query.get(*card_id) else {
@@ -693,53 +835,211 @@ fn handle_cards_positioning_cards_in_deck(
                 };
                 Some((card_id, card))
             })
-            .sorted_by_key(|(_card_id, card)| card.1 .0)
-            .map(|(card_id, ..)| card_id)
+            .sorted_by_key(|(_card_id, (_, _, in_deck, ..))| in_deck.0)
+            .rev()
+            .map(|(card_id, (behaviour, ..))| (card_id, behaviour));
+
+        let bottom_card_id = match cards_in_deck.next() {
+            Some((card_id, _)) => *card_id,
+            None => {
+                // no cards in deck
+                continue;
+            }
+        };
+
+        let cards_to_position = cards_in_deck
+            .filter(|(_, behaviour)| matches!(behaviour, CardPositioningBehaviour::InDeck))
+            .map(|(card_id, _)| card_id)
+            .cloned()
             .collect_vec();
 
-        let Some(bottom_card_id) = cards_in_deck.first() else {
-            // no cards in deck
-            continue;
-        };
-        let Ok((bottom_card_transform, _, _)) = cards_in_decks_query.get(**bottom_card_id) else {
+        let Ok((_, bottom_card_transform, ..)) = cards_in_decks_query.get(bottom_card_id) else {
             // bottom card not found
             continue;
         };
         let bottom_card_transform = bottom_card_transform.to_owned();
 
-        for card_id in cards_in_deck.iter().skip(1) {
-            let Ok(mut card) = cards_in_decks_query.get_mut(**card_id) else {
+        for card_id in cards_to_position {
+            let Ok(mut card) = cards_in_decks_query.get_mut(card_id) else {
                 warn!("Card not found in deck");
                 continue;
             };
-            let i = card.1 .0;
+            // get values
+            let i = card.2 .0;
+            let card_transform = &mut *card.1;
+            let travel_time = card.3;
 
+            // calculate positions
             let desired_pos = bottom_card_transform.translation + Vec3::Y * i as f32 * 0.01;
             let desired_rot = bottom_card_transform.rotation;
 
-            let current_pos = card.0.translation;
-            let current_rot = card.0.rotation;
+            let current_pos = card_transform.translation;
+            let current_rot = card_transform.rotation;
 
-            let travel_start_time = match card.2 {
-                Some(travel_start_time) => travel_start_time.0.to_owned(),
+            // get or set travel start time
+            let travel_time = match travel_time {
+                Some(travel_time) => travel_time.start_time.to_owned(),
                 None => {
                     let now = Instant::now();
-                    commands.entity(**card_id).insert(TravelStartTime(now));
+                    commands
+                        .entity(card_id)
+                        .insert(TravelTime { start_time: now });
                     now
                 }
             };
 
-            let progress = travel_start_time.elapsed().as_secs_f32();
+            // calculate progress
+            let progress = travel_time.elapsed().as_secs_f32();
             let progress = progress.min(1.0);
             let progress = progress.powf(0.5);
 
-            card.0.translation = current_pos.lerp(desired_pos, progress);
-            card.0.rotation = current_rot.slerp(desired_rot, progress);
+            // update card position
+            card_transform.translation = current_pos.lerp(desired_pos, progress);
+            card_transform.rotation = current_rot.slerp(desired_rot, progress);
+
+            if progress >= 0.99 {
+                commands.entity(card_id).remove::<TravelTime>();
+                commands.entity(card_id).insert(Sleeping {
+                    start_time: Instant::now(),
+                });
+            }
         }
     }
 }
 
-// todo: make sure cards in hand in front of player are spread out
+fn handle_cards_positioning_cards_in_hand(
+    mut commands: Commands,
+    session_query: Query<&Session>,
+    mut cards_in_hands_query: Query<
+        (
+            &CardPositioningBehaviour,
+            &mut Transform,
+            &InHand,
+            &BelongsToPlayer,
+            Option<&TravelTime>,
+        ),
+        (With<Card>, Without<Player>, Without<Sleeping>),
+    >,
+    player_query: Query<&Transform, (With<Player>, Without<Card>)>,
+) {
+    for session in session_query.iter() {
+        for player_id in session.player_ids.iter() {
+            let Ok(player) = player_query.get(*player_id) else {
+                warn!("Player not found in hand");
+                continue;
+            };
+            let player_transform = player;
+
+            // Identify the cards in the player's hand
+            let mut cards_in_hand = session
+                .card_ids
+                .iter()
+                .filter_map(|card_id| {
+                    let Ok(card) = cards_in_hands_query.get(*card_id) else {
+                        return None;
+                    };
+                    let (
+                        _card_positioning_behaviour,
+                        _card_transform,
+                        in_hand,
+                        _belongs_to_player,
+                        _travel_start_time,
+                    ) = card;
+                    Some((card_id, _card_positioning_behaviour, in_hand))
+                })
+                .sorted_by_key(|(_card_id, _card_positioning_behaviour, in_hand)| in_hand.0)
+                .map(|(card_id, card_positioning_behaviour, ..)| {
+                    (card_id, card_positioning_behaviour)
+                })
+                .peekable();
+
+            // The first card in hand is the leftmost card
+            let Some((left_card_id, ..)) = cards_in_hand.peek() else {
+                // no cards in hand
+                continue;
+            };
+            let Ok((_, left_card_transform, ..)) = cards_in_hands_query.get(**left_card_id) else {
+                // left card not found
+                continue;
+            };
+            let left_card_transform = left_card_transform.to_owned();
+
+            // Get the cards set to this behaviour
+            let cards_to_position = cards_in_hand
+                .filter(|(_card_id, card_positioning_behaviour)| {
+                    matches!(card_positioning_behaviour, CardPositioningBehaviour::InHand)
+                })
+                .map(|(card_id, _)| card_id)
+                .cloned()
+                .collect_vec();
+
+            // debug!(
+            //     "Player {:?} has {} cards in hand",
+            //     player_id,
+            //     cards_to_position.len()
+            // );
+
+            for card_id in cards_to_position {
+                let Ok(mut card) = cards_in_hands_query.get_mut(card_id) else {
+                    warn!("Card not found in hand");
+                    continue;
+                };
+                // get values
+                let i = card.2 .0;
+                let card_transform = &mut *card.1;
+                let travel_time = card.4;
+
+                // calculate positions
+                let (desired_pos, desired_rot) = match i {
+                    0 => {
+                        // the leftmost card starts in front of the player
+                        (
+                            player_transform.translation + player_transform.forward() * 0.5,
+                            player_transform.rotation,
+                        )
+                    }
+                    _ => {
+                        let desired_pos =
+                            left_card_transform.translation + Vec3::X * i as f32 * 0.01;
+                        let desired_rot = left_card_transform.rotation;
+                        (desired_pos, desired_rot)
+                    }
+                };
+
+                let current_pos = card_transform.translation;
+                let current_rot = card_transform.rotation;
+
+                // get or set travel start time
+                let travel_start_time = match travel_time {
+                    Some(travel_time) => travel_time.start_time.to_owned(),
+                    None => {
+                        let now = Instant::now();
+                        commands
+                            .entity(card_id)
+                            .insert(TravelTime { start_time: now });
+                        now
+                    }
+                };
+
+                // calculate progress
+                let progress = travel_start_time.elapsed().as_secs_f32();
+                let progress = progress.min(1.0);
+                let progress = progress.powf(0.5);
+
+                // update card position
+                card_transform.translation = current_pos.lerp(desired_pos, progress);
+                card_transform.rotation = current_rot.slerp(desired_rot, progress);
+
+                if progress >= 0.99 {
+                    commands.entity(card_id).remove::<TravelTime>();
+                    commands.entity(card_id).insert(Sleeping {
+                        start_time: Instant::now(),
+                    });
+                }
+            }
+        }
+    }
+}
 
 fn setup(
     mut commands: Commands,
@@ -764,7 +1064,7 @@ fn setup(
     // let card_width = 0.25;
     let card_width = 0.3;
     let card_height = card_width * card_aspect;
-    handles.card_shape = Cuboid::new(card_width, 0.1, card_height);
+    handles.card_shape = Cuboid::new(card_width, 0.005, card_height);
     handles.card_mesh = meshes.add(handles.card_shape.clone());
     handles.card_materials = Card::get_new_deck()
         .into_iter()
@@ -812,7 +1112,7 @@ fn setup(
             // Keep the mouse cursor in place when dragging
             lock_on_drag: true,
             // Change the width of the area that triggers edge pan. 0.1 is 10% of the window height.
-            edge_pan_width: 0.1,
+            // edge_pan_width: 0.1,
             // Increase pan speed
             pan_speed: 25.0,
             ..default()
@@ -837,8 +1137,6 @@ fn setup(
 
     // spawn the first table
     reset_events.send(SpawnTableEvent { num_players: 5 });
-    reset_events.send(SpawnTableEvent { num_players: 4 });
-    reset_events.send(SpawnTableEvent { num_players: 3 });
-    reset_events.send(SpawnTableEvent { num_players: 2 });
-    reset_events.send(SpawnTableEvent { num_players: 1 });
+    // reset_events.send(SpawnTableEvent { num_players: 4 });
+    // reset_events.send(SpawnTableEvent { num_players: 3 });
 }
