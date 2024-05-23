@@ -10,4 +10,5 @@ bevy = {version="0.13.2",features=["webp"]}
 bevy-inspector-egui = "0.24.0"
 bevy_rts_camera = "0.7.0"
 itertools = "0.13.0"
+meshtext = "0.3.0"
 rand = "0.8.5"

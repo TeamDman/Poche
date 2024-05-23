@@ -29,7 +29,12 @@ Whoever has the most points at the end wins.
 */
 use bevy::input::common_conditions::input_toggle_active;
 use bevy::log::LogPlugin;
+use bevy::pbr::NotShadowCaster;
+use bevy::pbr::NotShadowReceiver;
 use bevy::prelude::*;
+use bevy::render::mesh::Indices;
+use bevy::render::mesh::PrimitiveTopology;
+use bevy::render::render_asset::RenderAssetUsages;
 use bevy::utils::HashMap;
 use bevy::utils::HashSet;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
@@ -39,6 +44,10 @@ use bevy_rts_camera::RtsCameraControls;
 use bevy_rts_camera::RtsCameraPlugin;
 use fps_text_plugin::FpsTextPlugin;
 use itertools::Itertools;
+use meshtext::IndexedMeshText;
+use meshtext::MeshGenerator;
+use meshtext::QualitySettings;
+use meshtext::TextSection;
 use rand::Rng;
 
 ////////////////////////////
@@ -318,6 +327,8 @@ pub struct Handles {
     pub coin_shape: Cylinder,
     pub coin_mesh: Handle<Mesh>,
     pub coin_material: Handle<StandardMaterial>,
+    pub ahoy_mesh: Handle<Mesh>,
+    pub ahoy_material: Handle<StandardMaterial>,
 }
 
 ////////////////////////////
@@ -561,19 +572,30 @@ fn handle_spawn_session_events(
                     let _ = nametag_transform.translation
                         + Vec3::Y * handles.player_body_shape.half_length
                         + Vec3::Y * 0.2;
-                    parent.spawn(Text2dBundle {
-                        text: Text::from_section(
-                            "hehe",
-                            TextStyle {
-                                // font: todo!(),
-                                font_size: 26.5,
-                                color: Color::rgb(0.7, 0.6, 0.1),
-                                ..default()
-                            },
-                        ),
-                        transform: nametag_transform,
-                        ..default()
-                    });
+                    parent.spawn((
+                        PbrBundle {
+                            mesh: handles.ahoy_mesh.clone(),
+                            material: handles.ahoy_material.clone(),
+                            transform: nametag_transform,
+                            ..default()
+                        },
+                        Name::new("Nametag"),
+                        NotShadowCaster,
+                        NotShadowReceiver,
+                    ));
+                    // parent.spawn(Text2dBundle {
+                    //     text: Text::from_section(
+                    //         "hehe",
+                    //         TextStyle {
+                    //             // font: todo!(),
+                    //             font_size: 26.5,
+                    //             color: Color::rgb(0.7, 0.6, 0.1),
+                    //             ..default()
+                    //         },
+                    //     ),
+                    //     transform: nametag_transform,
+                    //     ..default()
+                    // });
                 })
                 .id();
             players.insert(player_id);
@@ -1278,7 +1300,7 @@ fn setup(
     mut handles: ResMut<Handles>,
     asset_server: Res<AssetServer>,
 ) {
-    // table
+    // Prepare table handles
     handles.table_shape = Cylinder::new(2.0, 1.0);
     handles.table_mesh = meshes.add(handles.table_shape.clone());
     handles.table_material = materials.add(StandardMaterial {
@@ -1286,7 +1308,7 @@ fn setup(
         ..default()
     });
 
-    // money jar
+    // Prepare money jar handles
     handles.coin_shape = Cylinder::new(0.02, 0.005);
     handles.coin_mesh = meshes.add(handles.coin_shape.clone());
     handles.coin_material = materials.add(StandardMaterial {
@@ -1294,11 +1316,10 @@ fn setup(
         ..default()
     });
 
-    // deck
+    // Prepare deck handles
     let card_tex_width = 655.0;
     let card_tex_height = 930.0;
     let card_aspect = card_tex_width / card_tex_height;
-    // let card_width = 0.25;
     let card_width = 0.3;
     let card_height = card_width * card_aspect;
     handles.card_shape = Cuboid::new(card_height, 0.005, card_width);
@@ -1318,7 +1339,7 @@ fn setup(
         })
         .collect();
 
-    // player
+    // Prepare player handles
     handles.player_body_shape = Capsule3d::new(0.2, 0.5);
     handles.player_body_mesh = meshes.add(handles.player_body_shape.clone());
     handles.player_body_material = materials.add(StandardMaterial {
@@ -1332,7 +1353,15 @@ fn setup(
         ..default()
     });
 
-    // camera
+    // Prepare ahoy handles
+    handles.ahoy_mesh = meshes.add(create_mesh("ahoy!"));
+    handles.ahoy_material = materials.add(StandardMaterial {
+        base_color: Color::BLUE,
+        unlit: true,
+        ..default()
+    });
+
+    // Spawn camera
     commands.spawn((
         Camera3dBundle {
             transform: Transform::from_xyz(5.0, 10.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
@@ -1358,7 +1387,7 @@ fn setup(
         },
     ));
 
-    // ground
+    // Spawn ground
     commands.spawn((
         PbrBundle {
             mesh: meshes.add(Plane3d::default().mesh().size(80.0, 80.0)),
@@ -1374,22 +1403,38 @@ fn setup(
         Name::new("Ground"),
     ));
 
-    // spawn the first table
+    // Spawn table
     reset_events.send(SpawnSessionEvent { num_players: 5 });
-    // reset_events.send(SpawnTableEvent { num_players: 4 });
-    // reset_events.send(SpawnTableEvent { num_players: 3 });
-    // reset_events.send(SpawnTableEvent { num_players: 5 });
-    // reset_events.send(SpawnTableEvent { num_players: 4 });
-    // reset_events.send(SpawnTableEvent { num_players: 3 });
-    // reset_events.send(SpawnTableEvent { num_players: 5 });
-    // reset_events.send(SpawnTableEvent { num_players: 4 });
-    // reset_events.send(SpawnTableEvent { num_players: 3 });
-    // reset_events.send(SpawnTableEvent { num_players: 5 });
-    // reset_events.send(SpawnTableEvent { num_players: 4 });
-    // reset_events.send(SpawnTableEvent { num_players: 3 });
-    // reset_events.send(SpawnTableEvent { num_players: 5 });
-    // reset_events.send(SpawnTableEvent { num_players: 4 });
-    // reset_events.send(SpawnTableEvent { num_players: 3 });
+}
+
+// from: https://github.com/ForTehLose/bevy_meshtext/blob/master/src/main.rs
+fn create_mesh(text: &str) -> Mesh {
+    let mut cube_mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+
+    let mesh_data = get_text_vertices(&text);
+    let chunks = mesh_data
+        .vertices
+        .chunks(3)
+        .map(|c| <[_; 3]>::try_from(c).unwrap())
+        .collect::<Vec<_>>();
+
+    cube_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, chunks);
+    cube_mesh.insert_indices(Indices::U32(mesh_data.indices));
+    cube_mesh
+}
+
+// from: https://github.com/ForTehLose/bevy_meshtext/blob/master/src/main.rs
+fn get_text_vertices(text: &str) -> IndexedMeshText {
+    let font_data = include_bytes!("../assets/fonts/Crunchyfont.ttf");
+    let mut generator = MeshGenerator::new_without_cache(font_data, QualitySettings::default());
+
+    let thing = generator
+        .generate_section(&text, true, None)
+        .expect("Failed to generate glyph.");
+    return thing;
 }
 
 fn handle_sleeping_key_press(
@@ -1493,7 +1538,9 @@ fn handle_kill_session_events(
             commands.entity(entity).despawn_recursive();
             found += 1;
 
-            if table.is_some() && let Some(transform) = transform {
+            if table.is_some()
+                && let Some(transform) = transform
+            {
                 table_positions.release_position(transform.translation);
             }
         }
