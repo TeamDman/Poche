@@ -1,3 +1,5 @@
+mod fps_text_plugin;
+
 use std::f32::consts::PI;
 use std::time::Instant;
 
@@ -34,7 +36,9 @@ use bevy_rts_camera::Ground;
 use bevy_rts_camera::RtsCamera;
 use bevy_rts_camera::RtsCameraControls;
 use bevy_rts_camera::RtsCameraPlugin;
+use fps_text_plugin::FpsTextPlugin;
 use itertools::Itertools;
+use rand::Rng;
 
 ////////////////////////////
 /// APP
@@ -51,7 +55,7 @@ fn main() {
     app.register_type::<CardPositioningBehaviour>();
     app.register_type::<Table>();
     app.register_type::<Player>();
-    app.register_type::<SpawnTableEvent>();
+    app.register_type::<SpawnSessionEvent>();
     app.register_type::<BelongsToPlayer>();
     app.register_type::<Handles>();
     app.register_type::<Sleeping>();
@@ -60,10 +64,12 @@ fn main() {
     app.init_resource::<Handles>();
     app.init_resource::<TablePositions>();
 
-    app.add_event::<SpawnTableEvent>();
+    app.add_event::<SpawnSessionEvent>();
+    app.add_event::<KillSessionEvent>();
     app.add_event::<SpawnDeckEvent>();
     app.add_event::<DealCardsEvent>();
 
+    app.add_plugins(FpsTextPlugin);
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {
@@ -101,23 +107,48 @@ fn main() {
     app.add_systems(
         Update,
         (
-            handle_spawn_table_events,
+            handle_spawn_session_events,
             handle_spawn_deck_events,
             handle_tables_needing_dealer,
             handle_deal_cards_events,
             determine_card_positioning_behaviours,
-            handle_cards_positioning_cards_in_deck,
-            handle_cards_positioning_cards_in_hand,
+            position_cards_in_deck,
+            position_cards_in_hand,
         )
             .chain(),
     );
     app.add_systems(Update, handle_quit_key_press);
     app.add_systems(Update, handle_deal_key_press);
+    app.add_systems(Update, handle_kill_session_key_press);
+    app.add_systems(Update, handle_new_table_key_press);
     app.add_systems(Update, handle_sleeping_key_press);
     app.add_systems(Update, handle_shuffle_back_in_key_press);
     app.add_systems(Update, update_card_names);
 
     app.run();
+}
+
+////////////////////////////
+/// MONEY
+////////////////////////////
+#[derive(Component, Debug, PartialEq, Clone, Reflect)]
+pub enum Coin {
+    Nickle,
+    Dime,
+    Quarter,
+    Loonie,
+    Toonie,
+}
+impl Coin {
+    pub fn value(&self) -> usize {
+        match self {
+            Coin::Nickle => 5,
+            Coin::Dime => 10,
+            Coin::Quarter => 25,
+            Coin::Loonie => 100,
+            Coin::Toonie => 200,
+        }
+    }
 }
 
 ////////////////////////////
@@ -247,6 +278,7 @@ pub struct BelongsToPlayer(Entity);
 /// To avoid conflicting card transform updates, use a component to enforce exclusive update bahviour.
 #[derive(Component, Debug, Eq, PartialEq, Clone, Reflect)]
 pub enum CardPositioningBehaviour {
+    None,
     InDeck,
     RevealedOnDeck,
     InHand,
@@ -281,6 +313,9 @@ pub struct Handles {
     pub player_eye_shape: Sphere,
     pub player_eye_mesh: Handle<Mesh>,
     pub player_eye_material: Handle<StandardMaterial>,
+    pub coin_shape: Cylinder,
+    pub coin_mesh: Handle<Mesh>,
+    pub coin_material: Handle<StandardMaterial>,
 }
 
 ////////////////////////////
@@ -379,9 +414,14 @@ pub struct DealCardsEvent {
 }
 
 #[derive(Event, Debug, Reflect)]
-pub struct SpawnTableEvent {
+pub struct SpawnSessionEvent {
     pub num_players: usize,
 }
+#[derive(Event, Debug, Reflect)]
+pub struct KillSessionEvent {
+    pub session_id: Entity,
+}
+
 #[derive(Event, Debug, Reflect)]
 pub struct SpawnDeckEvent {
     pub session_id: Entity,
@@ -401,22 +441,52 @@ fn handle_deal_key_press(
     input: Res<ButtonInput<KeyCode>>,
     session_query: Query<(Entity, &Session)>,
 ) {
-    if input.just_pressed(KeyCode::Digit1) {
-        for session in session_query.iter() {
-            let (session_id, session) = session;
-            let player_ids = session.player_ids.iter().cloned().collect_vec();
-            info!("Dealing cards to all players in session {session_id:?} because of key press");
-            events.send(DealCardsEvent {
-                session_id,
-                player_ids,
-            });
+    let keys = [
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+        KeyCode::Digit9,
+    ];
+    for (i, key) in keys.iter().enumerate() {
+        if input.just_pressed(*key) {
+            for session in session_query.iter() {
+                let (session_id, session) = session;
+                let mut player_ids = Vec::new();
+
+                for _ in 0..i + 1 {
+                    player_ids.append(&mut session.player_ids.iter().cloned().collect_vec());
+                }
+                info!(
+                    "Dealing cards to all players in session {session_id:?} because of key press"
+                );
+                events.send(DealCardsEvent {
+                    session_id,
+                    player_ids,
+                });
+            }
         }
     }
+    // if input.just_pressed(KeyCode::Digit1) {
+    //     for session in session_query.iter() {
+    //         let (session_id, session) = session;
+    //         let player_ids = session.player_ids.iter().cloned().collect_vec();
+    //         info!("Dealing cards to all players in session {session_id:?} because of key press");
+    //         events.send(DealCardsEvent {
+    //             session_id,
+    //             player_ids,
+    //         });
+    //     }
+    // }
 }
 
-fn handle_spawn_table_events(
+fn handle_spawn_session_events(
     mut commands: Commands,
-    mut spawn_table_events: EventReader<SpawnTableEvent>,
+    mut spawn_table_events: EventReader<SpawnSessionEvent>,
     mut spawn_deck_events: EventWriter<SpawnDeckEvent>,
     mut table_positions: ResMut<TablePositions>,
     handles: Res<Handles>,
@@ -448,13 +518,15 @@ fn handle_spawn_table_events(
                     .atan2((player_position - table_position).z),
             );
 
-            let player = commands
+            let player_transform =
+                Transform::from_rotation(player_rotation).with_translation(player_position);
+
+            let player_id = commands
                 .spawn((
                     PbrBundle {
                         mesh: handles.player_body_mesh.clone(),
                         material: handles.player_body_material.clone(),
-                        transform: Transform::from_rotation(player_rotation)
-                            .with_translation(player_position),
+                        transform: player_transform,
                         ..default()
                     },
                     Player::default(),
@@ -482,9 +554,45 @@ fn handle_spawn_table_events(
                         ),
                         ..default()
                     });
+                    let nametag_transform = player_transform;
+                    let _ = nametag_transform.translation
+                        + Vec3::Y * handles.player_body_shape.half_length
+                        + Vec3::Y * 0.2;
+                    parent.spawn(Text2dBundle {
+                        text: Text::from_section(
+                            "hehe",
+                            TextStyle {
+                                // font: todo!(),
+                                font_size: 26.5,
+                                color: Color::rgb(0.7, 0.6, 0.1),
+                                ..default()
+                            },
+                        ),
+                        transform: nametag_transform,
+                        ..default()
+                    });
                 })
                 .id();
-            players.push((player, player_position));
+            players.push((player_id, player_position));
+
+            let mut coin_position =
+                player_position + player_transform.forward() * 1.0 + player_transform.right() * 0.7;
+            coin_position.y =
+                table_position.y + handles.table_shape.half_height + handles.coin_shape.half_height;
+            for _ in 0..5 {
+                commands.spawn((
+                    PbrBundle {
+                        mesh: handles.coin_mesh.clone(),
+                        material: handles.coin_material.clone(),
+                        transform: Transform::from_translation(coin_position),
+                        ..default()
+                    },
+                    Coin::Quarter,
+                    Name::new("Coin - Quarter"),
+                    BelongsToPlayer(player_id),
+                ));
+                coin_position += player_transform.right() * handles.coin_shape.radius * 2.0;
+            }
         }
 
         // Spawn the table
@@ -712,8 +820,8 @@ fn handle_tables_needing_dealer(
 
 fn handle_deal_cards_events(
     mut commands: Commands,
-    cards_in_decks_query: Query<&Transform, With<InDeck>>,
-    cards_in_hands_query: Query<(&BelongsToPlayer, &InHand), With<Card>>,
+    cards_in_decks_query: Query<&InDeck, (With<Card>, Without<InHand>)>,
+    cards_in_hands_query: Query<(&BelongsToPlayer, &InHand), (With<Card>, Without<InDeck>)>,
     mut deal_cards_events: EventReader<DealCardsEvent>,
     session_query: Query<&Session>,
 ) {
@@ -745,12 +853,12 @@ fn handle_deal_cards_events(
             .card_ids
             .iter()
             .filter_map(|card_id| {
-                let Ok(card_transform) = cards_in_decks_query.get(*card_id) else {
+                let Ok(in_deck) = cards_in_decks_query.get(*card_id) else {
                     return None;
                 };
-                Some((card_id, card_transform.translation.y))
+                Some((card_id, in_deck.index_from_bottom))
             })
-            .sorted_by_key(|(_, y)| (1000.0 * y) as i32)
+            .sorted_by_key(|(_, index_from_bottom)| *index_from_bottom)
             .rev()
             .map(|(card_id, _)| *card_id);
 
@@ -773,11 +881,12 @@ fn handle_deal_cards_events(
                 commands.entity(card_id).insert(BelongsToPlayer(*player_id));
 
                 // Put it in the player's hand
-                let hand_size = hand_sizes.get(player_id).unwrap_or(&0);
+                let hand_size = hand_sizes.entry(*player_id).or_insert(0usize);
                 commands.entity(card_id).insert(InHand {
                     index_from_left: *hand_size,
                 });
-                hand_sizes.get_mut(player_id).map(|size| *size += 1);
+                *hand_size += 1;
+                debug!("Player hand size updated to {:?}", hand_size);
 
                 // Wake it up
                 commands.entity(card_id).remove::<Sleeping>();
@@ -814,6 +923,9 @@ fn determine_card_positioning_behaviours(
             card_played,
             card_trump,
         ) = card;
+        if card_positioning_behaviour == Some(&CardPositioningBehaviour::None) {
+            continue;
+        }
 
         struct Decision {
             has_player: bool,
@@ -871,7 +983,7 @@ fn determine_card_positioning_behaviours(
 
 // todo: add a "Sleeping" component to avoid movement calculations on entities at rest
 
-fn handle_cards_positioning_cards_in_deck(
+fn position_cards_in_deck(
     mut commands: Commands,
     session_query: Query<&Session>,
     mut cards_in_decks_query: Query<
@@ -992,7 +1104,7 @@ fn handle_cards_positioning_cards_in_deck(
     }
 }
 
-fn handle_cards_positioning_cards_in_hand(
+fn position_cards_in_hand(
     mut commands: Commands,
     session_query: Query<&Session>,
     mut cards_in_hands_query: Query<
@@ -1078,6 +1190,7 @@ fn handle_cards_positioning_cards_in_hand(
             //     cards_to_position.len()
             // );
 
+            let num_cards_to_position = cards_to_position.len() as f32;
             for card_id in cards_to_position {
                 let Ok(mut card) = cards_in_hands_query.get_mut(card_id) else {
                     warn!("Card not found in hand");
@@ -1093,14 +1206,17 @@ fn handle_cards_positioning_cards_in_hand(
                     0 => {
                         // the leftmost card starts in front of the player
                         (
-                            player_transform.translation + player_transform.forward() * 0.5,
+                            player_transform.translation
+                                + player_transform.forward() * 0.5
+                                + (player_transform.left() * (num_cards_to_position / 2.0 * 0.1)),
                             player_transform.rotation
                                 * Quat::from_euler(EulerRot::XYZ, PI / 2.0, 0.0, 0.0),
                         )
                     }
                     _ => {
                         let desired_pos = left_card_transform.translation
-                            + left_card_transform.right() * i as f32 * 0.1;
+                            + left_card_transform.right() * i as f32 * 0.1
+                            + left_card_transform.up() * i as f32 * 0.005;
                         let desired_rot = left_card_transform.rotation;
                         (desired_pos, desired_rot)
                     }
@@ -1145,7 +1261,7 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut reset_events: EventWriter<SpawnTableEvent>,
+    mut reset_events: EventWriter<SpawnSessionEvent>,
     mut handles: ResMut<Handles>,
     asset_server: Res<AssetServer>,
 ) {
@@ -1154,6 +1270,14 @@ fn setup(
     handles.table_mesh = meshes.add(handles.table_shape.clone());
     handles.table_material = materials.add(StandardMaterial {
         base_color: Color::rgb(0.8, 0.7, 0.6),
+        ..default()
+    });
+
+    // money jar
+    handles.coin_shape = Cylinder::new(0.02, 0.005);
+    handles.coin_mesh = meshes.add(handles.coin_shape.clone());
+    handles.coin_material = materials.add(StandardMaterial {
+        base_color: Color::rgb(0.8, 0.9, 0.9),
         ..default()
     });
 
@@ -1174,7 +1298,7 @@ fn setup(
                 card,
                 materials.add(StandardMaterial {
                     base_color_texture: Some(texture_handle),
-                    alpha_mode: AlphaMode::Blend,
+                    alpha_mode: AlphaMode::Mask(0.5),
                     ..default()
                 }),
             )
@@ -1201,25 +1325,21 @@ fn setup(
             transform: Transform::from_xyz(5.0, 10.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
             ..default()
         },
-        RtsCamera::default(),
+        RtsCamera {
+            height_max: 40.0,
+            ..defualt(),
+        },
         RtsCameraControls {
             // https://github.com/Plonq/bevy_rts_camera/blob/main/examples/advanced.rs
-            // Change pan controls to WASD
             key_up: KeyCode::KeyW,
             key_down: KeyCode::KeyS,
             key_left: KeyCode::KeyA,
             key_right: KeyCode::KeyD,
-            // Rotate the camera with right click
             button_rotate: MouseButton::Right,
-            // Keep the mouse cursor in place when rotating
             lock_on_rotate: true,
-            // Drag pan with middle click
             button_drag: Some(MouseButton::Middle),
-            // Keep the mouse cursor in place when dragging
             lock_on_drag: true,
-            // Change the width of the area that triggers edge pan. 0.1 is 10% of the window height.
-            // edge_pan_width: 0.1,
-            // Increase pan speed
+            edge_pan_width: 0.0,
             pan_speed: 25.0,
             ..default()
         },
@@ -1242,21 +1362,21 @@ fn setup(
     ));
 
     // spawn the first table
-    reset_events.send(SpawnTableEvent { num_players: 5 });
-    reset_events.send(SpawnTableEvent { num_players: 4 });
-    reset_events.send(SpawnTableEvent { num_players: 3 });
-    reset_events.send(SpawnTableEvent { num_players: 5 });
-    reset_events.send(SpawnTableEvent { num_players: 4 });
-    reset_events.send(SpawnTableEvent { num_players: 3 });
-    reset_events.send(SpawnTableEvent { num_players: 5 });
-    reset_events.send(SpawnTableEvent { num_players: 4 });
-    reset_events.send(SpawnTableEvent { num_players: 3 });
-    reset_events.send(SpawnTableEvent { num_players: 5 });
-    reset_events.send(SpawnTableEvent { num_players: 4 });
-    reset_events.send(SpawnTableEvent { num_players: 3 });
-    reset_events.send(SpawnTableEvent { num_players: 5 });
-    reset_events.send(SpawnTableEvent { num_players: 4 });
-    reset_events.send(SpawnTableEvent { num_players: 3 });
+    reset_events.send(SpawnSessionEvent { num_players: 5 });
+    // reset_events.send(SpawnTableEvent { num_players: 4 });
+    // reset_events.send(SpawnTableEvent { num_players: 3 });
+    // reset_events.send(SpawnTableEvent { num_players: 5 });
+    // reset_events.send(SpawnTableEvent { num_players: 4 });
+    // reset_events.send(SpawnTableEvent { num_players: 3 });
+    // reset_events.send(SpawnTableEvent { num_players: 5 });
+    // reset_events.send(SpawnTableEvent { num_players: 4 });
+    // reset_events.send(SpawnTableEvent { num_players: 3 });
+    // reset_events.send(SpawnTableEvent { num_players: 5 });
+    // reset_events.send(SpawnTableEvent { num_players: 4 });
+    // reset_events.send(SpawnTableEvent { num_players: 3 });
+    // reset_events.send(SpawnTableEvent { num_players: 5 });
+    // reset_events.send(SpawnTableEvent { num_players: 4 });
+    // reset_events.send(SpawnTableEvent { num_players: 3 });
 }
 
 fn handle_sleeping_key_press(
@@ -1311,5 +1431,33 @@ fn update_card_names(
     for card in card_query.iter_mut() {
         let (mut name, in_hand, in_deck) = card;
         *name = Name::new(format!("Card ({in_hand:?},{in_deck:?})"));
+    }
+}
+
+fn handle_kill_session_key_press(
+    input: Res<ButtonInput<KeyCode>>,
+    mut kill_session_events: EventWriter<KillSessionEvent>,
+    session_query: Query<Entity, With<Session>>,
+) {
+    if input.just_pressed(KeyCode::Minus) {
+        let Some(session) = session_query.iter().next() else {
+            warn!("Failed to find any sessions to kill");
+            return;
+        };
+        let session_id = session;
+
+        kill_session_events.send(KillSessionEvent { session_id });
+    }
+}
+
+fn handle_new_table_key_press(
+    input: Res<ButtonInput<KeyCode>>,
+    mut spawn_session_events: EventWriter<SpawnSessionEvent>,
+) {
+    if input.just_pressed(KeyCode::Equal) {
+        let min_players = 2;
+        let max_players = 6;
+        let num_players = rand::thread_rng().gen_range(min_players..=max_players);
+        spawn_session_events.send(SpawnSessionEvent { num_players });
     }
 }
