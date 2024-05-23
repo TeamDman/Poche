@@ -1,3 +1,4 @@
+#![feature(let_chains)]
 mod fps_text_plugin;
 
 use std::f32::consts::PI;
@@ -124,6 +125,7 @@ fn main() {
     app.add_systems(Update, handle_sleeping_key_press);
     app.add_systems(Update, handle_shuffle_back_in_key_press);
     app.add_systems(Update, update_card_names);
+    app.add_systems(Update, handle_kill_session_events);
 
     app.run();
 }
@@ -496,7 +498,8 @@ fn handle_spawn_session_events(
         let table_position = table_positions.acquire_position(handles.table_shape.half_height);
 
         // Spawn the players in a circle around the table
-        let mut players = Vec::new();
+        let mut players = HashSet::new();
+        let mut needs_session_id_ref = Vec::new();
         let seating_radius = handles.table_shape.radius + 0.7;
         for i in 0..event.num_players {
             // Get the angle from the center of the table to the player
@@ -573,25 +576,30 @@ fn handle_spawn_session_events(
                     });
                 })
                 .id();
-            players.push((player_id, player_position));
+            players.insert(player_id);
+            needs_session_id_ref.push(player_id);
 
             let mut coin_position =
                 player_position + player_transform.forward() * 1.0 + player_transform.right() * 0.7;
             coin_position.y =
                 table_position.y + handles.table_shape.half_height + handles.coin_shape.half_height;
             for _ in 0..5 {
-                commands.spawn((
-                    PbrBundle {
-                        mesh: handles.coin_mesh.clone(),
-                        material: handles.coin_material.clone(),
-                        transform: Transform::from_translation(coin_position),
-                        ..default()
-                    },
-                    Coin::Quarter,
-                    Name::new("Coin - Quarter"),
-                    BelongsToPlayer(player_id),
-                ));
+                let coin_id = commands
+                    .spawn((
+                        PbrBundle {
+                            mesh: handles.coin_mesh.clone(),
+                            material: handles.coin_material.clone(),
+                            transform: Transform::from_translation(coin_position),
+                            ..default()
+                        },
+                        Coin::Quarter,
+                        Name::new("Coin - Quarter"),
+                        BelongsToPlayer(player_id),
+                    ))
+                    .id();
                 coin_position += player_transform.right() * handles.coin_shape.radius * 2.0;
+
+                needs_session_id_ref.push(coin_id);
             }
         }
 
@@ -609,33 +617,37 @@ fn handle_spawn_session_events(
                 NeedsDealer,
             ))
             .id();
+        needs_session_id_ref.push(table);
 
         // Create the session
         let session_id = commands
             .spawn((
                 Session {
                     table_id: table,
-                    player_ids: players.iter().map(|(p, _)| *p).collect(),
+                    player_ids: players.clone(),
                     card_ids: Default::default(),
                 },
                 Name::new("Session"),
             ))
             .id();
+        needs_session_id_ref.push(session_id);
+
+        // Spawn the light
+        let light_id = commands
+            .spawn(PointLightBundle {
+                transform: Transform::from_translation(table_position + Vec3::Y * 4.0),
+                ..default()
+            })
+            .id();
+        needs_session_id_ref.push(light_id);
 
         // Attach session
-        for player in players {
-            commands.entity(player.0).insert(SessionRef(session_id));
+        for entity in needs_session_id_ref {
+            commands.entity(entity).insert(SessionRef(session_id));
         }
-        commands.entity(table).insert(SessionRef(session_id));
 
         // Spawn the deck
         spawn_deck_events.send(SpawnDeckEvent { session_id });
-
-        // Spawn the light
-        commands.spawn(PointLightBundle {
-            transform: Transform::from_translation(table_position + Vec3::Y * 4.0),
-            ..default()
-        });
 
         info!("Table spawned with {} players", event.num_players);
     }
@@ -685,6 +697,7 @@ fn handle_spawn_deck_events(
                     InDeck {
                         index_from_bottom: i,
                     },
+                    SessionRef(event.session_id),
                 ))
                 .id();
             session.card_ids.insert(card_id);
@@ -1326,8 +1339,8 @@ fn setup(
             ..default()
         },
         RtsCamera {
-            height_max: 40.0,
-            ..defualt(),
+            // height_max: 400.0,
+            ..default()
         },
         RtsCameraControls {
             // https://github.com/Plonq/bevy_rts_camera/blob/main/examples/advanced.rs
@@ -1446,6 +1459,7 @@ fn handle_kill_session_key_press(
         };
         let session_id = session;
 
+        info!("Killing session {session_id:?}");
         kill_session_events.send(KillSessionEvent { session_id });
     }
 }
@@ -1458,6 +1472,35 @@ fn handle_new_table_key_press(
         let min_players = 2;
         let max_players = 6;
         let num_players = rand::thread_rng().gen_range(min_players..=max_players);
+        info!("Spawning new table with {} players", num_players);
         spawn_session_events.send(SpawnSessionEvent { num_players });
+    }
+}
+
+fn handle_kill_session_events(
+    mut commands: Commands,
+    mut kill_session_events: EventReader<KillSessionEvent>,
+    kill_query: Query<(Entity, &SessionRef, Option<&Transform>, Option<&Table>)>,
+    mut table_positions: ResMut<TablePositions>,
+) {
+    for event in kill_session_events.read() {
+        let mut found = 0;
+        for entity in kill_query
+            .iter()
+            .filter(|(_, session_ref, ..)| ***session_ref == event.session_id)
+        {
+            let (entity, _, transform, table) = entity;
+            commands.entity(entity).despawn_recursive();
+            found += 1;
+
+            if table.is_some() && let Some(transform) = transform {
+                table_positions.release_position(transform.translation);
+            }
+        }
+        if found == 0 {
+            warn!("Failed to find session {:?} to kill", event.session_id);
+        } else {
+            info!("Killed session with {found} associated entities");
+        }
     }
 }
