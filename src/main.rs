@@ -15,9 +15,10 @@ fn main() -> eyre::Result<()> {
     let mut state = State::default();
     loop {
         println!("State: {state}");
-        let action_taken = state.advance()?;
+        let action_taken = state.step()?;
         println!("Action: {action_taken:?}\n");
         if state.is_done() {
+            println!("Game has ended!");
             break;
         }
     }

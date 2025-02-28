@@ -1,6 +1,4 @@
-use crate::state::GamePhase;
 use crate::state::State;
-use eyre::bail;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Action {
@@ -15,30 +13,38 @@ impl std::fmt::Display for Action {
 
 impl Action {
     pub fn get_valid_actions(state: &State) -> eyre::Result<Vec<Action>> {
-        let active_player = match state.phase {
-            GamePhase::Playing {
-                active_player_index: active_player,
-                ..
-            } => active_player,
-            _ => bail!("No active player found"),
-        };
-
-        let player = &state.players[active_player];
-        Ok(player
+        let active_player = &state.players[state.players.active_player_index];
+        let mut actions: Vec<Action> = active_player
             .hand
             .iter()
             .enumerate()
             .map(|(card_index, _)| Action::PlayCard {
-                player: active_player,
+                player: state.players.active_player_index,
                 card_index,
             })
-            .collect())
+            .collect();
+        match state.get_suit_to_follow() {
+            Some(suit) => {
+                let can_follow_suit = active_player.hand.iter().any(|c| c.suit == suit);
+                if can_follow_suit {
+                    actions.retain(|action| {
+                        let Action::PlayCard { card_index, .. } = action;
+                        {
+                            active_player.hand[*card_index].suit == suit
+                        }
+                    });
+                }
+            },
+            None => {}
+        };
+        Ok(actions)
     }
     pub fn apply(&self, state: &mut State) {
         match self {
             Action::PlayCard { player, card_index } => {
                 let card = state.players[*player].hand.remove(*card_index);
                 state.pile.push(card);
+                if *player == state.players.dealer_index {}
             }
         }
     }

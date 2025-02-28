@@ -9,6 +9,13 @@ pub struct Round {
     pub hand_size: u32,
     pub direction: Direction,
 }
+
+impl Round {
+    pub(crate) fn reset(&mut self) {
+        *self = Round::default();
+    }
+}
+
 impl Default for Round {
     fn default() -> Self {
         Round {
@@ -23,7 +30,7 @@ impl Round {
     /// 1,2,3,4,5,6,7,6,5,4,3,2,1,finished
     pub fn try_advance(&mut self, num_players: u32) -> eyre::Result<()> {
         if self.hand_size == 1 && self.direction == Direction::Down {
-            return Err(eyre::eyre!("Round is already finished"));
+            return Err(eyre::eyre!("The game is already finished, cannot advance to next round"));
         }
         self.round_number += 1;
         if self.round_number > 7 {
@@ -37,6 +44,9 @@ impl Round {
             Direction::Down => self.hand_size - 1,
         };
         Ok(())
+    }
+    pub fn is_last_round(&self) -> bool {
+        self.hand_size == 1 && self.direction == Direction::Up
     }
 }
 #[cfg(test)]

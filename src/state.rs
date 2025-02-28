@@ -1,6 +1,7 @@
 use color_eyre::owo_colors::OwoColorize;
+use eyre::bail;
 use crate::action::Action;
-use crate::cards::Deck;
+use crate::cards::{Deck, Suit};
 use crate::money::Coin;
 use crate::money::MoneyJar;
 use crate::players::Player;
@@ -11,30 +12,14 @@ use crate::random::RandomState;
 use crate::round::Round;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum GamePhase {
-    TakingBuyIn,
-    Playing {
-        round: Round,
-        active_player_index: usize,
-    },
-    GameOver,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct State {
     pub deck: Deck,
     pub players: Players,
     pub pot: MoneyJar,
     pub timestep: u32,
-    pub phase: GamePhase,
     pub rand: RandomState,
     pub pile: Deck,
-}
-
-impl State {
-    pub fn is_done(&self) -> bool {
-        matches!(self.phase, GamePhase::GameOver) 
-    }
+    pub round: Round,
 }
 
 impl Default for State {
@@ -54,73 +39,67 @@ impl Default for State {
             };
             players.push(player);
         }
+        
+        let mut pot = Default::default();
+        for player in players.iter_mut() {
+            player.money_jar -= MoneyJar::from(vec![Coin::Quarter]);
+            pot += MoneyJar::from(vec![Coin::Quarter]);
+        }
 
+        let dealer_index = rand.gen_range(0..players.len());
+        let active_player_index = dealer_index + 1 % players.len();
         let players = Players {
-            dealer_index: rand.gen_range(0..players.len()),
+            dealer_index,
+            active_player_index,
             players,
         };
-
-        let state = State {
+        
+        let mut state = State {
             players,
             deck: Deck::new_full(),
-            pot: Default::default(),
+            pot,
             timestep: 0,
             rand,
-            phase: GamePhase::TakingBuyIn,
             pile: Deck::new_empty(),
+            round: Round::default(),
         };
+        
+        state.deal_until_everyone_has_n_cards(1).unwrap();
+        
         state
     }
 }
 
 impl State {
-    pub fn advance(&mut self) -> eyre::Result<Option<Action>> {
-        let mut action_taken = None;
-        let next_phase = match self.phase.clone() {
-            GamePhase::TakingBuyIn => {
-                for player in self.players.iter_mut() {
-                    player.money_jar -= MoneyJar::from(vec![Coin::Quarter]);
-                    self.pot += MoneyJar::from(vec![Coin::Quarter]);
-                }
-                self.deal_until_everyone_has_n_cards(1)?;
-                GamePhase::Playing {
-                    round: Default::default(),
-                    active_player_index: self.players.get_left_of_dealer().0,
-                }
-            }
-            GamePhase::Playing {
-                active_player_index,
-                mut round,
-            } => {
-                let actions = Action::get_valid_actions(&self)?;
-                assert!(actions.len() > 0);
-                let phase = match round.try_advance(self.players.len() as u32) {
-                    Ok(()) => {
-                        self.deal_until_everyone_has_n_cards(round.hand_size)?;
-                        GamePhase::Playing {
-                            active_player_index: (active_player_index + 1) % self.players.len(),
-                            round,
-                        }
-                    },
-                    Err(_) => {
-                        GamePhase::GameOver
-                    }
-                };
-                
-                let active_player = &mut self.players[active_player_index];
-                let action = active_player.policy.pick_action(&mut self.rand, actions);
-                action.apply(self);
-                action_taken = Some(action);
-                if self.players.iter().all(|p| p.hand.is_empty()) {
-                    self.end_round();
-                }
-                phase
-            }
-            GamePhase::GameOver => GamePhase::GameOver,
-        };
-        self.phase = next_phase;
+    pub fn step(&mut self) -> eyre::Result<Action> {
+        if self.is_done() {
+            bail!("State is done");
+        }
+        let actions = Action::get_valid_actions(&self)?;
+        assert!(actions.len() > 0);
+        let active_player_index = self.players.active_player_index;
+        let active_player = &mut self.players[active_player_index];
+        let action = active_player.policy.pick_action(&mut self.rand, actions);
+        action.apply(self);
         
-        Ok(action_taken)
+        // advance to the next player's turn
+        self.players.active_player_index = (self.players.active_player_index + 1) % self.players.len();
+
+        if self.players.iter().all(|p| p.hand.is_empty()) {
+            self.end_round()?;
+        }
+        Ok(action)
+    }
+    
+    pub(crate) fn get_trump(&self) -> Option<Suit> {
+        self.deck.cards.last().map(|c| c.suit)
+    }
+    pub fn is_done(&self) -> bool {
+        self.round.is_last_round() && self.players.iter().all(|p| p.hand.is_empty())
+    }
+    
+    pub(crate) fn get_suit_to_follow(&self) -> Option<Suit> {
+        self.pile.cards.first().map(|c| c.suit)
     }
 
     fn shuffle_deck(&mut self) {
@@ -147,9 +126,20 @@ impl State {
         Ok(())
     }
 
-    fn end_round(&mut self) {
+    fn end_round(&mut self) -> eyre::Result<()> {
+        println!("Ending round");
+        if self.is_done() {
+            println!("The last round has ended!");
+            self.round.reset();
+            return Ok(()); // the game is over
+        } else {
+            self.round.try_advance(self.players.len() as u32)?;
+        }
         self.deck.cards.extend(self.pile.cards.drain(..));
         self.shuffle_deck();
+        self.players.dealer_index = (self.players.dealer_index + 1) % self.players.len();
+        self.deal_until_everyone_has_n_cards(self.round.hand_size)?;
+        Ok(())
     }
 }
 
@@ -159,14 +149,26 @@ impl std::fmt::Display for State {
         f.write_str("Players:\n")?;
         for player in self.players.iter() {
             f.write_fmt(format_args!(
-                "  {} has {} points and {} in their cash jar\n",
-                player.id.0, player.points, player.money_jar
+                "  {} has {} points, {} cards in hand, and {} in their cash jar\n",
+                player.id.0,
+                player.points,
+                player.hand.len(),
+                player.money_jar
             ))?;
         }
         f.write_fmt(format_args!(
-            "The dealer is {} and the pot is {}\n",
-            self.players.get_left_of_dealer().1.id,
+            "The dealer is {}, the active player is {}, and the pot is {}\n",
+            self.players.dealer_index,
+            self.players.active_player_index,
             self.pot,
+        ))?;
+        f.write_fmt(format_args!(
+            "Trump is {:?}\n",
+            self.get_trump(),
+        ))?;
+        f.write_fmt(format_args!(
+            "Follow-suit is {:?}\n",
+            self.get_suit_to_follow()
         ))?;
         f.write_fmt(format_args!(
             "The deck has {} cards left\n",
@@ -176,7 +178,6 @@ impl std::fmt::Display for State {
             "The pile has {} cards\n",
             self.pile.cards.len()
         ))?;
-        f.write_fmt(format_args!("Phase: {:?}", self.phase))?;
         Ok(())
     }
 }

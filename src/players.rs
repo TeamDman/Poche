@@ -9,6 +9,7 @@ pub struct Players {
     /// Clockwise-ordered players
     pub players: Vec<Player>,
     pub dealer_index: usize,
+    pub active_player_index: usize,
 }
 impl Players {
     pub fn iter_dealer_last(&self) -> impl Iterator<Item = (usize, &Player)> {
