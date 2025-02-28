@@ -14,6 +14,7 @@ impl std::fmt::Display for Action {
 impl Action {
     pub fn get_valid_actions(state: &State) -> eyre::Result<Vec<Action>> {
         let active_player = &state.players[state.players.active_player_index];
+        assert!(!active_player.hand.is_empty());
         let mut actions: Vec<Action> = active_player
             .hand
             .iter()
@@ -44,7 +45,6 @@ impl Action {
             Action::PlayCard { player, card_index } => {
                 let card = state.players[*player].hand.remove(*card_index);
                 state.pile.push(card);
-                if *player == state.players.dealer_index {}
             }
         }
     }

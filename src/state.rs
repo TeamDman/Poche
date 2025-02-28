@@ -1,7 +1,7 @@
-use color_eyre::owo_colors::OwoColorize;
-use eyre::bail;
 use crate::action::Action;
-use crate::cards::{Deck, Suit};
+use crate::cards::Card;
+use crate::cards::Deck;
+use crate::cards::Suit;
 use crate::money::Coin;
 use crate::money::MoneyJar;
 use crate::players::Player;
@@ -10,6 +10,9 @@ use crate::players::Players;
 use crate::policy::Policy;
 use crate::random::RandomState;
 use crate::round::Round;
+use eyre::OptionExt;
+use eyre::bail;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct State {
@@ -39,7 +42,7 @@ impl Default for State {
             };
             players.push(player);
         }
-        
+
         let mut pot = Default::default();
         for player in players.iter_mut() {
             player.money_jar -= MoneyJar::from(vec![Coin::Quarter]);
@@ -53,7 +56,7 @@ impl Default for State {
             active_player_index,
             players,
         };
-        
+
         let mut state = State {
             players,
             deck: Deck::new_full(),
@@ -63,9 +66,9 @@ impl Default for State {
             pile: Deck::new_empty(),
             round: Round::default(),
         };
-        
+
         state.deal_until_everyone_has_n_cards(1).unwrap();
-        
+
         state
     }
 }
@@ -81,25 +84,84 @@ impl State {
         let active_player = &mut self.players[active_player_index];
         let action = active_player.policy.pick_action(&mut self.rand, actions);
         action.apply(self);
-        
-        // advance to the next player's turn
-        self.players.active_player_index = (self.players.active_player_index + 1) % self.players.len();
+
+        // If all the players have the same number of cards in hand again, then everyone has played their card
+        let everyone_played_card = self
+            .players
+            .iter()
+            .map(|p| p.hand.len())
+            .collect::<HashSet<_>>()
+            .len()
+            == 1;
+        if everyone_played_card {
+            self.handle_everyone_played()?;
+        } else {
+            // advance to the next player's turn
+            self.players.active_player_index =
+                (self.players.active_player_index + 1) % self.players.len();
+        }
 
         if self.players.iter().all(|p| p.hand.is_empty()) {
             self.end_round()?;
         }
         Ok(action)
     }
-    
-    pub(crate) fn get_trump(&self) -> Option<Suit> {
+
+    fn handle_everyone_played(&mut self) -> eyre::Result<()> {
+        // determine the highest card played
+        let Some(trump) = self.get_trump() else {
+            bail!("Trump suit missing, how did we get here?");
+        };
+        let Some(follow_suit) = self.get_suit_to_follow() else {
+            bail!("Follow suit missing, how did we get here?");
+        };
+
+        println!(
+            "Determining winner of the trick. {} was lead, {} was trump.",
+            follow_suit, trump
+        );
+        let mut played = self.get_played_cards();
+        for (card, player) in &played {
+            println!("{} played {}", player.id, card);
+        }
+        played.sort_by(|a, b| {
+            a.0.value(follow_suit, trump)
+                .cmp(&b.0.value(follow_suit, trump))
+        });
+        let winner = played
+            .into_iter()
+            .next()
+            .ok_or_eyre("Could not find winner")?;
+        println!("{} won the trick with the {}", winner.1.id, winner.0);
+        Ok(())
+    }
+
+    pub fn get_trump(&self) -> Option<Suit> {
         self.deck.cards.last().map(|c| c.suit)
     }
     pub fn is_done(&self) -> bool {
         self.round.is_last_round() && self.players.iter().all(|p| p.hand.is_empty())
     }
-    
-    pub(crate) fn get_suit_to_follow(&self) -> Option<Suit> {
+
+    pub fn get_suit_to_follow(&self) -> Option<Suit> {
         self.pile.cards.first().map(|c| c.suit)
+    }
+
+    pub fn get_played_cards(&self) -> Vec<(Card, &Player)> {
+        // The most recent card was played by the active player
+        // We can walk backwards to find who played each card
+        let mut rtn = Vec::new();
+        let mut played_cards = self.pile.clone();
+        let mut player_index = self.players.active_player_index;
+        while let Some(card) = played_cards.take_top_card() {
+            let player = &self.players[player_index];
+            rtn.push((card, player));
+            player_index = match player_index {
+                0 => self.players.len() - 1,
+                _ => player_index - 1,
+            }
+        }
+        rtn
     }
 
     fn shuffle_deck(&mut self) {
@@ -117,7 +179,10 @@ impl State {
             }
             match next_player_to_receive_card {
                 Some(i) => {
-                    let card = self.deck.take_top_card()?;
+                    let card = self
+                        .deck
+                        .take_top_card()
+                        .ok_or_eyre("Tried to deal when no cards remaining")?;
                     self.players[i].hand.push(card);
                 }
                 None => break,
@@ -130,7 +195,7 @@ impl State {
         println!("Ending round");
         if self.is_done() {
             println!("The last round has ended!");
-            self.round.reset();
+            // self.round.reset();
             return Ok(()); // the game is over
         } else {
             self.round.try_advance(self.players.len() as u32)?;
@@ -158,14 +223,9 @@ impl std::fmt::Display for State {
         }
         f.write_fmt(format_args!(
             "The dealer is {}, the active player is {}, and the pot is {}\n",
-            self.players.dealer_index,
-            self.players.active_player_index,
-            self.pot,
+            self.players.dealer_index, self.players.active_player_index, self.pot,
         ))?;
-        f.write_fmt(format_args!(
-            "Trump is {:?}\n",
-            self.get_trump(),
-        ))?;
+        f.write_fmt(format_args!("Trump is {:?}\n", self.get_trump(),))?;
         f.write_fmt(format_args!(
             "Follow-suit is {:?}\n",
             self.get_suit_to_follow()
@@ -184,14 +244,8 @@ impl std::fmt::Display for State {
 
 #[cfg(test)]
 mod test {
-    use crate::state::State;
-
     #[test]
     pub fn bruh() {
         println!("{}", 2 - 6 % 10);
-    }
-    #[test]
-    pub fn left_of_dealer() {
-        let state = State::default();
     }
 }

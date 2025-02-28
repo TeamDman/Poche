@@ -1,4 +1,4 @@
-use eyre::OptionExt;
+use std::fmt::Formatter;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Suit {
@@ -6,6 +6,11 @@ pub enum Suit {
     Hearts,
     Diamonds,
     Clubs,
+}
+impl std::fmt::Display for Suit {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{:?}", self))
+    }
 }
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Rank {
@@ -23,10 +28,50 @@ pub enum Rank {
     King,
     Ace,
 }
+impl std::fmt::Display for Rank {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{:?}", self))
+    }
+}
+impl Rank {
+    pub fn value(&self) -> usize {
+        match self {
+            Rank::Two => 2,
+            Rank::Three => 3,
+            Rank::Four => 4,
+            Rank::Five => 5,
+            Rank::Six => 6,
+            Rank::Seven =>7,
+            Rank::Eight => 8,
+            Rank::Nine => 9,
+            Rank::Ten => 10,
+            Rank::Jack => 11,
+            Rank::Queen => 12,
+            Rank::King => 13,
+            Rank::Ace => 14,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct Card {
     pub suit: Suit,
     pub rank: Rank,
+}
+impl Card {
+    pub fn value(&self, follow_suit: Suit, trump: Suit) -> usize {
+        let base_value = self.rank.value();
+        match self.suit {
+            s if s == follow_suit => base_value + 100,
+            s if s == trump => base_value + 200,
+            _ => base_value,
+        }
+    }
+}
+impl std::fmt::Display for Card {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{} of {}", self.rank, self.suit))
+    }
 }
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Deck {
@@ -64,8 +109,8 @@ impl Deck {
     pub fn new_empty() -> Deck {
         Deck { cards: Vec::new() }
     }
-    pub fn take_top_card(&mut self) -> eyre::Result<Card> {
-        self.cards.pop().ok_or_eyre("Tried to draw when no cards remaining")
+    pub fn take_top_card(&mut self) -> Option<Card> {
+        self.cards.pop()
     }
     pub fn push(&mut self, card: Card) {
         self.cards.push(card);
