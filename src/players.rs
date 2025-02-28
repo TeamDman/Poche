@@ -21,7 +21,7 @@ impl Players {
             .take(self.players.len())
     }
     pub fn get_left_of_dealer(&self) -> (usize, &Player) {
-        let left_of_dealer_index = self.dealer_index + 1 % self.players.len();
+        let left_of_dealer_index = (self.dealer_index + 1) % self.players.len();
         (left_of_dealer_index, &self.players[left_of_dealer_index])
     }
 }
@@ -56,7 +56,20 @@ impl std::fmt::Display for PlayerId {
 pub struct Player {
     pub id: PlayerId,
     pub hand: Vec<Card>,
+    pub tricks_taken: Vec<Vec<Card>>,
     pub points: u32,
     pub money_jar: MoneyJar,
     pub policy: Policy,
+}
+impl Player {
+    pub fn new(id: PlayerId, policy: Policy) -> Player {
+        Player {
+            id,
+            hand: Vec::new(),
+            tricks_taken: Vec::new(),
+            points: 0,
+            money_jar: Default::default(),
+            policy,
+        }
+    }
 }

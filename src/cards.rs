@@ -1,4 +1,6 @@
 use std::fmt::Formatter;
+use std::ops::Deref;
+use std::ops::DerefMut;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Suit {
@@ -41,7 +43,7 @@ impl Rank {
             Rank::Four => 4,
             Rank::Five => 5,
             Rank::Six => 6,
-            Rank::Seven =>7,
+            Rank::Seven => 7,
             Rank::Eight => 8,
             Rank::Nine => 9,
             Rank::Ten => 10,
@@ -75,8 +77,20 @@ impl std::fmt::Display for Card {
 }
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Deck {
-    pub cards: Vec<Card>,
+    cards: Vec<Card>,
 }
+impl Default for Deck {
+    fn default() -> Self {
+        Deck::new_full()
+    }
+}
+
+impl Deck {
+    pub fn len(&self) -> usize {
+        self.cards.len()
+    }
+}
+
 impl Deck {
     pub fn new_full() -> Deck {
         let mut cards = Vec::new();
@@ -109,10 +123,16 @@ impl Deck {
     pub fn new_empty() -> Deck {
         Deck { cards: Vec::new() }
     }
-    pub fn take_top_card(&mut self) -> Option<Card> {
-        self.cards.pop()
+}
+
+impl Deref for Deck {
+    type Target = Vec<Card>;
+    fn deref(&self) -> &Self::Target {
+        &self.cards
     }
-    pub fn push(&mut self, card: Card) {
-        self.cards.push(card);
+}
+impl DerefMut for Deck {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.cards
     }
 }

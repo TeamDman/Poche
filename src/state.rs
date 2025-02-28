@@ -10,11 +10,13 @@ use crate::players::Players;
 use crate::policy::Policy;
 use crate::random::RandomState;
 use crate::round::Round;
+use crate::rule::Rule;
 use eyre::OptionExt;
 use eyre::bail;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct State {
     pub deck: Deck,
     pub players: Players,
@@ -23,23 +25,23 @@ pub struct State {
     pub rand: RandomState,
     pub pile: Deck,
     pub round: Round,
+    pub stack: VecDeque<Rule>,
 }
 
 impl Default for State {
     fn default() -> Self {
+        State::new(4)
+    }
+}
+
+impl State {
+    pub fn new(player_count: usize) -> State {
         let mut rand = RandomState::new();
 
         let mut players = Vec::new();
-        for x in 0..4 {
+        for x in 0..player_count {
             let player_id = PlayerId::new(format!("Player {}", x));
-            let money_jar = MoneyJar::from([Coin::Dime, Coin::Quarter].repeat(5));
-            let player = Player {
-                id: player_id,
-                hand: Vec::new(),
-                points: 0,
-                money_jar,
-                policy: Policy::Random,
-            };
+            let player = Player::new(player_id, Policy::Random);
             players.push(player);
         }
 
@@ -50,7 +52,7 @@ impl Default for State {
         }
 
         let dealer_index = rand.gen_range(0..players.len());
-        let active_player_index = dealer_index + 1 % players.len();
+        let active_player_index = (dealer_index + 1) % players.len();
         let players = Players {
             dealer_index,
             active_player_index,
@@ -65,15 +67,14 @@ impl Default for State {
             rand,
             pile: Deck::new_empty(),
             round: Round::default(),
+            stack: Default::default(),
         };
 
         state.deal_until_everyone_has_n_cards(1).unwrap();
 
         state
     }
-}
 
-impl State {
     pub fn step(&mut self) -> eyre::Result<Action> {
         if self.is_done() {
             bail!("State is done");
@@ -86,15 +87,15 @@ impl State {
         action.apply(self);
 
         // If all the players have the same number of cards in hand again, then everyone has played their card
-        let everyone_played_card = self
+        let trick_finished = self
             .players
             .iter()
             .map(|p| p.hand.len())
             .collect::<HashSet<_>>()
             .len()
             == 1;
-        if everyone_played_card {
-            self.handle_everyone_played()?;
+        if trick_finished {
+            self.handle_trick_finished()?;
         } else {
             // advance to the next player's turn
             self.players.active_player_index =
@@ -107,7 +108,7 @@ impl State {
         Ok(action)
     }
 
-    fn handle_everyone_played(&mut self) -> eyre::Result<()> {
+    pub fn handle_trick_finished(&mut self) -> eyre::Result<()> {
         // determine the highest card played
         let Some(trump) = self.get_trump() else {
             bail!("Trump suit missing, how did we get here?");
@@ -117,13 +118,14 @@ impl State {
         };
 
         println!(
-            "Determining winner of the trick. {} was lead, {} was trump.",
+            "Determining winner of the trick. {} was lead, {} was trump.\n========",
             follow_suit, trump
         );
         let mut played = self.get_played_cards();
         for (card, player) in &played {
             println!("{} played {}", player.id, card);
         }
+        println!("========");
         played.sort_by(|a, b| {
             a.0.value(follow_suit, trump)
                 .cmp(&b.0.value(follow_suit, trump))
@@ -133,18 +135,23 @@ impl State {
             .next()
             .ok_or_eyre("Could not find winner")?;
         println!("{} won the trick with the {}", winner.1.id, winner.0);
+        self.players.active_player_index = self
+            .players
+            .iter()
+            .position(|p| p.id == winner.1.id)
+            .ok_or_eyre("Could not find active player")?;
         Ok(())
     }
 
     pub fn get_trump(&self) -> Option<Suit> {
-        self.deck.cards.last().map(|c| c.suit)
+        self.deck.last().map(|c| c.suit)
     }
     pub fn is_done(&self) -> bool {
         self.round.is_last_round() && self.players.iter().all(|p| p.hand.is_empty())
     }
 
     pub fn get_suit_to_follow(&self) -> Option<Suit> {
-        self.pile.cards.first().map(|c| c.suit)
+        self.pile.first().map(|c| c.suit)
     }
 
     pub fn get_played_cards(&self) -> Vec<(Card, &Player)> {
@@ -153,7 +160,7 @@ impl State {
         let mut rtn = Vec::new();
         let mut played_cards = self.pile.clone();
         let mut player_index = self.players.active_player_index;
-        while let Some(card) = played_cards.take_top_card() {
+        while let Some(card) = played_cards.pop() {
             let player = &self.players[player_index];
             rtn.push((card, player));
             player_index = match player_index {
@@ -164,11 +171,11 @@ impl State {
         rtn
     }
 
-    fn shuffle_deck(&mut self) {
-        self.rand.shuffle(&mut self.deck.cards);
+    pub fn shuffle_deck(&mut self) {
+        self.rand.shuffle(&mut self.deck);
     }
 
-    fn deal_until_everyone_has_n_cards(&mut self, n: u32) -> eyre::Result<()> {
+    pub fn deal_until_everyone_has_n_cards(&mut self, n: u32) -> eyre::Result<()> {
         loop {
             let mut next_player_to_receive_card = None;
             for (i, player) in self.players.iter_dealer_last() {
@@ -179,9 +186,8 @@ impl State {
             }
             match next_player_to_receive_card {
                 Some(i) => {
-                    let card = self
-                        .deck
-                        .take_top_card()
+                    let card = (&mut self.deck)
+                        .pop()
                         .ok_or_eyre("Tried to deal when no cards remaining")?;
                     self.players[i].hand.push(card);
                 }
@@ -191,8 +197,8 @@ impl State {
         Ok(())
     }
 
-    fn end_round(&mut self) -> eyre::Result<()> {
-        println!("Ending round");
+    pub fn end_round(&mut self) -> eyre::Result<()> {
+        println!("======================== Ending round ================================");
         if self.is_done() {
             println!("The last round has ended!");
             // self.round.reset();
@@ -200,7 +206,7 @@ impl State {
         } else {
             self.round.try_advance(self.players.len() as u32)?;
         }
-        self.deck.cards.extend(self.pile.cards.drain(..));
+        self.deck.extend(self.pile.drain(..));
         self.shuffle_deck();
         self.players.dealer_index = (self.players.dealer_index + 1) % self.players.len();
         self.deal_until_everyone_has_n_cards(self.round.hand_size)?;
@@ -232,12 +238,9 @@ impl std::fmt::Display for State {
         ))?;
         f.write_fmt(format_args!(
             "The deck has {} cards left\n",
-            self.deck.cards.len()
+            self.deck.len()
         ))?;
-        f.write_fmt(format_args!(
-            "The pile has {} cards\n",
-            self.pile.cards.len()
-        ))?;
+        f.write_fmt(format_args!("The pile has {} cards\n", self.pile.len()))?;
         Ok(())
     }
 }

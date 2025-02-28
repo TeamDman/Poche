@@ -23,6 +23,11 @@ impl Coin {
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Default)]
 pub struct MoneyJar(u32);
+impl MoneyJar {
+    pub fn new(cents: u32) -> Self {
+        MoneyJar(cents)
+    }
+}
 
 impl AddAssign for MoneyJar {
     fn add_assign(&mut self, rhs: Self) {

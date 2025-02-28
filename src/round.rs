@@ -45,13 +45,3 @@ impl Round {
         self.hand_size == 1 && self.direction == Direction::Down
     }
 }
-#[cfg(test)]
-mod tests {
-    use crate::round::Round;
-
-    #[test]
-    fn it_works() {
-        let mut round = Round::default();
-        let num_players = 4;
-    }
-}

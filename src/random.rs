@@ -10,6 +10,11 @@ use rand_chacha::ChaCha8Rng;
 pub struct RandomState {
     pub seed: u64,
 }
+impl Default for RandomState {
+    fn default() -> Self {
+        RandomState::new()
+    }
+}
 
 impl RandomState {
     pub fn new() -> RandomState {

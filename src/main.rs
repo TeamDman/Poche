@@ -1,13 +1,4 @@
-use state::State;
-
-mod action;
-pub mod cards;
-mod money;
-pub mod players;
-mod policy;
-pub mod random;
-mod round;
-mod state;
+use poche::state::State;
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
