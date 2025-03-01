@@ -64,8 +64,8 @@ impl Card {
     pub fn value(&self, follow_suit: Suit, trump: Suit) -> usize {
         let base_value = self.rank.value();
         match self.suit {
-            s if s == follow_suit => base_value + 100,
             s if s == trump => base_value + 200,
+            s if s == follow_suit => base_value + 100,
             _ => base_value,
         }
     }
@@ -78,11 +78,6 @@ impl std::fmt::Display for Card {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Deck {
     cards: Vec<Card>,
-}
-impl Default for Deck {
-    fn default() -> Self {
-        Deck::new_full()
-    }
 }
 
 impl Deck {

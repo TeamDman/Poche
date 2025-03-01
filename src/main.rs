@@ -2,17 +2,16 @@ use poche::state::State;
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-    println!("Hi");
-    let mut state = State::default();
+    let mut state = State::new_with_random_players(4);
+    println!("{state}");
+    println!("Begin game loop");
     loop {
-        println!("State: {state}");
-        let action_taken = state.step()?;
-        println!("Action: {action_taken:?}\n");
-        if state.is_done() {
-            println!("Game has ended!");
+        let action_taken = state.tick()?;
+        if action_taken.is_none() {
             break;
         }
     }
+    println!("Game loop ended");
     println!("{state}");
     Ok(())
 }

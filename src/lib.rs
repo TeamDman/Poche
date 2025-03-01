@@ -6,4 +6,4 @@ pub mod policy;
 pub mod random;
 pub mod round;
 pub mod state;
-pub mod rule;
+pub mod rules;

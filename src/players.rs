@@ -1,28 +1,48 @@
-use std::ops::Deref;
-use std::ops::DerefMut;
 use crate::cards::Card;
 use crate::money::MoneyJar;
 use crate::policy::Policy;
+use eyre::bail;
+use std::ops::Deref;
+use std::ops::DerefMut;
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct Players {
     /// Clockwise-ordered players
     pub players: Vec<Player>,
-    pub dealer_index: usize,
-    pub active_player_index: usize,
+    pub dealer_index: Option<usize>,
+    pub active_player_index: Option<usize>,
 }
+
 impl Players {
-    pub fn iter_dealer_last(&self) -> impl Iterator<Item = (usize, &Player)> {
-        self.players
+    pub fn iter_dealer_last(&self) -> eyre::Result<impl Iterator<Item = (usize, &Player)>> {
+        let Some(dealer_index) = self.dealer_index else {
+            bail!("Dealer not set")
+        };
+        Ok(self
+            .players
             .iter()
             .enumerate()
             .cycle()
-            .skip(self.dealer_index + 1)
-            .take(self.players.len())
+            .skip(dealer_index + 1)
+            .take(self.players.len()))
     }
-    pub fn get_left_of_dealer(&self) -> (usize, &Player) {
-        let left_of_dealer_index = (self.dealer_index + 1) % self.players.len();
-        (left_of_dealer_index, &self.players[left_of_dealer_index])
+    pub fn get_left_of_dealer(&self) -> eyre::Result<(usize, &Player)> {
+        let Some(dealer_index) = self.dealer_index else {
+            bail!("Dealer not set");
+        };
+        let left_of_dealer_index = (dealer_index + 1) % self.players.len();
+        Ok((left_of_dealer_index, &self.players[left_of_dealer_index]))
+    }
+    pub fn get_active_player(&self) -> eyre::Result<(usize, &Player)> {
+        let Some(active_player_index) = self.active_player_index else {
+            bail!("Active player not set")
+        };
+        Ok((active_player_index, &self.players[active_player_index]))
+    }
+    pub fn get_wrapped(&self, index: isize) -> (usize, &Player) {
+        let len = self.players.len() as isize;
+        let wrapped_index = index.rem_euclid(len) as usize;
+        (wrapped_index, &self.players[wrapped_index])
     }
 }
 impl Deref for Players {
@@ -56,20 +76,22 @@ impl std::fmt::Display for PlayerId {
 pub struct Player {
     pub id: PlayerId,
     pub hand: Vec<Card>,
-    pub tricks_taken: Vec<Vec<Card>>,
-    pub points: u32,
+    pub tricks: Vec<Vec<Card>>,
+    pub score: u32,
     pub money_jar: MoneyJar,
     pub policy: Policy,
+    pub bet: Option<u32>,
 }
 impl Player {
     pub fn new(id: PlayerId, policy: Policy) -> Player {
         Player {
             id,
-            hand: Vec::new(),
-            tricks_taken: Vec::new(),
-            points: 0,
-            money_jar: Default::default(),
             policy,
+            hand: Vec::new(),
+            tricks: Vec::new(),
+            score: 0,
+            bet: None,
+            money_jar: MoneyJar::new(10_000),
         }
     }
 }

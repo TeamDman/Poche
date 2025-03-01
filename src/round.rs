@@ -1,3 +1,5 @@
+use std::fmt::Formatter;
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Direction {
     Up,
@@ -43,5 +45,14 @@ impl Round {
     }
     pub fn is_last_round(&self) -> bool {
         self.hand_size == 1 && self.direction == Direction::Down
+    }
+}
+impl std::fmt::Display for Round {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Round {} - Hand Size: {} - Direction: {:?}",
+            self.round_number, self.hand_size, self.direction
+        )
     }
 }
