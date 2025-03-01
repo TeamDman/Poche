@@ -15,7 +15,6 @@ use crate::rules::play_round::PlayRoundBehaviour;
 use crate::rules::play_trick::PlayTrickBehaviour;
 use crate::rules::reveal_trump::RevealTrumpBehaviour;
 use crate::rules::round_over::RoundOverBehaviour;
-use crate::rules::rule::Rule::DetermineWinner;
 use crate::rules::shuffle::ShuffleBehaviour;
 use crate::rules::update_bet_outcome::UpdateBetOutcomeBehaviour;
 use crate::state::State;
@@ -25,75 +24,75 @@ pub enum Rule {
     /// Each player pays a quarter to the pot
     /// Push DetermineDealer
     Ante,
-    
+
     /// The dealer is determined at random.
     /// If a previous game exists, the dealer continues to the next player.
     /// Push Shuffle
     DetermineDealer,
-    
+
     /// The deck is shuffled.
     /// Push DealHands
     Shuffle,
-    
+
     /// Push DealCard * num_players
     /// Push RevealTrump
     DealHands,
-    
+
     /// The player clockwise from the dealer with the least cards receives a card.
     /// Dealer is the last player to receive a card.
     DealCard,
-    
+
     /// The top card of the deck is flipped face up
     /// Push CollectBets
     RevealTrump,
-    
+
     /// Push Bet * num_players
     /// Push PlayHand
     CollectBets,
-    
+
     /// The player clockwise from the dealer who has not yet bet this round places a bet on how many tricks they think they will take.
     /// The dealer bets last.
     Bet,
-    
+
     /// Push PlayTrick * hand_size
     /// The player to the left of the dealer becomes the active player
     /// Push RoundOver
     PlayRound,
-    
+
     /// Push PlayCard * num_players
     /// Push DetermineTrickWinner
     PlayTrick,
-    
+
     /// The active player plays a card from their hand to the top of the pile.
     /// The next player clockwise becomes the active player.
     /// The first card played in the trick determines the lead suit.
     /// Players must follow suit if able.
     PlayCard,
-    
+
     /// All players have played a card for this trick.
     /// The pile should have a number of cards equal to the number of players.
     /// The player who played the highest card of the lead suit wins the trick.
     /// Trump cards beat all other suits.
     /// Push MovePileToWinner
     DetermineTrickWinner,
-    
+
     /// The player who won the trick turns the cards face down and places them in front of themselves.
     /// The number of tricks a player has taken is indicated by the number of piles in front of them.
     MovePileToWinner,
-    
+
     /// The round is over when all players have played all their cards.
     /// Push DetermineBetOutcomes
     RoundOver,
-    
+
     /// Push UpdateBetOutcome * num_players
     /// Push NextRound
     DetermineBetOutcomes,
-    
+
     /// If you took the number of cards you bet, you get 10+bet points.
     /// If you took all the tricks, and you bet to take all the tricks, you get 20+bet points.
     /// If you did not take the number of tricks you bet, you get 0 points.
     UpdateBetOutcome,
-    
+
     /// The round is over, the next round begins.
     /// The number of cards dealt to each player increases by 1 each round until the 7th round.
     /// The number of cards dealt to each player decreases by 1 each round after the 7th round.
@@ -101,14 +100,14 @@ pub enum Rule {
     /// If the last round has just completed, push DetermineWinner
     /// If the last round has not completed, push PassDealer
     NextRound,
-    
+
     /// The dealer passes to the next player clockwise.
     /// Push Shuffle
     PassDealer,
-    
+
     /// The game is over when the last round is complete.
     /// The winner is the player with the most points.
-    DetermineWinner
+    DetermineWinner,
 }
 pub trait RuleBehaviour {
     fn apply(&self, state: &mut State) -> eyre::Result<()>;

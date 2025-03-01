@@ -1,8 +1,13 @@
+use crate::rules::assertions::assert_active_player_is_none;
+use crate::rules::assertions::assert_all_players_bet_is_none;
+use crate::rules::assertions::assert_cards_only_in_deck_or_hands;
+use crate::rules::assertions::assert_dealer_is_some;
+use crate::rules::assertions::assert_follow_suits_is_none;
+use crate::rules::assertions::assert_trump_is_none;
 use crate::rules::rule::Rule;
 use crate::rules::rule::RuleBehaviour;
 use crate::state::State;
 use eyre::OptionExt;
-use crate::rules::assertions::{assert_active_player_is_none, assert_all_players_bet_is_none, assert_cards_only_in_deck_or_hands, assert_dealer_is_some, assert_follow_suits_is_none, assert_trump_is_none};
 
 pub struct RevealTrumpBehaviour;
 impl RuleBehaviour for RevealTrumpBehaviour {

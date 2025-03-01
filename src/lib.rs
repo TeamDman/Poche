@@ -5,5 +5,5 @@ pub mod players;
 pub mod policy;
 pub mod random;
 pub mod round;
-pub mod state;
 pub mod rules;
+pub mod state;

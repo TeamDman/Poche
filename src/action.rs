@@ -1,10 +1,15 @@
-use eyre::bail;
 use crate::state::State;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Action {
-    PlayCard { player_index: usize, card_index: usize },
-    Bet { player_index: usize, tricks: u32 },
+    PlayCard {
+        player_index: usize,
+        card_index: usize,
+    },
+    Bet {
+        player_index: usize,
+        tricks: u32,
+    },
 }
 
 impl std::fmt::Display for Action {
@@ -35,23 +40,27 @@ impl Action {
                             eprintln!("Invalid action: {}", action);
                             return false;
                         };
-                        {
-                            active_player.hand[*card_index].suit == suit
-                        }
+                        { active_player.hand[*card_index].suit == suit }
                     });
                 }
-            },
+            }
             None => {}
         };
         Ok(actions)
     }
     pub fn apply(&self, state: &mut State) {
         match self {
-            Action::PlayCard { player_index: player, card_index } => {
+            Action::PlayCard {
+                player_index: player,
+                card_index,
+            } => {
                 let card = state.players[*player].hand.remove(*card_index);
                 state.pile.push(card);
             }
-            Action::Bet { player_index: player, tricks } => {
+            Action::Bet {
+                player_index: player,
+                tricks,
+            } => {
                 state.players[*player].bet = Some(*tricks);
             }
         }

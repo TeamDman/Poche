@@ -1,6 +1,8 @@
-use crate::rules::assertions::{assert_active_player_is_some, assert_follow_suits_is_none, assert_follow_suits_is_some, assert_trump_is_some};
+use crate::rules::assertions::assert_active_player_is_some;
 use crate::rules::assertions::assert_all_players_bet_is_some;
 use crate::rules::assertions::assert_dealer_is_some;
+use crate::rules::assertions::assert_follow_suits_is_some;
+use crate::rules::assertions::assert_trump_is_some;
 use crate::rules::rule::Rule;
 use crate::rules::rule::RuleBehaviour;
 use crate::state::State;
@@ -32,13 +34,19 @@ impl RuleBehaviour for DetermineTrickWinnerBehaviour {
         println!("========");
         let mut played = state.get_played_cards();
         for (card, _, player) in &played {
-            println!("{} played {} (value={})", player.id, card, card.value(follow_suit, trump));
+            println!(
+                "{} played {} (value={})",
+                player.id,
+                card,
+                card.value(follow_suit, trump)
+            );
         }
         println!("========");
 
         played.sort_by(|a, b| {
             a.0.value(follow_suit, trump)
-                .cmp(&b.0.value(follow_suit, trump)).reverse()
+                .cmp(&b.0.value(follow_suit, trump))
+                .reverse()
         });
         let (winner_card, winner_index, winner) = played
             .into_iter()

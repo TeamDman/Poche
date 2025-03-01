@@ -1,4 +1,5 @@
-use std::ops::{AddAssign, SubAssign};
+use std::ops::AddAssign;
+use std::ops::SubAssign;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Coin {

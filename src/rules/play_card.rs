@@ -2,7 +2,6 @@ use crate::action::Action;
 use crate::rules::assertions::assert_active_player_is_some;
 use crate::rules::assertions::assert_all_players_bet_is_some;
 use crate::rules::assertions::assert_dealer_is_some;
-use crate::rules::assertions::assert_follow_suits_is_none;
 use crate::rules::assertions::assert_follow_suits_is_some;
 use crate::rules::assertions::assert_trump_is_some;
 use crate::rules::rule::RuleBehaviour;
@@ -25,7 +24,7 @@ impl RuleBehaviour for PlayCardBehaviour {
         }
         let chosen_action = active_player.policy.pick_action(&mut state.rand, actions);
         chosen_action.apply(state);
-        
+
         // Advance the active player
         state.players.active_player_index = Some(
             state

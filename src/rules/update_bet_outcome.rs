@@ -1,10 +1,11 @@
-use crate::action::Action;
+use crate::rules::assertions::assert_active_player_is_none;
+use crate::rules::assertions::assert_dealer_is_some;
+use crate::rules::assertions::assert_follow_suits_is_none;
+use crate::rules::assertions::assert_player_hands_empty;
+use crate::rules::assertions::assert_trump_is_none;
 use crate::rules::rule::RuleBehaviour;
 use crate::state::State;
-use eyre::OptionExt;
 use eyre::bail;
-use itertools::Itertools;
-use crate::rules::assertions::{assert_active_player_is_none, assert_active_player_is_some, assert_all_players_bet_is_some, assert_dealer_is_some, assert_follow_suits_is_none, assert_player_hands_empty, assert_trump_is_none};
 
 pub struct UpdateBetOutcomeBehaviour;
 
@@ -15,7 +16,7 @@ impl RuleBehaviour for UpdateBetOutcomeBehaviour {
         assert_player_hands_empty(state);
         assert_follow_suits_is_none(state);
         assert_trump_is_none(state);
-        
+
         // Find the next player who has a bet to be evaluated
         let Some((player_index, _)) = state
             .players
@@ -24,13 +25,13 @@ impl RuleBehaviour for UpdateBetOutcomeBehaviour {
         else {
             bail!("All bets have already been resolved");
         };
-        
+
         // Grab the player
         let mut player = state.players.get_mut(player_index).unwrap();
         let bet = player.bet.unwrap();
         let tricks = player.tricks.len() as u32;
         let hand_size = state.round.hand_size;
-        
+
         // Calculate the score change
         match (bet, tricks, hand_size) {
             (bet, taken, all) if bet == taken && taken == all => {
@@ -44,15 +45,15 @@ impl RuleBehaviour for UpdateBetOutcomeBehaviour {
             }
             x => unreachable!("invalid state for (bet,taken,all) calculation: {:?}", x),
         }
-        
+
         // Clear the bet
         player.bet = None;
-        
+
         // Return the cards to the deck
         for trick in player.tricks.drain(..) {
             state.deck.extend(trick);
         }
-        
+
         Ok(())
     }
 }

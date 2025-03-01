@@ -92,40 +92,51 @@ impl State {
 impl std::fmt::Display for State {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("=== Poche Game State ===\n")?;
-        
+
         // Write scores
         f.write_str("Scores: ")?;
         for player in self.players.iter() {
             f.write_fmt(format_args!("{}: {}\t", player.id.0, player.score))?;
         }
         f.write_str("\n")?;
-        
+
         // Write pot
         f.write_fmt(format_args!("Pot: {}\n", self.pot))?;
-        
+
         // Write card counts
         f.write_str("Card counts: ")?;
         f.write_fmt(format_args!("Deck: {}\t", self.deck.len()))?;
         f.write_fmt(format_args!("Pile: {}\t", self.pile.len()))?;
         for player in self.players.iter() {
-            f.write_fmt(format_args!("{}: hand={}, tricks={}\t", player.id.0, player.hand.len(), player.tricks.iter().map(|t| t.len()).sum::<usize>()))?;
+            f.write_fmt(format_args!(
+                "{}: hand={}, tricks={}\t",
+                player.id.0,
+                player.hand.len(),
+                player.tricks.iter().map(|t| t.len()).sum::<usize>()
+            ))?;
         }
         f.write_str("\n")?;
-        
+
         // Write round info
         f.write_fmt(format_args!("Round: {}\n", self.round))?;
-        
+
         // Write player info
         f.write_fmt(format_args!("Dealer: {:?}\n", self.players.dealer_index))?;
-        f.write_fmt(format_args!("Active player: {:?}\n", self.players.active_player_index))?;
-        
+        f.write_fmt(format_args!(
+            "Active player: {:?}\n",
+            self.players.active_player_index
+        ))?;
+
         // Write trump and suit
         f.write_fmt(format_args!("Trump: {:?}\n", self.trump))?;
-        f.write_fmt(format_args!("Suit to follow: {:?}\n", self.get_suit_to_follow()))?;
-        
+        f.write_fmt(format_args!(
+            "Suit to follow: {:?}\n",
+            self.get_suit_to_follow()
+        ))?;
+
         // Write stack
         f.write_str("Stack: ")?;
-        
+
         Ok(())
     }
 }

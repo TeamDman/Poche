@@ -10,7 +10,7 @@ fn it_works() -> eyre::Result<()> {
             Some(action) => {
                 println!("{:?}", action);
             }
-            None => break
+            None => break,
         }
     }
     bail!("Timeout limit reached");
