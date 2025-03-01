@@ -1,0 +1,1040 @@
+G:/Rust/CARGO_HOME/bin/cargo.exe run --color=always --package poche --bin poche --profile dev
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running `target\debug\poche.exe`
+=== Poche Game State ===
+Scores: Player 0: 0     Player 1: 0     Player 2: 0     Player 3: 0
+Pot: 0 cents
+Card counts: Deck: 52   Pile: 0 Player 0: hand=0, tricks=0      Player 1: hand=0, tricks=0      Player 2: hand=0, tricks=0      Player 3: hand=0, tricks=0
+Round: Round 1 - Hand Size: 1 - Direction: Up
+Dealer: None
+Active player: None
+Trump: None
+Suit to follow: None
+Stack: [Ante]
+Begin game loop
+Applying rule Ante (stack is now [])
+Applying rule DetermineDealer (stack is now [])
+Applying rule Shuffle (stack is now [])
+Applying rule DealHands (stack is now [])
+Applying rule DealCard (stack is now [DealCard, DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, RevealTrump])
+Applying rule DealCard (stack is now [RevealTrump])
+Applying rule RevealTrump (stack is now [])
+Applying rule CollectBets (stack is now [])
+Applying rule Bet (stack is now [Bet, Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, PlayRound])
+Applying rule Bet (stack is now [PlayRound])
+Applying rule PlayRound (stack is now [])
+Applying rule PlayTrick (stack is now [RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [RoundOver])
+Determining winner of the trick. Hearts was lead, Clubs was trump.
+========
+Player 1 played Two of Clubs (value=202)
+Player 0 played Eight of Spades (value=8)
+Player 3 played Five of Hearts (value=105)
+Player 2 played Ace of Hearts (value=114)
+========
+Player 1 won the trick with the Two of Clubs
+Applying rule MovePileToWinner (stack is now [RoundOver])
+Applying rule RoundOver (stack is now [])
+Applying rule DetermineBetOutcomes (stack is now [])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [NextRound])
+Applying rule NextRound (stack is now [])
+Applying rule PassDealer (stack is now [])
+Applying rule Shuffle (stack is now [])
+Applying rule DealHands (stack is now [])
+Applying rule DealCard (stack is now [DealCard, DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, RevealTrump])
+Applying rule DealCard (stack is now [RevealTrump])
+Applying rule RevealTrump (stack is now [])
+Applying rule CollectBets (stack is now [])
+Applying rule Bet (stack is now [Bet, Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, PlayRound])
+Applying rule Bet (stack is now [PlayRound])
+Applying rule PlayRound (stack is now [])
+Applying rule PlayTrick (stack is now [PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, RoundOver])
+Determining winner of the trick. Clubs was lead, Spades was trump.
+========
+Player 2 played Three of Clubs (value=103)
+Player 1 played Eight of Clubs (value=108)
+Player 0 played Five of Spades (value=205)
+Player 3 played Ace of Clubs (value=114)
+========
+Player 0 won the trick with the Five of Spades
+Applying rule MovePileToWinner (stack is now [PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [RoundOver])
+Determining winner of the trick. Hearts was lead, Spades was trump.
+========
+Player 0 played Four of Spades (value=204)
+Player 3 played King of Diamonds (value=13)
+Player 2 played Five of Diamonds (value=5)
+Player 1 played Five of Hearts (value=105)
+========
+Player 0 won the trick with the Four of Spades
+Applying rule MovePileToWinner (stack is now [RoundOver])
+Applying rule RoundOver (stack is now [])
+Applying rule DetermineBetOutcomes (stack is now [])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [NextRound])
+Applying rule NextRound (stack is now [])
+Applying rule PassDealer (stack is now [])
+Applying rule Shuffle (stack is now [])
+Applying rule DealHands (stack is now [])
+Applying rule DealCard (stack is now [DealCard, DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, RevealTrump])
+Applying rule DealCard (stack is now [RevealTrump])
+Applying rule RevealTrump (stack is now [])
+Applying rule CollectBets (stack is now [])
+Applying rule Bet (stack is now [Bet, Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, PlayRound])
+Applying rule Bet (stack is now [PlayRound])
+Applying rule PlayRound (stack is now [])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Diamonds was lead, Diamonds was trump.
+========
+Player 3 played Two of Diamonds (value=202)
+Player 2 played Ten of Hearts (value=10)
+Player 1 played Queen of Diamonds (value=212)
+Player 0 played Five of Diamonds (value=205)
+========
+Player 1 won the trick with the Queen of Diamonds
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, RoundOver])
+Determining winner of the trick. Clubs was lead, Diamonds was trump.
+========
+Player 1 played Jack of Clubs (value=111)
+Player 0 played Four of Hearts (value=4)
+Player 3 played Four of Spades (value=4)
+Player 2 played Four of Clubs (value=104)
+========
+Player 1 won the trick with the Jack of Clubs
+Applying rule MovePileToWinner (stack is now [PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [RoundOver])
+Determining winner of the trick. Hearts was lead, Diamonds was trump.
+========
+Player 1 played Six of Hearts (value=106)
+Player 0 played Five of Hearts (value=105)
+Player 3 played Two of Spades (value=2)
+Player 2 played Seven of Hearts (value=107)
+========
+Player 2 won the trick with the Seven of Hearts
+Applying rule MovePileToWinner (stack is now [RoundOver])
+Applying rule RoundOver (stack is now [])
+Applying rule DetermineBetOutcomes (stack is now [])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [NextRound])
+Applying rule NextRound (stack is now [])
+Applying rule PassDealer (stack is now [])
+Applying rule Shuffle (stack is now [])
+Applying rule DealHands (stack is now [])
+Applying rule DealCard (stack is now [DealCard, DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, RevealTrump])
+Applying rule DealCard (stack is now [RevealTrump])
+Applying rule RevealTrump (stack is now [])
+Applying rule CollectBets (stack is now [])
+Applying rule Bet (stack is now [Bet, Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, PlayRound])
+Applying rule Bet (stack is now [PlayRound])
+Applying rule PlayRound (stack is now [])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Hearts was lead, Diamonds was trump.
+========
+Player 0 played Six of Hearts (value=106)
+Player 3 played Four of Spades (value=4)
+Player 2 played Queen of Diamonds (value=212)
+Player 1 played Queen of Hearts (value=112)
+========
+Player 2 won the trick with the Queen of Diamonds
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Spades was lead, Diamonds was trump.
+========
+Player 2 played Ace of Clubs (value=14)
+Player 1 played Five of Spades (value=105)
+Player 0 played Eight of Clubs (value=8)
+Player 3 played Jack of Spades (value=111)
+========
+Player 3 won the trick with the Jack of Spades
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, RoundOver])
+Determining winner of the trick. Clubs was lead, Diamonds was trump.
+========
+Player 3 played Seven of Clubs (value=107)
+Player 2 played King of Clubs (value=113)
+Player 1 played Two of Hearts (value=2)
+Player 0 played Jack of Clubs (value=111)
+========
+Player 2 won the trick with the King of Clubs
+Applying rule MovePileToWinner (stack is now [PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [RoundOver])
+Determining winner of the trick. Clubs was lead, Diamonds was trump.
+========
+Player 2 played Three of Diamonds (value=203)
+Player 1 played King of Spades (value=13)
+Player 0 played Four of Diamonds (value=204)
+Player 3 played Five of Clubs (value=105)
+========
+Player 0 won the trick with the Four of Diamonds
+Applying rule MovePileToWinner (stack is now [RoundOver])
+Applying rule RoundOver (stack is now [])
+Applying rule DetermineBetOutcomes (stack is now [])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [NextRound])
+Applying rule NextRound (stack is now [])
+Applying rule PassDealer (stack is now [])
+Applying rule Shuffle (stack is now [])
+Applying rule DealHands (stack is now [])
+Applying rule DealCard (stack is now [DealCard, DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, RevealTrump])
+Applying rule DealCard (stack is now [RevealTrump])
+Applying rule RevealTrump (stack is now [])
+Applying rule CollectBets (stack is now [])
+Applying rule Bet (stack is now [Bet, Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, PlayRound])
+Applying rule Bet (stack is now [PlayRound])
+Applying rule PlayRound (stack is now [])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Spades was lead, Diamonds was trump.
+========
+Player 1 played Five of Spades (value=105)
+Player 0 played Two of Spades (value=102)
+Player 3 played Six of Spades (value=106)
+Player 2 played Eight of Spades (value=108)
+========
+Player 2 won the trick with the Eight of Spades
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Hearts was lead, Diamonds was trump.
+========
+Player 2 played Two of Hearts (value=102)
+Player 1 played Ace of Clubs (value=14)
+Player 0 played Four of Hearts (value=104)
+Player 3 played Six of Hearts (value=106)
+========
+Player 3 won the trick with the Six of Hearts
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Hearts was lead, Diamonds was trump.
+========
+Player 3 played Seven of Hearts (value=107)
+Player 2 played Jack of Hearts (value=111)
+Player 1 played Jack of Diamonds (value=211)
+Player 0 played Ten of Hearts (value=110)
+========
+Player 1 won the trick with the Jack of Diamonds
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, RoundOver])
+Determining winner of the trick. Spades was lead, Diamonds was trump.
+========
+Player 1 played King of Diamonds (value=213)
+Player 0 played Five of Hearts (value=5)
+Player 3 played Five of Diamonds (value=205)
+Player 2 played Jack of Spades (value=111)
+========
+Player 1 won the trick with the King of Diamonds
+Applying rule MovePileToWinner (stack is now [PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [RoundOver])
+Determining winner of the trick. Diamonds was lead, Diamonds was trump.
+========
+Player 1 played Queen of Diamonds (value=212)
+Player 0 played Four of Diamonds (value=204)
+Player 3 played Two of Clubs (value=2)
+Player 2 played Two of Diamonds (value=202)
+========
+Player 1 won the trick with the Queen of Diamonds
+Applying rule MovePileToWinner (stack is now [RoundOver])
+Applying rule RoundOver (stack is now [])
+Applying rule DetermineBetOutcomes (stack is now [])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [NextRound])
+Applying rule NextRound (stack is now [])
+Applying rule PassDealer (stack is now [])
+Applying rule Shuffle (stack is now [])
+Applying rule DealHands (stack is now [])
+Applying rule DealCard (stack is now [DealCard, DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, RevealTrump])
+Applying rule DealCard (stack is now [RevealTrump])
+Applying rule RevealTrump (stack is now [])
+Applying rule CollectBets (stack is now [])
+Applying rule Bet (stack is now [Bet, Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, PlayRound])
+Applying rule Bet (stack is now [PlayRound])
+Applying rule PlayRound (stack is now [])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Spades was lead, Clubs was trump.
+========
+Player 2 played Two of Spades (value=102)
+Player 1 played Ace of Spades (value=114)
+Player 0 played Six of Spades (value=106)
+Player 3 played Jack of Spades (value=111)
+========
+Player 1 won the trick with the Ace of Spades
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Hearts was lead, Clubs was trump.
+========
+Player 1 played Ten of Spades (value=10)
+Player 0 played Ace of Hearts (value=114)
+Player 3 played Eight of Spades (value=8)
+Player 2 played Jack of Hearts (value=111)
+========
+Player 0 won the trick with the Ace of Hearts
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Spades was lead, Clubs was trump.
+========
+Player 0 played Seven of Spades (value=107)
+Player 3 played Three of Spades (value=103)
+Player 2 played Three of Hearts (value=3)
+Player 1 played Nine of Spades (value=109)
+========
+Player 1 won the trick with the Nine of Spades
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Hearts was lead, Clubs was trump.
+========
+Player 1 played Nine of Clubs (value=209)
+Player 0 played Five of Clubs (value=205)
+Player 3 played King of Diamonds (value=13)
+Player 2 played Five of Hearts (value=105)
+========
+Player 1 won the trick with the Nine of Clubs
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, RoundOver])
+Determining winner of the trick. Hearts was lead, Clubs was trump.
+========
+Player 1 played Seven of Diamonds (value=7)
+Player 0 played Four of Diamonds (value=4)
+Player 3 played Six of Clubs (value=206)
+Player 2 played Nine of Hearts (value=109)
+========
+Player 3 won the trick with the Six of Clubs
+Applying rule MovePileToWinner (stack is now [PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [RoundOver])
+Determining winner of the trick. Clubs was lead, Clubs was trump.
+========
+Player 3 played Two of Diamonds (value=2)
+Player 2 played Ten of Clubs (value=210)
+Player 1 played Queen of Spades (value=12)
+Player 0 played King of Clubs (value=213)
+========
+Player 0 won the trick with the King of Clubs
+Applying rule MovePileToWinner (stack is now [RoundOver])
+Applying rule RoundOver (stack is now [])
+Applying rule DetermineBetOutcomes (stack is now [])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [NextRound])
+Applying rule NextRound (stack is now [])
+Applying rule PassDealer (stack is now [])
+Applying rule Shuffle (stack is now [])
+Applying rule DealHands (stack is now [])
+Applying rule DealCard (stack is now [DealCard, DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, RevealTrump])
+Applying rule DealCard (stack is now [RevealTrump])
+Applying rule RevealTrump (stack is now [])
+Applying rule CollectBets (stack is now [])
+Applying rule Bet (stack is now [Bet, Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, PlayRound])
+Applying rule Bet (stack is now [PlayRound])
+Applying rule PlayRound (stack is now [])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Hearts was lead, Diamonds was trump.
+========
+Player 3 played Seven of Hearts (value=107)
+Player 2 played Six of Hearts (value=106)
+Player 1 played Eight of Hearts (value=108)
+Player 0 played Queen of Hearts (value=112)
+========
+Player 0 won the trick with the Queen of Hearts
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Clubs was lead, Diamonds was trump.
+========
+Player 0 played Four of Diamonds (value=204)
+Player 3 played Nine of Clubs (value=109)
+Player 2 played Five of Clubs (value=105)
+Player 1 played Two of Clubs (value=102)
+========
+Player 0 won the trick with the Four of Diamonds
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Spades was lead, Diamonds was trump.
+========
+Player 0 played Nine of Spades (value=109)
+Player 3 played Eight of Spades (value=108)
+Player 2 played Jack of Spades (value=111)
+Player 1 played Four of Spades (value=104)
+========
+Player 2 won the trick with the Jack of Spades
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Hearts was lead, Diamonds was trump.
+========
+Player 2 played Ten of Diamonds (value=210)
+Player 1 played Ten of Clubs (value=10)
+Player 0 played Seven of Spades (value=7)
+Player 3 played Four of Hearts (value=104)
+========
+Player 2 won the trick with the Ten of Diamonds
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Hearts was lead, Diamonds was trump.
+========
+Player 2 played King of Diamonds (value=213)
+Player 1 played King of Spades (value=13)
+Player 0 played Queen of Spades (value=12)
+Player 3 played Three of Hearts (value=103)
+========
+Player 2 won the trick with the King of Diamonds
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, RoundOver])
+Determining winner of the trick. Spades was lead, Diamonds was trump.
+========
+Player 2 played Six of Clubs (value=6)
+Player 1 played Six of Spades (value=106)
+Player 0 played Three of Spades (value=103)
+Player 3 played Five of Spades (value=105)
+========
+Player 1 won the trick with the Six of Spades
+Applying rule MovePileToWinner (stack is now [PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [RoundOver])
+Determining winner of the trick. Diamonds was lead, Diamonds was trump.
+========
+Player 1 played Seven of Clubs (value=7)
+Player 0 played Jack of Diamonds (value=211)
+Player 3 played Queen of Diamonds (value=212)
+Player 2 played Two of Diamonds (value=202)
+========
+Player 3 won the trick with the Queen of Diamonds
+Applying rule MovePileToWinner (stack is now [RoundOver])
+Applying rule RoundOver (stack is now [])
+Applying rule DetermineBetOutcomes (stack is now [])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [NextRound])
+Applying rule NextRound (stack is now [])
+Applying rule PassDealer (stack is now [])
+Applying rule Shuffle (stack is now [])
+Applying rule DealHands (stack is now [])
+Applying rule DealCard (stack is now [DealCard, DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, RevealTrump])
+Applying rule DealCard (stack is now [RevealTrump])
+Applying rule RevealTrump (stack is now [])
+Applying rule CollectBets (stack is now [])
+Applying rule Bet (stack is now [Bet, Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, PlayRound])
+Applying rule Bet (stack is now [PlayRound])
+Applying rule PlayRound (stack is now [])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Clubs was lead, Clubs was trump.
+========
+Player 0 played Queen of Diamonds (value=12)
+Player 3 played Six of Clubs (value=206)
+Player 2 played Jack of Clubs (value=211)
+Player 1 played Ace of Clubs (value=214)
+========
+Player 1 won the trick with the Ace of Clubs
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Diamonds was lead, Clubs was trump.
+========
+Player 1 played Eight of Diamonds (value=108)
+Player 0 played Five of Diamonds (value=105)
+Player 3 played King of Diamonds (value=113)
+Player 2 played Ten of Diamonds (value=110)
+========
+Player 3 won the trick with the King of Diamonds
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Spades was lead, Clubs was trump.
+========
+Player 3 played King of Spades (value=113)
+Player 2 played Two of Spades (value=102)
+Player 1 played Ten of Clubs (value=210)
+Player 0 played Ace of Spades (value=114)
+========
+Player 1 won the trick with the Ten of Clubs
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Hearts was lead, Clubs was trump.
+========
+Player 1 played Four of Diamonds (value=4)
+Player 0 played King of Hearts (value=113)
+Player 3 played Nine of Spades (value=9)
+Player 2 played Two of Hearts (value=102)
+========
+Player 0 won the trick with the King of Hearts
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, RoundOver])
+Determining winner of the trick. Clubs was lead, Clubs was trump.
+========
+Player 0 played Seven of Diamonds (value=7)
+Player 3 played Three of Clubs (value=203)
+Player 2 played Jack of Spades (value=11)
+Player 1 played Queen of Clubs (value=212)
+========
+Player 1 won the trick with the Queen of Clubs
+Applying rule MovePileToWinner (stack is now [PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [RoundOver])
+Determining winner of the trick. Hearts was lead, Clubs was trump.
+========
+Player 1 played Four of Clubs (value=204)
+Player 0 played Six of Spades (value=6)
+Player 3 played Six of Diamonds (value=6)
+Player 2 played Five of Hearts (value=105)
+========
+Player 1 won the trick with the Four of Clubs
+Applying rule MovePileToWinner (stack is now [RoundOver])
+Applying rule RoundOver (stack is now [])
+Applying rule DetermineBetOutcomes (stack is now [])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [NextRound])
+Applying rule NextRound (stack is now [])
+Applying rule PassDealer (stack is now [])
+Applying rule Shuffle (stack is now [])
+Applying rule DealHands (stack is now [])
+Applying rule DealCard (stack is now [DealCard, DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, RevealTrump])
+Applying rule DealCard (stack is now [RevealTrump])
+Applying rule RevealTrump (stack is now [])
+Applying rule CollectBets (stack is now [])
+Applying rule Bet (stack is now [Bet, Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, PlayRound])
+Applying rule Bet (stack is now [PlayRound])
+Applying rule PlayRound (stack is now [])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Diamonds was lead, Diamonds was trump.
+========
+Player 1 played Six of Diamonds (value=206)
+Player 0 played Seven of Diamonds (value=207)
+Player 3 played Ace of Diamonds (value=214)
+Player 2 played Two of Diamonds (value=202)
+========
+Player 3 won the trick with the Ace of Diamonds
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Clubs was lead, Diamonds was trump.
+========
+Player 3 played King of Clubs (value=113)
+Player 2 played Three of Clubs (value=103)
+Player 1 played Ace of Clubs (value=114)
+Player 0 played Ten of Clubs (value=110)
+========
+Player 1 won the trick with the Ace of Clubs
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Spades was lead, Diamonds was trump.
+========
+Player 1 played Queen of Clubs (value=12)
+Player 0 played Eight of Diamonds (value=208)
+Player 3 played Ace of Spades (value=114)
+Player 2 played King of Spades (value=113)
+========
+Player 0 won the trick with the Eight of Diamonds
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, RoundOver])
+Determining winner of the trick. Hearts was lead, Diamonds was trump.
+========
+Player 0 played King of Hearts (value=113)
+Player 3 played Three of Hearts (value=103)
+Player 2 played Queen of Hearts (value=112)
+Player 1 played Four of Hearts (value=104)
+========
+Player 0 won the trick with the King of Hearts
+Applying rule MovePileToWinner (stack is now [PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [RoundOver])
+Determining winner of the trick. Clubs was lead, Diamonds was trump.
+========
+Player 0 played Two of Clubs (value=102)
+Player 3 played Three of Diamonds (value=203)
+Player 2 played Six of Spades (value=6)
+Player 1 played Five of Clubs (value=105)
+========
+Player 3 won the trick with the Three of Diamonds
+Applying rule MovePileToWinner (stack is now [RoundOver])
+Applying rule RoundOver (stack is now [])
+Applying rule DetermineBetOutcomes (stack is now [])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [NextRound])
+Applying rule NextRound (stack is now [])
+Applying rule PassDealer (stack is now [])
+Applying rule Shuffle (stack is now [])
+Applying rule DealHands (stack is now [])
+Applying rule DealCard (stack is now [DealCard, DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, RevealTrump])
+Applying rule DealCard (stack is now [RevealTrump])
+Applying rule RevealTrump (stack is now [])
+Applying rule CollectBets (stack is now [])
+Applying rule Bet (stack is now [Bet, Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, PlayRound])
+Applying rule Bet (stack is now [PlayRound])
+Applying rule PlayRound (stack is now [])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Hearts was lead, Hearts was trump.
+========
+Player 2 played Nine of Clubs (value=9)
+Player 1 played Seven of Hearts (value=207)
+Player 0 played Two of Hearts (value=202)
+Player 3 played Ace of Hearts (value=214)
+========
+Player 3 won the trick with the Ace of Hearts
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Diamonds was lead, Hearts was trump.
+========
+Player 3 played Jack of Diamonds (value=111)
+Player 2 played King of Diamonds (value=113)
+Player 1 played Five of Spades (value=5)
+Player 0 played Ace of Diamonds (value=114)
+========
+Player 0 won the trick with the Ace of Diamonds
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, RoundOver])
+Determining winner of the trick. Spades was lead, Hearts was trump.
+========
+Player 0 played Queen of Hearts (value=212)
+Player 3 played Jack of Spades (value=111)
+Player 2 played King of Clubs (value=13)
+Player 1 played Ace of Spades (value=114)
+========
+Player 0 won the trick with the Queen of Hearts
+Applying rule MovePileToWinner (stack is now [PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [RoundOver])
+Determining winner of the trick. Clubs was lead, Hearts was trump.
+========
+Player 0 played Two of Clubs (value=102)
+Player 3 played Three of Hearts (value=203)
+Player 2 played Jack of Clubs (value=111)
+Player 1 played Five of Clubs (value=105)
+========
+Player 3 won the trick with the Three of Hearts
+Applying rule MovePileToWinner (stack is now [RoundOver])
+Applying rule RoundOver (stack is now [])
+Applying rule DetermineBetOutcomes (stack is now [])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [NextRound])
+Applying rule NextRound (stack is now [])
+Applying rule PassDealer (stack is now [])
+Applying rule Shuffle (stack is now [])
+Applying rule DealHands (stack is now [])
+Applying rule DealCard (stack is now [DealCard, DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, RevealTrump])
+Applying rule DealCard (stack is now [RevealTrump])
+Applying rule RevealTrump (stack is now [])
+Applying rule CollectBets (stack is now [])
+Applying rule Bet (stack is now [Bet, Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, PlayRound])
+Applying rule Bet (stack is now [PlayRound])
+Applying rule PlayRound (stack is now [])
+Applying rule PlayTrick (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Determining winner of the trick. Spades was lead, Clubs was trump.
+========
+Player 3 played Four of Spades (value=104)
+Player 2 played Queen of Spades (value=112)
+Player 1 played Five of Spades (value=105)
+Player 0 played Seven of Spades (value=107)
+========
+Player 2 won the trick with the Queen of Spades
+Applying rule MovePileToWinner (stack is now [PlayTrick, PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, RoundOver])
+Determining winner of the trick. Spades was lead, Clubs was trump.
+========
+Player 2 played Three of Clubs (value=203)
+Player 1 played Jack of Hearts (value=11)
+Player 0 played Nine of Hearts (value=9)
+Player 3 played King of Spades (value=113)
+========
+Player 2 won the trick with the Three of Clubs
+Applying rule MovePileToWinner (stack is now [PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [RoundOver])
+Determining winner of the trick. Spades was lead, Clubs was trump.
+========
+Player 2 played Seven of Hearts (value=7)
+Player 1 played Five of Hearts (value=5)
+Player 0 played Queen of Hearts (value=12)
+Player 3 played Ten of Spades (value=110)
+========
+Player 3 won the trick with the Ten of Spades
+Applying rule MovePileToWinner (stack is now [RoundOver])
+Applying rule RoundOver (stack is now [])
+Applying rule DetermineBetOutcomes (stack is now [])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [NextRound])
+Applying rule NextRound (stack is now [])
+Applying rule PassDealer (stack is now [])
+Applying rule Shuffle (stack is now [])
+Applying rule DealHands (stack is now [])
+Applying rule DealCard (stack is now [DealCard, DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, RevealTrump])
+Applying rule DealCard (stack is now [RevealTrump])
+Applying rule RevealTrump (stack is now [])
+Applying rule CollectBets (stack is now [])
+Applying rule Bet (stack is now [Bet, Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, PlayRound])
+Applying rule Bet (stack is now [PlayRound])
+Applying rule PlayRound (stack is now [])
+Applying rule PlayTrick (stack is now [PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, PlayTrick, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [PlayTrick, RoundOver])
+Determining winner of the trick. Spades was lead, Spades was trump.
+========
+Player 0 played Nine of Clubs (value=9)
+Player 3 played Seven of Diamonds (value=7)
+Player 2 played Three of Hearts (value=3)
+Player 1 played Two of Spades (value=202)
+========
+Player 1 won the trick with the Two of Spades
+Applying rule MovePileToWinner (stack is now [PlayTrick, RoundOver])
+Applying rule PlayTrick (stack is now [RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [RoundOver])
+Determining winner of the trick. Diamonds was lead, Spades was trump.
+========
+Player 1 played Eight of Spades (value=208)
+Player 0 played Three of Diamonds (value=103)
+Player 3 played Ace of Hearts (value=14)
+Player 2 played Five of Diamonds (value=105)
+========
+Player 1 won the trick with the Eight of Spades
+Applying rule MovePileToWinner (stack is now [RoundOver])
+Applying rule RoundOver (stack is now [])
+Applying rule DetermineBetOutcomes (stack is now [])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [NextRound])
+Applying rule NextRound (stack is now [])
+Applying rule PassDealer (stack is now [])
+Applying rule Shuffle (stack is now [])
+Applying rule DealHands (stack is now [])
+Applying rule DealCard (stack is now [DealCard, DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, DealCard, RevealTrump])
+Applying rule DealCard (stack is now [DealCard, RevealTrump])
+Applying rule DealCard (stack is now [RevealTrump])
+Applying rule RevealTrump (stack is now [])
+Applying rule CollectBets (stack is now [])
+Applying rule Bet (stack is now [Bet, Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, Bet, PlayRound])
+Applying rule Bet (stack is now [Bet, PlayRound])
+Applying rule Bet (stack is now [PlayRound])
+Applying rule PlayRound (stack is now [])
+Applying rule PlayTrick (stack is now [RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [PlayCard, DetermineTrickWinner, RoundOver])
+Applying rule PlayCard (stack is now [DetermineTrickWinner, RoundOver])
+Applying rule DetermineTrickWinner (stack is now [RoundOver])
+Determining winner of the trick. Spades was lead, Clubs was trump.
+========
+Player 1 played Four of Clubs (value=204)
+Player 0 played Five of Spades (value=105)
+Player 3 played Ten of Diamonds (value=10)
+Player 2 played Queen of Spades (value=112)
+========
+Player 1 won the trick with the Four of Clubs
+Applying rule MovePileToWinner (stack is now [RoundOver])
+Applying rule RoundOver (stack is now [])
+Applying rule DetermineBetOutcomes (stack is now [])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [UpdateBetOutcome, NextRound])
+Applying rule UpdateBetOutcome (stack is now [NextRound])
+Applying rule NextRound (stack is now [])
+Applying rule DetermineWinner (stack is now [])
+The winner is: Player 3
+Game loop ended
+=== Poche Game State ===
+Scores: Player 0: 53    Player 1: 33    Player 2: 42    Player 3: 54
+Pot: 100 cents
+Card counts: Deck: 52   Pile: 0 Player 0: hand=0, tricks=0      Player 1: hand=0, tricks=0      Player 2: hand=0, tricks=0      Player 3: hand=0, tricks=0
+Round: Round 13 - Hand Size: 1 - Direction: Down
+Dealer: Some(0)
+Active player: None
+Trump: None
+Suit to follow: None
+Stack: []
+
+Process finished with exit code 0
+
+

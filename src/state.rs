@@ -135,7 +135,7 @@ impl std::fmt::Display for State {
         ))?;
 
         // Write stack
-        f.write_str("Stack: ")?;
+        f.write_fmt(format_args!("Stack: {:?}", self.stack))?;
 
         Ok(())
     }
