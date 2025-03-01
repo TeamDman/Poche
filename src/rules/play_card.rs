@@ -7,7 +7,6 @@ use crate::rules::assertions::assert_trump_is_some;
 use crate::rules::rule::RuleBehaviour;
 use crate::state::State;
 use eyre::bail;
-use itertools::Itertools;
 
 pub struct PlayCardBehaviour;
 

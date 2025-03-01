@@ -21,13 +21,13 @@ impl RuleBehaviour for UpdateBetOutcomeBehaviour {
         let Some((player_index, _)) = state
             .players
             .iter_dealer_last()?
-            .find(|(player_index, player)| player.bet.is_some())
+            .find(|(_player_index, player)| player.bet.is_some())
         else {
             bail!("All bets have already been resolved");
         };
 
         // Grab the player
-        let mut player = state.players.get_mut(player_index).unwrap();
+        let player = state.players.get_mut(player_index).unwrap();
         let bet = player.bet.unwrap();
         let tricks = player.tricks.len() as u32;
         let hand_size = state.round.hand_size;

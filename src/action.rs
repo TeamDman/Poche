@@ -40,7 +40,7 @@ impl Action {
                             eprintln!("Invalid action: {}", action);
                             return false;
                         };
-                        { active_player.hand[*card_index].suit == suit }
+                        active_player.hand[*card_index].suit == suit
                     });
                 }
             }
