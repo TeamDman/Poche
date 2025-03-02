@@ -1,9 +1,15 @@
+use poche::players::{Player, PlayerId};
+use poche::policy::Policy;
 use poche::rules::rule::Rule;
 use poche::state::State;
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     let mut state = State::new_with_random_players(4);
+    
+    let human = Player::new(PlayerId::new("Human".to_string()), Policy::Human);
+    state.players.push(human);
+    
     println!("{state}");
     println!("Begin game loop");
     let mut player_score_timeline: Vec<Vec<u32>> = Vec::new();
@@ -21,6 +27,7 @@ fn main() -> eyre::Result<()> {
             _ => {}
         }
     }
+    
     println!("Game loop ended");
     println!("{state}");
     println!();

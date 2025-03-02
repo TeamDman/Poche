@@ -29,7 +29,7 @@ impl RuleBehaviour for BetBehaviour {
             bail!("All players already placed their bet");
         };
         let player = &state.players[next_bettor_index];
-        let actions = (0..player.hand.len())
+        let actions = (0..=player.hand.len())
             .map(|i| Action::Bet {
                 player_index: next_bettor_index,
                 tricks: i as u32,
