@@ -26,23 +26,41 @@ impl Players {
             .skip(dealer_index + 1)
             .take(self.players.len()))
     }
-    pub fn get_left_of_dealer(&self) -> eyre::Result<(usize, &Player)> {
-        let Some(dealer_index) = self.dealer_index else {
-            bail!("Dealer not set");
-        };
-        let left_of_dealer_index = (dealer_index + 1) % self.players.len();
-        Ok((left_of_dealer_index, &self.players[left_of_dealer_index]))
-    }
     pub fn get_active_player(&self) -> eyre::Result<(usize, &Player)> {
         let Some(active_player_index) = self.active_player_index else {
             bail!("Active player not set")
         };
         Ok((active_player_index, &self.players[active_player_index]))
     }
+    pub fn get_active_player_mut(&mut self) -> eyre::Result<(usize, &mut Player)> {
+        let Some(active_player_index) = self.active_player_index else {
+            bail!("Active player not set")
+        };
+        Ok((active_player_index, &mut self.players[active_player_index]))
+    }
     pub fn get_wrapped(&self, index: isize) -> (usize, &Player) {
         let len = self.players.len() as isize;
         let wrapped_index = index.rem_euclid(len) as usize;
         (wrapped_index, &self.players[wrapped_index])
+    }
+    // pub fn get_player_mut(&mut self, index: isize) -> Option<&mut Player> {
+    //     let len = self.players.len() as isize;
+    //     let wrapped_index = index.rem_euclid(len) as usize;
+    //     self.players.get_mut(wrapped_index)
+    // }
+    pub fn advance_active_player(&mut self) -> eyre::Result<()> {
+        let (active_player_index, _) = self.get_active_player()?;
+        self.active_player_index = Some(self.get_wrapped(active_player_index as isize + 1).0);
+        Ok(())
+    }
+
+    pub fn set_active_player_to_left_of_dealer(&mut self) -> eyre::Result<()> {
+        let Some(dealer_index) = self.dealer_index else {
+            bail!("Dealer not set");
+        };
+        let left_of_dealer_index = (dealer_index + 1) % self.players.len();
+        self.active_player_index = Some(left_of_dealer_index);
+        Ok(())
     }
 }
 impl Deref for Players {

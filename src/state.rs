@@ -49,15 +49,14 @@ impl State {
         state
     }
     pub fn tick(&mut self) -> eyre::Result<Option<Rule>> {
-        if let Some(rule) = self.stack.pop_front() {
-            assert_invariants(self);
-            println!("Applying rule {:?} (stack is now {:?})", rule, self.stack);
-            rule.apply(self)?;
-            assert_invariants(self);
-            Ok(Some(rule))
-        } else {
-            Ok(None)
-        }
+        let Some(rule) = self.stack.pop_front() else {
+            return Ok(None);
+        };
+        assert_invariants(self);
+        println!("Applying rule {:?} (stack is now {:?})", rule, self.stack);
+        rule.apply(self)?;
+        assert_invariants(self);
+        Ok(Some(rule))
     }
 
     pub fn get_trump(&self) -> Option<Suit> {

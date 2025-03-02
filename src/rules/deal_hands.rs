@@ -17,10 +17,13 @@ impl RuleBehaviour for DealHandsBehaviour {
         assert_dealer_is_some(state);
         assert_follow_suits_is_none(state);
         assert_trump_is_none(state);
-        for _ in 0..state.players.len() {
-            state.stack.push_back(Rule::DealCard);
+        for _ in 0..state.round.hand_size {
+            for _ in 0..state.players.len() {
+                state.stack.push_back(Rule::DealCard);
+            }
         }
         state.stack.push_back(Rule::RevealTrump);
+        state.players.set_active_player_to_left_of_dealer()?;
         Ok(())
     }
 }

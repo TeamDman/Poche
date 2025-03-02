@@ -113,3 +113,13 @@ pub fn assert_follow_suits_is_none(state: &State) {
 pub fn assert_follow_suits_is_some(state: &State) {
     assert!(state.get_suit_to_follow().is_some());
 }
+pub fn assert_hands_full(state: &State) {
+    for player in state.players.iter() {
+        assert_eq!(player.hand.len(), state.round.hand_size as usize);
+    }
+}
+pub fn assert_active_player_is_left_of_dealer(state: &State) {
+    let dealer_index = state.players.dealer_index.unwrap();
+    let active_player_index = state.players.active_player_index.unwrap();
+    assert_eq!(active_player_index, (dealer_index + 1) % state.players.len());
+}

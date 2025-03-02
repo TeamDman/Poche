@@ -7,8 +7,8 @@ fn it_works() -> eyre::Result<()> {
     let mut state = State::new_with_random_players(num_players);
     for _ in 0..10000 {
         match state.tick()? {
-            Some(action) => {
-                println!("{:?}", action);
+            Some(_action) => {
+                // println!("{:?}", action);
             }
             None => return Ok(()),
         }

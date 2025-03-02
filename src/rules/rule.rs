@@ -35,11 +35,12 @@ pub enum Rule {
     Shuffle,
 
     /// Push DealCard * num_players
+    /// Dealer is the last player to receive a card.
     /// Push RevealTrump
     DealHands,
 
-    /// The player clockwise from the dealer with the least cards receives a card.
-    /// Dealer is the last player to receive a card.
+    /// The dealer deals a card to the active player.
+    /// The next player clockwise becomes the active player.
     DealCard,
 
     /// The top card of the deck is flipped face up
@@ -50,8 +51,9 @@ pub enum Rule {
     /// Push PlayHand
     CollectBets,
 
-    /// The player clockwise from the dealer who has not yet bet this round places a bet on how many tricks they think they will take.
+    /// The active player places a bet on how many tricks they think they will take.
     /// The dealer bets last.
+    /// The next player clockwise becomes the active player.
     Bet,
 
     /// Push PlayTrick * hand_size
