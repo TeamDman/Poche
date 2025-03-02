@@ -1,5 +1,5 @@
 use poche::players::{Player, PlayerId};
-use poche::policy::Policy;
+use poche::policies::policy::Policy;
 use poche::rules::rule::Rule;
 use poche::state::State;
 

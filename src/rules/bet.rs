@@ -1,4 +1,4 @@
-use crate::action::BetAction;
+use crate::actions::place_bet_action::BetAction;
 use crate::rules::assertions::assert_active_player_is_some;
 use crate::rules::assertions::assert_cards_only_in_deck_or_hands;
 use crate::rules::assertions::assert_dealer_is_some;

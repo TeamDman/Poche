@@ -5,7 +5,7 @@ use crate::money::MoneyJar;
 use crate::players::Player;
 use crate::players::PlayerId;
 use crate::players::Players;
-use crate::policy::Policy;
+use crate::policies::policy::Policy;
 use crate::random::RandomState;
 use crate::round::Round;
 use crate::rules::assertions::assert_invariants;

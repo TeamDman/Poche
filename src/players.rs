@@ -1,6 +1,6 @@
 use crate::cards::Card;
 use crate::money::MoneyJar;
-use crate::policy::Policy;
+use crate::policies::policy::Policy;
 use eyre::bail;
 use std::ops::Deref;
 use std::ops::DerefMut;
