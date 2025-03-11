@@ -1,8 +1,9 @@
 use std::fmt::Formatter;
 use std::ops::Deref;
 use std::ops::DerefMut;
+use strum::VariantArray;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, VariantArray)]
 pub enum Suit {
     Spades,
     Hearts,
@@ -14,7 +15,7 @@ impl std::fmt::Display for Suit {
         f.write_fmt(format_args!("{:?}", self))
     }
 }
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, VariantArray)]
 pub enum Rank {
     Two,
     Three,

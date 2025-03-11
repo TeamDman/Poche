@@ -9,3 +9,19 @@ eyre = "0.6.12"
 itertools = "0.14.0"
 rand = "0.9.0"
 rand_chacha = "0.9.0"
+macroquad = { version = "0.4.13", optional = true }
+strum = { version = "0.27.1", features = ["derive"] }
+futures = "0.3.31"
+
+[features]
+visualizer = ["macroquad"]
+
+[[bin]]
+name = "poche_visual"
+required-features = ["visualizer"]
+
+[[bin]]
+name = "poche_human"
+
+[[bin]]
+name = "poche_cpu"
