@@ -9,7 +9,7 @@ pub struct PlayCardAction {
 }
 impl PlayCardAction {
     pub fn get_valid_choices(state: &State) -> eyre::Result<Vec<PlayCardAction>> {
-        let (_, active_player) = state.players.get_active_player()?;
+        let active_player = state.players.get_active_player()?;
         let mut choices: Vec<PlayCardAction> = active_player
             .hand
             .iter()

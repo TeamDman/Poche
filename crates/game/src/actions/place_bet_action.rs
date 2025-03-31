@@ -7,7 +7,7 @@ pub struct BetAction {
 }
 impl BetAction {
     pub fn get_valid_choices(state: &State) -> eyre::Result<Vec<BetAction>> {
-        let (_, active_player) = state.players.get_active_player()?;
+        let active_player = state.players.get_active_player()?;
         let mut choices = Vec::new();
         for i in 0..=active_player.hand.len() {
             choices.push(BetAction { tricks: i as u32 });

@@ -16,7 +16,7 @@ impl RuleBehaviour for PlayCardBehaviour {
         assert_dealer_is_some(state);
         assert_trump_is_some(state);
 
-        let (_, active_player) = state.players.get_active_player()?;
+        let active_player = state.players.get_active_player()?;
         let choices = PlayCardAction::get_valid_choices(state)?;
 
         let mut rand = state.rand;

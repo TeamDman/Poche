@@ -15,7 +15,7 @@ use std::rc::Rc;
 pub struct Players {
     /// Clockwise-ordered players
     /// Index plus one gives the left player, index minus one gives the right player
-    /// 
+    ///
     /// ```txt
     ///          _________
     ///         /         \
@@ -27,7 +27,7 @@ pub struct Players {
     ///        \           /
     ///    4    \_________/    3
     /// ```
-    /// 
+    ///
     pub players: Vec<Player>,
     pub dealer_id: Option<PlayerId>,
     pub active_player_id: Option<PlayerId>,
@@ -105,11 +105,11 @@ impl Players {
         };
         Ok(index)
     }
-    pub fn get_active_player(&self) -> eyre::Result<(&PlayerId, &Player)> {
+    pub fn get_active_player(&self) -> eyre::Result<&Player> {
         let Some(active_player_id) = &self.active_player_id else {
             bail!("Active player not set")
         };
-        Ok((active_player_id, &self[active_player_id]))
+        Ok( &self[active_player_id])
     }
     pub fn get_active_player_mut(&mut self) -> eyre::Result<&mut Player> {
         let Some(active_player_id) = self.active_player_id.clone() else {
@@ -118,9 +118,8 @@ impl Players {
         Ok(&mut self[&active_player_id])
     }
     pub fn advance_active_player(&mut self) -> eyre::Result<()> {
-        let (active_player_id, _) = self.get_active_player()?;
-        let active_player_index = self.index_for(active_player_id)?;
-        self.active_player_id = Some(self[active_player_index + 1].id.clone());
+        let active_player = self.get_active_player()?;
+        self.active_player_id = Some(self[Offset::LeftOf(active_player.id.clone())].id.clone());
         Ok(())
     }
 
