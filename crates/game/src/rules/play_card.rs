@@ -17,10 +17,10 @@ impl RuleBehaviour for PlayCardBehaviour {
         assert_trump_is_some(state);
 
         let (_, active_player) = state.players.get_active_player()?;
-        let choices = PlayCardAction::get_valid_choices(&state)?;
+        let choices = PlayCardAction::get_valid_choices(state)?;
 
-        let mut rand = state.rand.clone();
-        let chosen_action = active_player.play_card(&mut rand, choices, &state)?;
+        let mut rand = state.rand;
+        let chosen_action = active_player.play_card(&mut rand, choices, state)?;
         state.rand = rand;
 
         chosen_action.apply(state)?;

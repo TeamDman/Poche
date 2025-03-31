@@ -38,7 +38,7 @@ impl RuleBehaviour for DetermineTrickWinnerBehaviour {
             .iter()
             .map(|(player_id, card)| {
                 let player = &state.players[player_id];
-                (card.clone(), player_id.clone(), player)
+                (*card, player_id.clone(), player)
             })
             .collect_vec();
         for (card, _, player) in &played {

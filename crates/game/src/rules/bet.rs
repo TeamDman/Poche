@@ -18,12 +18,12 @@ impl RuleBehaviour for BetBehaviour {
         assert_trump_is_some(state);
 
         // Get valid choices
-        let choices = BetAction::get_valid_choices(&state)?;
+        let choices = BetAction::get_valid_choices(state)?;
 
         // Pick based on player policy
-        let mut rand = state.rand.clone();
+        let mut rand = state.rand;
         let (_, active_player) = state.players.get_active_player()?;
-        let chosen_action = active_player.place_bet(&mut rand, choices, &state)?;
+        let chosen_action = active_player.place_bet(&mut rand, choices, state)?;
         state.rand = rand;
 
         // Apply the bet

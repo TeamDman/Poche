@@ -128,6 +128,6 @@ impl std::fmt::Display for State {
 mod test {
     #[test]
     pub fn bruh() {
-        println!("{}", 2 - 6 % 10);
+        println!("{}", 2 - 6);
     }
 }
