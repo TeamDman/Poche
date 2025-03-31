@@ -1,0 +1,13 @@
+[package]
+name = "poche_game"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+color-eyre.workspace = true
+eyre.workspace = true
+itertools.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+strum.workspace = true
+futures.workspace = true

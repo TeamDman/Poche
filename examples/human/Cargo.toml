@@ -1,0 +1,14 @@
+[package]
+name = "human"
+publish = false
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+poche_game.workspace=true
+eyre.workspace = true
+color-eyre.workspace = true
+
+[lints]
+workspace = true
