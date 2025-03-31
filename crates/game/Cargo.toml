@@ -4,8 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+color-eyre.workspace = true
 eyre.workspace = true
 itertools.workspace = true
+rand.workspace = true
 rand_chacha.workspace = true
 strum.workspace = true
+futures.workspace = true
 indexmap = "2.8.0"
