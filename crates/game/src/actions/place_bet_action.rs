@@ -15,7 +15,7 @@ impl BetAction {
         Ok(choices)
     }
     pub fn apply(&self, state: &mut State) -> eyre::Result<()> {
-        let (_, player) = state.players.get_active_player_mut()?;
+        let player = state.players.get_active_player_mut()?;
         player.bet = Some(self.tricks);
         Ok(())
     }

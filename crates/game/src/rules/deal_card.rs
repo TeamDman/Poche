@@ -18,7 +18,7 @@ impl RuleBehaviour for DealCardBehaviour {
         assert_follow_suits_is_none(state);
         assert_trump_is_none(state);
 
-        let (_, active_player) = state.players.get_active_player_mut()?;
+        let active_player = state.players.get_active_player_mut()?;
         let card = state.deck.pop().ok_or_eyre("No cards left to deal")?;
         active_player.hand.push(card);
         state.players.advance_active_player()?;

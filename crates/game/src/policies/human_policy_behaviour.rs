@@ -1,6 +1,6 @@
 use crate::actions::place_bet_action::BetAction;
 use crate::actions::play_card_action::PlayCardAction;
-use crate::players::{Player, PlayerId};
+use crate::players::Player;
 use crate::policies::policy::PolicyBehaviour;
 use crate::random::RandomState;
 use crate::state::State;
@@ -51,8 +51,8 @@ impl PolicyBehaviour for HumanPolicyBehaviour {
         println!("Your turn to play!");
         println!("Trump: {}", state.trump.unwrap());
         println!("Cards played:");
-        for card in state.pile.iter() {
-            println!("{card}");
+        for (player, card) in state.pile.iter() {
+            println!("{player} played {card}");
         }
         
         println!("Your hand:");

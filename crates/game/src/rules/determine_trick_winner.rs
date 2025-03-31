@@ -8,6 +8,7 @@ use crate::rules::rule::RuleBehaviour;
 use crate::state::State;
 use eyre::OptionExt;
 use eyre::bail;
+use itertools::Itertools;
 
 pub struct DetermineTrickWinnerBehaviour;
 
@@ -32,7 +33,14 @@ impl RuleBehaviour for DetermineTrickWinnerBehaviour {
         );
 
         println!("========");
-        let mut played = state.get_played_cards();
+        let mut played = state
+            .pile
+            .iter()
+            .map(|(player_id, card)| {
+                let player = &state.players[player_id];
+                (card.clone(), player_id.clone(), player)
+            })
+            .collect_vec();
         for (card, _, player) in &played {
             println!(
                 "{} played {} (value={})",
@@ -56,7 +64,7 @@ impl RuleBehaviour for DetermineTrickWinnerBehaviour {
         println!("{} won the trick with the {}", winner.id, winner_card);
 
         // Set the winner as the active player
-        state.players.active_player_index = Some(winner_index);
+        state.players.active_player_id = Some(winner_index);
 
         // Move the pile to the winner
         state.stack.push_front(Rule::MovePileToWinner);

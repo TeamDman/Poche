@@ -26,10 +26,10 @@ impl PlayCardAction {
         Ok(choices)
     }
     pub fn apply(&self, state: &mut State) -> eyre::Result<()> {
-        let (_, player) = state.players.get_active_player_mut()?;
+        let player = state.players.get_active_player_mut()?;
         let card = player.hand.remove(self.card_index);
         assert_eq!(card, self.card);
-        state.pile.push(card);
+        state.pile.insert(player.id.clone(), card);
         Ok(())
     }
 }

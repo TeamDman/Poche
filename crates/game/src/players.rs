@@ -1,51 +1,71 @@
+use crate::actions::place_bet_action::BetAction;
+use crate::actions::play_card_action::PlayCardAction;
 use crate::cards::Card;
 use crate::money::MoneyJar;
 use crate::policies::policy::Policy;
-use eyre::bail;
-use std::ops::Deref;
-use std::ops::DerefMut;
-use crate::actions::place_bet_action::BetAction;
-use crate::actions::play_card_action::PlayCardAction;
 use crate::random::RandomState;
 use crate::state::State;
+use eyre::bail;
+use std::ops::{Deref, IndexMut};
+use std::ops::DerefMut;
+use std::ops::Index;
+use std::rc::Rc;
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct Players {
     /// Clockwise-ordered players
     pub players: Vec<Player>,
-    pub dealer_index: Option<usize>,
-    pub active_player_index: Option<usize>,
+    pub dealer_id: Option<PlayerId>,
+    pub active_player_id: Option<PlayerId>,
 }
 
+impl Index<&PlayerId> for Players {
+    type Output = Player;
+    fn index(&self, id: &PlayerId) -> &Self::Output {
+        self.players
+            .iter()
+            .find(|player| player.id == *id)
+            .unwrap_or_else(|| panic!("Player with id {} not found", id))
+    }
+}
+impl IndexMut<&PlayerId> for Players {
+    fn index_mut(&mut self, id: &PlayerId) -> &mut Self::Output {
+        self.players
+            .iter_mut()
+            .find(|player| player.id == *id)
+            .unwrap_or_else(|| panic!("Player with id {} not found", id))
+    }
+}
 impl Players {
-    pub fn iter_dealer_last(&self) -> eyre::Result<impl Iterator<Item = (usize, &Player)>> {
-        let Some(dealer_index) = self.dealer_index else {
+    pub fn iter_dealer_last(&self) -> eyre::Result<impl Iterator<Item = &Player>> {
+        let Some(dealer_id) = &self.dealer_id else {
             bail!("Dealer not set")
         };
+        let dealer_position = self.players.iter().position(|player| player.id == *dealer_id).unwrap();
         Ok(self
             .players
             .iter()
-            .enumerate()
             .cycle()
-            .skip(dealer_index + 1)
+            .skip(dealer_position + 1)
             .take(self.players.len()))
     }
-    pub fn get_active_player(&self) -> eyre::Result<(usize, &Player)> {
-        let Some(active_player_index) = self.active_player_index else {
+    pub fn get_active_player(&self) -> eyre::Result<(&PlayerId, &Player)> {
+        let Some(active_player_id) = &self.active_player_id else {
             bail!("Active player not set")
         };
-        Ok((active_player_index, &self.players[active_player_index]))
+        Ok((active_player_id, &self[active_player_id]))
     }
-    pub fn get_active_player_mut(&mut self) -> eyre::Result<(usize, &mut Player)> {
-        let Some(active_player_index) = self.active_player_index else {
+    pub fn get_active_player_mut(&mut self) -> eyre::Result<&mut Player> {
+        let Some(active_player_id) = self.active_player_id.clone() else {
             bail!("Active player not set")
         };
-        Ok((active_player_index, &mut self.players[active_player_index]))
+        Ok(&mut self[&active_player_id])
     }
-    pub fn get_wrapped(&self, index: isize) -> (usize, &Player) {
+    pub fn get_wrapped(&self, index: isize) -> (&PlayerId, &Player) {
         let len = self.players.len() as isize;
         let wrapped_index = index.rem_euclid(len) as usize;
-        (wrapped_index, &self.players[wrapped_index])
+        let player_id = &self.players[wrapped_index].id;
+        (player_id, &self.players[wrapped_index])
     }
     // pub fn get_player_mut(&mut self, index: isize) -> Option<&mut Player> {
     //     let len = self.players.len() as isize;
@@ -53,17 +73,19 @@ impl Players {
     //     self.players.get_mut(wrapped_index)
     // }
     pub fn advance_active_player(&mut self) -> eyre::Result<()> {
-        let (active_player_index, _) = self.get_active_player()?;
-        self.active_player_index = Some(self.get_wrapped(active_player_index as isize + 1).0);
+        let (active_player_id, _) = self.get_active_player()?;
+        let active_player_index = self.players.iter().position(|player| &player.id == active_player_id).unwrap();
+        self.active_player_id = Some(self.get_wrapped(active_player_index as isize + 1).0.clone());
         Ok(())
     }
 
     pub fn set_active_player_to_left_of_dealer(&mut self) -> eyre::Result<()> {
-        let Some(dealer_index) = self.dealer_index else {
+        let Some(dealer_id) = &self.dealer_id else {
             bail!("Dealer not set");
         };
+        let dealer_index = self.players.iter().position(|player| &player.id == dealer_id).unwrap();
         let left_of_dealer_index = (dealer_index + 1) % self.players.len();
-        self.active_player_index = Some(left_of_dealer_index);
+        self.active_player_id = Some(self.players[left_of_dealer_index].id.clone());
         Ok(())
     }
 }
@@ -79,12 +101,13 @@ impl DerefMut for Players {
     }
 }
 
+/// A unique identifier for a player, cheap to clone
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct PlayerId(pub String);
+pub struct PlayerId(pub Rc<str>);
 
 impl PlayerId {
     pub fn new(name: String) -> PlayerId {
-        PlayerId(name)
+        PlayerId(Rc::from(name))
     }
 }
 
@@ -126,7 +149,9 @@ impl Player {
         if choices.len() == 1 {
             return Ok(choices.remove(0));
         }
-        self.policy.get_behaviour().place_bet(self, rand, choices, state)
+        self.policy
+            .get_behaviour()
+            .place_bet(self, rand, choices, state)
     }
     pub fn play_card(
         &self,
@@ -138,6 +163,9 @@ impl Player {
         if choices.len() == 1 {
             return Ok(choices.remove(0));
         }
-        self.policy.get_behaviour().play_card(self, rand, choices, state)
+        self.policy
+            .get_behaviour()
+            .play_card(self, rand, choices, state)
     }
 }
+

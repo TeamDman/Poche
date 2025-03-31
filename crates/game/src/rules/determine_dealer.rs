@@ -19,7 +19,7 @@ impl RuleBehaviour for DetermineDealerBehaviour {
         assert_trump_is_none(state);
 
         let dealer_index = state.rand.gen_range(0..state.players.len());
-        state.players.dealer_index = Some(dealer_index);
+        state.players.dealer_id = Some(state.players.get(dealer_index).unwrap().id.clone());
         state.stack.push_front(Rule::Shuffle);
         Ok(())
     }

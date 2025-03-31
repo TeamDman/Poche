@@ -22,7 +22,7 @@ impl RuleBehaviour for RoundOverBehaviour {
         assert_trump_is_some(state);
 
         // Clear the round state
-        state.players.active_player_index = None;
+        state.players.active_player_id = None;
         state.deck.push(state.trump.take().unwrap());
 
         state.stack.push_back(Rule::DetermineBetOutcomes);

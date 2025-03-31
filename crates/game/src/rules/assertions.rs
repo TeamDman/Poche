@@ -6,7 +6,7 @@ use itertools::Itertools;
 fn get_cards_in_state(state: &State) -> Vec<Card> {
     let mut cards_in_state: Vec<Card> = Vec::new();
     cards_in_state.extend(state.deck.iter());
-    cards_in_state.extend(state.pile.iter());
+    cards_in_state.extend(state.pile.values());
     for player in state.players.iter() {
         cards_in_state.extend(player.hand.iter());
         for trick in player.tricks.iter() {
@@ -43,7 +43,7 @@ pub fn assert_player_hands_empty(state: &State) {
     }
 }
 pub fn assert_pile_empty(state: &State) {
-    assert_eq!(*state.pile, vec![]);
+    assert!(state.pile.is_empty());
 }
 pub fn assert_cards_only_in_deck(state: &State) {
     let mut cards: Vec<Card> = Vec::new();
@@ -90,16 +90,16 @@ pub fn assert_all_players_bet_is_none(state: &State) {
     }
 }
 pub fn assert_active_player_is_none(state: &State) {
-    assert_eq!(state.players.active_player_index, None);
+    assert_eq!(state.players.active_player_id, None);
 }
 pub fn assert_dealer_is_none(state: &State) {
-    assert_eq!(state.players.dealer_index, None);
+    assert_eq!(state.players.dealer_id, None);
 }
 pub fn assert_active_player_is_some(state: &State) {
-    assert!(state.players.active_player_index.is_some());
+    assert!(state.players.active_player_id.is_some());
 }
 pub fn assert_dealer_is_some(state: &State) {
-    assert!(state.players.dealer_index.is_some());
+    assert!(state.players.dealer_id.is_some());
 }
 pub fn assert_trump_is_none(state: &State) {
     assert_eq!(state.trump, None);
@@ -119,7 +119,9 @@ pub fn assert_hands_full(state: &State) {
     }
 }
 pub fn assert_active_player_is_left_of_dealer(state: &State) {
-    let dealer_index = state.players.dealer_index.unwrap();
-    let active_player_index = state.players.active_player_index.unwrap();
+    let dealer_id = state.players.dealer_id.as_ref().unwrap();
+    let active_player_id = state.players.active_player_id.as_ref().unwrap();
+    let dealer_index = state.players.iter().position(|player| &player.id == dealer_id).unwrap();
+    let active_player_index = state.players.iter().position(|player| &player.id == active_player_id).unwrap();
     assert_eq!(active_player_index, (dealer_index + 1) % state.players.len());
 }

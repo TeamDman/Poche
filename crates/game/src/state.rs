@@ -11,6 +11,7 @@ use crate::round::Round;
 use crate::rules::assertions::assert_invariants;
 use crate::rules::rule::Rule;
 use crate::rules::rule::RuleBehaviour;
+use indexmap::IndexMap;
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -20,7 +21,7 @@ pub struct State {
     pub pot: MoneyJar,
     pub timestep: u32,
     pub rand: RandomState,
-    pub pile: Vec<Card>,
+    pub pile: IndexMap<PlayerId, Card>,
     pub round: Round,
     pub stack: VecDeque<Rule>,
     pub trump: Option<Card>,
@@ -67,24 +68,7 @@ impl State {
     // }
 
     pub fn get_suit_to_follow(&self) -> Option<Suit> {
-        self.pile.first().map(|c| c.suit)
-    }
-
-    pub fn get_played_cards(&self) -> Vec<(Card, usize, &Player)> {
-        // The most recent card was played by the active player
-        // We can walk backwards to find who played each card
-        let mut rtn = Vec::new();
-        let mut played_cards = self.pile.clone();
-        let mut player_index = self.players.active_player_index.unwrap();
-        while let Some(card) = played_cards.pop() {
-            let player = &self.players[player_index];
-            rtn.push((card, player_index, player));
-            player_index = match player_index {
-                0 => self.players.len() - 1,
-                _ => player_index - 1,
-            }
-        }
-        rtn
+        self.pile.first().map(|(_player, card)| card.suit)
     }
 }
 
@@ -120,10 +104,10 @@ impl std::fmt::Display for State {
         f.write_fmt(format_args!("Round: {}\n", self.round))?;
 
         // Write player info
-        f.write_fmt(format_args!("Dealer: {:?}\n", self.players.dealer_index))?;
+        f.write_fmt(format_args!("Dealer: {:?}\n", self.players.dealer_id))?;
         f.write_fmt(format_args!(
             "Active player: {:?}\n",
-            self.players.active_player_index
+            self.players.active_player_id
         ))?;
 
         // Write trump and suit

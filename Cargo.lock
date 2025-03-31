@@ -3428,6 +3428,7 @@ dependencies = [
  "color-eyre",
  "eyre",
  "futures",
+ "indexmap",
  "itertools 0.14.0",
  "rand 0.9.0",
  "rand_chacha 0.9.0",

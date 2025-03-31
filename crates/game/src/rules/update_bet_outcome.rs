@@ -18,15 +18,15 @@ impl RuleBehaviour for UpdateBetOutcomeBehaviour {
         assert_trump_is_none(state);
 
         // Find the next player who has a bet to be evaluated
-        let Some((player_index, _)) = state
+        let Some(player) = state
             .players
             .iter_dealer_last()?
-            .find(|(_player_index, player)| player.bet.is_some())
+            .find(|player| player.bet.is_some())
         else {
             bail!("All bets have already been resolved");
         };
 
-        // Grab the player
+        let player_index = state.players.iter().position(|p| p.id == player.id).unwrap();
         let player = state.players.get_mut(player_index).unwrap();
         let bet = player.bet.unwrap();
         let tricks = player.tricks.len() as u32;

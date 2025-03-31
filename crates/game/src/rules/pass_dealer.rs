@@ -19,9 +19,10 @@ impl RuleBehaviour for PassDealerBehaviour {
         assert_follow_suits_is_none(state);
         assert_trump_is_none(state);
 
-        let dealer_index = state.players.dealer_index.unwrap();
+        let dealer_id = state.players.dealer_id.as_ref().unwrap();
+        let dealer_index = state.players.iter().position(|player| &player.id == dealer_id).unwrap();
         let next_dealer_index = (dealer_index + 1) % state.players.len();
-        state.players.dealer_index = Some(next_dealer_index);
+        state.players.dealer_id = Some(state.players.get(next_dealer_index).unwrap().id.clone());
 
         state.stack.push_back(Shuffle);
 
