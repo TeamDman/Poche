@@ -1,5 +1,5 @@
 use eyre::bail;
-use poche::state::State;
+use poche_game::state::State;
 
 #[test]
 fn it_works() -> eyre::Result<()> {

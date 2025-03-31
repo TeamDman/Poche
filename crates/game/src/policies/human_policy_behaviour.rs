@@ -1,11 +1,24 @@
 use crate::actions::place_bet_action::BetAction;
 use crate::actions::play_card_action::PlayCardAction;
+use crate::players::PlayerId;
 use crate::policies::policy::PolicyBehaviour;
 use crate::random::RandomState;
 use crate::state::State;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct HumanPolicyBehaviour;
+pub struct HumanPolicyBehaviour {
+    pub player_id: PlayerId,
+}
+
+impl HumanPolicyBehaviour {
+    pub fn display_hand(&self, state: &State) {
+        println!("Your hand:");
+        // let player = state.players.get(&self.player_id).unwrap();
+        // for card in player.hand.iter() {
+        //     println!("{card}");
+        // }
+    }
+}
 
 impl PolicyBehaviour for HumanPolicyBehaviour {
     fn place_bet(
@@ -15,7 +28,7 @@ impl PolicyBehaviour for HumanPolicyBehaviour {
         _state: &State,
     ) -> eyre::Result<BetAction> {
         println!("Your turn to bet!");
-        println!("Your hand:");
+        
         for (i, action) in choices.iter().enumerate() {
             println!("{}: {}", i, action);
         }
