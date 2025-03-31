@@ -1,5 +1,6 @@
 use crate::actions::place_bet_action::BetAction;
 use crate::actions::play_card_action::PlayCardAction;
+use crate::players::Player;
 use crate::policies::policy::PolicyBehaviour;
 use crate::random::RandomState;
 use crate::state::State;
@@ -10,6 +11,7 @@ pub struct RandomPolicyBehaviour;
 impl PolicyBehaviour for RandomPolicyBehaviour {
     fn place_bet(
         &self,
+        _player: &Player,
         rand: &mut RandomState,
         mut choices: Vec<BetAction>,
         _state: &State,
@@ -21,6 +23,7 @@ impl PolicyBehaviour for RandomPolicyBehaviour {
 
     fn play_card(
         &self,
+        _player: &Player,
         rand: &mut RandomState,
         mut choices: Vec<PlayCardAction>,
         _state: &State,

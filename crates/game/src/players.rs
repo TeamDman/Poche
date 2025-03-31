@@ -4,6 +4,10 @@ use crate::policies::policy::Policy;
 use eyre::bail;
 use std::ops::Deref;
 use std::ops::DerefMut;
+use crate::actions::place_bet_action::BetAction;
+use crate::actions::play_card_action::PlayCardAction;
+use crate::random::RandomState;
+use crate::state::State;
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct Players {
@@ -111,5 +115,29 @@ impl Player {
             bet: None,
             money_jar: MoneyJar::new(10_000),
         }
+    }
+    pub fn place_bet(
+        &self,
+        rand: &mut RandomState,
+        mut choices: Vec<BetAction>,
+        state: &State,
+    ) -> eyre::Result<BetAction> {
+        assert_ne!(choices.len(), 0);
+        if choices.len() == 1 {
+            return Ok(choices.remove(0));
+        }
+        self.policy.get_behaviour().place_bet(self, rand, choices, state)
+    }
+    pub fn play_card(
+        &self,
+        rand: &mut RandomState,
+        mut choices: Vec<PlayCardAction>,
+        state: &State,
+    ) -> eyre::Result<PlayCardAction> {
+        assert_ne!(choices.len(), 0);
+        if choices.len() == 1 {
+            return Ok(choices.remove(0));
+        }
+        self.policy.get_behaviour().play_card(self, rand, choices, state)
     }
 }

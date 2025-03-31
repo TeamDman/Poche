@@ -1,34 +1,32 @@
 use crate::actions::place_bet_action::BetAction;
 use crate::actions::play_card_action::PlayCardAction;
-use crate::players::PlayerId;
+use crate::players::{Player, PlayerId};
 use crate::policies::policy::PolicyBehaviour;
 use crate::random::RandomState;
 use crate::state::State;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct HumanPolicyBehaviour {
-    pub player_id: PlayerId,
-}
+pub struct HumanPolicyBehaviour;
 
-impl HumanPolicyBehaviour {
-    pub fn display_hand(&self, state: &State) {
-        println!("Your hand:");
-        // let player = state.players.get(&self.player_id).unwrap();
-        // for card in player.hand.iter() {
-        //     println!("{card}");
-        // }
-    }
-}
+impl HumanPolicyBehaviour {}
 
 impl PolicyBehaviour for HumanPolicyBehaviour {
     fn place_bet(
         &self,
+        player: &Player,
         _rand: &mut RandomState,
         mut choices: Vec<BetAction>,
-        _state: &State,
+        state: &State,
     ) -> eyre::Result<BetAction> {
         println!("Your turn to bet!");
-        
+        println!("Trump: {}", state.trump.unwrap());
+        let tricks_bid = state.players.iter().filter_map(|player| player.bet).sum::<u32>();
+        println!("Tricks Bid: {tricks_bid}");
+        println!("Your hand:");
+        for card in player.hand.iter() {
+            println!("{card}");
+        }
+
         for (i, action) in choices.iter().enumerate() {
             println!("{}: {}", i, action);
         }
@@ -45,11 +43,19 @@ impl PolicyBehaviour for HumanPolicyBehaviour {
 
     fn play_card(
         &self,
+        _player: &Player,
         _rand: &mut RandomState,
         mut choices: Vec<PlayCardAction>,
-        _state: &State,
+        state: &State,
     ) -> eyre::Result<PlayCardAction> {
-        println!("Your turn! Choose an action to perform:");
+        println!("Your turn to play!");
+        println!("Trump: {}", state.trump.unwrap());
+        println!("Cards played:");
+        for card in state.pile.iter() {
+            println!("{card}");
+        }
+        
+        println!("Your hand:");
         for (i, action) in choices.iter().enumerate() {
             println!("{}: {}", i, action);
         }

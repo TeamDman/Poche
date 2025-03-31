@@ -20,7 +20,7 @@ impl RuleBehaviour for PlayCardBehaviour {
         let choices = PlayCardAction::get_valid_choices(&state)?;
 
         let mut rand = state.rand.clone();
-        let chosen_action = active_player.policy.play_card(&mut rand, choices, &state)?;
+        let chosen_action = active_player.play_card(&mut rand, choices, &state)?;
         state.rand = rand;
 
         chosen_action.apply(state)?;

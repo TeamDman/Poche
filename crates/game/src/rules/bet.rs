@@ -23,7 +23,7 @@ impl RuleBehaviour for BetBehaviour {
         // Pick based on player policy
         let mut rand = state.rand.clone();
         let (_, active_player) = state.players.get_active_player()?;
-        let chosen_action = active_player.policy.place_bet(&mut rand, choices, &state)?;
+        let chosen_action = active_player.place_bet(&mut rand, choices, &state)?;
         state.rand = rand;
 
         // Apply the bet
