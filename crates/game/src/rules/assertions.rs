@@ -1,8 +1,8 @@
 use crate::cards::Card;
 use crate::cards::Deck;
+use crate::players::Offset;
 use crate::state::State;
 use itertools::Itertools;
-use crate::players::Offset;
 
 fn get_cards_in_state(state: &State) -> Vec<Card> {
     let mut cards_in_state: Vec<Card> = Vec::new();
@@ -122,7 +122,12 @@ pub fn assert_hands_full(state: &State) {
 pub fn assert_active_player_is_left_of_dealer(state: &State) {
     let dealer_id = state.players.dealer_id.as_ref().unwrap();
     let active_player_id = state.players.active_player_id.as_ref().unwrap();
-    assert_eq!(state.players[Offset::LeftOf(dealer_id.clone())].id, *active_player_id);
-    assert_eq!(state.players[Offset::RightOf(active_player_id.clone())].id, *dealer_id);
+    assert_eq!(
+        state.players[Offset::LeftOf(dealer_id.clone())].id,
+        *active_player_id
+    );
+    assert_eq!(
+        state.players[Offset::RightOf(active_player_id.clone())].id,
+        *dealer_id
+    );
 }
-

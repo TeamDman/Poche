@@ -20,7 +20,11 @@ impl PolicyBehaviour for HumanPolicyBehaviour {
     ) -> eyre::Result<BetAction> {
         println!("Your turn to bet!");
         println!("Trump: {}", state.trump.unwrap());
-        let tricks_bid = state.players.iter().filter_map(|player| player.bet).sum::<u32>();
+        let tricks_bid = state
+            .players
+            .iter()
+            .filter_map(|player| player.bet)
+            .sum::<u32>();
         println!("Tricks Bid: {tricks_bid}");
         println!("Your hand:");
         for card in player.hand.iter() {
@@ -54,7 +58,7 @@ impl PolicyBehaviour for HumanPolicyBehaviour {
         for (player, card) in state.pile.iter() {
             println!("{player} played {card}");
         }
-        
+
         println!("Your hand:");
         for (i, action) in choices.iter().enumerate() {
             println!("{}: {}", i, action);

@@ -6,9 +6,10 @@ use crate::policies::policy::Policy;
 use crate::random::RandomState;
 use crate::state::State;
 use eyre::bail;
-use std::ops::{Deref, IndexMut};
+use std::ops::Deref;
 use std::ops::DerefMut;
 use std::ops::Index;
+use std::ops::IndexMut;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -91,7 +92,11 @@ impl Players {
         let Some(dealer_id) = &self.dealer_id else {
             bail!("Dealer not set")
         };
-        let dealer_position = self.players.iter().position(|player| player.id == *dealer_id).unwrap();
+        let dealer_position = self
+            .players
+            .iter()
+            .position(|player| player.id == *dealer_id)
+            .unwrap();
         Ok(self
             .players
             .iter()
@@ -100,7 +105,11 @@ impl Players {
             .take(self.players.len()))
     }
     pub fn index_for(&self, player_id: &PlayerId) -> eyre::Result<usize> {
-        let Some(index) = self.players.iter().position(|player| player.id == *player_id) else {
+        let Some(index) = self
+            .players
+            .iter()
+            .position(|player| player.id == *player_id)
+        else {
             bail!("Player with id {} not found", player_id)
         };
         Ok(index)
@@ -109,7 +118,7 @@ impl Players {
         let Some(active_player_id) = &self.active_player_id else {
             bail!("Active player not set")
         };
-        Ok( &self[active_player_id])
+        Ok(&self[active_player_id])
     }
     pub fn get_active_player_mut(&mut self) -> eyre::Result<&mut Player> {
         let Some(active_player_id) = self.active_player_id.clone() else {

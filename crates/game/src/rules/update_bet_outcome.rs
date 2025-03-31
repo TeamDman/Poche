@@ -26,7 +26,11 @@ impl RuleBehaviour for UpdateBetOutcomeBehaviour {
             bail!("All bets have already been resolved");
         };
 
-        let player_index = state.players.iter().position(|p| p.id == player.id).unwrap();
+        let player_index = state
+            .players
+            .iter()
+            .position(|p| p.id == player.id)
+            .unwrap();
         let player = state.players.get_mut(player_index).unwrap();
         let bet = player.bet.unwrap();
         let tricks = player.tricks.len() as u32;

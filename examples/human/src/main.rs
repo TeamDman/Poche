@@ -1,4 +1,5 @@
-use poche_game::players::{Player, PlayerId};
+use poche_game::players::Player;
+use poche_game::players::PlayerId;
 use poche_game::policies::policy::Policy;
 use poche_game::rules::rule::Rule;
 use poche_game::state::State;
@@ -39,17 +40,25 @@ fn main() -> eyre::Result<()> {
     }
     println!();
     // print player scores as table
-    for (i, (scores, hand_size)) in player_score_timeline.iter().zip(hand_size_timeline.iter()).enumerate() {
+    for (i, (scores, hand_size)) in player_score_timeline
+        .iter()
+        .zip(hand_size_timeline.iter())
+        .enumerate()
+    {
         print!("{:<15}", hand_size);
         for (j, score) in scores.iter().enumerate() {
-            let previous_score = if i == 0 { 0 } else { player_score_timeline[i - 1][j] };
+            let previous_score = if i == 0 {
+                0
+            } else {
+                player_score_timeline[i - 1][j]
+            };
             let score_change = score - previous_score;
             print!("{:<15}", score_change);
         }
         println!();
     }
     // print final scores
-    println!("{}", "=".repeat(15*(state.players.len()+1)));
+    println!("{}", "=".repeat(15 * (state.players.len() + 1)));
     print!("{:<15}", "Final Score");
     for player in state.players.iter() {
         print!("{:<15}", player.score);

@@ -1,6 +1,6 @@
-use std::fmt::Formatter;
 use crate::cards::Card;
 use crate::state::State;
+use std::fmt::Formatter;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PlayCardAction {
