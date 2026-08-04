@@ -20,40 +20,44 @@ use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
 const COVERAGE_TRACKS: [(&str, usize); 4] =
     [("rust", 3), ("alloy", 4), ("nusmv", 5), ("prolog", 6)];
 
-const LAST_REQUIRED_GUIDANCE_ID: u32 = 29;
-const LAST_REQUIRED_GATE_ID: u32 = 14;
-const REQUIRED_TASK_IDS: &[&str] = &[
-    "1.1", "1.2", "1.3", "1.4", "1.5", "2.1", "2.2", "2.3", "2.4", "2.5", "3.1", "3.2", "3.3",
-    "3.4", "4.1", "4.2", "4.3", "4.4", "5.1", "5.2", "5.3", "5.4", "6.1", "6.2", "6.3", "6.4",
-    "6.5", "9.1", "9.2", "9.3",
-];
-const REQUIRED_DEFERRED_SECTIONS: &[&str] = &[
-    "## Deferred follow-up — Automatic target-language generation",
-    "## Deferred follow-up — Reinforcement learning",
-    "## Deferred follow-up — Legacy comparison without legacy ownership",
+const PLAN_AUDIT_CONTRACTS: &[&str] = &[
+    include_str!("../../../tools/plan-audit/poche-foundation.conf"),
+    include_str!("../../../tools/plan-audit/poche-phase-2.conf"),
 ];
 const REQUIRED_TRIPLE_AUDIT_MARKERS: &[&str] = &[
     "**Pass 1 — extraction:**",
     "**Pass 2 — traceability:**",
     "**Pass 3 — adversarial omission:**",
 ];
-const REQUIRED_ADVERSARIAL_MARKERS: &[&str] = &[
-    "independent native oracles",
-    "Alloy/NuSMV consistency",
-    "forward/reverse Prolog",
-    "full-game rule coverage versus named finite proof scopes",
-    "strong Rust shapes",
-    "future RL compatibility without current RL implementation",
-    "end-of-round score as the future intermediary signal",
-    "MPL-2.0",
-    "untracked generated documentation",
-    "`model-checking` as the deliberate project head",
-];
 const REQUIRED_READY_SENTENCE: &str = "The plan is only ready once we have literally triple checked that no intent from the user has been omitted without explicit direction from the user.";
-const REQUIRED_OVERALL_CRITERIA: usize = 16;
+const READY_STATUS: &str = "Ready for execution";
+const IN_PROGRESS_STATUS: &str = "Execution in progress";
+const COMPLETE_STATUS: &str = "Execution complete";
+
+#[derive(Debug)]
+struct AuditProfile {
+    plan_id: String,
+    title: String,
+    plan_id_required: bool,
+    allowed_statuses: Vec<String>,
+    guidance_ids: Vec<u32>,
+    gate_section: String,
+    gate_ids: Vec<u32>,
+    gate_cells: usize,
+    working_gate_statuses: Vec<String>,
+    complete_gate_statuses: Vec<String>,
+    task_ids: Vec<String>,
+    require_task_criteria: bool,
+    overall_criteria: usize,
+    deferred_sections: Vec<String>,
+    adversarial_markers: Vec<String>,
+    forbid_superseded: bool,
+}
 
 #[derive(Debug)]
 struct GuidanceAuditReport {
+    plan_id: String,
+    status: String,
     guidance: usize,
     traceability: usize,
     gates: usize,
@@ -848,14 +852,15 @@ fn guidance(mut args: impl Iterator<Item = OsString>) -> ExitCode {
 
     match audit_guidance_plan(&plan) {
         Ok(report) => {
+            println!("plan profile: {} ({})", report.plan_id, report.status);
             println!("guidance ledger: {} active requirements", report.guidance);
             println!("traceability: {} requirement mappings", report.traceability);
-            println!("architecture gates: {} decided/deferred", report.gates);
+            println!("architecture gates: {} registered", report.gates);
             println!(
-                "implementation tasks: {} complete with completion notes",
+                "implementation tasks: {} registered with completion notes",
                 report.tasks
             );
-            println!("overall criteria: {} complete", report.overall_criteria);
+            println!("overall criteria: {} registered", report.overall_criteria);
             println!(
                 "deferred follow-ups: {} retained outside completion",
                 report.deferred_sections
@@ -863,7 +868,10 @@ fn guidance(mut args: impl Iterator<Item = OsString>) -> ExitCode {
             println!("triple audit pass 1: extraction record present");
             println!("triple audit pass 2: one-to-one traceability verified");
             println!("triple audit pass 3: adversarial omission markers verified");
-            println!("guidance audit: passed; U1–U29 remain explicit and traceable");
+            println!(
+                "guidance audit: passed for declarative profile {}",
+                report.plan_id
+            );
             ExitCode::SUCCESS
         }
         Err(errors) => {
@@ -882,11 +890,26 @@ fn guidance(mut args: impl Iterator<Item = OsString>) -> ExitCode {
 )]
 fn audit_guidance_plan(plan: &str) -> Result<GuidanceAuditReport, Vec<String>> {
     let mut errors = Vec::new();
+    let profiles = match load_audit_profiles() {
+        Ok(profiles) => profiles,
+        Err(error) => return Err(vec![error]),
+    };
+    let Some(profile) = select_audit_profile(plan, &profiles, &mut errors) else {
+        return Err(errors);
+    };
     let normalized = plan.split_whitespace().collect::<Vec<_>>().join(" ");
 
-    if !plan.contains("**Plan status:** Execution complete") {
-        errors.push("plan status is not `Execution complete`".to_owned());
+    let status = plan_status(plan).unwrap_or_else(|| {
+        errors.push("plan status is missing".to_owned());
+        String::new()
+    });
+    if !profile.allowed_statuses.contains(&status) {
+        errors.push(format!(
+            "plan status `{status}` is not allowed by profile `{}`",
+            profile.plan_id
+        ));
     }
+    let is_complete = status == COMPLETE_STATUS;
     if !normalized.contains(REQUIRED_READY_SENTENCE) {
         errors.push("literal triple-check readiness rule is missing".to_owned());
     }
@@ -895,10 +918,10 @@ fn audit_guidance_plan(plan: &str) -> Result<GuidanceAuditReport, Vec<String>> {
         .map_or_else(BTreeMap::new, |section| {
             numbered_table_rows(section, 'U', 3, &mut errors)
         });
-    validate_exact_range(
+    validate_exact_ids(
         &ledger,
         'U',
-        LAST_REQUIRED_GUIDANCE_ID,
+        &profile.guidance_ids,
         "guidance ledger",
         &mut errors,
     );
@@ -906,9 +929,10 @@ fn audit_guidance_plan(plan: &str) -> Result<GuidanceAuditReport, Vec<String>> {
         if cells[1].is_empty() || cells[2].is_empty() {
             errors.push(format!("U{number} has empty guidance or consequence text"));
         }
-        if cells[1].contains("Superseded by") {
+        if profile.forbid_superseded && cells[1].contains("Superseded by") {
             errors.push(format!(
-                "U{number} is superseded, but this milestone requires active U1–U29"
+                "U{number} is superseded, but profile `{}` requires every registered row to remain active",
+                profile.plan_id
             ));
         }
     }
@@ -917,10 +941,10 @@ fn audit_guidance_plan(plan: &str) -> Result<GuidanceAuditReport, Vec<String>> {
         .map_or_else(BTreeMap::new, |section| {
             numbered_table_rows(section, 'U', 2, &mut errors)
         });
-    validate_exact_range(
+    validate_exact_ids(
         &traceability,
         'U',
-        LAST_REQUIRED_GUIDANCE_ID,
+        &profile.guidance_ids,
         "guidance traceability",
         &mut errors,
     );
@@ -935,7 +959,7 @@ fn audit_guidance_plan(plan: &str) -> Result<GuidanceAuditReport, Vec<String>> {
     for marker in REQUIRED_TRIPLE_AUDIT_MARKERS {
         require_exactly_once(intent, marker, "intent-audit marker", &mut errors);
     }
-    for marker in REQUIRED_ADVERSARIAL_MARKERS {
+    for marker in &profile.adversarial_markers {
         if !normalized_intent.contains(marker) {
             errors.push(format!(
                 "adversarial omission pass does not preserve `{marker}`"
@@ -946,22 +970,23 @@ fn audit_guidance_plan(plan: &str) -> Result<GuidanceAuditReport, Vec<String>> {
         errors.push("intent audit does not record the known source limitation".to_owned());
     }
 
-    let gates = required_section(plan, "## Design gate dispositions", &mut errors)
+    let gates = required_section(plan, &profile.gate_section, &mut errors)
         .map_or_else(BTreeMap::new, |section| {
-            numbered_table_rows(section, 'G', 6, &mut errors)
+            numbered_table_rows(section, 'G', profile.gate_cells, &mut errors)
         });
-    validate_exact_range(
-        &gates,
-        'G',
-        LAST_REQUIRED_GATE_ID,
-        "design gates",
-        &mut errors,
-    );
+    validate_exact_ids(&gates, 'G', &profile.gate_ids, "design gates", &mut errors);
+    let allowed_gate_statuses = if is_complete {
+        &profile.complete_gate_statuses
+    } else {
+        &profile.working_gate_statuses
+    };
     for (number, cells) in &gates {
-        if !matches!(cells[1].as_str(), "Decided" | "Deferred") {
+        if !allowed_gate_statuses.contains(&cells[1]) {
             errors.push(format!(
-                "G{number} has status `{}`; expected Decided or Deferred",
-                cells[1]
+                "G{number} has status `{}`; profile `{}` allows {}",
+                cells[1],
+                profile.plan_id,
+                allowed_gate_statuses.join(", ")
             ));
         }
         if cells.iter().skip(2).any(String::is_empty) {
@@ -969,7 +994,7 @@ fn audit_guidance_plan(plan: &str) -> Result<GuidanceAuditReport, Vec<String>> {
         }
     }
 
-    let tasks = audit_task_completion(plan, &mut errors);
+    let tasks = audit_task_completion(plan, profile, &status, &mut errors);
 
     let overall =
         required_section(plan, "## Overall completion criteria", &mut errors).unwrap_or("");
@@ -983,34 +1008,240 @@ fn audit_guidance_plan(plan: &str) -> Result<GuidanceAuditReport, Vec<String>> {
             continue;
         };
         overall_criteria += 1;
-        if status != "x" {
+        if is_complete && status != "x" {
             errors.push(format!(
                 "overall completion criterion is not complete: `{line}`"
             ));
+        } else if !matches!(status, " " | "x") {
+            errors.push(format!("invalid overall criterion status in `{line}`"));
         }
     }
-    if overall_criteria != REQUIRED_OVERALL_CRITERIA {
+    if overall_criteria != profile.overall_criteria {
         errors.push(format!(
-            "overall completion has {overall_criteria} criteria; expected {REQUIRED_OVERALL_CRITERIA}"
+            "overall completion has {overall_criteria} criteria; profile `{}` expects {}",
+            profile.plan_id, profile.overall_criteria
         ));
     }
 
-    for marker in REQUIRED_DEFERRED_SECTIONS {
+    for marker in &profile.deferred_sections {
         require_exactly_once(plan, marker, "deferred follow-up", &mut errors);
     }
 
     if errors.is_empty() {
         Ok(GuidanceAuditReport {
+            plan_id: profile.plan_id.clone(),
+            status,
             guidance: ledger.len(),
             traceability: traceability.len(),
             gates: gates.len(),
             tasks,
             overall_criteria,
-            deferred_sections: REQUIRED_DEFERRED_SECTIONS.len(),
+            deferred_sections: profile.deferred_sections.len(),
         })
     } else {
         Err(errors)
     }
+}
+
+fn load_audit_profiles() -> Result<Vec<AuditProfile>, String> {
+    let mut profiles = PLAN_AUDIT_CONTRACTS
+        .iter()
+        .map(|contract| parse_audit_profile(contract))
+        .collect::<Result<Vec<_>, _>>()?;
+    profiles.sort_by(|left, right| left.plan_id.cmp(&right.plan_id));
+    for pair in profiles.windows(2) {
+        if pair[0].plan_id == pair[1].plan_id {
+            return Err(format!("duplicate audit profile `{}`", pair[0].plan_id));
+        }
+    }
+    Ok(profiles)
+}
+
+fn parse_audit_profile(contract: &str) -> Result<AuditProfile, String> {
+    let mut fields = BTreeMap::<String, String>::new();
+    for (index, raw_line) in contract.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(format!("audit contract line {} has no `=`", index + 1));
+        };
+        let key = key.trim().to_owned();
+        let value = value.trim().to_owned();
+        if value.is_empty() {
+            return Err(format!("audit contract field `{key}` is empty"));
+        }
+        if fields.insert(key.clone(), value).is_some() {
+            return Err(format!("duplicate audit contract field `{key}`"));
+        }
+    }
+
+    let plan_id = contract_field(&fields, "plan_id")?.to_owned();
+    let guidance_ids = parse_contract_ids(contract_field(&fields, "guidance_ids")?)?;
+    let gate_ids = parse_contract_ids(contract_field(&fields, "gate_ids")?)?;
+    require_contiguous_ids(&plan_id, "guidance_ids", &guidance_ids)?;
+    require_contiguous_ids(&plan_id, "gate_ids", &gate_ids)?;
+
+    let profile = AuditProfile {
+        plan_id,
+        title: contract_field(&fields, "title")?.to_owned(),
+        plan_id_required: parse_contract_bool(contract_field(&fields, "plan_id_required")?)?,
+        allowed_statuses: parse_contract_list(contract_field(&fields, "allowed_statuses")?)?,
+        guidance_ids,
+        gate_section: contract_field(&fields, "gate_section")?.to_owned(),
+        gate_ids,
+        gate_cells: parse_contract_usize(contract_field(&fields, "gate_cells")?)?,
+        working_gate_statuses: parse_contract_list(contract_field(
+            &fields,
+            "working_gate_statuses",
+        )?)?,
+        complete_gate_statuses: parse_contract_list(contract_field(
+            &fields,
+            "complete_gate_statuses",
+        )?)?,
+        task_ids: parse_contract_list(contract_field(&fields, "task_ids")?)?,
+        require_task_criteria: parse_contract_bool(contract_field(
+            &fields,
+            "require_task_criteria",
+        )?)?,
+        overall_criteria: parse_contract_usize(contract_field(&fields, "overall_criteria")?)?,
+        deferred_sections: parse_contract_list(contract_field(&fields, "deferred_sections")?)?,
+        adversarial_markers: parse_contract_list(contract_field(&fields, "adversarial_markers")?)?,
+        forbid_superseded: parse_contract_bool(contract_field(&fields, "forbid_superseded")?)?,
+    };
+    let mut task_ids = profile.task_ids.clone();
+    task_ids.sort();
+    task_ids.dedup();
+    if task_ids.len() != profile.task_ids.len() {
+        return Err(format!(
+            "audit profile `{}` contains duplicate task IDs",
+            profile.plan_id
+        ));
+    }
+    Ok(profile)
+}
+
+fn contract_field<'a>(fields: &'a BTreeMap<String, String>, key: &str) -> Result<&'a str, String> {
+    fields
+        .get(key)
+        .map(String::as_str)
+        .ok_or_else(|| format!("audit contract is missing `{key}`"))
+}
+
+fn parse_contract_list(value: &str) -> Result<Vec<String>, String> {
+    let values = value
+        .split("||")
+        .map(str::trim)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if values.is_empty() || values.iter().any(String::is_empty) {
+        Err(format!(
+            "invalid empty value in audit contract list `{value}`"
+        ))
+    } else {
+        Ok(values)
+    }
+}
+
+fn parse_contract_ids(value: &str) -> Result<Vec<u32>, String> {
+    let mut ids = Vec::new();
+    for part in value.split("||").map(str::trim) {
+        if let Some((start, end)) = part.split_once('-') {
+            let start = start
+                .parse::<u32>()
+                .map_err(|error| format!("invalid ID range start `{start}`: {error}"))?;
+            let end = end
+                .parse::<u32>()
+                .map_err(|error| format!("invalid ID range end `{end}`: {error}"))?;
+            if start > end {
+                return Err(format!("descending audit ID range `{part}`"));
+            }
+            ids.extend(start..=end);
+        } else {
+            ids.push(
+                part.parse::<u32>()
+                    .map_err(|error| format!("invalid audit ID `{part}`: {error}"))?,
+            );
+        }
+    }
+    Ok(ids)
+}
+
+fn parse_contract_bool(value: &str) -> Result<bool, String> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!("invalid audit contract boolean `{value}`")),
+    }
+}
+
+fn parse_contract_usize(value: &str) -> Result<usize, String> {
+    value
+        .parse()
+        .map_err(|error| format!("invalid audit contract integer `{value}`: {error}"))
+}
+
+fn require_contiguous_ids(plan_id: &str, field: &str, ids: &[u32]) -> Result<(), String> {
+    if ids.is_empty() {
+        return Err(format!("audit profile `{plan_id}` has no {field}"));
+    }
+    if ids.windows(2).any(|pair| pair[1] != pair[0] + 1) {
+        return Err(format!(
+            "audit profile `{plan_id}` has noncontiguous or duplicate {field}"
+        ));
+    }
+    Ok(())
+}
+
+fn select_audit_profile<'a>(
+    plan: &str,
+    profiles: &'a [AuditProfile],
+    errors: &mut Vec<String>,
+) -> Option<&'a AuditProfile> {
+    let title = first_nonempty_line(plan).unwrap_or("");
+    let declared_id = plan.lines().find_map(|line| {
+        line.strip_prefix("**Plan ID:**")
+            .map(str::trim)
+            .map(|value| value.trim_matches('`'))
+            .filter(|value| !value.is_empty())
+    });
+    let profile = if let Some(plan_id) = declared_id {
+        let Some(profile) = profiles.iter().find(|profile| profile.plan_id == plan_id) else {
+            errors.push(format!("unknown plan ID `{plan_id}`"));
+            return None;
+        };
+        profile
+    } else {
+        let Some(profile) = profiles
+            .iter()
+            .find(|profile| !profile.plan_id_required && profile.title == title)
+        else {
+            errors.push("plan has no registered Plan ID or legacy title".to_owned());
+            return None;
+        };
+        profile
+    };
+    if profile.title != title {
+        errors.push(format!(
+            "plan title `{title}` does not match profile `{}` title `{}`",
+            profile.plan_id, profile.title
+        ));
+    }
+    if profile.plan_id_required && declared_id.is_none() {
+        errors.push(format!(
+            "profile `{}` requires an explicit Plan ID",
+            profile.plan_id
+        ));
+    }
+    Some(profile)
+}
+
+fn plan_status(plan: &str) -> Option<String> {
+    plan.lines()
+        .find_map(|line| line.strip_prefix("**Plan status:**"))
+        .map(str::trim)
+        .map(str::to_owned)
 }
 
 fn required_section<'a>(plan: &'a str, heading: &str, errors: &mut Vec<String>) -> Option<&'a str> {
@@ -1063,21 +1294,25 @@ fn parse_numbered_id(value: &str, prefix: char) -> Option<u32> {
     value.strip_prefix(prefix)?.parse().ok()
 }
 
-fn validate_exact_range(
+fn validate_exact_ids(
     rows: &BTreeMap<u32, Vec<String>>,
     prefix: char,
-    maximum: u32,
+    expected: &[u32],
     label: &str,
     errors: &mut Vec<String>,
 ) {
-    for number in 1..=maximum {
-        if !rows.contains_key(&number) {
+    for number in expected {
+        if !rows.contains_key(number) {
             errors.push(format!("{label} is missing {prefix}{number}"));
         }
     }
-    for number in rows.keys().copied().filter(|number| *number > maximum) {
+    for number in rows
+        .keys()
+        .copied()
+        .filter(|number| !expected.contains(number))
+    {
         errors.push(format!(
-            "{label} contains unregistered {prefix}{number}; update the audit contract intentionally"
+            "{label} contains unregistered {prefix}{number}; update its declarative audit contract intentionally"
         ));
     }
 }
@@ -1091,7 +1326,12 @@ fn require_exactly_once(text: &str, marker: &str, label: &str, errors: &mut Vec<
     }
 }
 
-fn audit_task_completion(plan: &str, errors: &mut Vec<String>) -> usize {
+fn audit_task_completion(
+    plan: &str,
+    profile: &AuditProfile,
+    plan_status: &str,
+    errors: &mut Vec<String>,
+) -> usize {
     let lines = plan.lines().collect::<Vec<_>>();
     let mut tasks = BTreeMap::<String, (String, usize)>::new();
     for (index, line) in lines.iter().enumerate() {
@@ -1114,12 +1354,25 @@ fn audit_task_completion(plan: &str, errors: &mut Vec<String>) -> usize {
         }
     }
 
-    for required in REQUIRED_TASK_IDS {
-        let Some((status, start)) = tasks.get(*required) else {
+    let mut in_progress = 0_usize;
+    let mut started = 0_usize;
+    for required in &profile.task_ids {
+        let Some((status, start)) = tasks.get(required) else {
             errors.push(format!("missing implementation task {required}"));
             continue;
         };
-        if status != "x" {
+        if !matches!(status.as_str(), " " | "~" | "x" | "!") {
+            errors.push(format!(
+                "implementation task {required} has invalid status [{status}]"
+            ));
+        }
+        if status == "~" {
+            in_progress += 1;
+        }
+        if status != " " {
+            started += 1;
+        }
+        if plan_status == COMPLETE_STATUS && status != "x" {
             errors.push(format!(
                 "implementation task {required} has status [{status}], expected [x]"
             ));
@@ -1130,21 +1383,53 @@ fn audit_task_completion(plan: &str, errors: &mut Vec<String>) -> usize {
             .skip(start + 1)
             .find_map(|(index, line)| line.starts_with("### ").then_some(index))
             .unwrap_or(lines.len());
-        if !lines[start + 1..end]
+        let task_body = &lines[start + 1..end];
+        if !task_body
             .iter()
-            .any(|line| line.starts_with("**Completion notes ("))
+            .any(|line| line.starts_with("**Completion notes"))
         {
             errors.push(format!(
                 "implementation task {required} has no adjacent completion notes"
             ));
         }
+        if profile.require_task_criteria
+            && !task_body
+                .iter()
+                .any(|line| line.starts_with("**Completion criteria:**"))
+        {
+            errors.push(format!(
+                "implementation task {required} has no adjacent completion criteria"
+            ));
+        }
+        if status == "x"
+            && task_body.iter().any(|line| {
+                line.starts_with("**Completion notes")
+                    && (line.contains("Not started") || line.contains("In progress"))
+            })
+        {
+            errors.push(format!(
+                "implementation task {required} is complete but its notes still report unfinished work"
+            ));
+        }
     }
-    for id in tasks
-        .keys()
-        .filter(|id| !REQUIRED_TASK_IDS.contains(&id.as_str()))
-    {
+    for id in tasks.keys().filter(|id| !profile.task_ids.contains(id)) {
         errors.push(format!(
-            "unregistered implementation task {id}; update the audit contract intentionally"
+            "unregistered implementation task {id}; update the declarative audit contract intentionally"
+        ));
+    }
+    if in_progress > 1 {
+        errors.push(format!(
+            "plan has {in_progress} tasks in progress; expected at most one"
+        ));
+    }
+    if plan_status == READY_STATUS && started != 0 {
+        errors.push(format!(
+            "plan status is `{READY_STATUS}` but {started} implementation tasks have started"
+        ));
+    }
+    if plan_status == IN_PROGRESS_STATUS && started == 0 {
+        errors.push(format!(
+            "plan status is `{IN_PROGRESS_STATUS}` but no implementation task has started"
         ));
     }
     tasks.len()
@@ -1498,10 +1783,9 @@ mod tests {
     use std::fmt::Write as _;
 
     use super::{
-        LAST_REQUIRED_GATE_ID, LAST_REQUIRED_GUIDANCE_ID, REQUIRED_ADVERSARIAL_MARKERS,
-        REQUIRED_DEFERRED_SECTIONS, REQUIRED_OVERALL_CRITERIA, REQUIRED_READY_SENTENCE,
-        REQUIRED_TASK_IDS, REQUIRED_TRIPLE_AUDIT_MARKERS, audit_guidance_plan, first_nonempty_line,
-        is_disposition, is_source_anchor, markdown_cells,
+        AuditProfile, COMPLETE_STATUS, IN_PROGRESS_STATUS, REQUIRED_READY_SENTENCE,
+        REQUIRED_TRIPLE_AUDIT_MARKERS, audit_guidance_plan, first_nonempty_line, is_disposition,
+        is_source_anchor, load_audit_profiles, markdown_cells, parse_audit_profile,
     };
 
     #[test]
@@ -1525,8 +1809,11 @@ mod tests {
     }
 
     #[test]
-    fn complete_guidance_plan_passes_release_audit() {
-        let report = audit_guidance_plan(&complete_plan()).unwrap();
+    fn complete_predecessor_profile_passes_release_audit() {
+        let profiles = load_audit_profiles().unwrap();
+        let profile = profile(&profiles, "poche-foundation");
+        let report = audit_guidance_plan(&plan_fixture(profile, COMPLETE_STATUS)).unwrap();
+        assert_eq!(report.plan_id, "poche-foundation");
         assert_eq!(report.guidance, 29);
         assert_eq!(report.traceability, 29);
         assert_eq!(report.gates, 14);
@@ -1536,8 +1823,24 @@ mod tests {
     }
 
     #[test]
+    fn in_progress_phase_two_profile_passes_audit() {
+        let profiles = load_audit_profiles().unwrap();
+        let profile = profile(&profiles, "poche-phase-2");
+        let report = audit_guidance_plan(&plan_fixture(profile, IN_PROGRESS_STATUS)).unwrap();
+        assert_eq!(report.plan_id, "poche-phase-2");
+        assert_eq!(report.guidance, 21);
+        assert_eq!(report.traceability, 21);
+        assert_eq!(report.gates, 18);
+        assert_eq!(report.tasks, 42);
+        assert_eq!(report.overall_criteria, 19);
+        assert_eq!(report.deferred_sections, 4);
+    }
+
+    #[test]
     fn guidance_audit_rejects_a_missing_mapping() {
-        let plan = complete_plan().replace("| U17 | task 17 |\n", "");
+        let profiles = load_audit_profiles().unwrap();
+        let profile = profile(&profiles, "poche-foundation");
+        let plan = plan_fixture(profile, COMPLETE_STATUS).replace("| U17 | task 17 |\n", "");
         let errors = audit_guidance_plan(&plan).unwrap_err();
         assert!(
             errors
@@ -1547,8 +1850,24 @@ mod tests {
     }
 
     #[test]
+    fn guidance_audit_rejects_noncontiguous_plan_ids() {
+        let profiles = load_audit_profiles().unwrap();
+        let profile = profile(&profiles, "poche-foundation");
+        let plan = plan_fixture(profile, COMPLETE_STATUS)
+            .replace("| U16 | active guidance 16 | consequence 16 |\n", "");
+        let errors = audit_guidance_plan(&plan).unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("guidance ledger is missing U16"))
+        );
+    }
+
+    #[test]
     fn guidance_audit_rejects_an_unfinished_task() {
-        let plan = complete_plan().replace("### [x] 1.1 ", "### [ ] 1.1 ");
+        let profiles = load_audit_profiles().unwrap();
+        let profile = profile(&profiles, "poche-foundation");
+        let plan = plan_fixture(profile, COMPLETE_STATUS).replace("### [x] 1.1 ", "### [ ] 1.1 ");
         let errors = audit_guidance_plan(&plan).unwrap_err();
         assert!(
             errors
@@ -1557,11 +1876,94 @@ mod tests {
         );
     }
 
-    fn complete_plan() -> String {
-        let mut plan = format!(
-            "# Test plan\n\n**Plan status:** Execution complete\n\n{REQUIRED_READY_SENTENCE}\n\n## Authoritative user guidance ledger\n\n"
+    #[test]
+    fn guidance_audit_rejects_a_missing_audit_pass() {
+        let profiles = load_audit_profiles().unwrap();
+        let profile = profile(&profiles, "poche-foundation");
+        let plan = plan_fixture(profile, COMPLETE_STATUS).replace(
+            "**Pass 2 — traceability:** checked\n",
+            "traceability checked\n",
         );
-        for number in 1..=LAST_REQUIRED_GUIDANCE_ID {
+        let errors = audit_guidance_plan(&plan).unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("intent-audit marker"))
+        );
+    }
+
+    #[test]
+    fn guidance_audit_rejects_duplicate_task_ids() {
+        let profiles = load_audit_profiles().unwrap();
+        let profile = profile(&profiles, "poche-foundation");
+        let plan = plan_fixture(profile, COMPLETE_STATUS).replace(
+            "### [x] 1.1 task\n",
+            "### [x] 1.1 task\n\n### [x] 1.1 duplicate\n",
+        );
+        let errors = audit_guidance_plan(&plan).unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("duplicate implementation task 1.1"))
+        );
+    }
+
+    #[test]
+    fn guidance_audit_rejects_unknown_plan_ids() {
+        let profiles = load_audit_profiles().unwrap();
+        let profile = profile(&profiles, "poche-phase-2");
+        let plan =
+            plan_fixture(profile, IN_PROGRESS_STATUS).replace("`poche-phase-2`", "`unknown-plan`");
+        let errors = audit_guidance_plan(&plan).unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("unknown plan ID `unknown-plan`"))
+        );
+    }
+
+    #[test]
+    fn guidance_audit_cannot_misidentify_a_plan_as_another_profile() {
+        let profiles = load_audit_profiles().unwrap();
+        let profile = profile(&profiles, "poche-phase-2");
+        let plan = plan_fixture(profile, IN_PROGRESS_STATUS)
+            .replace("`poche-phase-2`", "`poche-foundation`");
+        let errors = audit_guidance_plan(&plan).unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("does not match profile"))
+        );
+    }
+
+    #[test]
+    fn audit_contract_rejects_noncontiguous_registered_ids() {
+        let contract =
+            super::PLAN_AUDIT_CONTRACTS[1].replace("guidance_ids=30-50", "guidance_ids=30||32");
+        let error = parse_audit_profile(&contract).unwrap_err();
+        assert!(error.contains("noncontiguous or duplicate guidance_ids"));
+    }
+
+    fn profile<'a>(profiles: &'a [AuditProfile], plan_id: &str) -> &'a AuditProfile {
+        profiles
+            .iter()
+            .find(|profile| profile.plan_id == plan_id)
+            .unwrap()
+    }
+
+    fn plan_fixture(profile: &AuditProfile, status: &str) -> String {
+        let mut plan = format!("{}\n\n", profile.title);
+        if profile.plan_id_required {
+            writeln!(plan, "**Plan ID:** `{}`\n", profile.plan_id)
+                .expect("writing to a String cannot fail");
+        }
+        writeln!(
+            plan,
+            "**Plan status:** {status}\n\n{REQUIRED_READY_SENTENCE}\n"
+        )
+        .expect("writing to a String cannot fail");
+        plan.push_str("## Authoritative user guidance ledger\n\n");
+        for number in &profile.guidance_ids {
             writeln!(
                 plan,
                 "| U{number} | active guidance {number} | consequence {number} |\n"
@@ -1574,43 +1976,64 @@ mod tests {
             plan.push(' ');
             plan.push_str("checked\n");
         }
-        for marker in REQUIRED_ADVERSARIAL_MARKERS {
+        for marker in &profile.adversarial_markers {
             plan.push_str(marker);
             plan.push('\n');
         }
         plan.push_str("**Known source limitation:** None\n\n");
 
-        plan.push_str("## Design gate dispositions\n\n");
-        for number in 1..=LAST_REQUIRED_GATE_ID {
-            writeln!(
-                plan,
-                "| G{number} | Decided | decision | recommendation | consequence | task |\n"
-            )
-            .expect("writing to a String cannot fail");
+        writeln!(plan, "{}\n", profile.gate_section).expect("writing to a String cannot fail");
+        let gate_status = if status == COMPLETE_STATUS {
+            &profile.complete_gate_statuses[0]
+        } else {
+            &profile.working_gate_statuses[0]
+        };
+        for number in &profile.gate_ids {
+            let mut cells = vec![format!("G{number}"), gate_status.clone()];
+            for index in 2..profile.gate_cells {
+                cells.push(format!("field {index}"));
+            }
+            writeln!(plan, "| {} |", cells.join(" | ")).expect("writing to a String cannot fail");
         }
 
         plan.push_str("\n## Guidance traceability\n\n");
-        for number in 1..=LAST_REQUIRED_GUIDANCE_ID {
+        for number in &profile.guidance_ids {
             writeln!(plan, "| U{number} | task {number} |\n")
                 .expect("writing to a String cannot fail");
         }
 
         plan.push_str("\n## Implementation\n\n");
-        for id in REQUIRED_TASK_IDS {
-            writeln!(
-                plan,
-                "### [x] {id} task\n\n**Completion notes (2026-08-04):** done\n\n"
-            )
-            .expect("writing to a String cannot fail");
+        for (index, id) in profile.task_ids.iter().enumerate() {
+            let task_status = if status == COMPLETE_STATUS {
+                "x"
+            } else if status == IN_PROGRESS_STATUS && index == 0 {
+                "~"
+            } else {
+                " "
+            };
+            writeln!(plan, "### [{task_status}] {id} task\n")
+                .expect("writing to a String cannot fail");
+            if profile.require_task_criteria {
+                plan.push_str("\n**Completion criteria:** checked when complete.\n");
+            }
+            let note = match task_status {
+                "x" => "done",
+                "~" => "In progress",
+                _ => "Not started",
+            };
+            writeln!(plan, "\n**Completion notes (2026-08-04):** {note}\n")
+                .expect("writing to a String cannot fail");
         }
-        for marker in REQUIRED_DEFERRED_SECTIONS {
+        for marker in &profile.deferred_sections {
             plan.push_str(marker);
             plan.push_str("\n\n### Future work\n\nNot current.\n\n");
         }
 
         plan.push_str("## Overall completion criteria\n\n");
-        for number in 1..=REQUIRED_OVERALL_CRITERIA {
-            writeln!(plan, "- [x] criterion {number}").expect("writing to a String cannot fail");
+        let overall_status = if status == COMPLETE_STATUS { "x" } else { " " };
+        for number in 1..=profile.overall_criteria {
+            writeln!(plan, "- [{overall_status}] criterion {number}")
+                .expect("writing to a String cannot fail");
         }
         plan
     }

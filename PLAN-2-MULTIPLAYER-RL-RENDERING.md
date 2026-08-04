@@ -2,7 +2,7 @@
 
 **Plan ID:** `poche-phase-2`
 
-**Plan status:** Ready for execution
+**Plan status:** Execution in progress
 
 **Primary implementation root:** `D:\Repos\Games\poche-3` on branch `model-checking`
 
@@ -405,7 +405,7 @@ track updates this file without overlapping edits.
 
 ## Phase 1 - Preserve intent and lock the semantic boundary
 
-### [ ] 1.1 Generalize resumable-plan auditing without weakening `PLAN.md`
+### [x] 1.1 Generalize resumable-plan auditing without weakening `PLAN.md`
 
 Implement a plan-profile or data-driven audit in `poche-xtask` so the command
 can validate both the completed predecessor and this plan. It must derive or
@@ -426,7 +426,18 @@ cargo run -p poche-xtask -- guidance audit PLAN-2-MULTIPLAYER-RL-RENDERING.md
 negative tests still fail; the new mechanism cannot silently accept a plan by
 identifying it as the other profile.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Complete. Added checked-in declarative audit
+contracts under `tools/plan-audit/` and selected them by explicit Plan ID plus an
+exact-title legacy bridge for unchanged `PLAN.md`. The auditor now applies each
+profile's status lifecycle, exact guidance/gate/task IDs, table shape, audit and
+adversarial markers, task criteria/notes, completion count, and deferred
+sections. Twelve `poche-xtask` tests pass, including negative cases for omitted
+mappings, noncontiguous IDs, unfinished tasks under a completed status, missing
+audit passes, duplicate task IDs, unknown plan IDs, and cross-profile identity
+spoofing. `cargo fmt --all -- --check`, `cargo clippy -p poche-xtask
+--all-targets -- -D warnings`, `cargo test -p poche-xtask`, and both required
+`guidance audit` commands pass. `git diff --exit-code -- PLAN.md` confirms the
+predecessor remained byte-for-byte untouched.
 
 ### [ ] 1.2 Record composition, threat model, dependency, and open-gate decisions
 
