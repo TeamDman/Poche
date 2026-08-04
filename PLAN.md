@@ -642,7 +642,7 @@ preserves the full native log/counterexample and normalized property evidence
 under ignored `target/nusmv-oracle/`. Strict NuSMV coverage has zero `todo`
 cells; `docs/nusmv-oracle.md` states the exact card-identity abstraction.
 
-### [ ] 2.3 Build the comprehensive Scryer Prolog oracle model
+### [x] 2.3 Build the comprehensive Scryer Prolog oracle model
 
 **Work:**
 
@@ -664,6 +664,19 @@ cargo run -p poche-xtask -- coverage audit --track prolog
 
 **Completion criteria:** Installed Scryer loads the program and the query corpus
 returns expected forward/reverse answer sets for every applicable rule ID.
+
+**Completed 2026-08-03:** `models/prolog/poche.pl` independently defines finite
+relations for all player schedules, the standard deck, clockwise deals, legal
+bids/plays, trick winners, bid scoring in both directions, final winners/money,
+First Jack, repeated-tie High Card, card restoration, and semantic score rows.
+Its full-identity two-player one-card round supports `legal_action/2`, `step/3`,
+`predecessor/3`, and `replay/3`. Installed Scryer passed a 16-query corpus,
+including complete forward replay, per-state card conservation, reverse bid and
+play predecessor recovery, and a reverse score query whose sole cause is `3-3`.
+The runner requires an explicit success marker because Scryer may report an
+uncaught goal error with exit status zero, and preserves the native transcript.
+Strict Prolog coverage has zero `todo` cells; `docs/prolog-oracle.md` records
+productive modes and the one-round transition bound.
 
 ### [x] 2.4 Build the comprehensive conventional Rust oracle environment
 

@@ -53,7 +53,7 @@ fn usage() {
     eprintln!(
         "usage:\n  cargo run -p poche-xtask -- doctor\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
-         cargo run -p poche-xtask -- oracle check rust|alloy|nusmv"
+         cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog"
     );
 }
 
@@ -68,6 +68,7 @@ fn oracle(mut args: impl Iterator<Item = OsString>) -> ExitCode {
         Some(value) if value == OsStr::new("rust") => check_rust_oracle(),
         Some(value) if value == OsStr::new("alloy") => check_alloy_oracle(),
         Some(value) if value == OsStr::new("nusmv") => check_nusmv_oracle(),
+        Some(value) if value == OsStr::new("prolog") => check_prolog_oracle(),
         Some(value) => {
             eprintln!(
                 "oracle backend is not implemented yet: {}",
@@ -80,6 +81,79 @@ fn oracle(mut args: impl Iterator<Item = OsString>) -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+fn check_prolog_oracle() -> ExitCode {
+    const SUCCESS_MARKER: &str = "POCHE_PROLOG_OK tests=16";
+
+    let tool = Tool {
+        label: "Scryer Prolog",
+        override_var: Some("SCRYER_PROLOG_BIN"),
+        commands: &["scryer-prolog", "scryer-prolog.exe"],
+        version_args: &["--version"],
+        accept_nonzero_with: None,
+    };
+    let command = match probe(&tool) {
+        Probe::Available { command, .. } => command,
+        Probe::Missing => {
+            eprintln!("Scryer Prolog is unavailable; set SCRYER_PROLOG_BIN or add it to PATH");
+            return ExitCode::FAILURE;
+        }
+        Probe::Failed { command, detail } => {
+            eprintln!(
+                "Scryer Prolog probe failed for {}: {detail}",
+                command.to_string_lossy()
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let model = root.join("models/prolog/poche.pl");
+    let evidence_dir = root.join("target/prolog-oracle");
+    if let Err(error) = fs::create_dir_all(&evidence_dir) {
+        eprintln!("failed to create {}: {error}", evidence_dir.display());
+        return ExitCode::FAILURE;
+    }
+
+    let output = match Command::new(command)
+        .current_dir(&root)
+        .arg("-f")
+        .arg(&model)
+        .args(["-g", "poche:run_oracle_tests,halt"])
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("failed to execute Scryer Prolog: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let transcript = format!("{stdout}\n{stderr}");
+    let native_log = evidence_dir.join("native.log");
+    if let Err(error) = fs::write(&native_log, &transcript) {
+        eprintln!("failed to write {}: {error}", native_log.display());
+        return ExitCode::FAILURE;
+    }
+
+    if !output.status.success()
+        || !transcript.contains(SUCCESS_MARKER)
+        || transcript.contains("causes: error")
+    {
+        eprintln!(
+            "Scryer Prolog oracle failed; transcript preserved at {}",
+            native_log.display()
+        );
+        return ExitCode::FAILURE;
+    }
+
+    println!(
+        "Scryer Prolog oracle: passed; 16 forward/reverse queries; evidence in {}",
+        native_log.display()
+    );
+    ExitCode::SUCCESS
 }
 
 fn check_nusmv_oracle() -> ExitCode {
