@@ -1,0 +1,478 @@
+-- This Source Code Form is subject to the terms of the Mozilla Public
+-- License, v. 2.0. If a copy of the MPL was not distributed with this
+-- file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+-- Independent NuSMV 2.7.1 oracle derived from docs/main.typ.
+-- Scope: exactly two players, the complete 13-round 1..7..1 schedule, a
+-- standard 52-card deck represented by conserved zone counts, and one current
+-- trick represented by suit/rank attributes. Card identity across distinct
+-- tricks is intentionally abstract; Alloy and Rust retain that provenance.
+-- No FAIRNESS clause is needed: every nonterminal phase advances on every
+-- transition, and FINISHED is absorbing.
+
+MODULE main
+
+IVAR
+  chosen_selection : {first_jack, high_card, announced_other};
+  chosen_trump : {clubs, diamonds, hearts, spades};
+  chosen_suit : {clubs, diamonds, hearts, spades};
+  chosen_rank : 2..14;
+  chosen_bid : 0..7;
+  follower_has_lead : boolean;
+
+VAR
+  -- R-GAME-003, R-SETUP-001: explicit lifecycle and absorbing terminal state.
+  phase : {prepare, deal, bid_first, bid_dealer, play_lead, play_follow,
+           collect, settle, advance, finished};
+
+  -- R-GAME-004, R-SETUP-004, R-ADVANCE-002: two-seat clockwise ring.
+  dealer : {p0, p1};
+  leader : {p0, p1};
+  last_winner : {p0, p1};
+  selection_method : {unselected, first_jack, high_card, announced_other};
+
+  -- An independent symbolic parameter checks the 2..51 table-size formula;
+  -- it is deliberately separate from the exact two-player transition scope.
+  table_players : 2..51;
+
+  -- R-HAND-002..004 and R-ADVANCE-003: full two-player schedule.
+  round_number : 0..13;
+  hand_size : 0..7;
+  trick_number : 0..7;
+
+  -- R-DEAL-003..004, R-TRICK-001,012, R-ADVANCE-001: conserved zones.
+  hand0_count : 0..7;
+  hand1_count : 0..7;
+  undealt_count : 0..52;
+  center_count : 0..2;
+  captured0_count : 0..14;
+  captured1_count : 0..14;
+  trump_revealed : boolean;
+
+  -- R-BID-002..005 and R-TRICK-001: fixed bids and trick credits.
+  bid0 : 0..7;
+  bid1 : 0..7;
+  tricks0 : 0..7;
+  tricks1 : 0..7;
+
+  -- R-DEAL-004, R-TRICK-003..011: symbolic current-card attributes.
+  trump_suit : {clubs, diamonds, hearts, spades};
+  lead_suit : {clubs, diamonds, hearts, spades};
+  lead_rank : 2..14;
+  follow_suit : {clubs, diamonds, hearts, spades};
+  follow_rank : 2..14;
+  follow_had_lead : boolean;
+
+  -- R-SCORE-001..005: raw round scores and cumulative score are explicit.
+  round_score0 : 0..27;
+  round_score1 : 0..27;
+  total_score0 : 0..351;
+  total_score1 : 0..351;
+
+  -- R-SETUP-005 and R-MONEY-001..003: monetary projections are not points.
+  ante_paid0 : boolean;
+  ante_paid1 : boolean;
+  paid_miss0 : boolean;
+  paid_miss1 : boolean;
+  miss_payments0 : 0..13;
+  miss_payments1 : 0..13;
+
+DEFINE
+  -- R-GAME-002: standard-deck constants; suits have no ordering operation and
+  -- ranks use only their numeric 2-through-Ace order.
+  deck_size := 52;
+  suit_count := 4;
+  rank_count := 13;
+  max_hand_for_table := case
+    table_players <= 7 : 7;
+    TRUE : 51 / table_players;
+  esac;
+  rounds_for_table := (2 * max_hand_for_table) - 1;
+
+  left_of_dealer := case dealer = p0 : p1; TRUE : p0; esac;
+  follower_player := case leader = p0 : p1; TRUE : p0; esac;
+  bid_actor := case
+    phase = bid_first : left_of_dealer;
+    TRUE : dealer;
+  esac;
+
+  schedule_hand := case
+    round_number = 1 : 1;
+    round_number = 2 : 2;
+    round_number = 3 : 3;
+    round_number = 4 : 4;
+    round_number = 5 : 5;
+    round_number = 6 : 6;
+    round_number = 7 : 7;
+    round_number = 8 : 6;
+    round_number = 9 : 5;
+    round_number = 10 : 4;
+    round_number = 11 : 3;
+    round_number = 12 : 2;
+    round_number = 13 : 1;
+    TRUE : 0;
+  esac;
+
+  next_schedule_hand := case
+    round_number = 0 : 1;
+    round_number = 1 : 2;
+    round_number = 2 : 3;
+    round_number = 3 : 4;
+    round_number = 4 : 5;
+    round_number = 5 : 6;
+    round_number = 6 : 7;
+    round_number = 7 : 6;
+    round_number = 8 : 5;
+    round_number = 9 : 4;
+    round_number = 10 : 3;
+    round_number = 11 : 2;
+    round_number = 12 : 1;
+    TRUE : 0;
+  esac;
+
+  card_total := undealt_count + hand0_count + hand1_count + center_count +
+                captured0_count + captured1_count +
+                case trump_revealed : 1; TRUE : 0; esac;
+
+  -- R-TRICK-007..011: trump dominates; otherwise only lead-suit cards are
+  -- eligible, and numeric rank breaks eligible comparisons.
+  input_lead_wins := case
+    lead_suit = trump_suit & chosen_suit != trump_suit : TRUE;
+    lead_suit != trump_suit & chosen_suit = trump_suit : FALSE;
+    lead_suit = trump_suit & chosen_suit = trump_suit : lead_rank > chosen_rank;
+    chosen_suit = lead_suit : lead_rank > chosen_rank;
+    TRUE : TRUE;
+  esac;
+
+  stored_lead_wins := case
+    lead_suit = trump_suit & follow_suit != trump_suit : TRUE;
+    lead_suit != trump_suit & follow_suit = trump_suit : FALSE;
+    lead_suit = trump_suit & follow_suit = trump_suit : lead_rank > follow_rank;
+    follow_suit = lead_suit : lead_rank > follow_rank;
+    TRUE : TRUE;
+  esac;
+
+  input_winner := case input_lead_wins : leader; TRUE : follower_player; esac;
+  expected_winner := case stored_lead_wins : leader; TRUE : follower_player; esac;
+
+  -- R-SCORE-002..004: 0 for a miss, 10+bid for an exact partial hand, and
+  -- 20+bid for an exact all-tricks hand (including 10 for bid-zero success).
+  expected_round_score0 := case
+    tricks0 != bid0 : 0;
+    tricks0 = hand_size : 20 + bid0;
+    TRUE : 10 + bid0;
+  esac;
+
+  expected_round_score1 := case
+    tricks1 != bid1 : 0;
+    tricks1 = hand_size : 20 + bid1;
+    TRUE : 10 + bid1;
+  esac;
+
+  winner0 := total_score0 >= total_score1;
+  winner1 := total_score1 >= total_score0;
+  bowl_recipient0 := phase = finished & winner0;
+  bowl_recipient1 := phase = finished & winner1;
+
+ASSIGN
+  init(phase) := prepare;
+  next(phase) := case
+    phase = prepare : deal;
+    phase = deal : bid_first;
+    phase = bid_first : bid_dealer;
+    phase = bid_dealer : play_lead;
+    phase = play_lead : play_follow;
+    phase = play_follow : collect;
+    phase = collect & trick_number + 1 = hand_size : settle;
+    phase = collect : play_lead;
+    phase = settle : advance;
+    phase = advance & round_number = 13 : finished;
+    phase = advance : deal;
+    TRUE : finished;
+  esac;
+
+  init(selection_method) := unselected;
+  next(selection_method) := case
+    phase = prepare : chosen_selection;
+    TRUE : selection_method;
+  esac;
+
+  init(dealer) := {p0, p1};
+  next(dealer) := case
+    phase = advance & round_number < 13 & dealer = p0 : p1;
+    phase = advance & round_number < 13 & dealer = p1 : p0;
+    TRUE : dealer;
+  esac;
+
+  init(round_number) := 0;
+  next(round_number) := case
+    phase = prepare : 1;
+    phase = advance & round_number < 13 : round_number + 1;
+    TRUE : round_number;
+  esac;
+
+  init(hand_size) := 0;
+  next(hand_size) := case
+    phase = prepare : 1;
+    phase = advance & round_number < 13 : next_schedule_hand;
+    TRUE : hand_size;
+  esac;
+
+  init(leader) := p0;
+  next(leader) := case
+    phase = deal : left_of_dealer;
+    phase = collect : last_winner;
+    TRUE : leader;
+  esac;
+
+  init(last_winner) := p0;
+  next(last_winner) := case
+    phase = play_follow : input_winner;
+    TRUE : last_winner;
+  esac;
+
+  init(bid0) := 0;
+  next(bid0) := case
+    phase = deal : 0;
+    (phase = bid_first | phase = bid_dealer) & bid_actor = p0 : chosen_bid;
+    TRUE : bid0;
+  esac;
+
+  init(bid1) := 0;
+  next(bid1) := case
+    phase = deal : 0;
+    (phase = bid_first | phase = bid_dealer) & bid_actor = p1 : chosen_bid;
+    TRUE : bid1;
+  esac;
+
+  init(hand0_count) := 0;
+  next(hand0_count) := case
+    phase = deal : hand_size;
+    phase = play_lead & leader = p0 & hand0_count > 0 : hand0_count - 1;
+    phase = play_follow & follower_player = p0 & hand0_count > 0 : hand0_count - 1;
+    TRUE : hand0_count;
+  esac;
+
+  init(hand1_count) := 0;
+  next(hand1_count) := case
+    phase = deal : hand_size;
+    phase = play_lead & leader = p1 & hand1_count > 0 : hand1_count - 1;
+    phase = play_follow & follower_player = p1 & hand1_count > 0 : hand1_count - 1;
+    TRUE : hand1_count;
+  esac;
+
+  init(undealt_count) := 52;
+  next(undealt_count) := case
+    phase = deal : 51 - (2 * hand_size);
+    phase = settle : 52;
+    TRUE : undealt_count;
+  esac;
+
+  init(center_count) := 0;
+  next(center_count) := case
+    phase = play_lead : 1;
+    phase = play_follow : 2;
+    phase = collect : 0;
+    TRUE : center_count;
+  esac;
+
+  init(captured0_count) := 0;
+  next(captured0_count) := case
+    phase = deal : 0;
+    phase = collect & last_winner = p0 & captured0_count <= 12 : captured0_count + 2;
+    phase = settle : 0;
+    TRUE : captured0_count;
+  esac;
+
+  init(captured1_count) := 0;
+  next(captured1_count) := case
+    phase = deal : 0;
+    phase = collect & last_winner = p1 & captured1_count <= 12 : captured1_count + 2;
+    phase = settle : 0;
+    TRUE : captured1_count;
+  esac;
+
+  init(trump_revealed) := FALSE;
+  next(trump_revealed) := case
+    phase = deal : TRUE;
+    phase = settle : FALSE;
+    TRUE : trump_revealed;
+  esac;
+
+  init(trump_suit) := clubs;
+  next(trump_suit) := case
+    phase = deal : chosen_trump;
+    TRUE : trump_suit;
+  esac;
+
+  init(lead_suit) := clubs;
+  next(lead_suit) := case
+    phase = play_lead : chosen_suit;
+    TRUE : lead_suit;
+  esac;
+
+  init(lead_rank) := 2;
+  next(lead_rank) := case
+    phase = play_lead : chosen_rank;
+    TRUE : lead_rank;
+  esac;
+
+  init(follow_suit) := clubs;
+  next(follow_suit) := case
+    phase = play_follow : chosen_suit;
+    TRUE : follow_suit;
+  esac;
+
+  init(follow_rank) := 2;
+  next(follow_rank) := case
+    phase = play_follow : chosen_rank;
+    TRUE : follow_rank;
+  esac;
+
+  init(follow_had_lead) := FALSE;
+  next(follow_had_lead) := case
+    phase = play_follow : follower_has_lead;
+    TRUE : follow_had_lead;
+  esac;
+
+  init(trick_number) := 0;
+  next(trick_number) := case
+    phase = deal : 0;
+    phase = collect & trick_number < 7 : trick_number + 1;
+    TRUE : trick_number;
+  esac;
+
+  init(tricks0) := 0;
+  next(tricks0) := case
+    phase = deal : 0;
+    phase = collect & last_winner = p0 & tricks0 < 7 : tricks0 + 1;
+    TRUE : tricks0;
+  esac;
+
+  init(tricks1) := 0;
+  next(tricks1) := case
+    phase = deal : 0;
+    phase = collect & last_winner = p1 & tricks1 < 7 : tricks1 + 1;
+    TRUE : tricks1;
+  esac;
+
+  init(round_score0) := 0;
+  next(round_score0) := case
+    phase = deal : 0;
+    phase = settle : expected_round_score0;
+    TRUE : round_score0;
+  esac;
+
+  init(round_score1) := 0;
+  next(round_score1) := case
+    phase = deal : 0;
+    phase = settle : expected_round_score1;
+    TRUE : round_score1;
+  esac;
+
+  init(total_score0) := 0;
+  next(total_score0) := case
+    phase = settle & total_score0 <= 324 : total_score0 + expected_round_score0;
+    TRUE : total_score0;
+  esac;
+
+  init(total_score1) := 0;
+  next(total_score1) := case
+    phase = settle & total_score1 <= 324 : total_score1 + expected_round_score1;
+    TRUE : total_score1;
+  esac;
+
+  init(ante_paid0) := FALSE;
+  next(ante_paid0) := case phase = prepare : TRUE; TRUE : ante_paid0; esac;
+  init(ante_paid1) := FALSE;
+  next(ante_paid1) := case phase = prepare : TRUE; TRUE : ante_paid1; esac;
+
+  init(paid_miss0) := FALSE;
+  next(paid_miss0) := case
+    phase = deal : FALSE;
+    phase = settle : tricks0 != bid0;
+    TRUE : paid_miss0;
+  esac;
+
+  init(paid_miss1) := FALSE;
+  next(paid_miss1) := case
+    phase = deal : FALSE;
+    phase = settle : tricks1 != bid1;
+    TRUE : paid_miss1;
+  esac;
+
+  init(miss_payments0) := 0;
+  next(miss_payments0) := case
+    phase = settle & tricks0 != bid0 & miss_payments0 < 13 : miss_payments0 + 1;
+    TRUE : miss_payments0;
+  esac;
+
+  init(miss_payments1) := 0;
+  next(miss_payments1) := case
+    phase = settle & tricks1 != bid1 & miss_payments1 < 13 : miss_payments1 + 1;
+    TRUE : miss_payments1;
+  esac;
+
+-- R-BID-002: invalid bids do not enter the transition relation.
+TRANS (phase = bid_first | phase = bid_dealer) -> chosen_bid <= hand_size
+
+-- R-TRICK-005..006: a follower known to hold lead suit must follow it; a void
+-- follower remains free. The second player cannot replay the current card.
+TRANS (phase = play_follow & follower_has_lead) -> chosen_suit = lead_suit
+TRANS phase = play_follow -> !(chosen_suit = lead_suit & chosen_rank = lead_rank)
+
+-- Safety invariants -----------------------------------------------------------
+INVARSPEC deck_size = 52 & suit_count = 4 & rank_count = 13
+INVARSPEC max_hand_for_table >= 1 & max_hand_for_table <= 7
+INVARSPEC (table_players * max_hand_for_table) + 1 <= 52
+INVARSPEC rounds_for_table = (2 * max_hand_for_table) - 1
+INVARSPEC card_total = 52
+INVARSPEC tricks0 + tricks1 = trick_number
+INVARSPEC round_number = 0 | hand_size = schedule_hand
+INVARSPEC phase = prepare -> round_number = 0
+INVARSPEC phase != prepare -> round_number >= 1
+INVARSPEC phase = bid_first -> bid_actor = left_of_dealer
+INVARSPEC phase = bid_dealer -> bid_actor = dealer
+INVARSPEC phase = play_lead & trick_number = 0 -> leader = left_of_dealer
+INVARSPEC phase = play_lead -> center_count = 0
+INVARSPEC phase = play_follow -> center_count = 1
+INVARSPEC phase = collect -> center_count = 2
+INVARSPEC phase = advance | phase = finished -> card_total = undealt_count
+INVARSPEC phase = collect & follow_had_lead -> follow_suit = lead_suit
+INVARSPEC phase = collect -> last_winner = expected_winner
+INVARSPEC phase = advance -> round_score0 = expected_round_score0
+INVARSPEC phase = advance -> round_score1 = expected_round_score1
+INVARSPEC phase = advance -> (paid_miss0 <-> tricks0 != bid0)
+INVARSPEC phase = advance -> (paid_miss1 <-> tricks1 != bid1)
+INVARSPEC phase != prepare -> ante_paid0 & ante_paid1
+INVARSPEC phase = finished -> round_number = 13 & hand_size = 1
+INVARSPEC phase = finished -> bowl_recipient0 = winner0
+INVARSPEC phase = finished -> bowl_recipient1 = winner1
+
+-- Transition, deadlock, reachability, and temporal checks --------------------
+CTLSPEC AG (phase = prepare -> AX phase = deal)
+CTLSPEC AG (phase = deal -> AX phase = bid_first)
+CTLSPEC AG (phase = bid_first -> AX phase = bid_dealer)
+CTLSPEC AG (phase = bid_dealer -> AX phase = play_lead)
+CTLSPEC AG (phase = play_lead -> AX phase = play_follow)
+CTLSPEC AG (phase = play_follow -> AX phase = collect)
+CTLSPEC AG (phase = settle -> AX phase = advance)
+CTLSPEC AG (phase = finished -> AX phase = finished)
+CTLSPEC AG (phase = collect -> AX leader = last_winner)
+CTLSPEC AG (phase = advance & round_number < 13 & dealer = p0 -> AX dealer = p1)
+CTLSPEC AG (phase = advance & round_number < 13 & dealer = p1 -> AX dealer = p0)
+CTLSPEC AG EX TRUE
+
+-- The total transition relation plus mandatory phase progress makes these
+-- universal termination claims fairness-free.
+CTLSPEC AF phase = finished
+LTLSPEC F phase = finished
+
+-- Intended behaviors remain reachable under the legal nondeterminism.
+CTLSPEC EF phase = finished
+CTLSPEC EF (phase = play_lead & bid0 + bid1 != hand_size)
+CTLSPEC EF (phase = advance & bid0 = 0 & tricks0 = 0 & round_score0 = 10)
+CTLSPEC EF (phase = collect & lead_suit != trump_suit &
+            follow_suit = trump_suit & last_winner = follower_player)
+CTLSPEC EF selection_method = first_jack
+CTLSPEC EF selection_method = high_card

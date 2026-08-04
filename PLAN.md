@@ -609,7 +609,7 @@ receipt. `docs/alloy-oracle.md` records the proof boundary and intentional atomi
 deal abstraction. Strict Alloy coverage reports zero `todo` cells across all 61
 rules; physical and documentary exclusions retain reasons.
 
-### [ ] 2.2 Build the comprehensive NuSMV oracle model
+### [x] 2.2 Build the comprehensive NuSMV oracle model
 
 **Work:**
 
@@ -629,6 +629,18 @@ cargo run -p poche-xtask -- coverage audit --track nusmv
 
 **Completion criteria:** NuSMV 2.7.1 checks the model natively; safety and
 termination meanings are explicit, and every applicable rule ID has evidence.
+
+**Completed 2026-08-03:** `models/nusmv/poche.smv` independently models the
+complete two-player thirteen-round transition system with explicit environment
+inputs, lifecycle phases, dealer/leader rotation, bids, abstract legal card
+attributes, conserved 52-card zone counts, trick winners, scoring, money, and an
+absorbing terminal state. A separate symbolic `2..51` parameter checks maximum
+hand, feasibility, and round-count formulas. Native NuSMV 2.7.1 with sound
+cone-of-influence reduction passed 46 invariant/CTL/LTL properties, including
+`AG EX TRUE`, `AF finished`, and `F finished`, without fairness. The runner
+preserves the full native log/counterexample and normalized property evidence
+under ignored `target/nusmv-oracle/`. Strict NuSMV coverage has zero `todo`
+cells; `docs/nusmv-oracle.md` states the exact card-identity abstraction.
 
 ### [ ] 2.3 Build the comprehensive Scryer Prolog oracle model
 

@@ -53,7 +53,7 @@ fn usage() {
     eprintln!(
         "usage:\n  cargo run -p poche-xtask -- doctor\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
-         cargo run -p poche-xtask -- oracle check rust|alloy"
+         cargo run -p poche-xtask -- oracle check rust|alloy|nusmv"
     );
 }
 
@@ -67,6 +67,7 @@ fn oracle(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     match backend.as_deref() {
         Some(value) if value == OsStr::new("rust") => check_rust_oracle(),
         Some(value) if value == OsStr::new("alloy") => check_alloy_oracle(),
+        Some(value) if value == OsStr::new("nusmv") => check_nusmv_oracle(),
         Some(value) => {
             eprintln!(
                 "oracle backend is not implemented yet: {}",
@@ -79,6 +80,101 @@ fn oracle(mut args: impl Iterator<Item = OsString>) -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+fn check_nusmv_oracle() -> ExitCode {
+    let tool = Tool {
+        label: "NuSMV",
+        override_var: Some("NUSMV_BIN"),
+        commands: &["NuSMV", "NuSMV.exe", "nusmv"],
+        version_args: &["-h"],
+        accept_nonzero_with: Some("NuSMV"),
+    };
+    let command = match probe(&tool) {
+        Probe::Available { command, .. } => command,
+        Probe::Missing => {
+            eprintln!("NuSMV is unavailable; set NUSMV_BIN or add NuSMV to PATH");
+            return ExitCode::FAILURE;
+        }
+        Probe::Failed { command, detail } => {
+            eprintln!(
+                "NuSMV probe failed for {}: {detail}",
+                command.to_string_lossy()
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let model = root.join("models/nusmv/poche.smv");
+    let evidence_dir = root.join("target/nusmv-oracle");
+    if let Err(error) = fs::create_dir_all(&evidence_dir) {
+        eprintln!("failed to create {}: {error}", evidence_dir.display());
+        return ExitCode::FAILURE;
+    }
+
+    let output = match Command::new(command)
+        .current_dir(&root)
+        .arg("-coi")
+        .arg(&model)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("failed to execute NuSMV: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let transcript = format!("{stdout}\n{stderr}");
+    let native_log = evidence_dir.join("native.log");
+    if let Err(error) = fs::write(&native_log, &transcript) {
+        eprintln!("failed to write {}: {error}", native_log.display());
+        return ExitCode::FAILURE;
+    }
+
+    let result_lines: Vec<&str> = transcript
+        .lines()
+        .filter(|line| line.starts_with("-- specification") || line.starts_with("-- invariant"))
+        .collect();
+    let normalized = result_lines.join("\n") + "\n";
+    let normalized_log = evidence_dir.join("normalized-results.txt");
+    if let Err(error) = fs::write(&normalized_log, normalized) {
+        eprintln!("failed to write {}: {error}", normalized_log.display());
+        return ExitCode::FAILURE;
+    }
+
+    if !output.status.success() {
+        eprintln!(
+            "NuSMV oracle failed with {}; transcript preserved at {}",
+            output.status,
+            native_log.display()
+        );
+        return ExitCode::FAILURE;
+    }
+    if result_lines.len() < 40 {
+        eprintln!(
+            "NuSMV reported only {} properties; expected at least 40; transcript: {}",
+            result_lines.len(),
+            native_log.display()
+        );
+        return ExitCode::FAILURE;
+    }
+    if result_lines.iter().any(|line| !line.ends_with("is true")) {
+        eprintln!(
+            "NuSMV reported a false property; counterexample preserved at {}",
+            native_log.display()
+        );
+        return ExitCode::FAILURE;
+    }
+
+    println!(
+        "NuSMV oracle: passed; {} exhaustive properties; normalized evidence in {}",
+        result_lines.len(),
+        normalized_log.display()
+    );
+    ExitCode::SUCCESS
 }
 
 fn check_alloy_oracle() -> ExitCode {
