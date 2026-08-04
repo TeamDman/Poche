@@ -747,7 +747,7 @@ four-track coverage audit, checks the inventory/audit shape, and passes.
 
 ## Phase 3 — Shared finite, formal, environment, and interchange contracts
 
-### [ ] 3.1 Implement finite domains and refinement-safe encodings
+### [x] 3.1 Implement finite domains and refinement-safe encodings
 
 **Work:**
 
@@ -768,6 +768,17 @@ cargo test -p poche-domain phon_roundtrip
 
 **Completion criteria:** Every selected-scope state/action component has a
 canonical finite encoding and exhaustive round-trip/refinement tests.
+
+**Completed 2026-08-03:** `poche-domain` defines dense `FiniteDomain`
+cardinality/enumeration/encode/decode contracts for bounded integers, options,
+pairs, fixed arrays, finite sets, indices, suits/ranks/cards, distinct card
+sequences, and the G4 phase/turn/action/score components. The six-card G4
+partition accepts exactly two cards per player, one trump, and one undealt card
+and densely enumerates all 180 valid partitions rather than normalizing invalid
+assignments. Facet supplies wire reflection and Phon round trips the selected
+scope wire, after which player count, bid, unique cards, and partition are
+revalidated. All specified filtered tests and Clippy with `-D warnings` pass;
+every first spare code and malformed refinement is rejected.
 
 ### [ ] 3.2 Define the environment, observation, chance, and scoring boundary
 
