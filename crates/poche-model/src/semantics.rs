@@ -84,7 +84,7 @@ pub struct SemanticDiff {
 }
 
 /// Unified explicit transition action, including the sole terminal self-loop.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 #[repr(u8)]
 pub enum ModelAction {
     /// Explicit chance input.

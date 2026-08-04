@@ -3,7 +3,7 @@ use facet::Facet;
 use crate::{Bid, Card, CardSet, Deal, Player, Pot, RoundId, Score, Tricks};
 
 /// Coarse semantic phase, derived from the phase-specific state variant.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 #[repr(u8)]
 pub enum Phase {
     /// Chance supplies a complete deal partition.
@@ -19,7 +19,7 @@ pub enum Phase {
 }
 
 /// Exact action owner at the environment boundary.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 #[repr(u8)]
 pub enum TurnOwner {
     /// Explicit chance choice.
@@ -33,7 +33,7 @@ pub enum TurnOwner {
 }
 
 /// Ledger shared by every nonterminal phase.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 pub struct Ledger {
     pub(crate) dealer: Player,
     pub(crate) round: RoundId,
@@ -68,7 +68,7 @@ impl Ledger {
 }
 
 /// Chance-owned state before each round deal.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 pub struct AwaitingDeal {
     pub(crate) ledger: Ledger,
 }
@@ -82,7 +82,7 @@ impl AwaitingDeal {
 }
 
 /// Structurally exact bidding progress for two clockwise bids.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 #[repr(u8)]
 pub enum BidProgress {
     /// Dealer's left neighbor has not bid yet.
@@ -92,7 +92,7 @@ pub enum BidProgress {
 }
 
 /// Bidding state with a complete fixed card partition.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 pub struct Bidding {
     pub(crate) ledger: Ledger,
     pub(crate) hands: [CardSet; 2],
@@ -144,7 +144,7 @@ impl Bidding {
 }
 
 /// One public card play.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 pub struct PlayedCard {
     /// Playing seat.
     pub player: Player,
@@ -153,7 +153,7 @@ pub struct PlayedCard {
 }
 
 /// Current-trick progress. A complete two-card trick is resolved immediately.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 #[repr(u8)]
 pub enum TrickProgress {
     /// Leader is ready to establish the lead suit.
@@ -192,7 +192,7 @@ impl TrickProgress {
 }
 
 /// Strict trick-play state.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 pub struct Playing {
     pub(crate) ledger: Ledger,
     pub(crate) hands: [CardSet; 2],
@@ -256,7 +256,7 @@ impl Playing {
 
 /// Deterministic round-settlement state. Hands and current trick are
 /// structurally absent because all played cards are in captured piles.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 pub struct Scoring {
     pub(crate) ledger: Ledger,
     pub(crate) trump: Card,
@@ -287,7 +287,7 @@ impl Scoring {
 }
 
 /// Terminal state with score and pot projections kept separate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 pub struct Finished {
     pub(crate) scores: [Score; 2],
     pub(crate) pot: Pot,
@@ -315,7 +315,7 @@ impl Finished {
 }
 
 /// Phase-specific complete semantic game state.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 #[repr(u8)]
 pub enum Game {
     /// Chance-owned deal boundary.
@@ -494,7 +494,7 @@ impl Game {
 
 /// Information visible to one player. No field can contain another player's
 /// private hand.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 pub struct Observation {
     /// Coarse phase.
     pub phase: Phase,
@@ -545,7 +545,7 @@ impl Observation {
 }
 
 /// Player-policy action; chance and settlement cannot be represented here.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 #[repr(u8)]
 pub enum PlayerAction {
     /// Announce a fixed bid.
@@ -565,7 +565,7 @@ pub enum PlayerAction {
 }
 
 /// Explicit chance action; a random generator is outside semantic state.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
 #[repr(u8)]
 pub enum ChanceAction {
     /// Supply one of the 180 exact card partitions.
@@ -573,7 +573,7 @@ pub enum ChanceAction {
 }
 
 /// Complete legal choice surface with disjoint ownership.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum LegalActions {
     /// Chance choices.
     Chance(Vec<ChanceAction>),

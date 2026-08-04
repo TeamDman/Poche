@@ -327,6 +327,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "poche-check"
+version = "0.1.0"
+dependencies = [
+ "poche-model",
+]
+
+[[package]]
 name = "poche-conformance"
 version = "0.1.0"
 dependencies = [
@@ -382,6 +389,7 @@ version = "0.1.0"
 name = "poche-xtask"
 version = "0.1.0"
 dependencies = [
+ "poche-check",
  "poche-conformance",
  "poche-oracle-rust",
 ]

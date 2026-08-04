@@ -10,6 +10,7 @@ use std::io;
 use std::path::Path;
 use std::process::{Command, ExitCode, Output};
 
+use poche_check::{CheckScope, TerminationReason, explore};
 use poche_conformance::{Disposition, compare_rust_models};
 use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
 
@@ -39,6 +40,7 @@ fn main() -> ExitCode {
         Some(command) if command == OsStr::new("coverage") => coverage(args),
         Some(command) if command == OsStr::new("oracle") => oracle(args),
         Some(command) if command == OsStr::new("compare") => compare(args),
+        Some(command) if command == OsStr::new("check") => check(args),
         Some(command) => {
             eprintln!("unknown poche-xtask command: {}", command.to_string_lossy());
             usage();
@@ -57,8 +59,46 @@ fn usage() {
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog\n  \
          cargo run -p poche-xtask -- oracle report\n  \
-         cargo run -p poche-xtask -- compare rust-oracle rust-formal"
+         cargo run -p poche-xtask -- compare rust-oracle rust-formal\n  \
+         cargo run -p poche-xtask -- check rust-explicit --scope micro"
     );
+}
+
+fn check(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    let backend = args.next();
+    let scope_flag = args.next();
+    let scope = args.next();
+    if backend.as_deref() != Some(OsStr::new("rust-explicit"))
+        || scope_flag.as_deref() != Some(OsStr::new("--scope"))
+        || scope.as_deref() != Some(OsStr::new("micro"))
+        || args.next().is_some()
+    {
+        usage();
+        return ExitCode::from(2);
+    }
+    let graph = match explore(CheckScope::Micro) {
+        Ok(graph) => graph,
+        Err(error) => {
+            eprintln!("explicit Rust exploration failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let stats = graph.stats();
+    println!("scope: {}", graph.scope().id());
+    println!(
+        "states={} transitions={} duplicate-state-hits={} max-depth={}",
+        stats.states, stats.transitions, stats.duplicate_state_hits, stats.maximum_depth
+    );
+    println!(
+        "initial-states={} finished-states={} termination={:?}",
+        stats.initial_states, stats.finished_states, stats.termination
+    );
+    if stats.termination != TerminationReason::ReachableStateSpaceExhausted {
+        eprintln!("explicit Rust exploration was not exhaustive");
+        return ExitCode::FAILURE;
+    }
+    println!("explicit Rust exploration: passed");
+    ExitCode::SUCCESS
 }
 
 fn compare(mut args: impl Iterator<Item = OsString>) -> ExitCode {

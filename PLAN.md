@@ -1036,7 +1036,7 @@ validation commands pass.
 
 ## Phase 5 — Exhaustive Rust checking and sampled testing
 
-### [ ] 5.1 Implement deterministic explicit-state exploration
+### [x] 5.1 Implement deterministic explicit-state exploration
 
 **Work:**
 
@@ -1057,6 +1057,19 @@ cargo run -p poche-xtask -- check rust-explicit --scope micro
 
 **Completion criteria:** Runs are deterministic and a known false invariant
 produces the expected shortest trace.
+
+**Completion notes (2026-08-03):** Added `poche-check` and
+`docs/explicit-checker.md`. Structural `Hash`/`Eq` on strict states/actions feeds
+a deterministic BFS whose hash map is membership-only, with canonical action
+ordering, graph-local discovery IDs, shortest predecessor/action records, trace
+reconstruction, duplicate counts, explicit cutoff/exhaustion reasons, and
+fail-closed legal-transition errors. The exact named scope
+`micro-2p-2s-3r-6c-schedule-1-2-1` begins from both prepared dealers, enumerates
+all applicable 120/180 deals, and includes the terminal absorb edge. With no
+symmetry reduction it exhausts 431,800 states and 549,896 transitions, records
+118,098 duplicate-state hits, maximum depth 20, and 176 `Finished` states. The
+known false phase invariant yields and replays the expected one-step shortest
+counterexample. Both tests and the unbounded CLI gate pass.
 
 ### [ ] 5.2 Exhaustively check the safety catalog
 
