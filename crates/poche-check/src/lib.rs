@@ -4,6 +4,9 @@
 
 //! Deterministic explicit-state exploration for the strict Poche model.
 
+mod evidence;
+mod safety;
+
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::fmt;
@@ -11,6 +14,9 @@ use std::fmt;
 use poche_model::{
     ChanceAction, Game, LegalActions, ModelAction, ModelError, Player, PlayerAction,
 };
+
+pub use evidence::{DefectEvidence, InjectedDefect, injected_defect_evidence};
+pub use safety::{PropertyMeasurements, SafetyFailure, SafetyReport, check_safety_catalog};
 
 /// Stable name for a fully declared finite transition system.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -166,6 +172,18 @@ impl ExplicitGraph {
             states,
             actions,
         })
+    }
+
+    /// Reconstruct a shortest prefix to `edge.from`, then append this exact
+    /// edge even when the successor was first discovered by another path.
+    #[must_use]
+    pub fn trace_through_edge(&self, edge: Edge) -> Option<Counterexample> {
+        let mut trace = self.shortest_trace(edge.from)?;
+        trace.actions.push(edge.action);
+        trace.states.push(self.state(edge.to)?);
+        trace.target = edge.to;
+        trace.depth += 1;
+        Some(trace)
     }
 }
 
@@ -484,6 +502,14 @@ fn insert_state(
     predecessors.push(predecessor);
     canonical.insert(state, id);
     Ok(id)
+}
+
+#[cfg(test)]
+fn exhaustive_test_graph() -> &'static ExplicitGraph {
+    use std::sync::OnceLock;
+
+    static GRAPH: OnceLock<ExplicitGraph> = OnceLock::new();
+    GRAPH.get_or_init(|| explore(CheckScope::Micro).expect("micro test graph explores"))
 }
 
 #[cfg(test)]

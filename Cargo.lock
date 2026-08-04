@@ -330,6 +330,8 @@ dependencies = [
 name = "poche-check"
 version = "0.1.0"
 dependencies = [
+ "phon",
+ "poche-interchange",
  "poche-model",
 ]
 

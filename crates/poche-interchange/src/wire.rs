@@ -469,6 +469,39 @@ pub struct RawDiagnosticWire {
     pub text: String,
 }
 
+/// Semantic projection in which a counterexample exposes a disagreement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet)]
+#[repr(u8)]
+pub enum ProjectionKindWire {
+    /// Complete hidden semantic state.
+    State,
+    /// One viewer's information projection.
+    Observation,
+    /// Legal action set or ownership surface.
+    LegalActions,
+    /// State-transition successor or provenance.
+    Transition,
+    /// Raw round-score/payment event.
+    RoundScore,
+    /// Terminal score/money outcome.
+    GameOutcome,
+}
+
+/// Expected-versus-actual projection difference carried by a counterexample.
+#[derive(Clone, Debug, PartialEq, Eq, Facet)]
+pub struct ProjectionDiffWire {
+    /// Projection family.
+    pub projection: ProjectionKindWire,
+    /// Stable field/index or expression path.
+    pub path: String,
+    /// Correct model projection.
+    pub expected: String,
+    /// Defective/backend projection.
+    pub actual: String,
+    /// Rules that make the projections disagree.
+    pub rule_ids: Vec<String>,
+}
+
 /// Normalized result from any native or Rust backend.
 #[derive(Clone, Debug, PartialEq, Eq, Facet)]
 pub struct SolverResultWire {
@@ -486,6 +519,8 @@ pub struct SolverResultWire {
     pub statistics: StatisticsWire,
     /// Original tool output and adapter diagnostics.
     pub raw_diagnostics: Vec<RawDiagnosticWire>,
+    /// Typed expected/actual differences explaining a counterexample.
+    pub counterexample_diffs: Vec<ProjectionDiffWire>,
 }
 
 /// Model-neutral fixture independently consumable by native adapters.

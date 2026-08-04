@@ -10,6 +10,8 @@ publish = false
 
 [dependencies]
 poche-model = { path = "../poche-model" }
+poche-interchange = { path = "../poche-interchange" }
+phon.workspace = true
 
 [lints]
 workspace = true

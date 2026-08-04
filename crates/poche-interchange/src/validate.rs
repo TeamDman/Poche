@@ -163,6 +163,24 @@ fn validate_result(result: &SolverResultWire, path: &str) -> Result<(), Validati
             &format!("{path}.raw_diagnostics[{index}].severity"),
         )?;
     }
+    for (index, diff) in result.counterexample_diffs.iter().enumerate() {
+        let diff_path = format!("{path}.counterexample_diffs[{index}]");
+        require_text(&diff.path, &format!("{diff_path}.path"))?;
+        require_text(&diff.expected, &format!("{diff_path}.expected"))?;
+        require_text(&diff.actual, &format!("{diff_path}.actual"))?;
+        if diff.expected == diff.actual {
+            return Err(ValidationError::new(
+                diff_path,
+                "counterexample diff must change a projection",
+            ));
+        }
+        if diff.rule_ids.is_empty() || diff.rule_ids.iter().any(String::is_empty) {
+            return Err(ValidationError::new(
+                format!("{diff_path}.rule_ids"),
+                "counterexample diff must retain nonempty rule origins",
+            ));
+        }
+    }
     if let Some(trace) = &result.trace {
         validate_trace(trace, path)?;
         if trace.context != result.context {

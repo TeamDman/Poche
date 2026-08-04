@@ -129,6 +129,12 @@ impl Bidding {
         self.trump
     }
 
+    /// Cards outside both hands and trump.
+    #[must_use]
+    pub const fn undealt(self) -> CardSet {
+        self.undealt
+    }
+
     /// Public fixed bids made so far.
     #[must_use]
     pub const fn bids(self) -> [Option<Bid>; 2] {
@@ -235,6 +241,12 @@ impl Playing {
         self.trump
     }
 
+    /// Cards outside both hands, trump, trick, and captures.
+    #[must_use]
+    pub const fn undealt(self) -> CardSet {
+        self.undealt
+    }
+
     /// Fixed bids.
     #[must_use]
     pub const fn bids(self) -> [Bid; 2] {
@@ -251,6 +263,12 @@ impl Playing {
     #[must_use]
     pub const fn tricks_won(self) -> [Tricks; 2] {
         self.tricks_won
+    }
+
+    /// Captured cards indexed by trick winner.
+    #[must_use]
+    pub const fn captured(self) -> [CardSet; 2] {
+        self.captured
     }
 }
 
@@ -273,6 +291,18 @@ impl Scoring {
         self.ledger
     }
 
+    /// Revealed trump card retained through settlement.
+    #[must_use]
+    pub const fn trump(self) -> Card {
+        self.trump
+    }
+
+    /// Cards outside player hands, trump, and captured tricks.
+    #[must_use]
+    pub const fn undealt(self) -> CardSet {
+        self.undealt
+    }
+
     /// Fixed bids.
     #[must_use]
     pub const fn bids(self) -> [Bid; 2] {
@@ -283,6 +313,12 @@ impl Scoring {
     #[must_use]
     pub const fn tricks_won(self) -> [Tricks; 2] {
         self.tricks_won
+    }
+
+    /// Captured cards indexed by trick winner.
+    #[must_use]
+    pub const fn captured(self) -> [CardSet; 2] {
+        self.captured
     }
 }
 

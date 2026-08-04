@@ -1071,7 +1071,7 @@ symmetry reduction it exhausts 431,800 states and 549,896 transitions, records
 known false phase invariant yields and replays the expected one-step shortest
 counterexample. Both tests and the unbounded CLI gate pass.
 
-### [ ] 5.2 Exhaustively check the safety catalog
+### [x] 5.2 Exhaustively check the safety catalog
 
 **Work:**
 
@@ -1088,6 +1088,20 @@ cargo test -p poche-check injected_defects
 
 **Completion criteria:** The micro-model passes every safety claim and each
 injected defect yields a readable, relevant counterexample.
+
+**Completion notes (2026-08-03):** Added exhaustive catalog evaluation and
+`docs/safety-checking.md`. Seven state obligations execute on all 431,800
+reachable states and seven transition obligations on all 549,896 edges,
+covering every non-liveness catalog property (with terminal absorption checked
+at both levels); failures retain catalog rule origins and the shortest exact
+state/edge replay. Universal SCC termination remains correctly assigned to
+5.3. Four controlled mutations—follow-suit freedom, rank-only winner,
+opponent-hand observation leak, and partial bonus for all tricks—are each
+discriminated by a relevant reachable G4 checkpoint. Counterexamples carry
+complete states, correct viewer observations/actions, applicable semantic
+state diffs, typed expected/actual projection diffs, and rule/source origins in
+`EvidenceBundleWire`; Phon encode/decode and post-decode semantic validation
+pass for every witness. Both required tests pass.
 
 ### [ ] 5.3 Check deadlocks and universal termination
 

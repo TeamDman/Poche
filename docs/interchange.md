@@ -13,6 +13,7 @@ schemas for:
 - named finite scopes, backend versions, subjects, rule origins, and confidence;
 - complete states, per-player observations, player and chance actions;
 - raw round scores, money outcomes, transitions, state diffs, and traces;
+- typed state/observation/action/score projection diffs on counterexamples;
 - Prolog bindings, normalized solver status, statistics, and raw diagnostics.
 
 Cross-model comparison intentionally permits the fixture and result to name

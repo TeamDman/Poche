@@ -2,9 +2,10 @@ use poche_interchange::{
     BackendKindWire, BackendWire, ChanceActionWire, ChanceProvenanceWire, ConfidenceKindWire,
     ConfidenceWire, EnvironmentActionWire, EvidenceBundleWire, EvidenceContextWire, FixtureWire,
     GameOutcomeWire, ModelIdentityWire, ObservationWire, PhaseWire, PlayerActionWire, PotShareWire,
-    PrologBindingWire, RawDiagnosticWire, RoundScoreWire, RuleRefWire, ScopeWire, SemanticHashWire,
-    SolverResultWire, SolverStatusWire, StateDiffWire, StateWire, StatisticWire, StatisticsWire,
-    SubjectKindWire, SubjectWire, TraceStepWire, TraceWire, TransitionWire, ValidatedEvidence,
+    ProjectionDiffWire, ProjectionKindWire, PrologBindingWire, RawDiagnosticWire, RoundScoreWire,
+    RuleRefWire, ScopeWire, SemanticHashWire, SolverResultWire, SolverStatusWire, StateDiffWire,
+    StateWire, StatisticWire, StatisticsWire, SubjectKindWire, SubjectWire, TraceStepWire,
+    TraceWire, TransitionWire, ValidatedEvidence,
 };
 
 fn hash(byte: u8) -> SemanticHashWire {
@@ -102,6 +103,10 @@ fn observation(state: &StateWire, viewer: u8) -> ObservationWire {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one literal bundle keeps every interchange field visible in the roundtrip fixture"
+)]
 fn sample_bundle() -> EvidenceBundleWire {
     let fixture_context = context(
         "poche-rust-oracle",
@@ -199,6 +204,13 @@ fn sample_bundle() -> EvidenceBundleWire {
                 stream: "stdout".to_owned(),
                 severity: "info".to_owned(),
                 text: "SAT".to_owned(),
+            }],
+            counterexample_diffs: vec![ProjectionDiffWire {
+                projection: ProjectionKindWire::LegalActions,
+                path: "legal_actions".to_owned(),
+                expected: "bid(0..=2)".to_owned(),
+                actual: "bid(0..=1)".to_owned(),
+                rule_ids: vec!["R-BID-004".to_owned()],
             }],
         },
     }
