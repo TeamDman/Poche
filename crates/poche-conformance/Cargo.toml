@@ -1,5 +1,5 @@
 [package]
-name = "poche-xtask"
+name = "poche-conformance"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-poche-conformance = { path = "../poche-conformance" }
+poche-model = { path = "../poche-model" }
 poche-oracle-rust = { path = "../poche-oracle-rust" }
 
 [lints]

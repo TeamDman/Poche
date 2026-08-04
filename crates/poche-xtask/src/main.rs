@@ -10,6 +10,7 @@ use std::io;
 use std::path::Path;
 use std::process::{Command, ExitCode, Output};
 
+use poche_conformance::{Disposition, compare_rust_models};
 use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
 
 const COVERAGE_TRACKS: [(&str, usize); 4] =
@@ -37,6 +38,7 @@ fn main() -> ExitCode {
         Some(command) if command == OsStr::new("doctor") => doctor(),
         Some(command) if command == OsStr::new("coverage") => coverage(args),
         Some(command) if command == OsStr::new("oracle") => oracle(args),
+        Some(command) if command == OsStr::new("compare") => compare(args),
         Some(command) => {
             eprintln!("unknown poche-xtask command: {}", command.to_string_lossy());
             usage();
@@ -54,8 +56,50 @@ fn usage() {
         "usage:\n  cargo run -p poche-xtask -- doctor\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog\n  \
-         cargo run -p poche-xtask -- oracle report"
+         cargo run -p poche-xtask -- oracle report\n  \
+         cargo run -p poche-xtask -- compare rust-oracle rust-formal"
     );
+}
+
+fn compare(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    let left = args.next();
+    let right = args.next();
+    if left.as_deref() != Some(OsStr::new("rust-oracle"))
+        || right.as_deref() != Some(OsStr::new("rust-formal"))
+        || args.next().is_some()
+    {
+        usage();
+        return ExitCode::from(2);
+    }
+    let report = match compare_rust_models() {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("Rust model conformance failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    for case in &report.cases {
+        if let Disposition::ClassifiedDifference(class) = case.disposition {
+            println!(
+                "classified difference: {} ({class:?}); rules={}",
+                case.id,
+                case.rule_ids.join(",")
+            );
+        }
+    }
+    println!(
+        "Rust model conformance: {} matches, {} classified differences",
+        report.match_count(),
+        report.difference_count()
+    );
+    println!(
+        "exact common prefix: {} observations, {} legal-action sets, {} transitions",
+        report.observations_compared,
+        report.legal_action_sets_compared,
+        report.transitions_compared
+    );
+    println!("Rust model conformance: passed with zero unclassified differences");
+    ExitCode::SUCCESS
 }
 
 fn oracle(mut args: impl Iterator<Item = OsString>) -> ExitCode {

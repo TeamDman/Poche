@@ -1000,7 +1000,7 @@ trace. The catalog explicitly leaves global deadlock/termination proof to Phase
 5 graph exploration. The named property test and strict Rust coverage audit pass
 with zero todos.
 
-### [ ] 4.4 Compare conventional and strict Rust models
+### [x] 4.4 Compare conventional and strict Rust models
 
 **Work:**
 
@@ -1019,6 +1019,20 @@ cargo run -p poche-xtask -- compare rust-oracle rust-formal
 
 **Completion criteria:** The agreed fixture corpus matches or carries explicit
 classified discrepancies tied to rule IDs and decisions.
+
+**Completion notes (2026-08-03):** Added the independent
+`poche-conformance` harness and `docs/rust-conformance.md`. A canonical
+six-card-to-52-card embedding replays the exact shared `1,2` prefix and compares
+28 viewer observations, 10 legal player-action sets, 14 paired transitions,
+round-score events, cumulative scores/pot, and local terminal status. Separate
+discriminating traces cover unrestricted total bids, zero bids, follow-suit,
+void trump play, off-suit loss, exact/all/miss scoring, winner-led play, and
+dealer rotation. Both complete schedules are then checked for terminal
+one-card scoring, maximum-score winner masks, and pot division. All 15 shared
+scenario IDs are audited. Schedule cardinality, card-universe cardinality, and
+prepared-dealer selection remain four explicit differences under three stable
+classes tied to their rule IDs; there are zero unclassified differences. Both
+validation commands pass.
 
 ## Phase 5 — Exhaustive Rust checking and sampled testing
 
