@@ -7,8 +7,10 @@ fixtures and evidence.
 
 - [Execution plan](PLAN.md)
 - [Typst rule source](docs/main.typ)
-- [Pretty rules](https://teamdman.github.io/Poche/) — published by GitHub Pages
-  once the documentation workflow is established
+- [Pretty rules](https://teamdman.github.io/Poche/) — generated from the current
+  `model-checking` source by GitHub Pages
+- [Direct rulebook PDF](https://teamdman.github.io/Poche/poche-rules.pdf)
+- [Publication and format decision](docs/pages-publication.md)
 
 The current goal covers the four models, named finite-scope checking,
 cross-model conformance, and published documentation. Reinforcement learning,
