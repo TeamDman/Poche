@@ -21,6 +21,9 @@ proof class, verification strategy, and equivalent native checks.
 | `finished-absorbing` | transition | terminal-only self-loop | exhaustive successor check |
 | `final-winner-semantics` | reachable state | `WinnerMask` Weavy kernel | finite kernel and reachable-state check |
 
-Structural claims are not presented as state-space discoveries. Conversely,
-`universal-termination` is not treated as proven merely because example games
-finish: Task 5.3 must establish the SCC obligation for the named scope.
+Structural claims are not presented as state-space discoveries. The Task 5.3
+checker now establishes `universal-termination` for the exact named
+`micro-2p-2s-3r-6c-schedule-1-2-1` scope: all 431,800 SCCs are singletons, the
+only 176 cyclic SCCs are terminal absorb loops, and there are no nonterminal
+deadlocks or progress-rank violations. This does not generalize to the full deck
+or other player counts.

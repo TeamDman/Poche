@@ -5,6 +5,7 @@
 //! Deterministic explicit-state exploration for the strict Poche model.
 
 mod evidence;
+mod liveness;
 mod safety;
 
 use std::collections::{HashMap, VecDeque};
@@ -16,6 +17,10 @@ use poche_model::{
 };
 
 pub use evidence::{DefectEvidence, InjectedDefect, injected_defect_evidence};
+pub use liveness::{
+    Lasso, LivenessError, LivenessReport, TemporalEdge, analyze_liveness,
+    analyze_with_nonterminal_stutter, progress_rank,
+};
 pub use safety::{PropertyMeasurements, SafetyFailure, SafetyReport, check_safety_catalog};
 
 /// Stable name for a fully declared finite transition system.

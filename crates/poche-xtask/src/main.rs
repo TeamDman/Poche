@@ -10,7 +10,7 @@ use std::io;
 use std::path::Path;
 use std::process::{Command, ExitCode, Output};
 
-use poche_check::{CheckScope, TerminationReason, explore};
+use poche_check::{CheckScope, TerminationReason, analyze_liveness, explore};
 use poche_conformance::{Disposition, compare_rust_models};
 use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
 
@@ -60,19 +60,16 @@ fn usage() {
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog\n  \
          cargo run -p poche-xtask -- oracle report\n  \
          cargo run -p poche-xtask -- compare rust-oracle rust-formal\n  \
-         cargo run -p poche-xtask -- check rust-explicit --scope micro"
+         cargo run -p poche-xtask -- check rust-explicit --scope micro\n  \
+         cargo run -p poche-xtask -- check rust-explicit --property game-terminates"
     );
 }
 
 fn check(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     let backend = args.next();
-    let scope_flag = args.next();
-    let scope = args.next();
-    if backend.as_deref() != Some(OsStr::new("rust-explicit"))
-        || scope_flag.as_deref() != Some(OsStr::new("--scope"))
-        || scope.as_deref() != Some(OsStr::new("micro"))
-        || args.next().is_some()
-    {
+    let mode = args.next();
+    let value = args.next();
+    if backend.as_deref() != Some(OsStr::new("rust-explicit")) || args.next().is_some() {
         usage();
         return ExitCode::from(2);
     }
@@ -97,8 +94,51 @@ fn check(mut args: impl Iterator<Item = OsString>) -> ExitCode {
         eprintln!("explicit Rust exploration was not exhaustive");
         return ExitCode::FAILURE;
     }
-    println!("explicit Rust exploration: passed");
-    ExitCode::SUCCESS
+    match (mode.as_deref(), value.as_deref()) {
+        (Some(flag), Some(scope))
+            if flag == OsStr::new("--scope") && scope == OsStr::new("micro") =>
+        {
+            println!("explicit Rust exploration: passed");
+            ExitCode::SUCCESS
+        }
+        (Some(flag), Some(property))
+            if flag == OsStr::new("--property") && property == OsStr::new("game-terminates") =>
+        {
+            let report = match analyze_liveness(&graph) {
+                Ok(report) => report,
+                Err(error) => {
+                    eprintln!("liveness analysis failed: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            println!(
+                "sccs={} cyclic={} nonterminal-cyclic={} deadlocks={}",
+                report.strongly_connected_components,
+                report.cyclic_components,
+                report.nonterminal_cyclic_components,
+                report.nonterminal_deadlocks.len()
+            );
+            println!(
+                "terminal-edge-violations={} progress-violations={} max-progress-rank={}",
+                report.terminal_edge_violations.len(),
+                report.progress_violations.len(),
+                report.maximum_progress_rank
+            );
+            if !report.universal_termination || !report.progress_violations.is_empty() {
+                eprintln!("universal micro-game termination was not established");
+                return ExitCode::FAILURE;
+            }
+            println!(
+                "property game-terminates: proven for {}",
+                graph.scope().id()
+            );
+            ExitCode::SUCCESS
+        }
+        _ => {
+            usage();
+            ExitCode::from(2)
+        }
+    }
 }
 
 fn compare(mut args: impl Iterator<Item = OsString>) -> ExitCode {

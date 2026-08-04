@@ -1103,7 +1103,7 @@ state diffs, typed expected/actual projection diffs, and rule/source origins in
 `EvidenceBundleWire`; Phon encode/decode and post-decode semantic validation
 pass for every witness. Both required tests pass.
 
-### [ ] 5.3 Check deadlocks and universal termination
+### [x] 5.3 Check deadlocks and universal termination
 
 **Work:**
 
@@ -1122,6 +1122,19 @@ cargo run -p poche-xtask -- check rust-explicit --property game-terminates
 
 **Completion criteria:** Universal termination is proven for the named scope or a
 replayable lasso is reported; injected stuttering is detected.
+
+**Completion notes (2026-08-03):** Added CSR adjacency, Tarjan SCC analysis,
+deadlock/terminal-edge auditing, prefix-plus-cycle reconstruction, an exact
+phase-specific countdown rank, and `docs/liveness-checking.md`. The raw named
+micro graph has 431,800 singleton SCCs; its only 176 cyclic SCCs are the 176
+`Finished` absorb loops. There are zero nonterminal deadlocks, malformed
+terminal edge sets, nonterminal cyclic SCCs, or rank violations. The rank is 20
+at both prepared initial dealers, zero at `Finished`, and drops exactly once on
+all nonterminal edges. Finite totality plus absence of nonterminal cycles proves
+`AF Finished` from every initial state without fairness assumptions. A
+controlled initial-state stutter is detected as one nonterminal SCC and yields
+the expected depth-zero prefix plus closed actionless one-edge lasso. All three
+validation commands pass.
 
 ### [ ] 5.4 Add complementary `Arbitrary` and larger-scope tests
 
