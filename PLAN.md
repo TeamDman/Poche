@@ -495,7 +495,7 @@ must install those fonts in CI rather than silently depending on fallback fonts.
 The original OneDrive file remains untouched, `docs/main.pdf` is ignored, and no
 PDF is tracked.
 
-### [ ] 1.4 Extract stable rule IDs and create the cross-track coverage ledger
+### [x] 1.4 Extract stable rule IDs and create the cross-track coverage ledger
 
 **Work:**
 
@@ -521,7 +521,18 @@ rg -n "U(?:[1-9]|1[0-9]|2[0-9])" PLAN.md
 all four model tracks have explicit dispositions, future-RL-relevant boundaries
 are flagged, and all U1–U29 requirements remain traceable.
 
-### [ ] 1.5 Establish the remote default branch and Pages deployment policy
+**Completion notes (2026-08-03):** `docs/rules-coverage.md` defines 61 stable
+rule IDs with precise `docs/main.typ` line anchors, Rust/Alloy/NuSMV/Prolog
+dispositions, future-RL relevance, and explanatory notes. It explicitly
+distinguishes full-rule comprehensiveness from named-scope exhaustiveness and
+marks physical/documentary non-applicability with reasons. `poche-xtask coverage
+audit` validates row structure, IDs, anchors, disposition vocabulary, and the
+paired U1–U29 guidance ledger/traceability rows. The structural audit passed and
+truthfully reported current `todo` counts (Rust 57, Alloy 53, NuSMV 53, Prolog
+56); strict `--track`/`--all` modes fail until selected model evidence replaces
+those cells.
+
+### [x] 1.5 Establish the remote default branch and Pages deployment policy
 
 **Work:**
 
@@ -551,6 +562,16 @@ gh pr list --repo TeamDman/Poche --state open --json number,baseRefName,headRefN
 `model-checking`, Pages reports an Actions/workflow publishing configuration,
 affected protections/PR bases are recorded or updated deliberately, and `main`
 has not been destructively removed.
+
+**Completion notes (2026-08-03):** After pushing foundation commit `765cb9c`,
+GitHub preflight showed default `main`, zero open PRs, no rulesets or branch
+protection, no Pages site, and no environments. Changed the default to
+`model-checking`, created Pages in workflow mode at
+`https://teamdman.github.io/Poche/`, and verified HTTPS enforcement. GitHub
+created a `github-pages` environment with custom deployment policy restricted to
+`model-checking`. Actions are enabled; the default workflow token is read-only.
+The untouched `main` branch remains at `0a19283`. Full evidence and rollback
+steps are in `docs/decisions/0002-github-head-and-pages-policy.md`.
 
 ## Phase 2 — Independent native oracle models
 

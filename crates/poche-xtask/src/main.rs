@@ -2,10 +2,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::io;
+use std::path::Path;
 use std::process::{Command, ExitCode, Output};
+
+const COVERAGE_TRACKS: [(&str, usize); 4] =
+    [("rust", 3), ("alloy", 4), ("nusmv", 5), ("prolog", 6)];
 
 struct Tool<'a> {
     label: &'a str,
@@ -27,6 +33,7 @@ fn main() -> ExitCode {
 
     match args.next().as_deref() {
         Some(command) if command == OsStr::new("doctor") => doctor(),
+        Some(command) if command == OsStr::new("coverage") => coverage(args),
         Some(command) => {
             eprintln!("unknown poche-xtask command: {}", command.to_string_lossy());
             usage();
@@ -40,7 +47,213 @@ fn main() -> ExitCode {
 }
 
 fn usage() {
-    eprintln!("usage: cargo run -p poche-xtask -- doctor");
+    eprintln!(
+        "usage:\n  cargo run -p poche-xtask -- doctor\n  \
+         cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]"
+    );
+}
+
+fn coverage(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("audit")) {
+        usage();
+        return ExitCode::from(2);
+    }
+
+    let mut strict_track = None;
+    let mut strict_all = false;
+    while let Some(argument) = args.next() {
+        if argument == OsStr::new("--all") {
+            strict_all = true;
+        } else if argument == OsStr::new("--track") {
+            let Some(track) = args.next() else {
+                eprintln!("--track requires rust, alloy, nusmv, or prolog");
+                return ExitCode::from(2);
+            };
+            strict_track = Some(track.to_string_lossy().into_owned());
+        } else {
+            eprintln!(
+                "unknown coverage-audit option: {}",
+                argument.to_string_lossy()
+            );
+            return ExitCode::from(2);
+        }
+    }
+
+    if strict_all && strict_track.is_some() {
+        eprintln!("choose either --all or --track, not both");
+        return ExitCode::from(2);
+    }
+
+    if let Some(selected) = strict_track.as_deref()
+        && !COVERAGE_TRACKS.iter().any(|(track, _)| *track == selected)
+    {
+        eprintln!("unknown coverage track: {selected}");
+        return ExitCode::from(2);
+    }
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let coverage_path = root.join("docs/rules-coverage.md");
+    let plan_path = root.join("PLAN.md");
+    let coverage_text = match fs::read_to_string(&coverage_path) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("failed to read {}: {error}", coverage_path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let plan_text = match fs::read_to_string(&plan_path) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("failed to read {}: {error}", plan_path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+
+    run_coverage_audit(
+        &coverage_text,
+        &plan_text,
+        strict_all,
+        strict_track.as_deref(),
+    )
+}
+
+fn run_coverage_audit(
+    coverage_text: &str,
+    plan_text: &str,
+    strict_all: bool,
+    strict_track: Option<&str>,
+) -> ExitCode {
+    let mut errors = Vec::new();
+    let mut seen_rules = BTreeMap::new();
+    let mut pending = BTreeMap::from([
+        ("rust", 0_usize),
+        ("alloy", 0_usize),
+        ("nusmv", 0_usize),
+        ("prolog", 0_usize),
+    ]);
+
+    for (line_index, line) in coverage_text.lines().enumerate() {
+        let cells = markdown_cells(line);
+        let Some(rule_id) = cells.first().filter(|cell| cell.starts_with("R-")) else {
+            continue;
+        };
+        let line_number = line_index + 1;
+
+        if cells.len() != 9 {
+            errors.push(format!(
+                "{rule_id} on line {line_number} has {} cells; expected 9",
+                cells.len()
+            ));
+            continue;
+        }
+        if let Some(first_line) = seen_rules.insert((*rule_id).to_owned(), line_number) {
+            errors.push(format!(
+                "duplicate {rule_id} on lines {first_line} and {line_number}"
+            ));
+        }
+        if !is_source_anchor(cells[1]) {
+            errors.push(format!(
+                "{rule_id} has invalid source anchor `{}`",
+                cells[1]
+            ));
+        }
+        if cells[2].is_empty() || cells[7].is_empty() || cells[8].is_empty() {
+            errors.push(format!(
+                "{rule_id} must have a rule, future-RL flag, and notes"
+            ));
+        }
+
+        for (track, index) in COVERAGE_TRACKS {
+            let disposition = cells[index];
+            if !is_disposition(disposition) {
+                errors.push(format!(
+                    "{rule_id} has invalid {track} disposition `{disposition}`"
+                ));
+                continue;
+            }
+            if disposition == "todo" {
+                *pending.get_mut(track).expect("known track") += 1;
+                let selected = strict_all || strict_track == Some(track);
+                if selected {
+                    errors.push(format!("{rule_id} remains todo for {track}"));
+                }
+            }
+        }
+    }
+
+    if seen_rules.is_empty() {
+        errors.push("no rule rows found".to_owned());
+    }
+    audit_guidance(plan_text, &mut errors);
+
+    println!("coverage rules: {}", seen_rules.len());
+    for (track, _) in COVERAGE_TRACKS {
+        println!("{track} todo: {}", pending[track]);
+    }
+
+    if errors.is_empty() {
+        println!("coverage audit: passed");
+        ExitCode::SUCCESS
+    } else {
+        for error in &errors {
+            eprintln!("coverage audit: {error}");
+        }
+        eprintln!("coverage audit: failed with {} error(s)", errors.len());
+        ExitCode::FAILURE
+    }
+}
+
+fn markdown_cells(line: &str) -> Vec<&str> {
+    line.trim()
+        .trim_matches('|')
+        .split('|')
+        .map(str::trim)
+        .collect()
+}
+
+fn is_source_anchor(value: &str) -> bool {
+    value.starts_with("`docs/main.typ:") && value.ends_with('`')
+}
+
+fn is_disposition(value: &str) -> bool {
+    value == "todo"
+        || [
+            "modeled: ",
+            "checked: ",
+            "queried: ",
+            "validated: ",
+            "n/a: ",
+            "deferred: ",
+        ]
+        .iter()
+        .any(|prefix| value.starts_with(prefix) && value.len() > prefix.len())
+}
+
+fn audit_guidance(plan: &str, errors: &mut Vec<String>) {
+    let mut counts = BTreeMap::<u32, usize>::new();
+    for line in plan.lines() {
+        let cells = markdown_cells(line);
+        let Some(id) = cells.first().and_then(|cell| cell.strip_prefix('U')) else {
+            continue;
+        };
+        if let Ok(number) = id.parse::<u32>() {
+            *counts.entry(number).or_default() += 1;
+        }
+    }
+
+    let Some(maximum) = counts.keys().next_back().copied() else {
+        errors.push("PLAN.md contains no guidance rows".to_owned());
+        return;
+    };
+    for number in 1..=maximum {
+        match counts.get(&number).copied().unwrap_or_default() {
+            2 => {}
+            0 => errors.push(format!("PLAN.md is missing U{number}")),
+            count => errors.push(format!(
+                "PLAN.md has {count} table rows for U{number}; expected ledger plus traceability"
+            )),
+        }
+    }
 }
 
 fn doctor() -> ExitCode {
@@ -185,7 +398,7 @@ fn first_nonempty_line(value: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::first_nonempty_line;
+    use super::{first_nonempty_line, is_disposition, is_source_anchor, markdown_cells};
 
     #[test]
     fn version_summary_uses_first_nonempty_line() {
@@ -194,5 +407,16 @@ mod tests {
             Some("version 1.2")
         );
         assert_eq!(first_nonempty_line("\n\r\n"), None);
+    }
+
+    #[test]
+    fn coverage_rows_are_split_and_validated() {
+        let cells = markdown_cells("| R-X-001 | `docs/main.typ:1-2` | Rule | todo |");
+        assert_eq!(cells, ["R-X-001", "`docs/main.typ:1-2`", "Rule", "todo"]);
+        assert!(is_source_anchor(cells[1]));
+        assert!(is_disposition(cells[3]));
+        assert!(is_disposition("checked: property P1"));
+        assert!(!is_disposition("checked:"));
+        assert!(!is_disposition("pending"));
     }
 }
