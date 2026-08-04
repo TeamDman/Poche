@@ -56,16 +56,22 @@ authority for what was built; the rows below govern this phase.
 | U44 | The prior round-end score decision remains important: score is a meaningful intermediary reward in Poche because score is the objective. | Version the RL reward projection; the default candidate emits the acting seat's raw round points at `RoundScoreEvent` and zero between score boundaries, while keeping outcomes and money separate. |
 | U45 | MPL-2.0 remains the preferred project license. | New first-party crates, protocol specifications, models, and source files use MPL-2.0; third-party dependencies and copied ideas receive a license/provenance audit. |
 | U46 | Research how the principles of the existing formal project can continue evolving, not merely bolt features onto it. | Preserve strong types, explicit chance/action ownership, viewer-scoped observations, semantic hashes, independent oracles, controlled defects, exact scopes, and honest evidence labels throughout this phase. |
+| U47 | If Veilid cannot support a browser-only client with no on-device companion, that result should inform the broader technology direction, including whether a Vulkan renderer is worth its loss of web portability. Use `G:\Programming\Repos\cursor-latency` and `G:\Programming\Repos\ash` as local rendering references. | Treat browser-only Veilid as an architectural fork, not a pass/fail deployment footnote. Compare a portable client against a native Vulkan path using measured portability, latency, complexity, distribution, and privacy consequences before committing the renderer architecture. |
+| U48 | Any player may pause the game, and while it is paused any player may unpause it. | Make pause and unpause single authorized player commands with no voting, acknowledgement quorum, or host override. Verify the exact policy in Rust and every applicable oracle, including repeated/concurrent/idempotent commands. |
+| U49 | Keep the first UI simple; egui is an acceptable preferred choice. | Use egui as the default client-renderer candidate and require a concrete incompatibility or materially better evidence to replace it. Keep rendering a projection consumer so native and web targets can share UI logic when the selected egui backend permits. |
+| U50 | If Veilid does not work well for a browser-only client, investigate Datastar and a hostable server binary as a less-anonymous alternative, using `G:\Programming\Repos\datastar` and `G:\Programming\Repos\datastar-rust`. | Spike a Datastar/Rust server topology alongside the browser-Veilid test. Compare self-hosting, server trust and metadata visibility, identity, room routing, reconnect, operations, and protocol parity; publish the anonymity/trust tradeoff rather than presenting it as equivalent to Veilid. |
 
 ## Intent audit evidence
 
 - **Pass 1 — extraction:** Reread the complete current request and the relevant
-  confirmed predecessor guidance. U30-U46 preserve the three tracks, text-first
+  confirmed predecessor guidance. U30-U50 preserve the three tracks, text-first
   ordering, Veilid room-code web goal, TPBAC/key authorization, every named room
   state, fast loopback, CLI template, chat, durable reconnect identity,
   spectator hand grants/revocation, Burn, PufferLib-as-reference, round scores,
-  MPL-2.0, and the request to extend the existing principles.
-- **Pass 2 — traceability:** Verified every active U30-U46 row maps to at least
+  MPL-2.0, the request to extend the existing principles, the exact any-player
+  pause/unpause policy, the egui preference, the native Vulkan portability fork,
+  and a potentially less-anonymous Datastar/server fallback.
+- **Pass 2 — traceability:** Verified every active U30-U50 row maps to at least
   one concrete task and completion criterion. Checked protocol, session,
   authorization, formal-model, CLI, Veilid, rendering, RL, training, evidence,
   and documentation sections for weakened or missing requirements.
@@ -73,7 +79,10 @@ authority for what was built; the rows below govern this phase.
   renderer work accidentally blocking RL; text serialization contaminating the
   rollout hot path; Veilid being treated as authorization; room codes becoming
   permanent bearer credentials; DHT schemas being assumed mutable; browser
-  Veilid being promised on HTTPS without evidence; chat or wall-clock values
+  Veilid being promised on HTTPS without evidence; treating a native companion
+  as an automatic fallback; choosing Vulkan without accounting for the browser
+  cost; describing a Datastar host as equally anonymous; letting egui own game
+  semantics; chat or wall-clock values
   exploding formal state; pause invalidating an unconditional termination
   claim; spectators receiving globally broadcast hidden state; revocation being
   described as erasure; PufferLib becoming a dependency; Burn owning game
@@ -90,7 +99,8 @@ consumers:
 
 1. a replayable text CLI;
 2. a loopback or Veilid-backed multiplayer room;
-3. a minimal viewer-correct web renderer;
+3. a minimal viewer-correct egui-first client, with browser-only Veilid or a
+   hostable Datastar topology selected from evidence;
 4. a vectorized RL rollout/training system using Burn for tensors.
 
 The common center is not a socket or UI. It is a deterministic typed protocol
@@ -214,6 +224,10 @@ semantic reducer.
 | `G:\Programming\Repos\burn` | `546cacb`, tag v0.21.0, detached, clean | Backend-generic tensors/autodiff, Flex/WGPU/CUDA/ROCm, records/checkpoints, `burn-rl` traits, async policy batching, off-policy trainer, DQN example. |
 | `G:\Programming\Repos\pufferlib` | `c5d3c63`, branch 4.0, clean | Contiguous preallocated rollout buffers, action masking, PPO-style rollout/train split, multi-agent fixed layouts, frozen-policy self-play, evaluation and performance measurement. |
 | `G:\Programming\Repos\facet\phon` | local main at `adac882`; parent worktree dirty outside Phon | Phon is a typed **binary** format/execution engine, so it is suitable for a binary codec/checkpoint but not the requested human-readable text transcript. |
+| `G:\Programming\Repos\cursor-latency` | `6c07705`, main, clean | MPL-2.0 native Windows/winit/ash reference with an explicit Vulkan swapchain and latency work. Use as native-rendering and latency evidence, not as a web-capable renderer assumption. |
+| `G:\Programming\Repos\ash` | `a9a1fb1`, master, clean | MIT/Apache-2.0 low-level Vulkan bindings and window interop. Its explicit loader, device, surface, swapchain, synchronization, and driver requirements make the native complexity and portability tradeoff concrete. |
+| `G:\Programming\Repos\datastar` | `85aa51ed`, develop, clean | MIT hypermedia framework reference for a browser UI driven by a hostable server rather than an on-device networking companion. |
+| `G:\Programming\Repos\datastar-rust` | clean commit `b88ad8a`; local worktree has an unrelated modified `Cargo.lock` | MIT Rust SDK with Axum, Rocket, and Warp integrations plus SSE event/reconnect primitives. Use the clean commit as reference and preserve the dirty worktree. |
 
 ### Current primary-source findings
 
@@ -232,8 +246,17 @@ semantic reducer.
 - Veilid 0.5.7's WASM package runs browser nodes over WebSockets, but its README
   documents browser socket/DNS restrictions and says HTTPS/WSS outbound relay
   support is not yet implemented. A GitHub Pages-hosted direct Veilid client is
-  therefore a measured gate. A locally served web renderer backed by a native
-  Veilid process is the reliable first web deployment.
+  therefore a measured architectural gate; success preserves a browser-only,
+  decentralized client, while failure changes the client/server and renderer
+  choice rather than silently requiring an on-device companion.
+- The local native rendering references expose the cost of a direct Vulkan
+  direction: ash intentionally mirrors Vulkan and cursor-latency explicitly owns
+  instance/device/surface/swapchain/synchronization work. That may buy control
+  and measurable latency, but it gives up the straightforward browser target.
+- Datastar's Rust SDK can stream server-generated UI changes over SSE through
+  conventional Rust HTTP servers. It is a credible browser-portable fallback
+  topology if browser-only Veilid fails, but introduces an operator-visible,
+  less-anonymous server trust and metadata boundary that must be documented.
 - Burn 0.21 provides an RL crate and DQN example, but the shipped trainer is
   principally off-policy/single-environment shaped. Poche needs turn-based
   multi-agent reward attribution, legal masks, partial observations, and
@@ -260,16 +283,16 @@ default and must be confirmed by the named task before dependent implementation.
 | G20 | Provisional | What identity persists? | An application-level player signing key stored through protected storage. Veilid node IDs and private routes are replaceable transport identities. Room membership refers to the stable application key. | Restart/reconnect test and secret-storage review in Tasks 5.1 and 5.3. |
 | G21 | Decided | How are authorization decisions modeled? | TPBAC-shaped immutable attempt and decision records, default deny, explicit allow, deny override, stable policy IDs/reasons, and audit-only policy support. | Cross-model authorization fixtures and controlled defects. |
 | G22 | Decided | First countdown behavior? | Host may arm only when minimum seats exist and every seated player is ready. Any seated player may unready or abort, cancelling the countdown. An authority clock emits a logical expiry event; expiry starts once if preconditions still hold. | Session rules and NuSMV/Rust liveness checks under named clock fairness. |
-| G23 | Provisional | Who may pause/resume? | Recommended: any active player may request pause; host may also pause for disconnect; resume requires all connected active players to acknowledge, with an explicit host override policy only if the user approves it. | Confirm in Task 1.2 before pause reducer/model work; record abuse/disconnect tradeoffs. |
+| G23 | Decided | Who may pause/resume? | Any active player may pause a running game. While paused, any active player may unpause it. There is no vote, acknowledgement quorum, or special host override. Duplicate/same-revision commands remain idempotent under normal command ordering rules. | Rust/oracle coverage for authorization, pause blocking game advancement, any-player unpause, and concurrent/repeated commands. |
 | G24 | Decided | Is chat game state? | No. Chat is an authorized, rate/size-bounded session event stream with ephemeral first-phase retention. Formal models track send permission/count abstractly, not text content. | Protocol and policy tests; persistence remains deferred. |
 | G25 | Decided | What does spectator revocation mean? | Stop future hand projections/delivery at the next capability epoch. Never claim already delivered information can be forgotten. Hidden observations are produced per recipient and never room-broadcast. | Projection/noninterference tests and an Alloy bounded information-flow model. |
-| G26 | Open | Can the public web app run Veilid directly? | First ship a locally served web client over the typed protocol to a native Veilid runtime. Separately test direct `veilid-wasm` on HTTP and HTTPS/WSS. Do not advertise direct Pages multiplayer until the HTTPS test passes. | Task 6.1 browser matrix. If direct HTTPS fails, any relay/native-companion production choice requires explicit user approval. |
+| G26 | Open | Can a browser-only public web app run Veilid with no on-device companion? | Test direct `veilid-wasm` on HTTP and production-equivalent HTTPS/WSS with no Poche or Veilid native process on the client device. Do not advertise direct Pages multiplayer until it passes. Failure is architecture evidence: compare a hostable Datastar server and a native Veilid client rather than automatically imposing a companion. | Task 6.1 browser/topology matrix must select and explain the supported live topology, privacy boundary, distribution model, and renderer consequences. External service deployment still requires separate authorization. |
 | G27 | Provisional | First RL tensor shape? | `poche-2p-v1`: fixed two-player full-rule game, seat-relative viewer encoding, fixed bid/card action vocabulary, legal mask, and explicit public-history strategy. Add other player counts as new specs. | Task 7.1 schema audit, random-policy parity, and user-visible manifest. |
 | G28 | Provisional | First reward projection? | `round-score-v1`: zero except at a round boundary, then the seat's raw rulebook points; terminal outcome and money are separately logged. No undocumented shaping or reward clipping. | Task 7.1 exact examples and baseline-return tests. |
 | G29 | Provisional | First learning algorithm? | Implement a small actor-critic PPO/GAE loop in Rust over Burn, with legal-logit masking and self-play against frozen checkpoints. Use Burn DQN only as an API reference/smoke comparison. | Task 8.1 controlled micro-environment test and recorded algorithm ADR. |
 | G30 | Decided | What liveness can be claimed once pause/network exist? | Preserve unconditional game termination only for the existing semantic game under its named scope. Session liveness is conditional on clock, delivery, player-action, and eventual-resume fairness. Paused/partitioned sessions may legitimately persist. | NuSMV/Rust properties must state assumptions and include counterexamples when each fairness assumption is removed. |
 | G31 | Decided | How is state-space explosion controlled? | Independently model game, session/authorization, and abstract transport; compose contracts and a small integration scope. Bound principals/messages/ticks and omit chat content/cryptographic bitstrings. | Coverage matrix and exact scope statements for every formal result. |
-| G32 | Open | Which Rust web UI stack is used? | Select only after the transport spike; require Rust/WASM compatibility, accessible semantic controls, deterministic projection rendering, modest dependency weight, and local/static build support. | Task 6.1 comparison ADR; visual fashion alone is not a deciding criterion. |
+| G32 | Provisional | Which first client UI stack is used? | Prefer a simple egui projection renderer with shared native/web UI logic where supported. Replace it only for a concrete incompatibility or materially better evidence. If browser-only Veilid fails, compare egui native/Vulkan-capable distribution with an egui web replay or Datastar browser client; do not couple renderer semantics to transport. | Task 6.1 executable comparison using the local cursor-latency, ash, Datastar, and Datastar Rust references; record portability, latency, bundle/distribution, accessibility, operations, privacy, and implementation complexity. |
 
 ## Security and protocol invariants
 
@@ -354,10 +377,14 @@ stable `S-*` rule/property ID and evidence:
 | U44 | G28, Tasks 7.1, 7.3, 8.5 |
 | U45 | Scope, Task 1.2, every new source task, Task 9.1 |
 | U46 | G15-G32, Phases 1-3, Tasks 7.1, 9.1-9.4 |
+| U47 | Current findings, G26, G32, Tasks 6.1-6.4, risk register |
+| U48 | G23, Tasks 1.3, 2.2, 2.4, 3.1-3.5, 4.2-4.3, 6.2-6.3 |
+| U49 | G32, Tasks 6.1-6.4 |
+| U50 | Current findings, G26, G32, Tasks 1.2, 6.1-6.4, 9.2, risk register |
 
 ## Execution order
 
-1. Generalize plan auditing; close authority/pause/web-test/RL-spec gates; write
+1. Generalize plan auditing; record authority/pause/web-test/RL-spec gates; write
    session rules and the threat model.
 2. Implement the pure protocol, authorization, session reducer, projections,
    and deterministic transcripts.
@@ -366,8 +393,8 @@ stable `S-*` rule/property ID and evidence:
 4. Deliver a complete loopback CLI vertical slice.
 5. Add native Veilid rooms, identity, invites, reconnect, chat, and private
    projections.
-6. Add the minimal web renderer and determine direct-browser deployment from
-   evidence.
+6. Add the minimal egui-first renderer and select browser-only Veilid,
+   native-client, or hostable Datastar delivery from evidence.
 7. Implement and benchmark typed vectorized RL rollouts and baselines.
 8. Add Burn inference/training, PPO self-play, checkpoints, and evaluation.
 9. Run aggregate acceptance, publish honest evidence, commit, and push.
@@ -406,9 +433,10 @@ identifying it as the other profile.
 Create `docs/decisions/0003-session-network-rl-architecture.md` (using the next
 available ADR number if 0003 is occupied). It must:
 
-- confirm G15-G22 and G24-G31 or record a superseding decision;
-- close G23's pause/resume policy with the user if the recommended policy is not
-  accepted;
+- confirm decided/provisional G15-G25 and G27-G31 or record a superseding
+  decision, including G23's decided any-player pause/unpause semantics;
+- preserve G26 and G32 as evidence-selected gates until Task 6.1 while recording
+  their authorized options and exact selection criteria;
 - define what the host, player, spectator, DHT cache, network peer, and web host
   are trusted to learn or do;
 - state plainly that first-phase host authority can inspect all hands and that
@@ -418,7 +446,9 @@ available ADR number if 0003 is occupied). It must:
   dependencies and dirty local worktrees;
 - record the Veilid upstream AI-contribution constraint and that no upstream
   code changes are planned;
-- pre-register the browser test matrix that closes G26;
+- pre-register the browser/topology/renderer test matrix that closes G26 and
+  G32, including direct browser-only Veilid, egui, native Vulkan evidence, and a
+  Datastar server binary without treating their privacy models as equivalent;
 - pre-register the first `RlSpec`, reward, baselines, algorithm experiment, and
   evaluation metrics before training.
 
@@ -838,41 +868,57 @@ public-network testing is rate-limited and never required for ordinary CI.
 
 Build the smallest possible viewer/client against protocol fixtures, then test:
 
-1. native runtime + locally served web UI;
-2. `veilid-wasm` on local HTTP/`ws://`;
-3. `veilid-wasm` on HTTPS/`wss://` with production-equivalent bootstrap/relay;
-4. Pages-hosted replay/demo mode independent of live networking.
+1. an egui projection renderer on its supported native backend;
+2. an egui/WASM Pages-hostable replay/demo with no live transport dependency;
+3. browser-only `veilid-wasm` on local HTTP/`ws://`, with no native Poche or
+   Veilid companion process on the client device;
+4. browser-only `veilid-wasm` on HTTPS/`wss://` with production-equivalent
+   bootstrap/relay and again no on-device companion;
+5. a minimal hostable Rust server binary using the clean Datastar/Datastar Rust
+   reference APIs to connect an ordinary browser to the same typed protocol;
+6. a bounded native-rendering comparison using cursor-latency/ash evidence to
+   quantify what direct Vulkan control offers and what web/distribution support
+   it costs. This is a spike, not authorization to rewrite the UI in raw Vulkan.
 
-Compare candidate Rust UI stacks for G32. Record browser versions, Veilid
-version/config, console/network evidence, bundle size, accessibility, and exact
-failure mode. Do not modify Veilid upstream.
+Record browser versions, Veilid version/config, console/network evidence,
+round-trip interaction latency, bundle and binary size, accessibility,
+deployment steps, operator/client metadata exposure, and exact failure modes.
+The Datastar spike must identify whether the server is authoritative, a relay,
+or colocated with the room host and must not expose private projections to an
+additional operator without an explicit threat-model change. Do not modify
+Veilid or any reference repository upstream.
 
-**Completion criteria:** G26 and G32 are closed. Native/local web is proven. If
-direct HTTPS Veilid fails, the plan stops before choosing a relay or companion
-deployment beyond the already local native runtime and requests explicit user
-direction.
+**Completion criteria:** G26 and G32 are closed with executable evidence and an
+ADR-selected live topology plus renderer. Direct live Pages is selected only if
+browser-only HTTPS Veilid passes. If it fails, select between a self-hostable
+Datastar server topology and a native Veilid client based on the recorded
+portability/privacy/operations evidence; do not silently require an on-device
+companion. The static replay/demo remains available in either case.
 
 **Completion notes:** Not started.
 
 ### [ ] 6.2 Implement deterministic room and game rendering
 
-Add the selected `poche-web` client as a projection renderer. Minimum surfaces:
+Add the selected egui-first client renderer and, when Task 6.1 selects the
+Datastar topology, its browser/server adapter. Minimum surfaces:
 identity, create/join code, member/seat/spectator list, ready state, countdown
 and abort, own hand, public table, legal actions, score/pot, pause/resume, chat,
 hand-view request/grant/revoke, reconnect status, errors with policy reasons,
 and transcript export/replay.
 
 **Completion criteria:** UI controls produce typed commands only; replaying the
-same projection/event stream yields the same DOM-relevant model; inaccessible
+same projection/event stream yields the same presentation model; native egui,
+egui/WASM, or Datastar rendering differences never change semantics; inaccessible
 or unauthorized controls are not the only enforcement layer.
 
 **Completion notes:** Not started.
 
 ### [ ] 6.3 Verify multi-view privacy and interaction behavior
 
-Run browser tests with host, two players, an ungranted spectator, and a granted
-then revoked spectator. Inspect rendered text/DOM, client state, logs, and
-network payload access according to the threat model.
+Run client/browser tests with host, two players, an ungranted spectator, and a
+granted then revoked spectator. Inspect rendered text/widgets/DOM, client state,
+logs, server state where applicable, and network payload access according to the
+selected topology's threat model.
 
 **Completion criteria:** Each viewer sees exactly its projection; countdown,
 pause, chat, and reconnect are usable; revocation changes future spectator view;
@@ -883,13 +929,17 @@ no hidden hand is present in unauthorized client state.
 ### [ ] 6.4 Publish only deployment modes proven by Task 6.1
 
 Extend existing Pages automation to publish the web replay/demo and, only if
-G26 passes, direct live multiplayer. Generated WASM/JS/assets remain untracked.
-If live multiplayer requires the local native runtime, document/download that
-mode rather than representing Pages as independently live.
+G26's browser-only test passes, direct Veilid live multiplayer. Generated
+WASM/JS/assets remain untracked. If Task 6.1 instead selects the hostable
+Datastar server, publish reproducible server build/run/container guidance and a
+clear connection configuration without claiming Pages itself hosts the live
+backend. If native Veilid is selected, document/download that client without
+representing Pages as independently live.
 
-**Completion criteria:** README links distinguish rulebook, replay/demo, local
-native web, and any proven direct live mode; generated assets do not inflate Git
-history; deployment limitations are conspicuous.
+**Completion criteria:** README links distinguish rulebook, replay/demo, native
+client, browser-only Veilid, and Datastar-hosted modes according to what was
+actually proven; the trust/anonymity difference is conspicuous; generated
+assets do not inflate Git history.
 
 **Completion notes:** Not started.
 
@@ -1099,8 +1149,9 @@ results emphasize score and carry empirical confidence labels.
 ### [ ] 9.4 Complete guidance audit, documentation, commits, and push
 
 Update README and contributor docs with architecture, threat model, CLI, room
-codes, reconnect, chat, spectator grants, local/direct web modes, RL manifests,
-proof-versus-training evidence, and exact reproduction commands. Mark tasks
+codes, reconnect, chat, spectator grants, native/direct/hosted client modes and
+their privacy differences, RL manifests, proof-versus-training evidence, and
+exact reproduction commands. Mark tasks
 complete only with adjacent evidence. Rerun all three intent-audit passes and:
 
 ```powershell
@@ -1113,7 +1164,7 @@ Commit coherent slices with meaningful messages, push `model-checking`, verify
 the remote branch SHA, and update the plan status to `Execution complete` only
 after no required work remains.
 
-**Completion criteria:** Every U30-U46 row has completion evidence; all gates
+**Completion criteria:** Every U30-U50 row has completion evidence; all gates
 are decided/deferred/blocked with exact conditions; all overall criteria below
 are checked; the local branch is clean and synchronized with the verified
 remote commit.
@@ -1124,7 +1175,7 @@ remote commit.
 
 - [ ] The predecessor plan remains unchanged as truthful completed history, and
   both plans pass generalized guidance audits.
-- [ ] Every U30-U46 requirement maps to completed evidence; the final triple
+- [ ] Every U30-U50 requirement maps to completed evidence; the final triple
   intent audit finds no silent omission or weakened qualifier.
 - [ ] `SessionState` and `GameEnvironment` remain separate, deterministic,
   strongly typed reducers with an explicitly tested composition boundary.
@@ -1132,8 +1183,8 @@ remote commit.
   renderer, fixtures, and replay; RL uses the same semantics without parsing or
   networking in its hot path.
 - [ ] Host/create, code/join, membership, ready, abortable countdown, start,
-  pause/resume, post-game, reconnect, leave/close, and bounded chat work in
-  loopback and native Veilid scenarios.
+  any-player pause and any-player unpause, post-game, reconnect, leave/close,
+  and bounded chat work in loopback and native Veilid scenarios.
 - [ ] Application keys and capabilities, not room codes or transport IDs alone,
   authorize commands; duplicate/stale/cross-room/revoked attempts fail closed
   with auditable policy reasons.
@@ -1149,8 +1200,9 @@ remote commit.
 - [ ] The CLI provides inspectable human text, NDJSON automation, structured
   diagnostics, replay, and safe identity/room operations based on the clean
   template patterns.
-- [ ] A minimal web client renders viewer-correct rooms and games. README and
-  Pages advertise only the live-network deployment modes that Task 6.1 proved.
+- [ ] A minimal egui-first client renders viewer-correct rooms and games. The
+  browser-only Veilid/native-client/Datastar choice follows Task 6.1 evidence;
+  README and Pages advertise only proven modes and their actual trust boundary.
 - [ ] `poche-2p-v1` fixes observation/history/action/mask/reward semantics and
   semantic hashes; scalar and vectorized rollouts are deterministic and agree.
 - [ ] Legal-random and heuristic baselines, fixed evaluation seeds, selected
@@ -1203,7 +1255,9 @@ functional renderer and privacy tests.
 
 | Risk | Consequence | Mitigation / evidence gate |
 | --- | --- | --- |
-| Veilid browser HTTPS/WSS support is insufficient | A Pages-hosted direct live client cannot connect | G26/Task 6.1; ship local native-backed web first; request user direction before adding relay trust/infrastructure. |
+| Veilid browser HTTPS/WSS support is insufficient | A Pages-hosted direct live client cannot connect and an on-device companion would undermine the intended browser-only experience | G26/Task 6.1; use the failure to select between a native Veilid client and a self-hostable Datastar server, retaining a static replay/demo and documenting the topology. |
+| A native Vulkan direction is chosen without accounting for portability | Low-level renderer work prevents the browser client and consumes effort unrelated to game semantics | G32/Task 6.1; egui first, bounded ash/cursor-latency evidence spike, and an ADR comparing latency/control against distribution and web reach. |
+| A Datastar server is described as equivalent to Veilid anonymity | Operators or infrastructure can observe metadata or state users expected to remain decentralized/private | Threat-model the server role and private projections, make self-hosting reproducible, disclose metadata visibility, and never reuse Veilid privacy claims. |
 | Veilid transport signatures are mistaken for app authorization | Unauthorized room commands or replay | G21; app-signed canonical commands, default deny, epochs/revisions/IDs, controlled attack tests. |
 | Immutable DHT schemas conflict with dynamic membership | Join/revoke cannot be represented safely | Host-owned DFLT rendezvous plus Poche event/capability log; do not mutate SMPL membership. |
 | Host authority weakens hidden-information fairness | Host can inspect/manipulate full state | Explicit threat model and UI disclosure; signed audit log; trustless dealing deferred rather than implied. |
