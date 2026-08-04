@@ -780,7 +780,7 @@ scope wire, after which player count, bid, unique cards, and partition are
 revalidated. All specified filtered tests and Clippy with `-D warnings` pass;
 every first spare code and malformed refinement is rejected.
 
-### [ ] 3.2 Define the environment, observation, chance, and scoring boundary
+### [x] 3.2 Define the environment, observation, chance, and scoring boundary
 
 **Work:**
 
@@ -808,6 +808,17 @@ cargo test -p poche-environment round_score_events
 **Completion criteria:** Formal checking and simulation share one environment
 boundary; hidden information is explicit, and a later RL adapter can consume
 round scores without changing formal game semantics.
+
+**Completed 2026-08-03:** `poche-environment` defines the policy-neutral
+`GameEnvironment` contract with hidden `State`, `AgentId`, per-viewer
+`Observation`, disjoint player/chance/environment actions, transition outcomes,
+raw rule-originated round-score events, final score/money outcomes, and terminal
+status. `OracleEnvironment` adapts the conventional Rust oracle without exposing
+full state to a policy. Seeded SplitMix-derived deck permutations are functions
+of `(seed, deal_ordinal)` and carry replay provenance outside formal state; equal
+inputs reproduce byte-for-byte deck orders. Visibility tests prove each player
+receives only their own private hand, and round-boundary tests retain raw score
+and payment origins. No reward type or policy-selection hook was introduced.
 
 ### [ ] 3.3 Define a pure Poche formal dialect over Weavy
 

@@ -335,6 +335,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "poche-environment"
+version = "0.1.0"
+dependencies = [
+ "poche-oracle-rust",
+]
+
+[[package]]
 name = "poche-oracle-rust"
 version = "0.1.0"
 
