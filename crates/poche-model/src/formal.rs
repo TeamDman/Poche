@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
-use std::sync::OnceLock;
+use std::collections::{BTreeMap, HashMap};
+use std::hash::Hash;
+use std::sync::{Mutex, OnceLock};
 
 use facet::Facet;
 use poche_formal::{
@@ -75,10 +76,12 @@ pub fn formal_kernel_catalog() -> Result<Vec<FormalKernelInfo>, Diagnostic> {
 }
 
 pub(crate) fn bid_legal(bid: Bid, round: RoundId) -> Result<bool, ModelError> {
-    evaluate_bool(
-        bid_program()?,
-        [("bid", bid.get()), ("hand-size", round.hand_size())],
-    )
+    cached_evaluation(&BID_RESULTS, (bid, round), || {
+        evaluate_bool(
+            bid_program()?,
+            [("bid", bid.get()), ("hand-size", round.hand_size())],
+        )
+    })
 }
 
 pub(crate) fn follow_suit_legal(
@@ -86,46 +89,54 @@ pub(crate) fn follow_suit_legal(
     selected: Card,
     lead: Card,
 ) -> Result<bool, ModelError> {
-    let inputs = BTreeMap::from([
-        ("hand-has-lead".to_owned(), Value::Bool(hand_has_lead)),
-        (
-            "selected-suit".to_owned(),
-            Value::Integer(i32::from(selected.suit())),
-        ),
-        (
-            "lead-suit".to_owned(),
-            Value::Integer(i32::from(lead.suit())),
-        ),
-    ]);
-    let value = follow_suit_program()?.evaluate(&inputs)?;
-    value_bool(&value)
+    cached_evaluation(
+        &FOLLOW_SUIT_RESULTS,
+        (hand_has_lead, selected, lead),
+        || {
+            let inputs = BTreeMap::from([
+                ("hand-has-lead".to_owned(), Value::Bool(hand_has_lead)),
+                (
+                    "selected-suit".to_owned(),
+                    Value::Integer(i32::from(selected.suit())),
+                ),
+                (
+                    "lead-suit".to_owned(),
+                    Value::Integer(i32::from(lead.suit())),
+                ),
+            ]);
+            let value = follow_suit_program()?.evaluate(&inputs)?;
+            value_bool(&value)
+        },
+    )
 }
 
 pub(crate) fn second_card_wins(lead: Card, second: Card, trump: Card) -> Result<bool, ModelError> {
-    let inputs = BTreeMap::from([
-        (
-            "lead-suit".to_owned(),
-            Value::Integer(i32::from(lead.suit())),
-        ),
-        (
-            "lead-rank".to_owned(),
-            Value::Integer(i32::from(lead.rank())),
-        ),
-        (
-            "second-suit".to_owned(),
-            Value::Integer(i32::from(second.suit())),
-        ),
-        (
-            "second-rank".to_owned(),
-            Value::Integer(i32::from(second.rank())),
-        ),
-        (
-            "trump-suit".to_owned(),
-            Value::Integer(i32::from(trump.suit())),
-        ),
-    ]);
-    let value = second_wins_program()?.evaluate(&inputs)?;
-    value_bool(&value)
+    cached_evaluation(&SECOND_WINS_RESULTS, (lead, second, trump), || {
+        let inputs = BTreeMap::from([
+            (
+                "lead-suit".to_owned(),
+                Value::Integer(i32::from(lead.suit())),
+            ),
+            (
+                "lead-rank".to_owned(),
+                Value::Integer(i32::from(lead.rank())),
+            ),
+            (
+                "second-suit".to_owned(),
+                Value::Integer(i32::from(second.suit())),
+            ),
+            (
+                "second-rank".to_owned(),
+                Value::Integer(i32::from(second.rank())),
+            ),
+            (
+                "trump-suit".to_owned(),
+                Value::Integer(i32::from(trump.suit())),
+            ),
+        ]);
+        let value = second_wins_program()?.evaluate(&inputs)?;
+        value_bool(&value)
+    })
 }
 
 pub(crate) fn round_score(
@@ -133,49 +144,90 @@ pub(crate) fn round_score(
     tricks: u8,
     round: RoundId,
 ) -> Result<(u8, u8, u8), ModelError> {
-    let inputs = integer_inputs([
-        ("bid", bid.get()),
-        ("tricks", tricks),
-        ("hand-size", round.hand_size()),
-    ]);
-    let Value::Record { fields, .. } = round_score_program()?.evaluate(&inputs)? else {
-        return Err(ModelError::Invariant("formal score output record"));
-    };
-    let [outcome, points, payment]: [Value; 3] = fields
-        .try_into()
-        .map_err(|_| ModelError::Invariant("formal score output arity"))?;
-    let Value::Enumeration { ordinal, .. } = outcome else {
-        return Err(ModelError::Invariant("formal score outcome enum"));
-    };
-    let Value::Integer(points) = points else {
-        return Err(ModelError::Invariant("formal score points integer"));
-    };
-    let Value::Integer(payment) = payment else {
-        return Err(ModelError::Invariant("formal score payment integer"));
-    };
-    Ok((
-        u8::try_from(ordinal).map_err(|_| ModelError::Invariant("score outcome ordinal"))?,
-        u8::try_from(points).map_err(|_| ModelError::Invariant("score points range"))?,
-        u8::try_from(payment).map_err(|_| ModelError::Invariant("score payment range"))?,
-    ))
+    cached_evaluation(&ROUND_SCORE_RESULTS, (bid, tricks, round), || {
+        let inputs = integer_inputs([
+            ("bid", bid.get()),
+            ("tricks", tricks),
+            ("hand-size", round.hand_size()),
+        ]);
+        let Value::Record { fields, .. } = round_score_program()?.evaluate(&inputs)? else {
+            return Err(ModelError::Invariant("formal score output record"));
+        };
+        let [outcome, points, payment]: [Value; 3] = fields
+            .try_into()
+            .map_err(|_| ModelError::Invariant("formal score output arity"))?;
+        let Value::Enumeration { ordinal, .. } = outcome else {
+            return Err(ModelError::Invariant("formal score outcome enum"));
+        };
+        let Value::Integer(points) = points else {
+            return Err(ModelError::Invariant("formal score points integer"));
+        };
+        let Value::Integer(payment) = payment else {
+            return Err(ModelError::Invariant("formal score payment integer"));
+        };
+        Ok((
+            u8::try_from(ordinal).map_err(|_| ModelError::Invariant("score outcome ordinal"))?,
+            u8::try_from(points).map_err(|_| ModelError::Invariant("score points range"))?,
+            u8::try_from(payment).map_err(|_| ModelError::Invariant("score payment range"))?,
+        ))
+    })
 }
 
 pub(crate) fn final_round(round: RoundId) -> Result<bool, ModelError> {
-    evaluate_bool(final_round_program()?, [("round", round as u8)])
+    cached_evaluation(&FINAL_ROUND_RESULTS, round, || {
+        evaluate_bool(final_round_program()?, [("round", round as u8)])
+    })
 }
 
 pub(crate) fn winner_mask(scores: [u8; 2]) -> Result<[bool; 2], ModelError> {
-    let result = winner_mask_program()?.evaluate(&integer_inputs([
-        ("score-zero", scores[0]),
-        ("score-one", scores[1]),
-    ]))?;
-    let Value::Record { fields, .. } = result else {
-        return Err(ModelError::Invariant("formal winner output record"));
-    };
-    let [zero, one]: [Value; 2] = fields
-        .try_into()
-        .map_err(|_| ModelError::Invariant("formal winner output arity"))?;
-    Ok([value_bool(&zero)?, value_bool(&one)?])
+    cached_evaluation(&WINNER_MASK_RESULTS, scores, || {
+        let result = winner_mask_program()?.evaluate(&integer_inputs([
+            ("score-zero", scores[0]),
+            ("score-one", scores[1]),
+        ]))?;
+        let Value::Record { fields, .. } = result else {
+            return Err(ModelError::Invariant("formal winner output record"));
+        };
+        let [zero, one]: [Value; 2] = fields
+            .try_into()
+            .map_err(|_| ModelError::Invariant("formal winner output arity"))?;
+        Ok([value_bool(&zero)?, value_bool(&one)?])
+    })
+}
+
+type ResultCache<K, V> = OnceLock<Mutex<HashMap<K, Result<V, ModelError>>>>;
+
+static BID_RESULTS: ResultCache<(Bid, RoundId), bool> = OnceLock::new();
+static FOLLOW_SUIT_RESULTS: ResultCache<(bool, Card, Card), bool> = OnceLock::new();
+static SECOND_WINS_RESULTS: ResultCache<(Card, Card, Card), bool> = OnceLock::new();
+static ROUND_SCORE_RESULTS: ResultCache<(Bid, u8, RoundId), (u8, u8, u8)> = OnceLock::new();
+static FINAL_ROUND_RESULTS: ResultCache<RoundId, bool> = OnceLock::new();
+static WINNER_MASK_RESULTS: ResultCache<[u8; 2], [bool; 2]> = OnceLock::new();
+
+fn cached_evaluation<K, V>(
+    cache: &'static ResultCache<K, V>,
+    key: K,
+    evaluate: impl FnOnce() -> Result<V, ModelError>,
+) -> Result<V, ModelError>
+where
+    K: Copy + Eq + Hash,
+    V: Clone,
+{
+    let values = cache.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(result) = values
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&key)
+        .cloned()
+    {
+        return result;
+    }
+    let result = evaluate();
+    values
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(key, result.clone());
+    result
 }
 
 static BID_PROGRAM: OnceLock<Result<FormalProgram, Diagnostic>> = OnceLock::new();

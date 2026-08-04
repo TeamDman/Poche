@@ -1136,7 +1136,7 @@ controlled initial-state stutter is detected as one nonterminal SCC and yields
 the expected depth-zero prefix plus closed actionless one-edge lasso. All three
 validation commands pass.
 
-### [ ] 5.4 Add complementary `Arbitrary` and larger-scope tests
+### [x] 5.4 Add complementary `Arbitrary` and larger-scope tests
 
 **Work:**
 
@@ -1155,6 +1155,21 @@ cargo test -p poche-model proptest_larger_scopes
 
 **Completion criteria:** Generated tests respect refinements, reproduce failures,
 and cannot be confused with exhaustive or bounded proofs.
+
+**Completion notes (2026-08-03):** Added exact `proptest 1.11.0` test inputs and
+`docs/sampled-testing.md`. `TraceSeed: Arbitrary` constructs only refined initial
+states and selects only advertised legal chance/player actions through complete
+20-step games. Every action is replayed; direct Rust phase/actor/bid/follow-suit,
+trick-winner, and score/payment formulas are compared with Weavy-powered
+transitions; all local catalog obligations and terminal absorption are checked.
+Six fixed seeds are permanent regression/replay inputs, and minimized future
+failures can be added directly. `LargerScopeCase: Arbitrary` samples deterministic
+full 52-card games at 2, 3, 7, and 51 players, validates every state/settlement,
+and checks seed-identical outcomes. Its summary is literally labeled `sampled`.
+Finite Weavy results are memoized only after first native graph evaluation by
+their complete inputs. Both required proptest filters pass; sampled results are
+kept distinct from exhaustive/bounded evidence, and no RL API or reward is
+introduced.
 
 ## Phase 6 — Native tool integration and cross-model agreement
 

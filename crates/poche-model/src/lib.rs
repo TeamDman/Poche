@@ -13,6 +13,9 @@ mod property;
 mod semantics;
 mod state;
 
+#[cfg(test)]
+mod proptest_tests;
+
 pub use finite::{
     Bid, Card, CardSet, Deal, ModelError, OneCardDeal, Player, Pot, RoundId, Score, Tricks,
     TwoCardDeal,
