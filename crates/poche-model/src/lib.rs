@@ -9,6 +9,7 @@
 
 mod finite;
 mod formal;
+mod property;
 mod semantics;
 mod state;
 
@@ -17,6 +18,10 @@ pub use finite::{
     TwoCardDeal,
 };
 pub use formal::{FormalKernelInfo, KernelId, formal_kernel_catalog};
+pub use property::{
+    NativeCheckRef, PropertyClass, PropertyExpression, PropertyId, PropertySpec,
+    VerificationStrategy, evaluate_state_property, evaluate_transition_property, property_catalog,
+};
 pub use semantics::{
     GameOutcome, ModelAction, PotDivision, RoundOutcome, RoundScoreEvent, RuleOrigin, SemanticDiff,
     Transition,

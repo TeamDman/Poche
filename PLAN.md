@@ -966,7 +966,7 @@ for the physical selection rules, which remain comprehensive in the independent
 native oracles. All four named example/terminal filters and strict Clippy pass;
 `docs/strict-rust-model.md` records the boundary.
 
-### [ ] 4.3 Declare safety, consistency, and liveness properties
+### [x] 4.3 Declare safety, consistency, and liveness properties
 
 **Work:**
 
@@ -986,6 +986,19 @@ cargo run -p poche-xtask -- coverage audit --track rust
 
 **Completion criteria:** Every claim has a stable ID, formal expression,
 rule/source mapping, explanation, and declared verification strategy.
+
+**Completion notes (2026-08-03):** Added an executable 14-property catalog and
+`docs/property-catalog.md`. It separately classifies structural, reachable-state,
+transition, and temporal claims; references pure Weavy kernels or named
+state/transition/temporal expressions; retains rule/source origins and equivalent
+native checks; and declares structural, finite-kernel, exhaustive state,
+exhaustive transition, deadlock, or SCC verification strategies. Local
+obligations for card partitions, action ownership, viewer projection, fixed bids,
+follow-suit, winner/leader, capture credits, scoring/pot, progress, terminal
+absorption, and winner ties execute successfully over a complete three-round
+trace. The catalog explicitly leaves global deadlock/termination proof to Phase
+5 graph exploration. The named property test and strict Rust coverage audit pass
+with zero todos.
 
 ### [ ] 4.4 Compare conventional and strict Rust models
 
