@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+poche-check = { path = "../poche-check" }
 poche-model = { path = "../poche-model" }
 poche-native-tools = { path = "../poche-native-tools" }
 poche-oracle-rust = { path = "../poche-oracle-rust" }

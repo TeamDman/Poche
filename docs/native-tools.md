@@ -63,6 +63,13 @@ beside SAT/UNSAT and instance counts. NuSMV results retain property kind,
 normalized expression, and truth value. Scryer emits one stable named PASS line
 per `oracle_test/1` query plus a checked aggregate count.
 
+Named NuSMV conformance suites additionally run `show_property`, `check_fsm`,
+and `check_property` through an ignored command script. `show_property` joins
+each result to its stable source `NAME`; `check_fsm` preserves totality and a
+deadlock assignment. Counterexample normalization carries forward unchanged
+variables omitted by native traces and records loop-start indices. A property
+expected to be false cannot pass unless a corresponding named trace is present.
+
 Named Alloy conformance suites use the same raw/normalized evidence boundary
 but declare expected polarity per command. This is necessary because a malformed
 fixture expressed as `run InvalidThing` passes when it is UNSAT, while a

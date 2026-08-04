@@ -1,0 +1,194 @@
+-- This Source Code Form is subject to the terms of the Mozilla Public
+-- License, v. 2.0. If a copy of the MPL was not distributed with this
+-- file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+-- Handwritten temporal projection for Rust/NuSMV conformance.
+-- Scope: exactly two players, the strict model's 1,2,1 three-round schedule,
+-- and phase/card-count observations. Card identities and detailed scoring
+-- remain in the independent full Rust, Alloy, and NuSMV oracles.
+
+MODULE main
+
+IVAR
+  stutter_choice : boolean;
+  chosen_winner : {p0, p1};
+
+VAR
+  mode : {correct, stutter, deadlock};
+  phase : {awaiting_deal, bid_first, bid_dealer, play_lead, play_follow,
+           scoring, finished};
+  dealer : {p0, p1};
+  leader : {p0, p1};
+  round_index : 0..2;
+  hand_size : 1..2;
+  hand0_count : 0..2;
+  hand1_count : 0..2;
+  tricks_played : 0..2;
+
+DEFINE
+  left_of_dealer := case dealer = p0 : p1; TRUE : p0; esac;
+  follower := case leader = p0 : p1; TRUE : p0; esac;
+  stutter_now := mode = stutter & phase = awaiting_deal &
+                 round_index = 0 & stutter_choice;
+  future_actions := case
+    round_index = 0 : 14;
+    round_index = 1 : 6;
+    TRUE : 0;
+  esac;
+  progress_rank := case
+    phase = awaiting_deal : future_actions + 4 + (2 * hand_size);
+    phase = bid_first : future_actions + 3 + (2 * hand_size);
+    phase = bid_dealer : future_actions + 2 + (2 * hand_size);
+    phase = play_lead | phase = play_follow :
+      future_actions + hand0_count + hand1_count + 1;
+    phase = scoring : future_actions + 1;
+    TRUE : 0;
+  esac;
+
+ASSIGN
+  init(mode) := {correct, stutter, deadlock};
+  next(mode) := mode;
+
+  init(phase) := awaiting_deal;
+  next(phase) := case
+    stutter_now : phase;
+    phase = awaiting_deal : bid_first;
+    phase = bid_first : bid_dealer;
+    phase = bid_dealer : play_lead;
+    phase = play_lead : play_follow;
+    phase = play_follow & hand0_count + hand1_count = 1 : scoring;
+    phase = play_follow : play_lead;
+    phase = scoring & round_index = 2 : finished;
+    phase = scoring : awaiting_deal;
+    TRUE : finished;
+  esac;
+
+  init(dealer) := {p0, p1};
+  next(dealer) := case
+    stutter_now : dealer;
+    phase = scoring & round_index < 2 & dealer = p0 : p1;
+    phase = scoring & round_index < 2 : p0;
+    TRUE : dealer;
+  esac;
+
+  init(leader) := p0;
+  next(leader) := case
+    stutter_now : leader;
+    phase = awaiting_deal : left_of_dealer;
+    phase = play_follow : chosen_winner;
+    TRUE : leader;
+  esac;
+
+  init(round_index) := 0;
+  next(round_index) := case
+    stutter_now : round_index;
+    phase = scoring & round_index < 2 : round_index + 1;
+    TRUE : round_index;
+  esac;
+
+  init(hand_size) := 1;
+  next(hand_size) := case
+    stutter_now : hand_size;
+    phase = scoring & round_index = 0 : 2;
+    phase = scoring & round_index = 1 : 1;
+    TRUE : hand_size;
+  esac;
+
+  init(hand0_count) := 0;
+  next(hand0_count) := case
+    stutter_now : hand0_count;
+    phase = awaiting_deal : hand_size;
+    phase = play_lead & leader = p0 & hand0_count > 0 : hand0_count - 1;
+    phase = play_follow & follower = p0 & hand0_count > 0 : hand0_count - 1;
+    TRUE : hand0_count;
+  esac;
+
+  init(hand1_count) := 0;
+  next(hand1_count) := case
+    stutter_now : hand1_count;
+    phase = awaiting_deal : hand_size;
+    phase = play_lead & leader = p1 & hand1_count > 0 : hand1_count - 1;
+    phase = play_follow & follower = p1 & hand1_count > 0 : hand1_count - 1;
+    TRUE : hand1_count;
+  esac;
+
+  init(tricks_played) := 0;
+  next(tricks_played) := case
+    stutter_now : tricks_played;
+    phase = awaiting_deal : 0;
+    phase = play_follow & tricks_played < 2 : tricks_played + 1;
+    phase = scoring : 0;
+    TRUE : tricks_played;
+  esac;
+
+-- The deadlock mutation removes every successor from the first follower state.
+TRANS !(mode = deadlock & phase = play_follow & round_index = 0 &
+        tricks_played = 0)
+
+-- Correct-mode initial and invariant projections.
+INVARSPEC NAME correct_progress_bounds :=
+  mode != correct | progress_rank >= 0 & progress_rank <= 20;
+INVARSPEC NAME correct_card_count_bounds :=
+  mode != correct | hand0_count + hand1_count <= 2 * hand_size;
+INVARSPEC NAME correct_finished_shape :=
+  mode != correct | phase != finished |
+  round_index = 2 & hand_size = 1 & progress_rank = 0;
+
+-- Selected exact one-step obligations.
+CTLSPEC NAME step_deal_round0 :=
+  AG (mode = correct & phase = awaiting_deal & round_index = 0 ->
+      AX (phase = bid_first & progress_rank = 19));
+CTLSPEC NAME step_deal_round1 :=
+  AG (mode = correct & phase = awaiting_deal & round_index = 1 ->
+      AX (phase = bid_first & progress_rank = 13));
+CTLSPEC NAME step_deal_round2 :=
+  AG (mode = correct & phase = awaiting_deal & round_index = 2 ->
+      AX (phase = bid_first & progress_rank = 5));
+CTLSPEC NAME step_bid_first :=
+  AG (mode = correct & phase = bid_first -> AX phase = bid_dealer);
+CTLSPEC NAME step_bid_dealer :=
+  AG (mode = correct & phase = bid_dealer -> AX phase = play_lead);
+CTLSPEC NAME step_play_lead :=
+  AG (mode = correct & phase = play_lead -> AX phase = play_follow);
+CTLSPEC NAME step_final_follow :=
+  AG (mode = correct & phase = play_follow &
+      hand0_count + hand1_count = 1 -> AX phase = scoring);
+CTLSPEC NAME step_nonfinal_follow :=
+  AG (mode = correct & phase = play_follow &
+      hand0_count + hand1_count > 1 -> AX phase = play_lead);
+CTLSPEC NAME step_score_round0 :=
+  AG (mode = correct & phase = scoring & round_index = 0 ->
+      AX (phase = awaiting_deal & round_index = 1 & hand_size = 2 &
+          progress_rank = 14));
+CTLSPEC NAME step_score_round1 :=
+  AG (mode = correct & phase = scoring & round_index = 1 ->
+      AX (phase = awaiting_deal & round_index = 2 & hand_size = 1 &
+          progress_rank = 6));
+CTLSPEC NAME step_score_round2 :=
+  AG (mode = correct & phase = scoring & round_index = 2 ->
+      AX (phase = finished & progress_rank = 0));
+CTLSPEC NAME finished_absorbing :=
+  AG (mode = correct & phase = finished -> AX phase = finished);
+
+-- Correct-mode totality and universal termination.
+CTLSPEC NAME correct_deadlock_free := mode != correct | AG EX TRUE;
+CTLSPEC NAME correct_af_terminates := mode != correct | AF phase = finished;
+LTLSPEC NAME correct_ltl_terminates := mode != correct | F phase = finished;
+CTLSPEC NAME correct_finished_reachable := mode != correct | EF phase = finished;
+
+-- These two state formulae are intentionally false and expose both prepared
+-- dealer variants as one-state counterexample witnesses.
+CTLSPEC NAME initial_dealer_p0_witness :=
+  !(mode = correct & phase = awaiting_deal & round_index = 0 &
+    dealer = p0 & progress_rank = 20);
+CTLSPEC NAME initial_dealer_p1_witness :=
+  !(mode = correct & phase = awaiting_deal & round_index = 0 &
+    dealer = p1 & progress_rank = 20);
+
+-- Matching controlled defects: a nonterminal self-loop refutes AF termination,
+-- and a removed successor refutes reachable-state totality.
+CTLSPEC NAME stutter_refutes_termination :=
+  mode != stutter | AF phase = finished;
+INVARSPEC NAME deadlock_defect_reachable :=
+  !(mode = deadlock & phase = play_follow & round_index = 0 &
+    tricks_played = 0);

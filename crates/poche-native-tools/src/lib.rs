@@ -12,7 +12,7 @@ mod adapters;
 mod normalize;
 mod runner;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 pub use adapters::{
@@ -24,7 +24,7 @@ pub use normalize::{
     NuSmvPropertyResult, PrologTestResult, normalize_alloy, normalize_alloy_commands,
     normalize_nusmv, normalize_prolog,
 };
-pub use runner::{run_all, run_alloy_suite, run_backend, run_prolog_fixture};
+pub use runner::{run_all, run_alloy_suite, run_backend, run_nusmv_suite, run_prolog_fixture};
 
 /// A native backend whose handwritten model can be executed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -170,6 +170,77 @@ pub struct AlloySuiteReport {
 
 impl AlloySuiteReport {
     /// Whether every expected command had its declared bounded result.
+    #[must_use]
+    pub fn succeeded(&self) -> bool {
+        self.disposition == NativeDisposition::Success
+    }
+}
+
+/// Expected truth value for one named `NuSMV` conformance property.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NuSmvPropertyExpectation {
+    /// Stable `NAME` declared in the handwritten model.
+    pub name: String,
+    /// Temporal specification or state invariant.
+    pub kind: NuSmvPropertyKind,
+    /// Required truth value; controlled defects intentionally require false.
+    pub holds: bool,
+}
+
+/// One `NuSMV` state after changed-value rows have been carried forward.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NuSmvTraceState {
+    /// Complete assignment map visible in the native trace.
+    pub assignments: BTreeMap<String, String>,
+}
+
+/// Normalized native counterexample for a named false property.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NuSmvCounterexample {
+    /// Stable property name from `show_property`.
+    pub property_name: String,
+    /// Native normalized property expression.
+    pub property_expression: String,
+    /// State sequence with inherited unchanged values materialized.
+    pub states: Vec<NuSmvTraceState>,
+    /// Index of the first repeated-cycle state when `NuSMV` marks a loop.
+    pub loop_start: Option<usize>,
+}
+
+/// Native `check_fsm` totality/deadlock diagnostics.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NuSmvFsmDiagnostics {
+    /// Whether the global conformance transition relation is total.
+    pub transition_total: bool,
+    /// Whether every reachable state has a successor.
+    pub deadlock_free: bool,
+    /// One native deadlock assignment when the fixture intentionally has one.
+    pub deadlock_state: Option<BTreeMap<String, String>>,
+}
+
+/// Typed result of a named `NuSMV` conformance suite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NuSmvSuiteReport {
+    /// Stable suite/evidence ID.
+    pub suite_id: String,
+    /// Success, recognized native failure, or unknown output.
+    pub disposition: NativeDisposition,
+    /// Human-readable diagnostic.
+    pub diagnostic: String,
+    /// Named normalized property results.
+    pub results: Vec<NuSmvPropertyResult>,
+    /// Counterexamples for every property expected to be false.
+    pub counterexamples: Vec<NuSmvCounterexample>,
+    /// Explicit transition-totality/deadlock diagnostics.
+    pub fsm: Option<NuSmvFsmDiagnostics>,
+    /// Raw invocation when `NuSMV` launched.
+    pub raw: Option<RawInvocation>,
+    /// Ignored suite evidence directory.
+    pub evidence_directory: PathBuf,
+}
+
+impl NuSmvSuiteReport {
+    /// Whether properties, traces, and FSM diagnostics matched the suite.
     #[must_use]
     pub fn succeeded(&self) -> bool {
         self.disposition == NativeDisposition::Success

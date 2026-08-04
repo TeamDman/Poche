@@ -1282,7 +1282,7 @@ is preserved. The runner also keeps canonical repository containment checks
 while translating Windows `\\?\` paths for Alloy's Java launcher. Both required
 validation commands and strict Clippy pass.
 
-### [ ] 6.4 Verify NuSMV transition and temporal agreement
+### [x] 6.4 Verify NuSMV transition and temporal agreement
 
 **Work:**
 
@@ -1301,6 +1301,28 @@ cargo run -p poche-xtask -- compare rust nusmv --scope micro
 
 **Completion criteria:** NuSMV and Rust agree on the named temporal semantics and
 injected defects produce corresponding counterexamples.
+
+**Completion notes (2026-08-03):** Added the independent handwritten
+`models/nusmv/conformance.smv` projection for the exact Rust micro `1,2,1`
+schedule, typed named-property/FSM/counterexample runners, explicit Rust
+deadlock mutation analysis, the public `compare rust nusmv --scope micro`
+command, and `docs/nusmv-conformance.md`. All 23 native properties have stable
+source `NAME`s: 19 correct-mode invariants/CTL/LTL claims hold, two deliberately
+false formulae expose both prepared dealer initial states, and two deliberately
+false controlled-defect properties carry counterexamples. Twelve refined
+round/phase one-step obligations cover deal, both bids, lead/follow branching,
+three settlement boundaries, and absorption. Rust exhaustively projects
+431,800 states and 549,896 transitions into exactly nine coarse phase pairs;
+its rank is 20 initially, decreases on every nonterminal edge, and is zero on
+absorbing edges. The native changed-value traces are materialized into complete
+states. NuSMV's initial stutter counterexample and Rust's injected self-loop
+agree as a two-state lasso; the NuSMV false deadlock-invariant trace and Rust's
+removed-successor mutation agree as a five-state prefix ending at rank 16.
+`check_fsm` independently reports the mixed fixture non-total/not deadlock-free
+and its assignment matches that trace and Rust state. Correct mode remains
+deadlock-free and universally terminating; the full 52-card-count `1..7..1`
+NuSMV oracle remains independent and is not narrowed. Both required validation
+commands, fail-closed parser tests, and strict Clippy pass.
 
 ### [ ] 6.5 Complete the cross-model rule and behavior audit
 

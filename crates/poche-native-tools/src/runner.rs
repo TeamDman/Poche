@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 use std::fmt::Write as _;
@@ -16,7 +16,9 @@ use crate::normalize::{
 };
 use crate::{
     AlloyCommandExpectation, AlloySuiteReport, NativeBackend, NativeDisposition, NativeReport,
-    PrologFixtureReport, RawInvocation, evaluate_fixtures,
+    NuSmvCounterexample, NuSmvFsmDiagnostics, NuSmvPropertyExpectation, NuSmvPropertyKind,
+    NuSmvPropertyResult, NuSmvSuiteReport, NuSmvTraceState, PrologFixtureReport, RawInvocation,
+    evaluate_fixtures,
 };
 
 struct ToolSpec {
@@ -281,6 +283,306 @@ fn alloy_suite_without_raw(
         disposition,
         diagnostic,
         results: Vec::new(),
+        raw: None,
+        evidence_directory,
+    }
+}
+
+/// Execute one named `NuSMV` suite with property catalog, counterexample, and
+/// explicit FSM-totality capture.
+#[must_use]
+#[allow(clippy::too_many_lines)]
+pub fn run_nusmv_suite(
+    root: &Path,
+    suite_id: &str,
+    model_path: &Path,
+    expectations: &[NuSmvPropertyExpectation],
+) -> NuSmvSuiteReport {
+    let evidence_directory = root.join("target").join(suite_id);
+    let valid_suite_id = !suite_id.is_empty()
+        && suite_id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+    if !valid_suite_id || expectations.is_empty() {
+        return nusmv_suite_without_raw(
+            suite_id,
+            NativeDisposition::Failure,
+            "suite ID is invalid or property expectations are empty".to_owned(),
+            evidence_directory,
+        );
+    }
+    if let Err(error) = fs::create_dir_all(&evidence_directory) {
+        return nusmv_suite_without_raw(
+            suite_id,
+            NativeDisposition::Failure,
+            format!("could not create evidence directory: {error}"),
+            evidence_directory,
+        );
+    }
+    let model = if model_path.is_absolute() {
+        model_path.to_owned()
+    } else {
+        root.join(model_path)
+    };
+    let canonical_root = match fs::canonicalize(root) {
+        Ok(path) => path,
+        Err(error) => {
+            return nusmv_suite_without_raw(
+                suite_id,
+                NativeDisposition::Failure,
+                format!("could not canonicalize repository root: {error}"),
+                evidence_directory,
+            );
+        }
+    };
+    let canonical_model = match fs::canonicalize(&model) {
+        Ok(path) if path.starts_with(&canonical_root) => path,
+        Ok(_) => {
+            return nusmv_suite_without_raw(
+                suite_id,
+                NativeDisposition::Failure,
+                "NuSMV suite model must remain inside the repository".to_owned(),
+                evidence_directory,
+            );
+        }
+        Err(error) => {
+            return nusmv_suite_without_raw(
+                suite_id,
+                NativeDisposition::Failure,
+                format!(
+                    "could not resolve NuSMV suite model {}: {error}",
+                    model.display()
+                ),
+                evidence_directory,
+            );
+        }
+    };
+    let source_property_count = match native_property_count(&canonical_model) {
+        Ok(count) if count == expectations.len() => count,
+        Ok(count) => {
+            return nusmv_suite_without_raw(
+                suite_id,
+                NativeDisposition::Failure,
+                format!(
+                    "NuSMV source has {count} properties, but {} were expected",
+                    expectations.len()
+                ),
+                evidence_directory,
+            );
+        }
+        Err(error) => {
+            return nusmv_suite_without_raw(
+                suite_id,
+                NativeDisposition::Failure,
+                error,
+                evidence_directory,
+            );
+        }
+    };
+    let spec = tool_spec(NativeBackend::NuSmv);
+    let (program, version) = match resolve_tool(&spec) {
+        Ok(found) => found,
+        Err(error) => {
+            return nusmv_suite_without_raw(
+                suite_id,
+                NativeDisposition::Failure,
+                error,
+                evidence_directory,
+            );
+        }
+    };
+    let script_path = evidence_directory.join("commands.txt");
+    let model_argument = external_tool_path(&canonical_model)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let script = format!(
+        "read_model -i \"{model_argument}\"\ngo\nshow_property\ncheck_fsm\ncheck_property\nquit\n"
+    );
+    if let Err(error) = fs::write(&script_path, script) {
+        return nusmv_suite_without_raw(
+            suite_id,
+            NativeDisposition::Failure,
+            format!("could not write NuSMV command script: {error}"),
+            evidence_directory,
+        );
+    }
+    let arguments = vec![OsString::from("-source"), external_tool_path(&script_path)];
+    let output = match Command::new(&program)
+        .current_dir(root)
+        .args(&arguments)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            return nusmv_suite_without_raw(
+                suite_id,
+                NativeDisposition::Failure,
+                format!("failed to launch NuSMV: {error}"),
+                evidence_directory,
+            );
+        }
+    };
+    let raw = RawInvocation {
+        program: program.to_string_lossy().into_owned(),
+        arguments: arguments
+            .iter()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect(),
+        version,
+        exit_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    };
+    if let Err(error) = preserve_raw(&evidence_directory, &raw, &output.stdout, &output.stderr) {
+        return NuSmvSuiteReport {
+            suite_id: suite_id.to_owned(),
+            disposition: NativeDisposition::Failure,
+            diagnostic: format!("failed to preserve raw evidence: {error}"),
+            results: Vec::new(),
+            counterexamples: Vec::new(),
+            fsm: None,
+            raw: Some(raw),
+            evidence_directory,
+        };
+    }
+    let transcript = format!("{}\n{}", raw.stdout, raw.stderr);
+    let parsed = parse_nusmv_suite(&transcript);
+    let (results, counterexamples, fsm) = match parsed {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            return NuSmvSuiteReport {
+                suite_id: suite_id.to_owned(),
+                disposition: if output.status.success() {
+                    NativeDisposition::Unknown
+                } else {
+                    NativeDisposition::Failure
+                },
+                diagnostic: error,
+                results: Vec::new(),
+                counterexamples: Vec::new(),
+                fsm: None,
+                raw: Some(raw),
+                evidence_directory,
+            };
+        }
+    };
+    if results.len() != source_property_count {
+        return NuSmvSuiteReport {
+            suite_id: suite_id.to_owned(),
+            disposition: NativeDisposition::Unknown,
+            diagnostic: format!(
+                "NuSMV returned {} named results for {source_property_count} source properties",
+                results.len()
+            ),
+            results,
+            counterexamples,
+            fsm: Some(fsm),
+            raw: Some(raw),
+            evidence_directory,
+        };
+    }
+    let expected = expectations
+        .iter()
+        .map(|item| (item.name.as_str(), (item.kind, item.holds)))
+        .collect::<BTreeMap<_, _>>();
+    if expected.len() != expectations.len() {
+        return NuSmvSuiteReport {
+            suite_id: suite_id.to_owned(),
+            disposition: NativeDisposition::Failure,
+            diagnostic: "duplicate NuSMV expectation name".to_owned(),
+            results,
+            counterexamples,
+            fsm: Some(fsm),
+            raw: Some(raw),
+            evidence_directory,
+        };
+    }
+    let actual = results
+        .iter()
+        .filter_map(|item| {
+            item.name
+                .as_deref()
+                .map(|name| (name, (item.kind, item.holds)))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mismatch = expected != actual;
+    let false_names = expectations
+        .iter()
+        .filter(|item| !item.holds)
+        .map(|item| item.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let trace_names = counterexamples
+        .iter()
+        .map(|trace| trace.property_name.as_str())
+        .collect::<BTreeSet<_>>();
+    let trace_mismatch = false_names != trace_names;
+    if let Err(error) =
+        preserve_normalized(&evidence_directory, &NormalizedRun::NuSmv(results.clone()))
+            .and_then(|()| preserve_nusmv_traces(&evidence_directory, &counterexamples, &fsm))
+    {
+        return NuSmvSuiteReport {
+            suite_id: suite_id.to_owned(),
+            disposition: NativeDisposition::Failure,
+            diagnostic: format!("failed to preserve normalized NuSMV evidence: {error}"),
+            results,
+            counterexamples,
+            fsm: Some(fsm),
+            raw: Some(raw),
+            evidence_directory,
+        };
+    }
+    let (disposition, diagnostic) = if !output.status.success() {
+        (
+            NativeDisposition::Failure,
+            format!("NuSMV exited with {}", output.status),
+        )
+    } else if mismatch {
+        (
+            NativeDisposition::Failure,
+            "named NuSMV property results differ from expectations".to_owned(),
+        )
+    } else if trace_mismatch {
+        (
+            NativeDisposition::Failure,
+            format!(
+                "NuSMV counterexample inventory differs: expected={false_names:?}, actual={trace_names:?}"
+            ),
+        )
+    } else {
+        (
+            NativeDisposition::Success,
+            format!(
+                "recognized {} named properties, {} counterexamples, and check_fsm diagnostics",
+                results.len(),
+                counterexamples.len()
+            ),
+        )
+    };
+    NuSmvSuiteReport {
+        suite_id: suite_id.to_owned(),
+        disposition,
+        diagnostic,
+        results,
+        counterexamples,
+        fsm: Some(fsm),
+        raw: Some(raw),
+        evidence_directory,
+    }
+}
+
+fn nusmv_suite_without_raw(
+    suite_id: &str,
+    disposition: NativeDisposition,
+    diagnostic: String,
+    evidence_directory: PathBuf,
+) -> NuSmvSuiteReport {
+    NuSmvSuiteReport {
+        suite_id: suite_id.to_owned(),
+        disposition,
+        diagnostic,
+        results: Vec::new(),
+        counterexamples: Vec::new(),
+        fsm: None,
         raw: None,
         evidence_directory,
     }
@@ -861,6 +1163,292 @@ fn native_property_count(path: &Path) -> Result<usize, String> {
         .count())
 }
 
+#[derive(Clone, Debug)]
+struct NuSmvCatalogEntry {
+    name: String,
+    kind: NuSmvPropertyKind,
+    expression: String,
+}
+
+#[derive(Clone, Debug)]
+struct RawNuSmvTrace {
+    expression: String,
+    states: Vec<NuSmvTraceState>,
+    loop_start: Option<usize>,
+}
+
+fn parse_nusmv_suite(
+    transcript: &str,
+) -> Result<
+    (
+        Vec<NuSmvPropertyResult>,
+        Vec<NuSmvCounterexample>,
+        NuSmvFsmDiagnostics,
+    ),
+    String,
+> {
+    let catalog = parse_nusmv_catalog(transcript)?;
+    let NormalizedRun::NuSmv(mut results) = normalize_nusmv(transcript)? else {
+        unreachable!("NuSMV parser returns NuSMV evidence")
+    };
+    if catalog.len() != results.len() {
+        return Err(format!(
+            "NuSMV property catalog has {} entries but {} results",
+            catalog.len(),
+            results.len()
+        ));
+    }
+    let mut names = BTreeSet::new();
+    for (entry, result) in catalog.iter().zip(&mut results) {
+        if !names.insert(entry.name.as_str()) {
+            return Err(format!("duplicate NuSMV property name: {}", entry.name));
+        }
+        if entry.kind != result.kind
+            || collapse_spaces(&entry.expression) != collapse_spaces(&result.expression)
+        {
+            return Err(format!(
+                "NuSMV property catalog/result order differs at {}: catalog={:?}, result={:?}",
+                entry.name, entry.expression, result.expression
+            ));
+        }
+        result.name = Some(entry.name.clone());
+    }
+    let raw_traces = parse_nusmv_counterexamples(transcript)?;
+    let mut counterexamples = Vec::with_capacity(raw_traces.len());
+    for trace in raw_traces {
+        let expression = collapse_spaces(&trace.expression);
+        let matches = catalog
+            .iter()
+            .filter(|entry| collapse_spaces(&entry.expression) == expression)
+            .collect::<Vec<_>>();
+        let [entry] = matches.as_slice() else {
+            return Err(format!(
+                "counterexample expression did not identify exactly one named property: {}",
+                trace.expression
+            ));
+        };
+        counterexamples.push(NuSmvCounterexample {
+            property_name: entry.name.clone(),
+            property_expression: trace.expression,
+            states: trace.states,
+            loop_start: trace.loop_start,
+        });
+    }
+    Ok((results, counterexamples, parse_nusmv_fsm(transcript)?))
+}
+
+fn parse_nusmv_catalog(transcript: &str) -> Result<Vec<NuSmvCatalogEntry>, String> {
+    let mut catalog = Vec::new();
+    let mut pending: Option<(usize, String)> = None;
+    for raw in transcript.lines() {
+        let line = nusmv_payload(raw);
+        if let Some((prefix, expression)) = line.split_once(':')
+            && let Ok(index) = prefix.trim().parse::<usize>()
+        {
+            pending = Some((index, expression.trim().to_owned()));
+            continue;
+        }
+        let Some((index, expression)) = pending.take_if(|_| line.starts_with('[')) else {
+            continue;
+        };
+        let metadata = line
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .ok_or_else(|| format!("malformed NuSMV property metadata: {line}"))?;
+        let fields = metadata.split_whitespace().collect::<Vec<_>>();
+        let native_kind = fields
+            .first()
+            .ok_or_else(|| format!("empty NuSMV property metadata: {line}"))?;
+        let name = fields
+            .last()
+            .filter(|name| **name != "N/A")
+            .ok_or_else(|| format!("NuSMV property {index:03} has no stable name"))?;
+        let kind = match *native_kind {
+            "CTL" | "LTL" => NuSmvPropertyKind::Specification,
+            "Invar" => NuSmvPropertyKind::Invariant,
+            other => return Err(format!("unknown NuSMV catalog kind: {other}")),
+        };
+        if index != catalog.len() {
+            return Err(format!(
+                "NuSMV property IDs are not contiguous: expected {}, found {index}",
+                catalog.len()
+            ));
+        }
+        catalog.push(NuSmvCatalogEntry {
+            name: (*name).to_owned(),
+            kind,
+            expression,
+        });
+    }
+    if catalog.is_empty() {
+        return Err("NuSMV show_property emitted no named catalog".to_owned());
+    }
+    Ok(catalog)
+}
+
+fn parse_nusmv_counterexamples(transcript: &str) -> Result<Vec<RawNuSmvTrace>, String> {
+    let mut traces = Vec::new();
+    let mut current: Option<RawNuSmvTrace> = None;
+    let mut inside_state = false;
+    let mut pending_loop = false;
+    for raw in transcript.lines() {
+        let line = nusmv_payload(raw);
+        if let Some((_kind, expression, holds)) = parse_nusmv_result_line(line)? {
+            finish_raw_trace(&mut traces, current.take())?;
+            inside_state = false;
+            pending_loop = false;
+            if !holds {
+                current = Some(RawNuSmvTrace {
+                    expression,
+                    states: Vec::new(),
+                    loop_start: None,
+                });
+            }
+            continue;
+        }
+        let Some(trace) = &mut current else {
+            continue;
+        };
+        if line == "-- Loop starts here" {
+            pending_loop = true;
+            continue;
+        }
+        if line.contains("-> State:") {
+            if pending_loop {
+                if trace.loop_start.replace(trace.states.len()).is_some() {
+                    return Err("NuSMV trace contains multiple loop markers".to_owned());
+                }
+                pending_loop = false;
+            }
+            let assignments = trace
+                .states
+                .last()
+                .map_or_else(BTreeMap::new, |state| state.assignments.clone());
+            trace.states.push(NuSmvTraceState { assignments });
+            inside_state = true;
+            continue;
+        }
+        if line.contains("-> Input:") {
+            inside_state = false;
+            continue;
+        }
+        if inside_state && let Some((name, value)) = parse_assignment(line) {
+            let state = trace
+                .states
+                .last_mut()
+                .ok_or_else(|| "NuSMV assignment preceded its state".to_owned())?;
+            state.assignments.insert(name, value);
+        }
+    }
+    finish_raw_trace(&mut traces, current)?;
+    Ok(traces)
+}
+
+fn finish_raw_trace(
+    traces: &mut Vec<RawNuSmvTrace>,
+    trace: Option<RawNuSmvTrace>,
+) -> Result<(), String> {
+    if let Some(trace) = trace {
+        if trace.states.is_empty() {
+            return Err(format!(
+                "false NuSMV property had no counterexample states: {}",
+                trace.expression
+            ));
+        }
+        traces.push(trace);
+    }
+    Ok(())
+}
+
+fn parse_nusmv_result_line(
+    line: &str,
+) -> Result<Option<(NuSmvPropertyKind, String, bool)>, String> {
+    let parsed = if let Some(rest) = line.strip_prefix("-- specification") {
+        Some((NuSmvPropertyKind::Specification, rest))
+    } else {
+        line.strip_prefix("-- invariant")
+            .map(|rest| (NuSmvPropertyKind::Invariant, rest))
+    };
+    let Some((kind, rest)) = parsed else {
+        return Ok(None);
+    };
+    let Some((expression, value)) = rest.rsplit_once(" is ") else {
+        return Err(format!("malformed NuSMV result line: {line}"));
+    };
+    let holds = match value.trim() {
+        "true" => true,
+        "false" => false,
+        other => return Err(format!("unknown NuSMV truth value `{other}`")),
+    };
+    Ok(Some((kind, expression.trim().to_owned(), holds)))
+}
+
+fn parse_nusmv_fsm(transcript: &str) -> Result<NuSmvFsmDiagnostics, String> {
+    let transition_total = if transcript.contains("The transition relation is not total.") {
+        false
+    } else if transcript.contains("The transition relation is total.") {
+        true
+    } else {
+        return Err("NuSMV check_fsm omitted transition-totality result".to_owned());
+    };
+    let deadlock_free = if transcript.contains("transition relation is not deadlock-free.") {
+        false
+    } else if transcript.contains("transition relation is deadlock-free.") {
+        true
+    } else {
+        return Err("NuSMV check_fsm omitted deadlock result".to_owned());
+    };
+    let mut deadlock_state = None;
+    let mut inside = false;
+    for raw in transcript.lines() {
+        let line = nusmv_payload(raw);
+        if line == "A deadlock state is:" {
+            inside = true;
+            deadlock_state = Some(BTreeMap::new());
+            continue;
+        }
+        if inside && line.starts_with("###") {
+            break;
+        }
+        if inside && let Some((name, value)) = parse_assignment(line) {
+            deadlock_state
+                .as_mut()
+                .expect("deadlock map was initialized")
+                .insert(name, value);
+        }
+    }
+    if !deadlock_free && deadlock_state.as_ref().is_none_or(BTreeMap::is_empty) {
+        return Err("NuSMV reported a deadlock without a state assignment".to_owned());
+    }
+    Ok(NuSmvFsmDiagnostics {
+        transition_total,
+        deadlock_free,
+        deadlock_state,
+    })
+}
+
+fn parse_assignment(line: &str) -> Option<(String, String)> {
+    let (name, value) = line.split_once(" = ")?;
+    let name = name.trim();
+    let value = value.trim();
+    if name.is_empty() || value.is_empty() || name.contains(' ') {
+        return None;
+    }
+    Some((name.to_owned(), value.to_owned()))
+}
+
+fn collapse_spaces(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn nusmv_payload(mut line: &str) -> &str {
+    line = line.trim();
+    while let Some(rest) = line.strip_prefix("NuSMV >") {
+        line = rest.trim_start();
+    }
+    line
+}
+
 fn extract_alloy_command_source(receipt: &str, name: &str) -> Result<String, String> {
     let commands = receipt
         .find("\"commands\":{")
@@ -995,8 +1583,14 @@ fn preserve_normalized(directory: &Path, normalized: &NormalizedRun) -> io::Resu
                     crate::NuSmvPropertyKind::Specification => "specification",
                     crate::NuSmvPropertyKind::Invariant => "invariant",
                 };
-                writeln!(output, "{kind}\t{}\t{}", result.expression, result.holds)
-                    .expect("writing to String cannot fail");
+                writeln!(
+                    output,
+                    "{kind}\t{}\t{}\t{}",
+                    result.name.as_deref().unwrap_or("<unnamed>"),
+                    result.expression,
+                    result.holds
+                )
+                .expect("writing to String cannot fail");
             }
         }
         NormalizedRun::ScryerProlog(results) => {
@@ -1007,6 +1601,42 @@ fn preserve_normalized(directory: &Path, normalized: &NormalizedRun) -> io::Resu
         }
     }
     fs::write(directory.join("normalized-results.txt"), output)
+}
+
+fn preserve_nusmv_traces(
+    directory: &Path,
+    traces: &[NuSmvCounterexample],
+    fsm: &NuSmvFsmDiagnostics,
+) -> io::Result<()> {
+    let mut output = String::new();
+    writeln!(
+        output,
+        "fsm\ttotal={}\tdeadlock_free={}",
+        fsm.transition_total, fsm.deadlock_free
+    )
+    .expect("writing to String cannot fail");
+    if let Some(state) = &fsm.deadlock_state {
+        for (name, value) in state {
+            writeln!(output, "deadlock\t{name}={value}").expect("writing to String cannot fail");
+        }
+    }
+    for trace in traces {
+        writeln!(
+            output,
+            "trace\t{}\tloop_start={:?}\texpression={}",
+            trace.property_name, trace.loop_start, trace.property_expression
+        )
+        .expect("writing to String cannot fail");
+        for (index, state) in trace.states.iter().enumerate() {
+            write!(output, "state\t{}\t{index}", trace.property_name)
+                .expect("writing to String cannot fail");
+            for (name, value) in &state.assignments {
+                write!(output, "\t{name}={value}").expect("writing to String cannot fail");
+            }
+            output.push('\n');
+        }
+    }
+    fs::write(directory.join("normalized-counterexamples.txt"), output)
 }
 
 fn first_nonempty_line(value: &str) -> Option<&str> {
@@ -1053,6 +1683,43 @@ mod tests {
             external_tool_path(Path::new(r"\\?\UNC\server\share\model.als")),
             OsString::from(r"\\server\share\model.als")
         );
+    }
+
+    #[test]
+    fn nusmv_suite_parser_joins_names_traces_and_deadlock() {
+        let transcript = r"
+000 :AF phase = finished
+  [CTL Unchecked N/A terminates]
+001 :!bad
+  [Invar Unchecked N/A bad_reachable]
+The transition relation is not total.
+The transition relation is not deadlock-free.
+A deadlock state is:
+mode = deadlock
+phase = stuck
+##########################################################
+-- specification AF phase = finished  is true
+-- invariant !bad  is false
+Trace Description: Counterexample
+Trace Type: Counterexample
+  -> State: 1.1 <-
+    mode = deadlock
+    phase = start
+  -> Input: 1.2 <-
+  -> State: 1.2 <-
+    phase = stuck
+";
+        let (results, traces, fsm) = parse_nusmv_suite(transcript).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].name.as_deref(), Some("terminates"));
+        assert_eq!(results[1].name.as_deref(), Some("bad_reachable"));
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].property_name, "bad_reachable");
+        assert_eq!(traces[0].states.len(), 2);
+        assert_eq!(traces[0].states[1].assignments["mode"], "deadlock");
+        assert!(!fsm.transition_total);
+        assert!(!fsm.deadlock_free);
+        assert_eq!(fsm.deadlock_state.unwrap()["phase"], "stuck");
     }
 
     #[test]

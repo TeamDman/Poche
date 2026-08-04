@@ -19,7 +19,7 @@ use poche_model::{
 pub use evidence::{DefectEvidence, InjectedDefect, injected_defect_evidence};
 pub use liveness::{
     Lasso, LivenessError, LivenessReport, TemporalEdge, analyze_liveness,
-    analyze_with_nonterminal_stutter, progress_rank,
+    analyze_with_nonterminal_deadlock, analyze_with_nonterminal_stutter, progress_rank,
 };
 pub use safety::{PropertyMeasurements, SafetyFailure, SafetyReport, check_safety_catalog};
 

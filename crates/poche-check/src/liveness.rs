@@ -70,7 +70,7 @@ impl Error for LivenessError {}
 ///
 /// Returns an error only if graph-local IDs/edges are internally inconsistent.
 pub fn analyze_liveness(graph: &ExplicitGraph) -> Result<LivenessReport, LivenessError> {
-    analyze(graph, None)
+    analyze(graph, None, None)
 }
 
 /// Inject one illegal nonterminal self-loop and prove the liveness checker
@@ -91,7 +91,28 @@ pub fn analyze_with_nonterminal_stutter(
             "controlled stutter must target a nonterminal state".to_owned(),
         ));
     }
-    analyze(graph, Some((state, state)))
+    analyze(graph, Some((state, state)), None)
+}
+
+/// Remove every successor from one reachable nonterminal state and prove the
+/// liveness checker reports that exact deadlock.
+///
+/// # Errors
+///
+/// Rejects an absent or already-terminal mutation state.
+pub fn analyze_with_nonterminal_deadlock(
+    graph: &ExplicitGraph,
+    state: StateId,
+) -> Result<LivenessReport, LivenessError> {
+    let game = graph
+        .state(state)
+        .ok_or_else(|| LivenessError("deadlock state is absent".to_owned()))?;
+    if game.phase() == Phase::Finished {
+        return Err(LivenessError(
+            "controlled deadlock must target a nonterminal state".to_owned(),
+        ));
+    }
+    analyze(graph, None, Some(state))
 }
 
 /// Exact number of semantic actions remaining on every continuation from this
@@ -139,8 +160,9 @@ const fn future_round_actions(round: RoundId) -> u8 {
 fn analyze(
     graph: &ExplicitGraph,
     injected_edge: Option<(StateId, StateId)>,
+    removed_successors: Option<StateId>,
 ) -> Result<LivenessReport, LivenessError> {
-    let adjacency = Csr::from_graph(graph, injected_edge)?;
+    let adjacency = Csr::from_graph(graph, injected_edge, removed_successors)?;
     let mut nonterminal_deadlocks = Vec::new();
     let mut terminal_edge_violations = Vec::new();
     let mut progress_violations = Vec::new();
@@ -318,10 +340,14 @@ impl Csr {
     fn from_graph(
         graph: &ExplicitGraph,
         injected: Option<(StateId, StateId)>,
+        removed_successors: Option<StateId>,
     ) -> Result<Self, LivenessError> {
         let states = graph.states().len();
         let mut counts = vec![0_usize; states];
         for edge in graph.edges() {
+            if Some(edge.from) == removed_successors {
+                continue;
+            }
             let count = counts
                 .get_mut(edge.from.index())
                 .ok_or_else(|| LivenessError("edge source is absent".to_owned()))?;
@@ -335,7 +361,7 @@ impl Csr {
             }
             counts[from.index()] += 1;
         }
-        Self::from_counts_and_edges(states, &counts, graph.edges(), injected)
+        Self::from_counts_and_edges(states, &counts, graph.edges(), injected, removed_successors)
     }
 
     fn from_counts_and_edges(
@@ -343,6 +369,7 @@ impl Csr {
         counts: &[usize],
         edges: &[Edge],
         injected: Option<(StateId, StateId)>,
+        removed_successors: Option<StateId>,
     ) -> Result<Self, LivenessError> {
         let mut offsets = vec![0_usize; states + 1];
         for index in 0..states {
@@ -353,6 +380,9 @@ impl Csr {
         let mut targets = vec![StateId(0); offsets[states]];
         let mut cursors = offsets[..states].to_vec();
         for edge in edges {
+            if Some(edge.from) == removed_successors {
+                continue;
+            }
             targets[cursors[edge.from.index()]] = edge.to;
             cursors[edge.from.index()] += 1;
         }
@@ -384,7 +414,7 @@ impl Csr {
         for edge in &edges {
             counts[edge.from.index()] += 1;
         }
-        Self::from_counts_and_edges(states, &counts, &edges, None).unwrap()
+        Self::from_counts_and_edges(states, &counts, &edges, None, None).unwrap()
     }
 }
 
@@ -497,5 +527,16 @@ mod tests {
         assert_eq!(lasso.cycle_states, vec![initial, initial]);
         assert_eq!(lasso.cycle_edges.len(), 1);
         assert_eq!(lasso.cycle_edges[0].action, None);
+    }
+
+    #[test]
+    fn nonterminal_deadlock_detects_removed_successors() {
+        let graph = exhaustive_test_graph();
+        let initial = graph.initial_states()[0];
+        let report = analyze_with_nonterminal_deadlock(graph, initial).unwrap();
+        assert!(!report.universal_termination);
+        assert_eq!(report.nonterminal_deadlocks, vec![initial]);
+        assert_eq!(report.nonterminal_cyclic_components, 0);
+        assert!(report.lasso.is_none());
     }
 }

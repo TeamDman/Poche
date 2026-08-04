@@ -12,7 +12,7 @@ use std::process::{Command, ExitCode, Output};
 
 use poche_check::{CheckScope, TerminationReason, analyze_liveness, explore};
 use poche_conformance::{
-    Disposition, compare_rust_alloy, compare_rust_models, compare_rust_prolog,
+    Disposition, compare_rust_alloy, compare_rust_models, compare_rust_nusmv, compare_rust_prolog,
 };
 use poche_native_tools::{NativeBackend, NativeDisposition, run_backend};
 use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
@@ -65,6 +65,7 @@ fn usage() {
          cargo run -p poche-xtask -- compare rust-oracle rust-formal\n  \
          cargo run -p poche-xtask -- compare rust prolog --fixtures PATH\n  \
          cargo run -p poche-xtask -- compare rust alloy --scope micro\n  \
+         cargo run -p poche-xtask -- compare rust nusmv --scope micro\n  \
          cargo run -p poche-xtask -- check rust-explicit --scope micro\n  \
          cargo run -p poche-xtask -- check rust-explicit --property game-terminates"
     );
@@ -152,6 +153,10 @@ fn compare(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     if left.as_deref() == Some(OsStr::new("rust")) && right.as_deref() == Some(OsStr::new("alloy"))
     {
         return compare_rust_alloy_command(args);
+    }
+    if left.as_deref() == Some(OsStr::new("rust")) && right.as_deref() == Some(OsStr::new("nusmv"))
+    {
+        return compare_rust_nusmv_command(args);
     }
     if left.as_deref() == Some(OsStr::new("rust")) && right.as_deref() == Some(OsStr::new("prolog"))
     {
@@ -267,6 +272,42 @@ fn compare_rust_alloy_command(mut args: impl Iterator<Item = OsString>) -> ExitC
         report.assertions_checked,
         report.controlled_defect_witnesses,
         report.projection_groups_compared
+    );
+    ExitCode::SUCCESS
+}
+
+fn compare_rust_nusmv_command(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("--scope"))
+        || args.next().as_deref() != Some(OsStr::new("micro"))
+        || args.next().is_some()
+    {
+        usage();
+        return ExitCode::from(2);
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let report = match compare_rust_nusmv(&root) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("Rust/NuSMV conformance failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    for limitation in &report.limitations {
+        println!("scope: {limitation}");
+    }
+    println!(
+        "Rust explicit scope: {} states, {} transitions, {} coarse one-step phase pairs",
+        report.rust_states, report.rust_transitions, report.rust_step_projection_pairs
+    );
+    println!(
+        "Rust/NuSMV conformance: {} named properties ({} correct-mode holds), {} refined step obligations, {} initial states, {} controlled defect counterexamples; stutter states={}, deadlock states={}; passed",
+        report.property_count,
+        report.correct_properties,
+        report.native_step_obligations,
+        report.initial_states_compared,
+        report.defect_counterexamples_compared,
+        report.stutter_trace_states,
+        report.deadlock_trace_states
     );
     ExitCode::SUCCESS
 }

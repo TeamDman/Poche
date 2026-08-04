@@ -53,3 +53,9 @@ The checked result is exhaustive for the reachable state space of this fixed
 two-player symbolic abstraction. It is not a proof for other player counts or
 for cross-trick card identity. Those limits are intentionally different from
 Alloy's named bounded atom scopes and Rust's typed executable oracle.
+
+The separate [Rust/NuSMV temporal-conformance suite](nusmv-conformance.md)
+uses the strict Rust model's smaller `1,2,1` scope to compare initial states,
+phase transitions, progress/termination, deadlocks, and matching controlled
+counterexamples. It preserves this full oracle's broader schedule as an
+independent check rather than changing its scope to fit Rust.

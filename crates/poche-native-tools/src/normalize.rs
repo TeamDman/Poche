@@ -61,6 +61,8 @@ pub enum NuSmvPropertyKind {
 /// One normalized `NuSMV` property result.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NuSmvPropertyResult {
+    /// Stable source name when a named-suite property catalog was captured.
+    pub name: Option<String>,
     /// Output category.
     pub kind: NuSmvPropertyKind,
     /// `NuSMV`'s normalized property expression.
@@ -264,7 +266,7 @@ pub fn normalize_alloy_commands(
 pub fn normalize_nusmv(transcript: &str) -> Result<NormalizedRun, String> {
     let mut results = Vec::new();
     for line in transcript.lines() {
-        let line = line.trim();
+        let line = nusmv_payload(line);
         let parsed = if let Some(rest) = line.strip_prefix("-- specification") {
             Some((NuSmvPropertyKind::Specification, rest))
         } else {
@@ -287,6 +289,7 @@ pub fn normalize_nusmv(transcript: &str) -> Result<NormalizedRun, String> {
             return Err("NuSMV emitted an empty property expression".to_owned());
         }
         results.push(NuSmvPropertyResult {
+            name: None,
             kind,
             expression: expression.to_owned(),
             holds,
@@ -296,6 +299,14 @@ pub fn normalize_nusmv(transcript: &str) -> Result<NormalizedRun, String> {
         return Err("NuSMV output contained no property results".to_owned());
     }
     Ok(NormalizedRun::NuSmv(results))
+}
+
+fn nusmv_payload(mut line: &str) -> &str {
+    line = line.trim();
+    while let Some(rest) = line.strip_prefix("NuSMV >") {
+        line = rest.trim_start();
+    }
+    line
 }
 
 /// Parse the named Scryer Prolog corpus protocol.
