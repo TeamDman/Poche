@@ -1,0 +1,6 @@
+schema_version = 1
+id = "trick-winner-relations"
+native_goal = "trick_winners"
+rules = ["R-TRICK-007", "R-TRICK-008", "R-TRICK-009", "R-TRICK-010", "R-TRICK-011"]
+mode = "Ground trump and two clockwise plays; normalize the unique winning seat."
+

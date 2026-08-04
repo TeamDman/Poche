@@ -1206,7 +1206,7 @@ constraint/mode notes and conjunctive selectors. Scryer now emits one stable
 named result per corpus query. Both required validation commands pass, including
 the aggregate conventional Rust + Alloy 6.2.0 + NuSMV 2.7.1 + Scryer execution.
 
-### [ ] 6.2 Verify Prolog predecessor/successor agreement
+### [x] 6.2 Verify Prolog predecessor/successor agreement
 
 **Work:**
 
@@ -1224,6 +1224,22 @@ cargo run -p poche-xtask -- compare rust prolog --fixtures tests/fixtures/prolog
 
 **Completion criteria:** Applicable query answer sets agree for the complete
 fixture corpus or carry explicit rule-linked discrepancies.
+
+**Completion notes (2026-08-03):** Added six strict manifests under
+`tests/fixtures/prolog/`, native `run_conformance_fixture/1` and
+`rule_explanation/3` relations, a fail-closed per-fixture Scryer runner, exact
+conventional-Rust adapters, and `docs/prolog-conformance.md`. The complete corpus
+compares 264 order-normalized rows with zero differences: 19 legal actions, 15
+full-card-identity successors, three ground `(Previous, Action)` explanations,
+four trick winners, all 203 score/payment combinations for hand sizes 1..7, and
+20 relation/rule/explanation bindings derived independently from Prolog facts
+and the Rust property catalog. The adapter explicitly composes Prolog's internal
+`collect` step with the second play to match Rust's atomic complete-trick
+transition. Reverse search is constrained to ground successor/action terms and
+`once/1` at three deterministic checkpoints; exhaustive alternative-term search
+was measured as unproductive and is not advertised. Native explanation wording
+may differ, while exact rule identity and nonempty explanations are required.
+Both required validation commands pass.
 
 ### [ ] 6.3 Verify Alloy structural and bounded agreement
 

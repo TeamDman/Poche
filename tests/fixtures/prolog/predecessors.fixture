@@ -1,0 +1,6 @@
+schema_version = 1
+id = "predecessors-for-action-and-state"
+native_goal = "predecessors"
+rules = ["R-GAME-003", "R-BID-003", "R-TRICK-004"]
+mode = "Ground successor and action before reverse search; retain one deterministic predecessor for three bounded checkpoints."
+

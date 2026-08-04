@@ -1,0 +1,6 @@
+schema_version = 1
+id = "canonical-round-successors"
+native_goal = "successors"
+rules = ["R-GAME-003", "R-DEAL-001", "R-BID-002", "R-BID-003", "R-TRICK-003", "R-TRICK-004", "R-TRICK-012"]
+mode = "Enumerate every legal successor through the one-card decision prefix; collapse only Prolog collect into Rust trick completion."
+

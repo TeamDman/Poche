@@ -1,0 +1,6 @@
+schema_version = 1
+id = "legal-actions-from-state"
+native_goal = "legal_actions"
+rules = ["R-GAME-003", "R-GAME-004", "R-BID-001", "R-BID-002", "R-TRICK-003", "R-TRICK-004", "R-TRICK-005", "R-TRICK-006"]
+mode = "Ground one-card round states; normalize the complete legal action answer set."
+

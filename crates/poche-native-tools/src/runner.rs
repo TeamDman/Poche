@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsString;
 use std::fmt::Write as _;
@@ -10,6 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::PrologFixtureReport;
 use crate::normalize::{NormalizedRun, normalize_alloy, normalize_nusmv, normalize_prolog};
 use crate::{NativeBackend, NativeDisposition, NativeReport, RawInvocation, evaluate_fixtures};
 
@@ -31,6 +33,221 @@ pub fn run_all(root: &Path) -> Vec<NativeReport> {
     .into_iter()
     .map(|backend| run_backend(root, backend))
     .collect()
+}
+
+/// Execute one finite native Prolog conformance fixture.
+///
+/// The supplied names are restricted to lowercase ASCII identifiers so they
+/// can select a handwritten predicate mode without becoming executable source.
+#[must_use]
+#[allow(clippy::too_many_lines)]
+pub fn run_prolog_fixture(root: &Path, fixture_id: &str, native_goal: &str) -> PrologFixtureReport {
+    let evidence_directory = root.join("target/prolog-conformance").join(fixture_id);
+    let invalid_fixture = fixture_id.is_empty()
+        || !fixture_id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+    let invalid_goal = native_goal.is_empty()
+        || !native_goal
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_');
+    if invalid_fixture || invalid_goal {
+        return PrologFixtureReport {
+            fixture_id: fixture_id.to_owned(),
+            native_goal: native_goal.to_owned(),
+            disposition: NativeDisposition::Failure,
+            diagnostic: "fixture ID or native goal contains unsupported characters".to_owned(),
+            answers: BTreeSet::new(),
+            raw: None,
+            evidence_directory,
+        };
+    }
+    if let Err(error) = fs::create_dir_all(&evidence_directory) {
+        return prolog_fixture_without_raw(
+            fixture_id,
+            native_goal,
+            NativeDisposition::Failure,
+            format!("could not create evidence directory: {error}"),
+            evidence_directory,
+        );
+    }
+    let spec = tool_spec(NativeBackend::ScryerProlog);
+    let (program, version) = match resolve_tool(&spec) {
+        Ok(found) => found,
+        Err(error) => {
+            return prolog_fixture_without_raw(
+                fixture_id,
+                native_goal,
+                NativeDisposition::Failure,
+                error,
+                evidence_directory,
+            );
+        }
+    };
+    let model = root.join("models/prolog/poche.pl");
+    let goal = format!("poche:run_conformance_fixture({native_goal}),halt");
+    let arguments = vec![
+        OsString::from("-f"),
+        model.as_os_str().to_owned(),
+        OsString::from("-g"),
+        OsString::from(&goal),
+    ];
+    let output = match Command::new(&program)
+        .current_dir(root)
+        .args(&arguments)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            return prolog_fixture_without_raw(
+                fixture_id,
+                native_goal,
+                NativeDisposition::Failure,
+                format!("failed to launch Scryer Prolog: {error}"),
+                evidence_directory,
+            );
+        }
+    };
+    let raw = RawInvocation {
+        program: program.to_string_lossy().into_owned(),
+        arguments: arguments
+            .iter()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect(),
+        version,
+        exit_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    };
+    if let Err(error) = preserve_raw(&evidence_directory, &raw, &output.stdout, &output.stderr) {
+        return PrologFixtureReport {
+            fixture_id: fixture_id.to_owned(),
+            native_goal: native_goal.to_owned(),
+            disposition: NativeDisposition::Failure,
+            diagnostic: format!("failed to preserve raw evidence: {error}"),
+            answers: BTreeSet::new(),
+            raw: Some(raw),
+            evidence_directory,
+        };
+    }
+    let transcript = format!("{}\n{}", raw.stdout, raw.stderr);
+    let answers = match normalize_prolog_fixture(native_goal, &transcript) {
+        Ok(answers) => answers,
+        Err(error) => {
+            return PrologFixtureReport {
+                fixture_id: fixture_id.to_owned(),
+                native_goal: native_goal.to_owned(),
+                disposition: if output.status.success() {
+                    NativeDisposition::Unknown
+                } else {
+                    NativeDisposition::Failure
+                },
+                diagnostic: error,
+                answers: BTreeSet::new(),
+                raw: Some(raw),
+                evidence_directory,
+            };
+        }
+    };
+    if let Err(error) = fs::write(
+        evidence_directory.join("normalized-answers.txt"),
+        answers.iter().fold(String::new(), |mut output, answer| {
+            writeln!(output, "{answer}").expect("writing to String cannot fail");
+            output
+        }),
+    ) {
+        return PrologFixtureReport {
+            fixture_id: fixture_id.to_owned(),
+            native_goal: native_goal.to_owned(),
+            disposition: NativeDisposition::Failure,
+            diagnostic: format!("failed to preserve normalized answers: {error}"),
+            answers,
+            raw: Some(raw),
+            evidence_directory,
+        };
+    }
+    let disposition = if output.status.success() {
+        NativeDisposition::Success
+    } else {
+        NativeDisposition::Failure
+    };
+    PrologFixtureReport {
+        fixture_id: fixture_id.to_owned(),
+        native_goal: native_goal.to_owned(),
+        disposition,
+        diagnostic: if disposition == NativeDisposition::Success {
+            format!("recognized {} unique answer rows", answers.len())
+        } else {
+            format!("Scryer Prolog exited with {}", output.status)
+        },
+        answers,
+        raw: Some(raw),
+        evidence_directory,
+    }
+}
+
+fn prolog_fixture_without_raw(
+    fixture_id: &str,
+    native_goal: &str,
+    disposition: NativeDisposition,
+    diagnostic: String,
+    evidence_directory: PathBuf,
+) -> PrologFixtureReport {
+    PrologFixtureReport {
+        fixture_id: fixture_id.to_owned(),
+        native_goal: native_goal.to_owned(),
+        disposition,
+        diagnostic,
+        answers: BTreeSet::new(),
+        raw: None,
+        evidence_directory,
+    }
+}
+
+fn normalize_prolog_fixture(
+    native_goal: &str,
+    transcript: &str,
+) -> Result<BTreeSet<String>, String> {
+    let begin_marker = format!("POCHE_PROLOG_FIXTURE {native_goal} BEGIN");
+    let end_prefix = format!("POCHE_PROLOG_FIXTURE {native_goal} END count=");
+    let mut inside_fixture = false;
+    let mut saw_end = false;
+    let mut declared_count = None;
+    let mut answers = BTreeSet::new();
+    for line in transcript.lines().map(str::trim) {
+        if line == begin_marker {
+            if inside_fixture || saw_end {
+                return Err("duplicate or misplaced Prolog fixture BEGIN marker".to_owned());
+            }
+            inside_fixture = true;
+        } else if let Some(answer) = line.strip_prefix("POCHE_PROLOG_ANSWER ") {
+            if !inside_fixture || saw_end || answer.is_empty() {
+                return Err("misplaced or empty Prolog answer row".to_owned());
+            }
+            if !answers.insert(answer.to_owned()) {
+                return Err(format!("duplicate Prolog answer row: {answer}"));
+            }
+        } else if let Some(count) = line.strip_prefix(&end_prefix) {
+            if !inside_fixture || saw_end {
+                return Err("duplicate or misplaced Prolog fixture END marker".to_owned());
+            }
+            declared_count = Some(
+                count
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid Prolog answer count `{count}`"))?,
+            );
+            saw_end = true;
+        } else if line.starts_with("POCHE_PROLOG_") {
+            return Err(format!("unknown Prolog fixture protocol line: {line}"));
+        }
+    }
+    if !inside_fixture || !saw_end || declared_count != Some(answers.len()) {
+        return Err(format!(
+            "incomplete Prolog fixture protocol: begin={inside_fixture}, end={saw_end}, declared={declared_count:?}, answers={}",
+            answers.len()
+        ));
+    }
+    Ok(answers)
 }
 
 /// Run one handwritten oracle and preserve both raw and normalized evidence.
@@ -568,5 +785,30 @@ mod tests {
     fn os_string_is_accepted_by_command_contract() {
         fn accepts_os_str(_: &OsStr) {}
         accepts_os_str(OsStr::new("alloy"));
+    }
+
+    #[test]
+    fn prolog_fixture_protocol_is_order_independent_and_fail_closed() {
+        let transcript = "POCHE_PROLOG_FIXTURE legal_actions BEGIN\n\
+            POCHE_PROLOG_ANSWER legal(z)\n\
+            POCHE_PROLOG_ANSWER legal(a)\n\
+            POCHE_PROLOG_FIXTURE legal_actions END count=2\n";
+        let answers = normalize_prolog_fixture("legal_actions", transcript)
+            .expect("complete known protocol parses");
+        assert_eq!(
+            answers.into_iter().collect::<Vec<_>>(),
+            ["legal(a)", "legal(z)"]
+        );
+        assert!(
+            normalize_prolog_fixture(
+                "legal_actions",
+                "POCHE_PROLOG_FIXTURE legal_actions BEGIN\n\
+                 POCHE_PROLOG_ANSWER legal(a)\n\
+                 POCHE_PROLOG_ANSWER legal(a)\n\
+                 POCHE_PROLOG_FIXTURE legal_actions END count=2\n"
+            )
+            .is_err()
+        );
+        assert!(normalize_prolog_fixture("legal_actions", "unstructured success").is_err());
     }
 }

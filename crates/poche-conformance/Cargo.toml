@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 poche-model = { path = "../poche-model" }
+poche-native-tools = { path = "../poche-native-tools" }
 poche-oracle-rust = { path = "../poche-oracle-rust" }
 
 [lints]

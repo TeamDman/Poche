@@ -11,7 +11,7 @@ use std::path::Path;
 use std::process::{Command, ExitCode, Output};
 
 use poche_check::{CheckScope, TerminationReason, analyze_liveness, explore};
-use poche_conformance::{Disposition, compare_rust_models};
+use poche_conformance::{Disposition, compare_rust_models, compare_rust_prolog};
 use poche_native_tools::{NativeBackend, NativeDisposition, run_backend};
 use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
 
@@ -61,6 +61,7 @@ fn usage() {
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- oracle report\n  \
          cargo run -p poche-xtask -- compare rust-oracle rust-formal\n  \
+         cargo run -p poche-xtask -- compare rust prolog --fixtures PATH\n  \
          cargo run -p poche-xtask -- check rust-explicit --scope micro\n  \
          cargo run -p poche-xtask -- check rust-explicit --property game-terminates"
     );
@@ -145,6 +146,52 @@ fn check(mut args: impl Iterator<Item = OsString>) -> ExitCode {
 fn compare(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     let left = args.next();
     let right = args.next();
+    if left.as_deref() == Some(OsStr::new("rust")) && right.as_deref() == Some(OsStr::new("prolog"))
+    {
+        if args.next().as_deref() != Some(OsStr::new("--fixtures")) {
+            usage();
+            return ExitCode::from(2);
+        }
+        let Some(fixture_path) = args.next() else {
+            usage();
+            return ExitCode::from(2);
+        };
+        if args.next().is_some() {
+            usage();
+            return ExitCode::from(2);
+        }
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let supplied = Path::new(&fixture_path);
+        let fixtures = if supplied.is_absolute() {
+            supplied.to_owned()
+        } else {
+            root.join(supplied)
+        };
+        let report = match compare_rust_prolog(&root, &fixtures) {
+            Ok(report) => report,
+            Err(error) => {
+                eprintln!("Rust/Prolog conformance failed: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        for fixture in &report.fixtures {
+            println!(
+                "{}: {} exact answer rows; rules={}",
+                fixture.id,
+                fixture.answer_count,
+                fixture.rules.join(",")
+            );
+        }
+        println!("collect boundary: {}", report.collect_boundary);
+        println!("predecessor boundary: {}", report.predecessor_boundary);
+        println!(
+            "Rust/Scryer Prolog conformance: {} fixtures, {} exact normalized answer rows, {} rule explanations; passed",
+            report.fixtures.len(),
+            report.answer_count,
+            report.explanation_count
+        );
+        return ExitCode::SUCCESS;
+    }
     if left.as_deref() != Some(OsStr::new("rust-oracle"))
         || right.as_deref() != Some(OsStr::new("rust-formal"))
         || args.next().is_some()

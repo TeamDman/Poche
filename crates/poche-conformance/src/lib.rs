@@ -9,6 +9,13 @@
 //! the lowest three ranks of two oracle suits. It compares the common `1, 2`
 //! round prefix exactly, while preserving (rather than hiding) scope changes.
 
+mod prolog;
+
+pub use prolog::{
+    PrologConformanceError, PrologConformanceReport, PrologFixtureComparison, PrologFixtureSpec,
+    compare_rust_prolog,
+};
+
 use std::error::Error;
 use std::fmt;
 

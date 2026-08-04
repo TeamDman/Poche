@@ -10,6 +10,9 @@ clockwise whole deals, legal bids and plays, trick winners, forward and reverse
 round scoring, final winners, pot division, First Jack, and repeated-tie High
 Card. A full-card-identity two-player one-card round supplies executable
 `legal_action/2`, `step/3`, `predecessor/3`, and `replay/3` state queries.
+`rule_explanation/3` additionally exposes finite relation-to-rule explanation
+facts with variables accepted in any position. Cross-model fixtures and their
+productive constraints are documented in `docs/prolog-conformance.md`.
 
 ## Native check
 

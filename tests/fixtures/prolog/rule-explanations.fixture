@@ -1,0 +1,5 @@
+schema_version = 1
+id = "rule-explanations"
+native_goal = "rule_explanations"
+rules = ["R-GAME-003", "R-GAME-004", "R-BID-001", "R-TRICK-004", "R-ADVANCE-003", "R-TRICK-007", "R-TRICK-008", "R-TRICK-009", "R-TRICK-010", "R-TRICK-011", "R-SCORE-001", "R-SCORE-002", "R-SCORE-003", "R-SCORE-004", "R-SCORE-005", "R-MONEY-001", "R-MONEY-002"]
+mode = "Query finite relation/rule/explanation facts in either direction; compare rule identity and require nonempty native explanations."

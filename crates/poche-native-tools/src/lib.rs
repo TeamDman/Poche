@@ -12,6 +12,7 @@ mod adapters;
 mod normalize;
 mod runner;
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 pub use adapters::{
@@ -22,7 +23,7 @@ pub use normalize::{
     AlloyCommandKind, AlloyCommandResult, AlloyOutcome, NormalizedRun, NuSmvPropertyKind,
     NuSmvPropertyResult, PrologTestResult, normalize_alloy, normalize_nusmv, normalize_prolog,
 };
-pub use runner::{run_all, run_backend};
+pub use runner::{run_all, run_backend, run_prolog_fixture};
 
 /// A native backend whose handwritten model can be executed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -104,6 +105,33 @@ pub struct NativeReport {
 
 impl NativeReport {
     /// Whether this report is a recognized all-passing result.
+    #[must_use]
+    pub fn succeeded(&self) -> bool {
+        self.disposition == NativeDisposition::Success
+    }
+}
+
+/// Typed result of one grounded Scryer Prolog cross-model fixture query.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrologFixtureReport {
+    /// Stable fixture ID used for evidence paths.
+    pub fixture_id: String,
+    /// Native goal atom accepted by `run_conformance_fixture/1`.
+    pub native_goal: String,
+    /// Success, process/query failure, or unrecognized output.
+    pub disposition: NativeDisposition,
+    /// Human-readable diagnostic.
+    pub diagnostic: String,
+    /// Order-independent, duplicate-free normalized answer rows.
+    pub answers: BTreeSet<String>,
+    /// Raw native invocation when Scryer launched.
+    pub raw: Option<RawInvocation>,
+    /// Ignored per-fixture evidence directory.
+    pub evidence_directory: PathBuf,
+}
+
+impl PrologFixtureReport {
+    /// Whether the process and strict answer protocol both succeeded.
     #[must_use]
     pub fn succeeded(&self) -> bool {
         self.disposition == NativeDisposition::Success

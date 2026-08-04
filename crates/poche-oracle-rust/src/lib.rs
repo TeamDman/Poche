@@ -317,20 +317,7 @@ impl<const PLAYERS: usize> Trick<PLAYERS> {
 
     #[must_use]
     pub fn winner(&self, trump: Suit) -> Option<Seat<PLAYERS>> {
-        if self.len != PLAYERS {
-            return None;
-        }
-        let lead = self.lead_suit()?;
-        self.iter()
-            .max_by_key(|played| {
-                let category = if played.card.suit == trump {
-                    2_u8
-                } else {
-                    u8::from(played.card.suit == lead)
-                };
-                (category, played.card.rank)
-            })
-            .map(|played| played.player)
+        winner_from_plays(trump, self.iter(), self.len)
     }
 
     fn push(&mut self, played: PlayedCard<PLAYERS>) -> Result<(), RuleViolation> {
@@ -341,6 +328,49 @@ impl<const PLAYERS: usize> Trick<PLAYERS> {
         self.len += 1;
         Ok(())
     }
+}
+
+/// Resolve a complete clockwise trick supplied outside a game transition.
+///
+/// Returns `None` unless exactly one play per statically known player is
+/// supplied. The first play establishes lead suit; trump, then lead suit, then
+/// rank determine the unique winner.
+#[must_use]
+pub fn trick_winner<const PLAYERS: usize>(
+    trump: Suit,
+    plays: &[PlayedCard<PLAYERS>],
+) -> Option<Seat<PLAYERS>> {
+    let mut seen = [false; PLAYERS];
+    for play in plays {
+        if seen[play.player.index()] {
+            return None;
+        }
+        seen[play.player.index()] = true;
+    }
+    winner_from_plays(trump, plays.iter().copied(), plays.len())
+}
+
+fn winner_from_plays<const PLAYERS: usize>(
+    trump: Suit,
+    mut plays: impl Iterator<Item = PlayedCard<PLAYERS>>,
+    length: usize,
+) -> Option<Seat<PLAYERS>> {
+    if length != PLAYERS {
+        return None;
+    }
+    let first = plays.next()?;
+    let lead = first.card.suit;
+    std::iter::once(first)
+        .chain(plays)
+        .max_by_key(|played| {
+            let category = if played.card.suit == trump {
+                2_u8
+            } else {
+                u8::from(played.card.suit == lead)
+            };
+            (category, played.card.rank)
+        })
+        .map(|played| played.player)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1395,6 +1425,10 @@ mod tests {
 
         assert_eq!(trick.winner(Suit::Clubs), Some(seat(2)));
         assert_eq!(trick.winner(Suit::Diamonds), Some(seat(0)));
+        let plays = trick.iter().collect::<Vec<_>>();
+        assert_eq!(trick_winner(Suit::Clubs, &plays), Some(seat(2)));
+        let duplicate = [plays[0], plays[0], plays[2]];
+        assert_eq!(trick_winner(Suit::Clubs, &duplicate), None);
     }
 
     #[test]

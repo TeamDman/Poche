@@ -23,6 +23,8 @@
     predecessor/3,
     replay/3,
     restore_round/2,
+    rule_explanation/3,
+    run_conformance_fixture/1,
     run_oracle_tests/0
 ]).
 
@@ -39,6 +41,7 @@
 ]).
 
 :- discontiguous(oracle_test/1).
+:- discontiguous(conformance_row/2).
 
 % This is an independent relational oracle derived from docs/main.typ.  It is
 % not generated from Rust.  Predicates document their productive modes in the
@@ -489,6 +492,137 @@ all_unique([]).
 all_unique([Card|Cards]) :-
     \+ memberchk(Card, Cards),
     all_unique(Cards).
+
+% Cross-model query fixtures --------------------------------------------------
+%
+% These adapters select ground/productive modes of the independent relations;
+% they do not encode Rust expectations. Rows are sorted before printing so the
+% native answer set has a deterministic transport order.
+
+run_conformance_fixture(Name) :-
+    findall(Row, conformance_row(Name, Row), RawRows),
+    sort(RawRows, Rows),
+    format("POCHE_PROLOG_FIXTURE ~w BEGIN~n", [Name]),
+    write_conformance_rows(Rows),
+    length(Rows, Count),
+    format("POCHE_PROLOG_FIXTURE ~w END count=~d~n", [Name, Count]).
+
+write_conformance_rows([]).
+write_conformance_rows([Row|Rows]) :-
+    format("POCHE_PROLOG_ANSWER ~w~n", [Row]),
+    write_conformance_rows(Rows).
+
+canonical_fixture_state(initial, State) :-
+    standard_deck(Deck),
+    initial_round_state(Deck, State).
+canonical_fixture_state(after_deal, State) :-
+    canonical_fixture_state(initial, Initial),
+    step(Initial, deal, State).
+canonical_fixture_state(after_bid0(Bid0), State) :-
+    between(0, 1, Bid0),
+    canonical_fixture_state(after_deal, Before),
+    step(Before, bid(0, Bid0), State).
+canonical_fixture_state(after_bids(Bid0, Bid1), State) :-
+    between(0, 1, Bid0),
+    between(0, 1, Bid1),
+    canonical_fixture_state(after_bid0(Bid0), Before),
+    step(Before, bid(1, Bid1), State).
+canonical_fixture_state(after_lead(Bid0, Bid1), State) :-
+    canonical_fixture_state(after_bids(Bid0, Bid1), Before),
+    step(Before, play(0, card(clubs, 2)), State).
+canonical_fixture_state(after_trick(Bid0, Bid1), State) :-
+    canonical_fixture_state(after_lead(Bid0, Bid1), Before),
+    step(Before, play(1, card(clubs, 3)), Collect),
+    step(Collect, collect, State).
+
+decision_fixture_state(initial, State) :- canonical_fixture_state(initial, State).
+decision_fixture_state(after_deal, State) :- canonical_fixture_state(after_deal, State).
+decision_fixture_state(after_bid0(Bid0), State) :-
+    canonical_fixture_state(after_bid0(Bid0), State).
+decision_fixture_state(after_bids(Bid0, Bid1), State) :-
+    canonical_fixture_state(after_bids(Bid0, Bid1), State).
+decision_fixture_state(after_lead(Bid0, Bid1), State) :-
+    canonical_fixture_state(after_lead(Bid0, Bid1), State).
+
+semantic_step(State, Action, Next) :-
+    step(State, Action, Intermediate),
+    ( Intermediate = round_state(collect(_), _, _, _, _, _, _, _, _, _, _, _, _) ->
+        step(Intermediate, collect, Next)
+    ; Next = Intermediate
+    ).
+
+conformance_row(legal_actions, legal(Name, Action)) :-
+    decision_fixture_state(Name, State),
+    legal_action(State, Action).
+conformance_row(legal_actions, legal(Name, settle)) :-
+    canonical_fixture_state(Name, round_state(settle, Dealer, HandSize, Deck,
+        Hands, Trump, Bids, Leader, Center, Captured, Won, Scores, Pot)),
+    legal_action(round_state(settle, Dealer, HandSize, Deck, Hands, Trump, Bids,
+        Leader, Center, Captured, Won, Scores, Pot), settle).
+
+conformance_row(successors, successor(Name, Action, Next)) :-
+    decision_fixture_state(Name, State),
+    legal_action(State, Action),
+    semantic_step(State, Action, Next).
+
+predecessor_fixture(after_bid0(0), bid(0, 0), Target) :-
+    canonical_fixture_state(after_bid0(0), Target).
+predecessor_fixture(after_bids(0, 1), bid(1, 1), Target) :-
+    canonical_fixture_state(after_bids(0, 1), Target).
+predecessor_fixture(after_lead(0, 1), play(0, card(clubs, 2)), Target) :-
+    canonical_fixture_state(after_lead(0, 1), Target).
+
+conformance_row(predecessors, predecessor(Name, Action, Previous)) :-
+    predecessor_fixture(Name, Action, Target),
+    once(predecessor(Target, Action, Previous)).
+
+winner_fixture(trump_low,
+    spades,
+    [play(0, card(hearts, 14)), play(1, card(spades, 2))]).
+winner_fixture(lead_over_off_suit,
+    spades,
+    [play(0, card(hearts, 10)), play(1, card(clubs, 14))]).
+winner_fixture(higher_lead,
+    spades,
+    [play(0, card(hearts, 10)), play(1, card(hearts, 11))]).
+winner_fixture(off_suit_ineligible,
+    spades,
+    [play(0, card(hearts, 2)), play(1, card(clubs, 14))]).
+
+conformance_row(trick_winners, winner(Name, Winner)) :-
+    winner_fixture(Name, Trump, Plays),
+    trick_winner(Trump, Plays, Winner).
+
+conformance_row(round_scoring, score(HandSize, Bid, Tricks, Points, Cell, MissDimes)) :-
+    between(1, 7, HandSize),
+    round_score(HandSize, Bid, Tricks, Points, Cell, MissDimes).
+
+% Finite facts support queries by relation, rule ID, or both. Explanation atoms
+% are intentionally native prose keys; cross-model comparison requires matching
+% rule identity and nonempty explanations, not identical English sentences.
+rule_explanation(legal_action, 'R-GAME-003', unique_phase_action).
+rule_explanation(legal_action, 'R-GAME-004', clockwise_actor).
+rule_explanation(legal_action, 'R-BID-001', bidder_order).
+rule_explanation(legal_action, 'R-TRICK-004', clockwise_play_order).
+rule_explanation(step, 'R-GAME-003', explicit_phase_transition).
+rule_explanation(step, 'R-ADVANCE-003', progress_to_next_round_or_finish).
+rule_explanation(predecessor, 'R-GAME-003', reverse_of_explicit_transition).
+rule_explanation(predecessor, 'R-ADVANCE-003', reverse_progress_boundary).
+rule_explanation(trick_winner, 'R-TRICK-007', trump_eligibility).
+rule_explanation(trick_winner, 'R-TRICK-008', lead_suit_eligibility).
+rule_explanation(trick_winner, 'R-TRICK-009', off_suit_ineligibility).
+rule_explanation(trick_winner, 'R-TRICK-010', rank_ordering).
+rule_explanation(trick_winner, 'R-TRICK-011', unique_highest_eligible_card).
+rule_explanation(round_score, 'R-SCORE-001', scoring_after_round).
+rule_explanation(round_score, 'R-SCORE-002', missed_bid_zero_points).
+rule_explanation(round_score, 'R-SCORE-003', exact_bid_bonus).
+rule_explanation(round_score, 'R-SCORE-004', all_tricks_bonus).
+rule_explanation(round_score, 'R-SCORE-005', numeric_score_value).
+rule_explanation(round_score, 'R-MONEY-001', missed_bid_payment).
+rule_explanation(round_score, 'R-MONEY-002', payment_enters_bowl).
+
+conformance_row(rule_explanations, rule(Relation, Rule, Explanation)) :-
+    rule_explanation(Relation, Rule, Explanation).
 
 % Native query corpus ----------------------------------------------------------
 

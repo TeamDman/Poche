@@ -427,6 +427,7 @@ name = "poche-conformance"
 version = "0.1.0"
 dependencies = [
  "poche-model",
+ "poche-native-tools",
  "poche-oracle-rust",
 ]
 
