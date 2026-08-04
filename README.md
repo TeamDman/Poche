@@ -6,9 +6,10 @@ it answers naturally, then compares their observable behavior through shared
 fixtures and evidence.
 
 - [Execution plan](PLAN.md)
+- [Contributor and evidence guide](CONTRIBUTING.md)
 - [Typst rule source](docs/main.typ)
-- [Pretty rules](https://teamdman.github.io/Poche/) — generated from the current
-  `model-checking` source by GitHub Pages
+- [Pretty rules](https://teamdman.github.io/Poche/) — generated from the
+  `model-checking` rulebook source by GitHub Pages
 - [Direct rulebook PDF](https://teamdman.github.io/Poche/poche-rules.pdf)
 - [Publication and format decision](docs/pages-publication.md)
 

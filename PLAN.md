@@ -1,12 +1,12 @@
 # Poche formal models and executable Rust environment
 
-**Plan status:** Ready for `/goal` execution
+**Plan status:** Execution complete
 
 **Primary implementation root:** `D:\Repos\Games\poche-3` on orphan branch `model-checking`
 
-**Last updated:** 2026-08-03
+**Last updated:** 2026-08-04
 
-**Intent audit:** Passed 2026-08-03 against all original user messages available in this task
+**Intent audit:** Passed 2026-08-04 against all original user messages and final implementation evidence available in this task
 
 ## How to update this plan
 
@@ -42,6 +42,9 @@ being weakened by summarization, plan cleanup, or context compaction.
   that disposition explicitly; omission is not an acceptable disposition.
 - Before handoff, verify that every active `U` requirement and every extracted
   Poche rule ID still appears in its respective traceability/coverage table.
+
+The plan is only ready once we have literally triple checked that no intent from
+the user has been omitted without explicit direction from the user.
 
 ## Authoritative user guidance ledger
 
@@ -81,14 +84,15 @@ being weakened by summarization, plan cleanup, or context compaction.
 
 - **Pass 1 — extraction:** Reread every original user message from the initial
   Alloy/NuSMV/Prolog brainstorming request through the current-goal, licensing,
-  proof-scope, and future-reward decisions. U1–U25 preserve the original intent;
-  U26–U29 preserve the newly confirmed goal boundary, MPL-2.0 choice, round-score
-  signal, and comprehensive-versus-exhaustive distinction.
+  proof-scope, and future-reward decisions after implementation. U1–U25 preserve
+  the original intent; U26–U29 preserve the confirmed goal boundary, MPL-2.0
+  choice, round-score signal, and comprehensive-versus-exhaustive distinction.
 - **Pass 2 — traceability:** Verified every active U1–U29 requirement has one
-  authoritative ledger row and one guidance-traceability row. Checked the new
-  decisions against scope, gates, execution order, task acceptance criteria,
-  deferred-work sections, overall completion, and risks. RL training, legacy-v2
-  comparison, and automatic source generation are not hidden completion gates.
+  authoritative ledger row and one guidance-traceability row. Checked the final
+  implementation/evidence against scope, gates, execution order, task acceptance
+  criteria and adjacent completion notes, deferred-work sections, all 16 overall
+  completion criteria, and risks. RL training, legacy-v2 comparison, and
+  automatic source generation are not hidden completion gates.
 - **Pass 3 — adversarial omission:** Reread the user messages after the revised
   plan and searched specifically for scope leakage or weakened qualifiers:
   independent native oracles; Alloy/NuSMV consistency; forward/reverse Prolog;
@@ -186,20 +190,21 @@ The project succeeds only when coverage and confidence are stated precisely:
 - Treating the legacy `v2` engine as normative rules.
 - Committing generated PDF/HTML output.
 
-## Established foundation
+## Planning baseline and applied state
 
-These facts were verified locally on 2026-08-03 and should not be silently
-reopened:
+These planning-baseline facts were verified locally on 2026-08-03 and remain
+historical evidence rather than descriptions of the completed repository:
 
-- `D:\Repos\Games\poche-3` is an empty Git worktree on the unborn orphan branch
-  `model-checking`; `PLAN.md` is its only current file.
-- The remote `TeamDman/Poche` repository currently has default branch `main`.
-  A read of the Pages REST endpoint returned HTTP 404, so Pages is not configured
-  yet. Both facts were verified with `gh` on 2026-08-03.
+- `D:\Repos\Games\poche-3` began as an empty Git worktree on the unborn orphan
+  branch `model-checking`; `PLAN.md` was its only file.
+- The remote `TeamDman/Poche` repository initially had default branch `main`, and
+  its Pages REST endpoint returned HTTP 404. The pre-change state and rollback
+  evidence are retained in
+  `docs/decisions/0002-github-head-and-pages-policy.md`.
 - The same repository has sibling reference worktrees:
   - `D:\Repos\Games\Poche` at `caece9d` on `v2`;
   - `D:\Repos\Games\poche-2` at `0a19283` on `main`.
-- The current rules draft is
+- The imported rules source was
   `D:\OneDrive\Documents\Ideas\poche\main.typ`. It specifies 2–51 players,
   52 cards, hands capped at seven, deal/bid/trick/score phases, follow-suit,
   trump, dealer rotation, pot payments, scoring, shared ties, and the `1..m..1`
@@ -225,10 +230,27 @@ reopened:
     `v0.10.0-17-ge4d96925`;
   - `C:\Program Files\alloy-6.2.0-windows-amd64\bin\alloy.exe`;
   - `C:\Program Files\NuSMV-2.7.1-win64\bin\NuSMV.exe`, reporting NuSMV 2.7.1.
-- No `typst*.exe` was found in the inspected Cargo bin directory and `typst` was
-  not discoverable in the current shell. Typst needs an explicit local/CI pin.
+- No `typst*.exe` was initially discoverable. Task 1.3 subsequently installed an
+  ignored local Typst 0.15.1 binary, and Task 9.1 pinned and digest-verified that
+  version independently in CI.
 - Prior architecture research is recorded at
   `D:\OneDrive\Documents\Ideas\model checking\2026-08-03-rust-formal-methods-engine.md`.
+
+The applied state verified on 2026-08-04 is:
+
+- `model-checking` is pushed and is the GitHub default/head branch; preserved
+  `main` remains at `0a19283bf949c3adf9d961f01114631cf44960eb`.
+- The MPL-2.0 repository contains the copied Typst authority, 61-rule/four-track
+  coverage ledger, independent Rust/Alloy/NuSMV/Scryer models, finite/formal/
+  environment/interchange contracts, explicit checker, native runners,
+  conformance suites, contributor guide, and durable acceptance evidence.
+- GitHub Pages uses workflow publication with HTTPS and a protected
+  `github-pages` environment whose sole deployment branch policy is
+  `model-checking`. Run `30882134532` published the five-page generated PDF and
+  landing page from commit `7bd7d2db4771955a5613fb7cc5a85bc90f30c2d8`.
+- Rust 1.96.0, Alloy 6.2.0, NuSMV 2.7.1, Scryer Prolog
+  `0.10.0-17-ge4d96925`, and Typst 0.15.1 are all discoverable through the
+  documented `PATH`/environment-override contract.
 
 ## Confirmed decisions and constraints
 
@@ -262,9 +284,9 @@ reopened:
 - Cargo sources/build targets remain outside OneDrive. `docs/main.pdf` and HTML
   build output are ignored.
 - GitHub Pages, not Git history, owns public generated Typst output.
-- `model-checking` is intended to become the repository's default/head branch
-  after its first commit is pushed. The Pages workflow and `github-pages`
-  deployment protection must target that deliberate default branch.
+- `model-checking` is the verified repository default/head branch. The Pages
+  workflow and protected `github-pages` environment target that branch; the
+  preserved `main` branch was not rewritten or deleted.
 - Results distinguish exhaustive finite checking, bounded checking, sampled
   fuzzing, unsupported behavior, and unknown/tool failure. Future RL evidence
   will remain a distinct empirical category.
@@ -365,9 +387,9 @@ rg -n "pub struct State|fn tick|pub enum Rule|assert_invariants" `
 | U18 | 2.3, 3.3, 6.2, deferred generation follow-up |
 | U19 | 1.2, confirmed constraints |
 | U20 | 1.3, 9.1 |
-| U21 | Established foundation, G14, 1.5, 9.1, overall completion criteria |
+| U21 | Planning baseline and applied state, G14, 1.5, 9.1, overall completion criteria |
 | U22 | Purpose, scope non-goal, 3.1–3.4, 9.2 |
-| U23 | Established foundation and source references |
+| U23 | Planning baseline and applied state, source references |
 | U24 | Scope, 5.1–5.4, overall completion criteria |
 | U25 | Plan status, working assumptions, G1–G14 |
 | U26 | Current-goal boundary, scope, 3.2, 4.1–4.2, deferred RL follow-up, overall completion criteria |
@@ -397,7 +419,7 @@ checking a generator against its own output.
 
 | Track | Primary questions | Comprehensive coverage obligation | Native validation | Evidence |
 | --- | --- | --- | --- | --- |
-| Typst rules | What game is intended? | Every normative rule has a stable rule ID and source anchor. | Pinned Typst render | 61-rule ledger; local PDF render/visual audit passed; Pages publication is Task 9.1. |
+| Typst rules | What game is intended? | Every normative rule has a stable rule ID and source anchor. | Pinned Typst render | 61-rule ledger; five-page PDF render/visual audit passed locally and after live Pages publication. |
 | Rust oracle/environment | What are valid states, observations, legal actions, transitions, round scores/outcomes, and terminal outcomes? | Every applicable rule ID has executable examples/properties or an explicit disposition. | Rust tests, explicit exploration, replay | Conventional/strict conformance has 14 matches and four classified boundaries; micro exploration has 431,800 states and 549,896 transitions. |
 | Alloy 6.2.0 | Do structurally valid deals/states/traces exist, and do bounded assertions find contradictions or counterexamples? | Every structural/relational rule ID is modeled or explicitly inapplicable; selected temporal facts may be included. | Native Alloy runs with scopes recorded | 15 base-oracle commands plus 10 bounded conformance commands; 13 canonical relation groups agree with Rust. |
 | NuSMV 2.7.1 | Can phases deadlock, violate invariants, or avoid termination? Are temporal rules mutually consistent? | Every state/transition/temporal rule ID is represented or explicitly inapplicable. | Native NuSMV invariant/CTL/LTL runs and traces | 46 full-oracle properties plus 23 named micro properties; stutter/deadlock traces agree with Rust. |
@@ -598,7 +620,7 @@ cargo run -p poche-xtask -- coverage audit --track alloy
 **Completion criteria:** Alloy 6.2.0 natively accepts the model; every applicable
 rule ID has a fact/predicate/assertion and recorded result or explicit limitation.
 
-**Completed 2026-08-03:** `models/alloy/poche.als` is an independent relational
+**Completion notes (2026-08-03):** `models/alloy/poche.als` is an independent relational
 oracle over the complete 52-card deck, cyclic seats, parametric schedule,
 complete-round snapshots, phase traces, scoring/money separation, final winners,
 First Jack, and repeated-tie High Card. The native Alloy 6.2.0 runner completed
@@ -630,7 +652,7 @@ cargo run -p poche-xtask -- coverage audit --track nusmv
 **Completion criteria:** NuSMV 2.7.1 checks the model natively; safety and
 termination meanings are explicit, and every applicable rule ID has evidence.
 
-**Completed 2026-08-03:** `models/nusmv/poche.smv` independently models the
+**Completion notes (2026-08-03):** `models/nusmv/poche.smv` independently models the
 complete two-player thirteen-round transition system with explicit environment
 inputs, lifecycle phases, dealer/leader rotation, bids, abstract legal card
 attributes, conserved 52-card zone counts, trick winners, scoring, money, and an
@@ -665,7 +687,7 @@ cargo run -p poche-xtask -- coverage audit --track prolog
 **Completion criteria:** Installed Scryer loads the program and the query corpus
 returns expected forward/reverse answer sets for every applicable rule ID.
 
-**Completed 2026-08-03:** `models/prolog/poche.pl` independently defines finite
+**Completion notes (2026-08-03):** `models/prolog/poche.pl` independently defines finite
 relations for all player schedules, the standard deck, clockwise deals, legal
 bids/plays, trick winners, bid scoring in both directions, final winners/money,
 First Jack, repeated-tie High Card, card restoration, and semantic score rows.
@@ -736,7 +758,7 @@ cargo run -p poche-xtask -- oracle report
 **Completion criteria:** All four native models meet the G11 completeness policy;
 remaining disagreements are explicit inputs to Phase 6 rather than omissions.
 
-**Completed 2026-08-03:** `docs/oracle-audit.md` confirms G11 coverage across
+**Completion notes (2026-08-03):** `docs/oracle-audit.md` confirms G11 coverage across
 all 61 rules and four tracks, records each oracle's scope/evidence strength, and
 classifies 11 explicit scope, tool-role, expected-semantic, or written-rule
 differences with zero missing-rule gaps. `fixtures/oracle-inventory.toml` seeds
@@ -769,7 +791,7 @@ cargo test -p poche-domain phon_roundtrip
 **Completion criteria:** Every selected-scope state/action component has a
 canonical finite encoding and exhaustive round-trip/refinement tests.
 
-**Completed 2026-08-03:** `poche-domain` defines dense `FiniteDomain`
+**Completion notes (2026-08-03):** `poche-domain` defines dense `FiniteDomain`
 cardinality/enumeration/encode/decode contracts for bounded integers, options,
 pairs, fixed arrays, finite sets, indices, suits/ranks/cards, distinct card
 sequences, and the G4 phase/turn/action/score components. The six-card G4
@@ -809,7 +831,7 @@ cargo test -p poche-environment round_score_events
 boundary; hidden information is explicit, and a later RL adapter can consume
 round scores without changing formal game semantics.
 
-**Completed 2026-08-03:** `poche-environment` defines the policy-neutral
+**Completion notes (2026-08-03):** `poche-environment` defines the policy-neutral
 `GameEnvironment` contract with hidden `State`, `AgentId`, per-viewer
 `Observation`, disjoint player/chance/environment actions, transition outcomes,
 raw rule-originated round-score events, final score/money outcomes, and terminal
@@ -1530,7 +1552,7 @@ to a rule/decision and support consequence.
 
 ## Phase 9 — Pages, contributor documentation, and release evidence
 
-### [ ] 9.1 Publish PDF and approved HTML views without Git history churn
+### [x] 9.1 Publish PDF and approved HTML views without Git history churn
 
 **Work:**
 
@@ -1555,7 +1577,26 @@ gh api repos/TeamDman/Poche/pages
 **Completion criteria:** The public README link displays current generated rules,
 source remains directly accessible, and generated document output is untracked.
 
-### [ ] 9.2 Document modeling roles, authoring, proof strength, and future RL boundary
+**Completion notes (2026-08-04):** Added a fail-closed Pages workflow, an
+accessible landing page, README links, and `docs/pages-publication.md`. The
+workflow installs TeX Gyre fonts; verifies the official Typst 0.15.1 Linux
+archive against GitHub's SHA-256 digest and exact `9dfd3a08` version; compiles
+`docs/main.typ`; stamps the landing page with the full source commit and event
+time; and deploys only `site/` through the protected `github-pages` environment.
+Native Typst HTML was evaluated with the pinned compiler and rejected under G13:
+the experimental target explicitly drops the rulebook template's page/two-column
+layout, title placement, spacing, and alignments. The canonical pretty view is
+therefore landing HTML plus generated PDF. Production run `30882134532` passed
+with current `checkout@v7`, `configure-pages@v6`,
+`upload-pages-artifact@v5`, and `deploy-pages@v5`. Remote acceptance confirmed
+`model-checking` as default, workflow Pages with HTTPS, the sole deployment
+branch policy `model-checking`, a `200 text/html` landing page carrying commit
+`7bd7d2db4771955a5613fb7cc5a85bc90f30c2d8`, and a `200 application/pdf`
+194,258-byte rulebook. Poppler reported five tagged letter pages produced by
+Typst 0.15.1; all five rendered pages passed visual inspection. Local validation
+also confirmed `docs/main.pdf` is ignored and `git ls-files "*.pdf"` is empty.
+
+### [x] 9.2 Document modeling roles, authoring, proof strength, and future RL boundary
 
 **Work:**
 
@@ -1578,7 +1619,28 @@ cargo run -p poche-xtask -- coverage audit --all
 evidence and cannot reasonably mistake training or bounded checking for proof of
 another kind.
 
-### [ ] 9.3 Audit guidance fidelity and record first milestone evidence
+**Completion notes (2026-08-04):** Added `CONTRIBUTING.md` as the contributor
+and evidence guide plus `.github/pull_request_template.md` as its review gate.
+The guide traces Typst intent through stable rule IDs, four independently
+authored model families, typed/Phon evidence identity, and acceptance. It
+documents each backend's useful and rejected claim surface; the accepted and
+forbidden strict Rust/Weavy operations; native discovery, fail-closed outputs,
+and all reproduction/conformance commands; and a precise exhaustive/bounded/
+symbolic/queried/sampled/conformance/controlled-defect/future-trained vocabulary.
+The policy-neutral environment section preserves complete-state versus
+viewer-observation separation, agent/chance/environment ownership, explicit
+replayable chance, deterministic transition semantics, raw rule-originated
+round scores, and separate points/money/final outcomes. It records raw
+end-of-round score as the intended future intermediary reward input while
+leaving the reward projection and all RL work deferred and empirical. The LLM
+protocol requires disclosure, full-diff/provenance/scope review, native
+execution, discriminating negative evidence, discrepancy preservation, and
+continued handwritten-oracle independence. `cargo test --doc --workspace`
+passed for all nine crate targets; `doctor` found the pinned Rust, Alloy,
+NuSMV, Scryer Prolog, and Typst versions; and `coverage audit --all` again
+reported 61 rules with zero `todo` cells in every track.
+
+### [x] 9.3 Audit guidance fidelity and record first milestone evidence
 
 **Work:**
 
@@ -1602,43 +1664,60 @@ git diff --exit-code
 advertised evidence is reproducible, and no nuance is known to exist only in
 conversation history.
 
+**Completion notes (2026-08-04):** Added the executable `guidance audit PLAN.md`
+gate with positive and negative unit tests. It requires exactly U1–U29 in both
+the authoritative ledger and traceability table, G1–G14 in decided/deferred
+states, all 30 active implementation tasks complete with adjacent notes, all 16
+overall criteria complete, all three deferred follow-up sections retained, the
+literal triple-check rule, and extraction/traceability/adversarial-omission
+records containing every named nuance. The final three-pass reread found no user
+intent present only in conversation history. The planning baseline was separated
+from the applied repository/remote state, stale Phase 9 language was removed,
+and the acceptance matrix now links the live Pages run, published scope, Typst
+version/fidelity disposition, contributor guide, and final audit command. The
+guidance and 61-rule/four-track coverage audits, acceptance hashes, aggregate
+native/cross-model comparison, formatting, all-target/all-feature Clippy,
+all-feature workspace tests/doc tests, pinned-tool doctor, Typst render, live
+Pages checks, and clean-worktree check all passed. Deferred RL, automatic
+generation, and legacy-v2 comparison remain recorded but unimplemented.
+
 ## Overall completion criteria
 
-- [ ] Every active U requirement remains in the guidance ledger and maps to
+- [x] Every active U requirement remains in the guidance ledger and maps to
   implementation/evidence.
-- [ ] `docs/main.typ` is copied, rendered reproducibly, and published through a
+- [x] `docs/main.typ` is copied, rendered reproducibly, and published through a
   working GitHub Pages pretty-view link without tracked generated PDF/HTML.
-- [ ] The pushed `model-checking` branch is the verified GitHub default/head
+- [x] The pushed `model-checking` branch is the verified GitHub default/head
   branch, Pages uses GitHub Actions, and production deployment policy targets
   that branch without deleting `main` implicitly.
-- [ ] Every normative Poche rule has a stable rule ID/source anchor and explicit
+- [x] Every normative Poche rule has a stable rule ID/source anchor and explicit
   Rust, Alloy, NuSMV, and Prolog applicability/evidence disposition; rules
   affecting future RL boundaries are separately flagged without adding an RL
   model track.
-- [ ] Native comprehensive Alloy, NuSMV, Prolog, and Rust models execute in their
+- [x] Native comprehensive Alloy, NuSMV, Prolog, and Rust models execute in their
   intended engines/runtimes.
-- [ ] Alloy structural/bounded consistency results name their scopes.
-- [ ] NuSMV safety/deadlock/termination results and counterexamples are recorded.
-- [ ] Prolog answers forward legal-action/transition queries and bounded reverse
+- [x] Alloy structural/bounded consistency results name their scopes.
+- [x] NuSMV safety/deadlock/termination results and counterexamples are recorded.
+- [x] Prolog answers forward legal-action/transition queries and bounded reverse
   predecessor/action questions with documented modes/constraints.
-- [ ] Rust uses strong finite/phase types where practical and exposes explicit
+- [x] Rust uses strong finite/phase types where practical and exposes explicit
   state, observation, legal action, chance, transition, round-score/outcome, and
   terminal contracts.
-- [ ] The named micro-scope is exhaustively explored with deterministic counts,
+- [x] The named micro-scope is exhaustively explored with deterministic counts,
   safety evidence, and liveness/deadlock evidence.
-- [ ] Injected defects demonstrate that each important property/query can fail
+- [x] Injected defects demonstrate that each important property/query can fail
   discriminatingly rather than passing vacuously.
-- [ ] Cross-model fixtures and properties agree or every discrepancy is explicit,
+- [x] Cross-model fixtures and properties agree or every discrepancy is explicit,
   classified, and tied to a rule/decision.
-- [ ] Phon results carry model, rules, scope, observation, scoring, backend, and
+- [x] Phon results carry model, rules, scope, observation, scoring, backend, and
   confidence identity.
-- [ ] Future-RL compatibility is demonstrated without implementing RL: hidden
+- [x] Future-RL compatibility is demonstrated without implementing RL: hidden
   information boundaries are explicit, chance/replay semantics are deterministic,
   and raw per-player end-of-round scores are available as the intended
   intermediary reward signal.
-- [ ] RL implementation, automatic target generation, and legacy-v2 comparison
+- [x] RL implementation, automatic target generation, and legacy-v2 comparison
   remain explicitly deferred and do not block current completion.
-- [ ] Clean-clone build, native-tool, coverage, conformance, and documentation
+- [x] Clean-clone build, native-tool, coverage, conformance, and documentation
   commands are recorded and reproducible.
 
 ## Risk register

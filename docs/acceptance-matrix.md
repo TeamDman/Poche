@@ -1,9 +1,10 @@
 # Cross-model acceptance matrix
 
-This is the Phase 6 acceptance snapshot for the independently authored Poche
-models. It records what was actually compared, at what strength and scope. The
-matrix does not upgrade bounded, queried, or sampled evidence into exhaustive
-proof. GitHub Pages and final contributor/release audits remain Phase 9 work.
+This is the first-milestone acceptance snapshot for the independently authored
+Poche models and their published rulebook. It records what was actually
+compared, at what strength and scope. The matrix does not upgrade bounded,
+queried, or sampled evidence into exhaustive proof. Publication and contributor
+guidance are complete; RL, generation, and legacy comparison remain deferred.
 
 ## Pinned tools
 
@@ -13,6 +14,7 @@ proof. GitHub Pages and final contributor/release audits remain Phase 9 work.
 | Alloy | Alloy 6.2.0 | `ALLOY_BIN` or `PATH` |
 | NuSMV | NuSMV 2.7.1 | `NUSMV_BIN` or `PATH` |
 | Prolog | Scryer Prolog 0.10.0-17-ge4d96925 | `SCRYER_PROLOG_BIN` or `PATH` |
+| Typst | Typst 0.15.1 (`9dfd3a08`) | `TYPST_BIN` or `PATH`; official Linux archive digest-verified in Pages CI |
 | Facet | 0.50.0-rc.5 | exact Cargo dependency |
 | Phon | 0.2.0-rc.5 | exact Cargo dependency |
 | Weavy | 0.2.2 | exact Cargo dependency |
@@ -36,6 +38,7 @@ is not a substitute for that per-run evidence.
 | Scryer base oracle | finite generic/bounded relational query modes | `oracle check prolog` | 16 named queries pass |
 | Rust ↔ Scryer | ground two-player one-card transitions plus finite score/explanation relations | `compare rust prolog --fixtures tests/fixtures/prolog` | six fixtures; 264 exact order-independent rows; three ground bounded predecessors; 20 explanation bindings |
 | Phon evidence | typed and semantically refined wire envelopes | interchange and injected-defect tests | model/rules/schema/scope/scoring/observation/backend/confidence identities survive roundtrip and are revalidated |
+| Rulebook publication | exact `model-checking` source commit, pinned compiler/digest/fonts, generated output untracked | Pages run [`30882134532`](https://github.com/TeamDman/Poche/actions/runs/30882134532) and [publication decision](pages-publication.md) | `200 text/html` landing page and `200 application/pdf` five-page rulebook from commit `7bd7d2db4771955a5613fb7cc5a85bc90f30c2d8`; all pages visually inspected |
 
 ## Applicable comparison surfaces
 
@@ -68,6 +71,9 @@ is not a substitute for that per-run evidence.
   because no modeled decision or observation occurs between cards.
 - Indivisible-cent tie remainder and optional playoff mechanics remain written
   ambiguities; no model invents a rule.
+- Native Typst HTML 0.15.1 is not published: the experimental target drops the
+  selected template's page/two-column layout, title placement, spacing, and
+  alignments. Landing HTML plus PDF is the accepted G13 format.
 - RL, automatic target generation, and legacy-v2 comparison remain deferred.
 
 The detailed classifications remain D-01 through D-11 in
@@ -96,9 +102,14 @@ Recompute and audit revisions with:
 ```pwsh
 cargo run -p poche-xtask -- acceptance hashes
 cargo run -p poche-xtask -- compare all --scope micro
+cargo run -p poche-xtask -- guidance audit PLAN.md
 ```
 
 `compare all --scope micro` runs the conventional Rust smoke game, all three
 full native oracles, every pairwise comparison above, and rejects a stale hash
 or required acceptance marker. Raw native evidence remains ignored under
 `target/`; this document records stable claims, not generated transcripts.
+
+The public rulebook is <https://teamdman.github.io/Poche/>. Contributor-facing
+model roles, claim boundaries, native commands, observation/scoring contracts,
+and LLM review requirements are in [`CONTRIBUTING.md`](../CONTRIBUTING.md).
