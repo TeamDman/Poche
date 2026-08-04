@@ -26,6 +26,12 @@ they fail while a selected applicable cell remains `todo`.
 The future-RL column is an architectural relevance flag, not a fifth model
 track or a current-goal completion obligation.
 
+The Phase 6 cross-model audit is recorded in
+[`acceptance-matrix.md`](acceptance-matrix.md). Cells below remain the direct
+per-rule native evidence; the acceptance matrix adds comparisons only where two
+tools expose a meaningful common projection. `coverage audit --all` requires
+all 61 rows and all four model cells to retain a valid disposition.
+
 ## Coverage ledger
 
 | Rule ID | Source anchor | Normative rule | Rust | Alloy | NuSMV | Prolog | Future RL | Notes |

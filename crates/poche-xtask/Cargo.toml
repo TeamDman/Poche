@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+blake3 = "=1.8.5"
 poche-check = { path = "../poche-check" }
 poche-conformance = { path = "../poche-conformance" }
 poche-native-tools = { path = "../poche-native-tools" }

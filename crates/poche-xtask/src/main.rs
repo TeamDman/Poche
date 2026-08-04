@@ -14,7 +14,7 @@ use poche_check::{CheckScope, TerminationReason, analyze_liveness, explore};
 use poche_conformance::{
     Disposition, compare_rust_alloy, compare_rust_models, compare_rust_nusmv, compare_rust_prolog,
 };
-use poche_native_tools::{NativeBackend, NativeDisposition, run_backend};
+use poche_native_tools::{NativeBackend, NativeDisposition, run_all, run_backend};
 use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
 
 const COVERAGE_TRACKS: [(&str, usize); 4] =
@@ -43,6 +43,7 @@ fn main() -> ExitCode {
         Some(command) if command == OsStr::new("coverage") => coverage(args),
         Some(command) if command == OsStr::new("oracle") => oracle(args),
         Some(command) if command == OsStr::new("compare") => compare(args),
+        Some(command) if command == OsStr::new("acceptance") => acceptance(args),
         Some(command) if command == OsStr::new("check") => check(args),
         Some(command) => {
             eprintln!("unknown poche-xtask command: {}", command.to_string_lossy());
@@ -66,6 +67,8 @@ fn usage() {
          cargo run -p poche-xtask -- compare rust prolog --fixtures PATH\n  \
          cargo run -p poche-xtask -- compare rust alloy --scope micro\n  \
          cargo run -p poche-xtask -- compare rust nusmv --scope micro\n  \
+         cargo run -p poche-xtask -- compare all --scope micro\n  \
+         cargo run -p poche-xtask -- acceptance hashes\n  \
          cargo run -p poche-xtask -- check rust-explicit --scope micro\n  \
          cargo run -p poche-xtask -- check rust-explicit --property game-terminates"
     );
@@ -150,6 +153,14 @@ fn check(mut args: impl Iterator<Item = OsString>) -> ExitCode {
 fn compare(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     let left = args.next();
     let right = args.next();
+    if left.as_deref() == Some(OsStr::new("all")) && right.as_deref() == Some(OsStr::new("--scope"))
+    {
+        if args.next().as_deref() != Some(OsStr::new("micro")) || args.next().is_some() {
+            usage();
+            return ExitCode::from(2);
+        }
+        return compare_all_command();
+    }
     if left.as_deref() == Some(OsStr::new("rust")) && right.as_deref() == Some(OsStr::new("alloy"))
     {
         return compare_rust_alloy_command(args);
@@ -312,6 +323,244 @@ fn compare_rust_nusmv_command(mut args: impl Iterator<Item = OsString>) -> ExitC
     ExitCode::SUCCESS
 }
 
+const ACCEPTANCE_HASH_GROUPS: &[(&str, &[&str])] = &[
+    ("rules", &["docs/main.typ", "docs/rules-coverage.md"]),
+    ("rust-oracle", &["crates/poche-oracle-rust/src/lib.rs"]),
+    (
+        "rust-formal",
+        &[
+            "crates/poche-model/src/finite.rs",
+            "crates/poche-model/src/formal.rs",
+            "crates/poche-model/src/lib.rs",
+            "crates/poche-model/src/property.rs",
+            "crates/poche-model/src/proptest_tests.rs",
+            "crates/poche-model/src/semantics.rs",
+            "crates/poche-model/src/state.rs",
+            "crates/poche-check/src/evidence.rs",
+            "crates/poche-check/src/lib.rs",
+            "crates/poche-check/src/liveness.rs",
+            "crates/poche-check/src/safety.rs",
+        ],
+    ),
+    (
+        "contracts",
+        &[
+            "crates/poche-domain/src/lib.rs",
+            "crates/poche-environment/src/lib.rs",
+            "crates/poche-formal/src/lib.rs",
+            "crates/poche-interchange/src/lib.rs",
+            "crates/poche-interchange/src/validate.rs",
+            "crates/poche-interchange/src/wire.rs",
+        ],
+    ),
+    (
+        "alloy",
+        &["models/alloy/poche.als", "models/alloy/conformance.als"],
+    ),
+    (
+        "nusmv",
+        &["models/nusmv/poche.smv", "models/nusmv/conformance.smv"],
+    ),
+    ("prolog", &["models/prolog/poche.pl"]),
+    (
+        "conformance",
+        &[
+            "crates/poche-conformance/src/alloy.rs",
+            "crates/poche-conformance/src/lib.rs",
+            "crates/poche-conformance/src/nusmv.rs",
+            "crates/poche-conformance/src/prolog.rs",
+            "crates/poche-native-tools/src/adapters.rs",
+            "crates/poche-native-tools/src/lib.rs",
+            "crates/poche-native-tools/src/normalize.rs",
+            "crates/poche-native-tools/src/runner.rs",
+        ],
+    ),
+    (
+        "toolchain",
+        &["Cargo.lock", "rust-toolchain.toml", "tools/versions.toml"],
+    ),
+];
+
+fn acceptance(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("hashes")) || args.next().is_some() {
+        usage();
+        return ExitCode::from(2);
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    match acceptance_hashes(&root) {
+        Ok(hashes) => {
+            for (group, hash) in hashes {
+                println!("{group}\tblake3:{hash}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("acceptance hashes failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "the aggregate command reports each independent evidence gate before acceptance"
+)]
+fn compare_all_command() -> ExitCode {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    if check_rust_oracle() != ExitCode::SUCCESS {
+        return ExitCode::FAILURE;
+    }
+    let native = run_all(&root);
+    for report in &native {
+        if report.disposition != NativeDisposition::Success {
+            eprintln!(
+                "{} full oracle failed: {:?}: {}",
+                report.backend.id(),
+                report.disposition,
+                report.diagnostic
+            );
+            return ExitCode::FAILURE;
+        }
+        let results = report
+            .normalized
+            .as_ref()
+            .map_or(0, poche_native_tools::NormalizedRun::len);
+        let version = report
+            .raw
+            .as_ref()
+            .map_or("<missing>", |raw| raw.version.as_str());
+        println!(
+            "{} full oracle: {results} results; version={version}",
+            report.backend.id()
+        );
+    }
+
+    let rust = match compare_rust_models() {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("Rust/Rust comparison failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let prolog = match compare_rust_prolog(&root, &root.join("tests/fixtures/prolog")) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("Rust/Prolog comparison failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let alloy = match compare_rust_alloy(&root) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("Rust/Alloy comparison failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let nusmv = match compare_rust_nusmv(&root) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("Rust/NuSMV comparison failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let hashes = match verify_acceptance_matrix(&root) {
+        Ok(hashes) => hashes,
+        Err(error) => {
+            eprintln!("acceptance matrix failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    println!(
+        "Rust/Rust: {} matches, {} classified scope/boundary differences, {} exact transitions",
+        rust.match_count(),
+        rust.difference_count(),
+        rust.transitions_compared
+    );
+    println!(
+        "Rust/Prolog: {} fixtures, {} exact rows, {} explanations",
+        prolog.fixtures.len(),
+        prolog.answer_count,
+        prolog.explanation_count
+    );
+    println!(
+        "Rust/Alloy: {} commands, {} projection groups, {} defect witnesses",
+        alloy.command_count, alloy.projection_groups_compared, alloy.controlled_defect_witnesses
+    );
+    println!(
+        "Rust/NuSMV: {} properties, {} Rust states, {} Rust transitions, {} defect counterexamples",
+        nusmv.property_count,
+        nusmv.rust_states,
+        nusmv.rust_transitions,
+        nusmv.defect_counterexamples_compared
+    );
+    println!(
+        "acceptance revisions: {} verified BLAKE3 groups",
+        hashes.len()
+    );
+    println!("cross-model acceptance: passed with zero unclassified differences");
+    ExitCode::SUCCESS
+}
+
+fn acceptance_hashes(root: &Path) -> Result<Vec<(&'static str, String)>, String> {
+    ACCEPTANCE_HASH_GROUPS
+        .iter()
+        .map(|(group, paths)| {
+            artifact_hash(root, paths)
+                .map(|hash| (*group, hash))
+                .map_err(|error| format!("{group}: {error}"))
+        })
+        .collect()
+}
+
+fn artifact_hash(root: &Path, paths: &[&str]) -> io::Result<String> {
+    let mut hasher = blake3::Hasher::new();
+    for relative in paths {
+        let bytes = fs::read(root.join(relative))?;
+        hasher.update(relative.as_bytes());
+        hasher.update(&[0]);
+        let length = u64::try_from(bytes.len()).map_err(io::Error::other)?;
+        hasher.update(&length.to_le_bytes());
+        hasher.update(&bytes);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn verify_acceptance_matrix(root: &Path) -> Result<Vec<(&'static str, String)>, String> {
+    let path = root.join("docs/acceptance-matrix.md");
+    let matrix = fs::read_to_string(&path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let hashes = acceptance_hashes(root)?;
+    let missing_hashes = hashes
+        .iter()
+        .filter(|(group, hash)| !matrix.contains(&format!("| {group} | `blake3:{hash}` |")))
+        .map(|(group, hash)| format!("{group}=blake3:{hash}"))
+        .collect::<Vec<_>>();
+    if !missing_hashes.is_empty() {
+        return Err(format!(
+            "stale/missing revision rows: {}",
+            missing_hashes.join(", ")
+        ));
+    }
+    for required in [
+        "Rust 1.96.0",
+        "Alloy 6.2.0",
+        "NuSMV 2.7.1",
+        "Scryer Prolog 0.10.0-17-ge4d96925",
+        "61 stable rules",
+        "431,800",
+        "549,896",
+        "compare all --scope micro",
+    ] {
+        if !matrix.contains(required) {
+            return Err(format!(
+                "acceptance matrix omitted required marker {required:?}"
+            ));
+        }
+    }
+    Ok(hashes)
+}
+
 fn oracle(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     let Some(subcommand) = args.next() else {
         usage();
@@ -365,6 +614,7 @@ fn oracle_report() -> ExitCode {
         "docs/nusmv-oracle.md",
         "docs/prolog-oracle.md",
         "docs/oracle-audit.md",
+        "docs/acceptance-matrix.md",
         "fixtures/oracle-inventory.toml",
     ];
     for relative in required {
@@ -413,7 +663,7 @@ fn oracle_report() -> ExitCode {
         .filter(|line| line.starts_with("| D-"))
         .count();
     if (scenarios, properties, queries, differences) != (15, 4, 3, 11)
-        || !audit.contains("Status: Phase 2 complete")
+        || !audit.contains("Status: Phase 6 cross-model acceptance complete")
     {
         eprintln!(
             "oracle report: inventory/audit shape changed unexpectedly: scenarios={scenarios}, properties={properties}, queries={queries}, differences={differences}"

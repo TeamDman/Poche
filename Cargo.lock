@@ -499,6 +499,7 @@ version = "0.1.0"
 name = "poche-xtask"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "poche-check",
  "poche-conformance",
  "poche-native-tools",

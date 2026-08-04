@@ -397,12 +397,12 @@ checking a generator against its own output.
 
 | Track | Primary questions | Comprehensive coverage obligation | Native validation | Evidence |
 | --- | --- | --- | --- | --- |
-| Typst rules | What game is intended? | Every normative rule has a stable rule ID and source anchor. | Pinned Typst render | Pending |
-| Rust oracle/environment | What are valid states, observations, legal actions, transitions, round scores/outcomes, and terminal outcomes? | Every applicable rule ID has executable examples/properties or an explicit disposition. | Rust tests, explicit exploration, replay | Pending |
-| Alloy 6.2.0 | Do structurally valid deals/states/traces exist, and do bounded assertions find contradictions or counterexamples? | Every structural/relational rule ID is modeled or explicitly inapplicable; selected temporal facts may be included. | Native Alloy runs with scopes recorded | Pending |
-| NuSMV 2.7.1 | Can phases deadlock, violate invariants, or avoid termination? Are temporal rules mutually consistent? | Every state/transition/temporal rule ID is represented or explicitly inapplicable. | Native NuSMV invariant/CTL/LTL runs and traces | Pending |
-| Scryer Prolog | Which actions are legal now, which predecessor actions/states can explain this state, and how are rule conclusions derived? | Every relational/action/scoring rule ID has forward and, where meaningful, reverse queries. | Native Scryer query corpus and answer sets | Pending |
-| Full 52-card game | How does the real game behave? | All rules are expressible, but exhaustive claims are limited to named abstractions/scopes. | Simulation/fuzzing plus targeted symbolic checks | Pending |
+| Typst rules | What game is intended? | Every normative rule has a stable rule ID and source anchor. | Pinned Typst render | 61-rule ledger; local PDF render/visual audit passed; Pages publication is Task 9.1. |
+| Rust oracle/environment | What are valid states, observations, legal actions, transitions, round scores/outcomes, and terminal outcomes? | Every applicable rule ID has executable examples/properties or an explicit disposition. | Rust tests, explicit exploration, replay | Conventional/strict conformance has 14 matches and four classified boundaries; micro exploration has 431,800 states and 549,896 transitions. |
+| Alloy 6.2.0 | Do structurally valid deals/states/traces exist, and do bounded assertions find contradictions or counterexamples? | Every structural/relational rule ID is modeled or explicitly inapplicable; selected temporal facts may be included. | Native Alloy runs with scopes recorded | 15 base-oracle commands plus 10 bounded conformance commands; 13 canonical relation groups agree with Rust. |
+| NuSMV 2.7.1 | Can phases deadlock, violate invariants, or avoid termination? Are temporal rules mutually consistent? | Every state/transition/temporal rule ID is represented or explicitly inapplicable. | Native NuSMV invariant/CTL/LTL runs and traces | 46 full-oracle properties plus 23 named micro properties; stutter/deadlock traces agree with Rust. |
+| Scryer Prolog | Which actions are legal now, which predecessor actions/states can explain this state, and how are rule conclusions derived? | Every relational/action/scoring rule ID has forward and, where meaningful, reverse queries. | Native Scryer query corpus and answer sets | 16 base queries plus six conformance fixtures/264 exact rows, including three bounded ground predecessors. |
+| Full 52-card game | How does the real game behave? | All rules are expressible, but exhaustive claims are limited to named abstractions/scopes. | Simulation/fuzzing plus targeted symbolic checks | Conventional Rust completes full games; sampled 2/3/7/51-player runs and full-deck native projections are explicitly non-exhaustive outside their named checks. |
 
 ## Phase 1 — Repository, rules, and traceability foundation
 
@@ -1324,7 +1324,7 @@ deadlock-free and universally terminating; the full 52-card-count `1..7..1`
 NuSMV oracle remains independent and is not narrowed. Both required validation
 commands, fail-closed parser tests, and strict Clippy pass.
 
-### [ ] 6.5 Complete the cross-model rule and behavior audit
+### [x] 6.5 Complete the cross-model rule and behavior audit
 
 **Work:**
 
@@ -1345,6 +1345,24 @@ cargo test --workspace
 
 **Completion criteria:** Every rule/track cell has evidence or an explicit
 disposition, and every advertised agreement claim is reproducible.
+
+**Completion notes (2026-08-03):** Added
+`docs/acceptance-matrix.md`, refreshed the Phase 6 oracle audit and modeling
+matrix, promoted the 15-scenario/four-property/three-query inventory to accepted
+normalized/Phon adapter status, and added `acceptance hashes` plus the aggregate
+`compare all --scope micro` gate. The strict coverage audit confirms 61 rules ×
+four tracks with zero `todo` cells. The acceptance matrix preserves native tool
+roles and records pinned/actual versions, all commands, exact/bounded/queried/
+sampled confidence, scopes, counts, D-01..D-11 limits, and nine deterministic
+BLAKE3 source-family revisions. The aggregate gate executes the 150-transition
+conventional Rust game, 15 Alloy + 46 NuSMV + 16 Scryer base results, then
+verifies 14 Rust/Rust matches with four classified boundaries, six Prolog
+fixtures/264 exact rows, 10 Alloy commands/13 relation groups, and 23 NuSMV
+properties over the 431,800-state/549,896-transition Rust graph. It rejects
+stale revisions or required matrix markers and passed with zero unclassified
+differences. All three required commands pass; the full workspace run includes
+65 unit/integration tests plus all doc-test targets, with native conformance,
+controlled safety/temporal defects, sampled tests, and exhaustive checks green.
 
 ## Deferred follow-up — Automatic target-language generation
 

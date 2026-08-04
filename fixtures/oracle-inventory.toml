@@ -1,6 +1,6 @@
 schema_version = 1
-status = "native-evidence-inventory"
-shared_serialization = "deferred-to-phase-3"
+status = "cross-model-acceptance"
+shared_serialization = "phon-interchange-plus-native-normalized-adapters"
 
 [[scenario]]
 id = "schedule-boundaries"
