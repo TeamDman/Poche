@@ -342,6 +342,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "poche-formal"
+version = "0.1.0"
+dependencies = [
+ "weavy",
+]
+
+[[package]]
 name = "poche-oracle-rust"
 version = "0.1.0"
 

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/poche-domain", "crates/poche-environment", "crates/poche-oracle-rust", "crates/poche-xtask"]
+members = ["crates/poche-domain", "crates/poche-environment", "crates/poche-formal", "crates/poche-oracle-rust", "crates/poche-xtask"]
 resolver = "3"
 
 [workspace.package]

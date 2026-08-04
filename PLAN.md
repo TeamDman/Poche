@@ -820,7 +820,7 @@ inputs reproduce byte-for-byte deck orders. Visibility tests prove each player
 receives only their own private hand, and round-boundary tests retain raw score
 and payment origins. No reward type or policy-selection hook was introduced.
 
-### [ ] 3.3 Define a pure Poche formal dialect over Weavy
+### [x] 3.3 Define a pure Poche formal dialect over Weavy
 
 **Work:**
 
@@ -843,6 +843,20 @@ cargo test -p poche-formal origin_mapping
 
 **Completion criteria:** The complete supported computation graph can be
 interpreted independently of arbitrary Rust, with source-oriented diagnostics.
+
+**Completion notes (2026-08-03):** Added the reusable `poche-formal` crate and
+`docs/formal-dialect.md`. Its closed finite type system covers bounded integers,
+enums, records, and fixed arrays; its pure graph covers constants/inputs,
+construction/projection, equality/order, Boolean logic, conditionals, statically
+in-bounds indexing, and explicitly finite `all`/`any`/`sum` folds. Graphs lower
+to a Poche-owned postfix instruction vocabulary in `weavy::Lowered` and execute
+through a caller-supplied Weavy `Step` interpreter without arbitrary Rust
+callbacks. Every instruction retains a rule ID, rulebook source, and the
+state/observation/legal-action/transition/scoring/property computation role;
+runtime failures add an instruction offset. The authoring boundary explicitly
+rejects opaque calls, effects, dynamic allocation, unbounded iteration, hidden
+randomness, and unsupported arithmetic. All three named test filters and strict
+Clippy validation pass.
 
 ### [ ] 3.4 Define Phon model, fixture, trace, observation, and result schemas
 

@@ -1,0 +1,15 @@
+[package]
+name = "poche-formal"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+weavy.workspace = true
+
+[lints]
+workspace = true
