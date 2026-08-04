@@ -60,6 +60,11 @@ Expected native results:
 | assertion | `ScheduleBoundariesAndFeasibility` | UNSAT (no counterexample) |
 | assertion | `FinalWinnersAreExactlyTheMaxima` | UNSAT (no counterexample) |
 
+The separate [Rust/Alloy bounded-conformance suite](alloy-conformance.md)
+imports this oracle and adds role-labelled valid/invalid fixtures plus
+controlled weakened-rule witnesses. It compares a canonical receipt instance
+with an executed Rust round without generating either oracle.
+
 ## Proof boundary
 
 The structural rule facts are general over their signatures, but the commands

@@ -9,7 +9,10 @@
 //! the lowest three ranks of two oracle suits. It compares the common `1, 2`
 //! round prefix exactly, while preserving (rather than hiding) scope changes.
 
+mod alloy;
 mod prolog;
+
+pub use alloy::{AlloyConformanceError, AlloyConformanceReport, compare_rust_alloy};
 
 pub use prolog::{
     PrologConformanceError, PrologConformanceReport, PrologFixtureComparison, PrologFixtureSpec,

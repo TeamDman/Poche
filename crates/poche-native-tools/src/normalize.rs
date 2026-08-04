@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Alloy command kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,14 +164,38 @@ pub(crate) const PROLOG_TESTS: [&str; 16] = [
 /// Returns a diagnostic when any required command is absent or when a result
 /// line contains an unknown name, kind, outcome, or duplicate.
 pub fn normalize_alloy(transcript: &str) -> Result<NormalizedRun, String> {
+    let expected = ALLOY_WITNESSES
+        .into_iter()
+        .map(|name| (name, AlloyCommandKind::Witness))
+        .chain(
+            ALLOY_ASSERTIONS
+                .into_iter()
+                .map(|name| (name, AlloyCommandKind::Assertion)),
+        )
+        .collect::<Vec<_>>();
+    normalize_alloy_commands(transcript, &expected)
+}
+
+/// Parse Alloy CLI output for an explicitly named command suite.
+///
+/// # Errors
+///
+/// Returns a diagnostic when an expected name is missing/duplicated, an extra
+/// command appears, the command kind differs, or SAT polarity is unrecognized.
+pub fn normalize_alloy_commands(
+    transcript: &str,
+    expected_commands: &[(&str, AlloyCommandKind)],
+) -> Result<NormalizedRun, String> {
     let cleaned: String = transcript
         .chars()
         .filter(|character| !character.is_control() || matches!(character, '\n' | '\r' | '\t'))
         .collect();
-    let expected: BTreeSet<&str> = ALLOY_WITNESSES
-        .into_iter()
-        .chain(ALLOY_ASSERTIONS)
-        .collect();
+    let mut expected = BTreeMap::new();
+    for (name, kind) in expected_commands {
+        if expected.insert(*name, *kind).is_some() {
+            return Err(format!("duplicate expected Alloy command: {name}"));
+        }
+    }
     let mut seen = BTreeSet::new();
     let mut results = Vec::new();
 
@@ -186,9 +210,9 @@ pub fn normalize_alloy(transcript: &str) -> Result<NormalizedRun, String> {
         let Some(name) = tokens.get(kind_index + 1).copied() else {
             return Err(format!("malformed Alloy result line: {line}"));
         };
-        if !expected.contains(name) {
+        let Some(expected_kind) = expected.get(name).copied() else {
             return Err(format!("unknown Alloy command in output: {name}"));
-        }
+        };
         if !seen.insert(name) {
             return Err(format!("duplicate Alloy command result: {name}"));
         }
@@ -197,6 +221,11 @@ pub fn normalize_alloy(transcript: &str) -> Result<NormalizedRun, String> {
             "check" => AlloyCommandKind::Assertion,
             _ => unreachable!("position accepts only run/check"),
         };
+        if kind != expected_kind {
+            return Err(format!(
+                "Alloy command {name} had kind {kind:?}, expected {expected_kind:?}"
+            ));
+        }
         let outcome = match tokens.last().copied() {
             Some("SAT") => AlloyOutcome::Sat,
             Some("UNSAT") => AlloyOutcome::Unsat,
@@ -215,7 +244,8 @@ pub fn normalize_alloy(transcript: &str) -> Result<NormalizedRun, String> {
         });
     }
 
-    let missing: Vec<_> = expected.difference(&seen).copied().collect();
+    let expected_names = expected.keys().copied().collect::<BTreeSet<_>>();
+    let missing: Vec<_> = expected_names.difference(&seen).copied().collect();
     if !missing.is_empty() {
         return Err(format!(
             "Alloy output omitted commands: {}",

@@ -63,6 +63,15 @@ beside SAT/UNSAT and instance counts. NuSMV results retain property kind,
 normalized expression, and truth value. Scryer emits one stable named PASS line
 per `oracle_test/1` query plus a checked aggregate count.
 
+Named Alloy conformance suites use the same raw/normalized evidence boundary
+but declare expected polarity per command. This is necessary because a malformed
+fixture expressed as `run InvalidThing` passes when it is UNSAT, while a
+controlled weakened-rule witness passes when it is SAT. The generic parser
+still requires an exact command inventory and receipt-derived scope for every
+result. Canonical repository paths are used for containment checks; Windows
+verbatim `\\?\` prefixes are removed only from paths passed to Alloy's Java
+launcher.
+
 ## Common fixture conversion
 
 `fixture_adapters()` is an explicit registry from

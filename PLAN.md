@@ -1241,7 +1241,7 @@ was measured as unproductive and is not advertised. Native explanation wording
 may differ, while exact rule identity and nonempty explanations are required.
 Both required validation commands pass.
 
-### [ ] 6.3 Verify Alloy structural and bounded agreement
+### [x] 6.3 Verify Alloy structural and bounded agreement
 
 **Work:**
 
@@ -1259,6 +1259,28 @@ cargo run -p poche-xtask -- compare rust alloy --scope micro
 
 **Completion criteria:** Rust and Alloy agree on applicable fixtures/properties
 within named scopes, and discrepancies are classified rather than hidden.
+
+**Completion notes (2026-08-03):** Added the independent importing fixture
+module `models/alloy/conformance.als`, a typed arbitrary-expectation Alloy suite
+runner, an exact receipt projection adapter, the public
+`compare rust alloy --scope micro` command, and
+`docs/alloy-conformance.md`. Ten separately scoped searches pass: one canonical
+valid one-card round is SAT; five malformed structures and their aggregate
+assertion are UNSAT; and three weakened-rule predicates are SAT, proving the
+checks discriminate follow-suit freedom, a rank-only winner, and an incorrect
+partial all-tricks bonus. Stable Alloy role relations avoid generated atom-name
+coupling. The adapter maps all 52 card atoms by suit/rank and exactly compares
+13 lifecycle relation groups with an executed conventional Rust round: roles,
+cards, hands, bids, plays, winner, scores, captured piles, and restoration.
+Rust independently rejects a duplicate deck and illegal off-suit play and
+discriminates the same winner/scoring defects. Every result retains its full
+receipt-derived source, seven-bit integer bound, two-player/52-card atom bounds,
+one/two-trick bound, and lifecycle/dealer-selection bounds. Results are
+explicitly described as bounded, internal layout equality is not claimed, and
+Rust's prevention/phase-validation boundary versus Alloy's structural rejection
+is preserved. The runner also keeps canonical repository containment checks
+while translating Windows `\\?\` paths for Alloy's Java launcher. Both required
+validation commands and strict Clippy pass.
 
 ### [ ] 6.4 Verify NuSMV transition and temporal agreement
 

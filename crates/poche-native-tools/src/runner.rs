@@ -11,9 +11,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::PrologFixtureReport;
-use crate::normalize::{NormalizedRun, normalize_alloy, normalize_nusmv, normalize_prolog};
-use crate::{NativeBackend, NativeDisposition, NativeReport, RawInvocation, evaluate_fixtures};
+use crate::normalize::{
+    NormalizedRun, normalize_alloy, normalize_alloy_commands, normalize_nusmv, normalize_prolog,
+};
+use crate::{
+    AlloyCommandExpectation, AlloySuiteReport, NativeBackend, NativeDisposition, NativeReport,
+    PrologFixtureReport, RawInvocation, evaluate_fixtures,
+};
 
 struct ToolSpec {
     override_variable: &'static str,
@@ -33,6 +37,264 @@ pub fn run_all(root: &Path) -> Vec<NativeReport> {
     .into_iter()
     .map(|backend| run_backend(root, backend))
     .collect()
+}
+
+/// Execute one explicitly named bounded Alloy command suite.
+#[must_use]
+#[allow(clippy::too_many_lines)]
+pub fn run_alloy_suite(
+    root: &Path,
+    suite_id: &str,
+    model_path: &Path,
+    expectations: &[AlloyCommandExpectation],
+) -> AlloySuiteReport {
+    let evidence_directory = root.join("target").join(suite_id);
+    let valid_suite_id = !suite_id.is_empty()
+        && suite_id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+    if !valid_suite_id || expectations.is_empty() {
+        return alloy_suite_without_raw(
+            suite_id,
+            NativeDisposition::Failure,
+            "suite ID is invalid or command expectations are empty".to_owned(),
+            evidence_directory,
+        );
+    }
+    if let Err(error) = fs::create_dir_all(&evidence_directory) {
+        return alloy_suite_without_raw(
+            suite_id,
+            NativeDisposition::Failure,
+            format!("could not create evidence directory: {error}"),
+            evidence_directory,
+        );
+    }
+    let model = if model_path.is_absolute() {
+        model_path.to_owned()
+    } else {
+        root.join(model_path)
+    };
+    let canonical_root = match fs::canonicalize(root) {
+        Ok(path) => path,
+        Err(error) => {
+            return alloy_suite_without_raw(
+                suite_id,
+                NativeDisposition::Failure,
+                format!("could not canonicalize repository root: {error}"),
+                evidence_directory,
+            );
+        }
+    };
+    let canonical_model = match fs::canonicalize(&model) {
+        Ok(path) if path.starts_with(&canonical_root) => path,
+        Ok(_) => {
+            return alloy_suite_without_raw(
+                suite_id,
+                NativeDisposition::Failure,
+                "Alloy suite model must remain inside the repository".to_owned(),
+                evidence_directory,
+            );
+        }
+        Err(error) => {
+            return alloy_suite_without_raw(
+                suite_id,
+                NativeDisposition::Failure,
+                format!(
+                    "could not resolve Alloy suite model {}: {error}",
+                    model.display()
+                ),
+                evidence_directory,
+            );
+        }
+    };
+    let spec = tool_spec(NativeBackend::Alloy);
+    let (program, version) = match resolve_tool(&spec) {
+        Ok(found) => found,
+        Err(error) => {
+            return alloy_suite_without_raw(
+                suite_id,
+                NativeDisposition::Failure,
+                error,
+                evidence_directory,
+            );
+        }
+    };
+    let arguments = vec![
+        OsString::from("exec"),
+        OsString::from("-c"),
+        OsString::from("*"),
+        OsString::from("-t"),
+        OsString::from("none"),
+        OsString::from("-o"),
+        evidence_directory.as_os_str().to_owned(),
+        OsString::from("-f"),
+        OsString::from("-n"),
+        external_tool_path(&canonical_model),
+    ];
+    let output = match Command::new(&program)
+        .current_dir(root)
+        .args(&arguments)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            return alloy_suite_without_raw(
+                suite_id,
+                NativeDisposition::Failure,
+                format!("failed to launch Alloy: {error}"),
+                evidence_directory,
+            );
+        }
+    };
+    let raw = RawInvocation {
+        program: program.to_string_lossy().into_owned(),
+        arguments: arguments
+            .iter()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect(),
+        version,
+        exit_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    };
+    if let Err(error) = preserve_raw(&evidence_directory, &raw, &output.stdout, &output.stderr) {
+        return AlloySuiteReport {
+            suite_id: suite_id.to_owned(),
+            disposition: NativeDisposition::Failure,
+            diagnostic: format!("failed to preserve raw evidence: {error}"),
+            results: Vec::new(),
+            raw: Some(raw),
+            evidence_directory,
+        };
+    }
+    let transcript = format!("{}\n{}", raw.stdout, raw.stderr);
+    let expected_kinds = expectations
+        .iter()
+        .map(|expected| (expected.name.as_str(), expected.kind))
+        .collect::<Vec<_>>();
+    let mut results = match normalize_alloy_commands(&transcript, &expected_kinds) {
+        Ok(NormalizedRun::Alloy(results)) => results,
+        Ok(_) => unreachable!("Alloy parser returns Alloy evidence"),
+        Err(error) => {
+            return AlloySuiteReport {
+                suite_id: suite_id.to_owned(),
+                disposition: if output.status.success() {
+                    NativeDisposition::Unknown
+                } else {
+                    NativeDisposition::Failure
+                },
+                diagnostic: error,
+                results: Vec::new(),
+                raw: Some(raw),
+                evidence_directory,
+            };
+        }
+    };
+    let receipt_path = evidence_directory.join("receipt.json");
+    let receipt = match fs::read_to_string(&receipt_path) {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            return AlloySuiteReport {
+                suite_id: suite_id.to_owned(),
+                disposition: NativeDisposition::Unknown,
+                diagnostic: format!("could not read {}: {error}", receipt_path.display()),
+                results,
+                raw: Some(raw),
+                evidence_directory,
+            };
+        }
+    };
+    for result in &mut results {
+        match extract_alloy_command_source(&receipt, &result.name) {
+            Ok(source) => result.command_source = Some(source),
+            Err(error) => {
+                return AlloySuiteReport {
+                    suite_id: suite_id.to_owned(),
+                    disposition: NativeDisposition::Unknown,
+                    diagnostic: error,
+                    results,
+                    raw: Some(raw),
+                    evidence_directory,
+                };
+            }
+        }
+    }
+    if let Err(error) =
+        preserve_normalized(&evidence_directory, &NormalizedRun::Alloy(results.clone()))
+    {
+        return AlloySuiteReport {
+            suite_id: suite_id.to_owned(),
+            disposition: NativeDisposition::Failure,
+            diagnostic: format!("failed to preserve normalized results: {error}"),
+            results,
+            raw: Some(raw),
+            evidence_directory,
+        };
+    }
+    let mismatch = expectations.iter().find(|expected| {
+        !results.iter().any(|result| {
+            result.name == expected.name
+                && result.kind == expected.kind
+                && result.outcome == expected.outcome
+        })
+    });
+    let (disposition, diagnostic) = if !output.status.success() {
+        (
+            NativeDisposition::Failure,
+            format!("Alloy exited with {}", output.status),
+        )
+    } else if let Some(expected) = mismatch {
+        (
+            NativeDisposition::Failure,
+            format!(
+                "{} did not have expected {:?} {:?}",
+                expected.name, expected.kind, expected.outcome
+            ),
+        )
+    } else {
+        (
+            NativeDisposition::Success,
+            format!(
+                "recognized {} expected bounded results with receipt scopes",
+                results.len()
+            ),
+        )
+    };
+    AlloySuiteReport {
+        suite_id: suite_id.to_owned(),
+        disposition,
+        diagnostic,
+        results,
+        raw: Some(raw),
+        evidence_directory,
+    }
+}
+
+fn alloy_suite_without_raw(
+    suite_id: &str,
+    disposition: NativeDisposition,
+    diagnostic: String,
+    evidence_directory: PathBuf,
+) -> AlloySuiteReport {
+    AlloySuiteReport {
+        suite_id: suite_id.to_owned(),
+        disposition,
+        diagnostic,
+        results: Vec::new(),
+        raw: None,
+        evidence_directory,
+    }
+}
+
+fn external_tool_path(path: &Path) -> OsString {
+    let text = path.as_os_str().to_string_lossy();
+    if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
+        OsString::from(format!(r"\\{unc}"))
+    } else if let Some(drive_path) = text.strip_prefix(r"\\?\") {
+        OsString::from(drive_path)
+    } else {
+        path.as_os_str().to_owned()
+    }
 }
 
 /// Execute one finite native Prolog conformance fixture.
@@ -779,6 +1041,18 @@ mod tests {
         let (model, arguments) = invocation(root, NativeBackend::Alloy, &evidence);
         assert!(model.ends_with("models/alloy/poche.als"));
         assert_eq!(arguments.last(), Some(&model.into_os_string()));
+    }
+
+    #[test]
+    fn external_tools_receive_non_verbatim_windows_paths() {
+        assert_eq!(
+            external_tool_path(Path::new(r"\\?\D:\repo\model.als")),
+            OsString::from(r"D:\repo\model.als")
+        );
+        assert_eq!(
+            external_tool_path(Path::new(r"\\?\UNC\server\share\model.als")),
+            OsString::from(r"\\server\share\model.als")
+        );
     }
 
     #[test]

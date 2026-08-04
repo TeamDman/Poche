@@ -11,7 +11,9 @@ use std::path::Path;
 use std::process::{Command, ExitCode, Output};
 
 use poche_check::{CheckScope, TerminationReason, analyze_liveness, explore};
-use poche_conformance::{Disposition, compare_rust_models, compare_rust_prolog};
+use poche_conformance::{
+    Disposition, compare_rust_alloy, compare_rust_models, compare_rust_prolog,
+};
 use poche_native_tools::{NativeBackend, NativeDisposition, run_backend};
 use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
 
@@ -62,6 +64,7 @@ fn usage() {
          cargo run -p poche-xtask -- oracle report\n  \
          cargo run -p poche-xtask -- compare rust-oracle rust-formal\n  \
          cargo run -p poche-xtask -- compare rust prolog --fixtures PATH\n  \
+         cargo run -p poche-xtask -- compare rust alloy --scope micro\n  \
          cargo run -p poche-xtask -- check rust-explicit --scope micro\n  \
          cargo run -p poche-xtask -- check rust-explicit --property game-terminates"
     );
@@ -146,6 +149,10 @@ fn check(mut args: impl Iterator<Item = OsString>) -> ExitCode {
 fn compare(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     let left = args.next();
     let right = args.next();
+    if left.as_deref() == Some(OsStr::new("rust")) && right.as_deref() == Some(OsStr::new("alloy"))
+    {
+        return compare_rust_alloy_command(args);
+    }
     if left.as_deref() == Some(OsStr::new("rust")) && right.as_deref() == Some(OsStr::new("prolog"))
     {
         if args.next().as_deref() != Some(OsStr::new("--fixtures")) {
@@ -227,6 +234,40 @@ fn compare(mut args: impl Iterator<Item = OsString>) -> ExitCode {
         report.transitions_compared
     );
     println!("Rust model conformance: passed with zero unclassified differences");
+    ExitCode::SUCCESS
+}
+
+fn compare_rust_alloy_command(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("--scope"))
+        || args.next().as_deref() != Some(OsStr::new("micro"))
+        || args.next().is_some()
+    {
+        usage();
+        return ExitCode::from(2);
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let report = match compare_rust_alloy(&root) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("Rust/Alloy conformance failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    for (index, scope) in report.command_scopes.iter().enumerate() {
+        println!("scope[{index}]: {}", scope.replace('\n', " "));
+    }
+    for limitation in &report.limitations {
+        println!("boundedness: {limitation}");
+    }
+    println!(
+        "Rust/Alloy conformance: {} commands, {} valid instance, {} invalid structures rejected, {} assertion, {} controlled defect witnesses, {} relational projection groups; passed",
+        report.command_count,
+        report.valid_instances,
+        report.invalid_structures_rejected,
+        report.assertions_checked,
+        report.controlled_defect_witnesses,
+        report.projection_groups_compared
+    );
     ExitCode::SUCCESS
 }
 

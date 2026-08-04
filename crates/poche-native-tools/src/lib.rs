@@ -21,9 +21,10 @@ pub use adapters::{
 };
 pub use normalize::{
     AlloyCommandKind, AlloyCommandResult, AlloyOutcome, NormalizedRun, NuSmvPropertyKind,
-    NuSmvPropertyResult, PrologTestResult, normalize_alloy, normalize_nusmv, normalize_prolog,
+    NuSmvPropertyResult, PrologTestResult, normalize_alloy, normalize_alloy_commands,
+    normalize_nusmv, normalize_prolog,
 };
-pub use runner::{run_all, run_backend, run_prolog_fixture};
+pub use runner::{run_all, run_alloy_suite, run_backend, run_prolog_fixture};
 
 /// A native backend whose handwritten model can be executed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -132,6 +133,43 @@ pub struct PrologFixtureReport {
 
 impl PrologFixtureReport {
     /// Whether the process and strict answer protocol both succeeded.
+    #[must_use]
+    pub fn succeeded(&self) -> bool {
+        self.disposition == NativeDisposition::Success
+    }
+}
+
+/// Expected outcome for one command in a bounded Alloy suite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AlloyCommandExpectation {
+    /// Stable command name.
+    pub name: String,
+    /// `run` witness or `check` assertion.
+    pub kind: AlloyCommandKind,
+    /// Required SAT polarity. Defect-discrimination checks may intentionally
+    /// require SAT even when a correct assertion normally requires UNSAT.
+    pub outcome: AlloyOutcome,
+}
+
+/// Typed result of a named bounded Alloy conformance suite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AlloySuiteReport {
+    /// Stable suite/evidence ID.
+    pub suite_id: String,
+    /// Success, recognized native failure, or unknown output.
+    pub disposition: NativeDisposition,
+    /// Human-readable diagnostic.
+    pub diagnostic: String,
+    /// Normalized results with receipt-derived command scopes.
+    pub results: Vec<AlloyCommandResult>,
+    /// Raw invocation when Alloy launched.
+    pub raw: Option<RawInvocation>,
+    /// Ignored suite evidence directory containing `receipt.json`.
+    pub evidence_directory: PathBuf,
+}
+
+impl AlloySuiteReport {
+    /// Whether every expected command had its declared bounded result.
     #[must_use]
     pub fn succeeded(&self) -> bool {
         self.disposition == NativeDisposition::Success
