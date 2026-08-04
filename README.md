@@ -5,7 +5,8 @@ Alloy, NuSMV, and Scryer Prolog. The project uses each backend for the questions
 it answers naturally, then compares their observable behavior through shared
 fixtures and evidence.
 
-- [Execution plan](PLAN.md)
+- [Completed formal-modeling plan](PLAN.md)
+- [Next-phase multiplayer, rendering, and RL plan](PLAN-2-MULTIPLAYER-RL-RENDERING.md)
 - [Contributor and evidence guide](CONTRIBUTING.md)
 - [Typst rule source](docs/main.typ)
 - [Pretty rules](https://teamdman.github.io/Poche/) — generated from the
@@ -13,13 +14,12 @@ fixtures and evidence.
 - [Direct rulebook PDF](https://teamdman.github.io/Poche/poche-rules.pdf)
 - [Publication and format decision](docs/pages-publication.md)
 
-The current goal covers the four models, named finite-scope checking,
-cross-model conformance, and published documentation. Reinforcement learning,
-automatic target-language generation, and legacy-v2 comparison are deliberately
-deferred. The game contracts still preserve per-player observations, legal
-actions, explicit chance, deterministic transitions, round boundaries, raw
-round scores, and terminal outcomes so later learning work does not require a
-semantic redesign.
+The completed first milestone covers the four models, named finite-scope
+checking, cross-model conformance, and published documentation. The next-phase
+plan composes that game core with a text-first multiplayer session protocol,
+Veilid rooms, minimal rendering, and reinforcement learning without making
+network or UI state part of the formal game state. Automatic target-language
+generation and legacy-v2 comparison remain deferred.
 
 ## Native tools
 
