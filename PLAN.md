@@ -858,7 +858,7 @@ rejects opaque calls, effects, dynamic allocation, unbounded iteration, hidden
 randomness, and unsupported arithmetic. All three named test filters and strict
 Clippy validation pass.
 
-### [ ] 3.4 Define Phon model, fixture, trace, observation, and result schemas
+### [x] 3.4 Define Phon model, fixture, trace, observation, and result schemas
 
 **Work:**
 
@@ -879,6 +879,20 @@ cargo test -p poche-interchange fixture_compatibility
 
 **Completion criteria:** Cross-model evidence cannot be mistaken for another
 scope, rule revision, scoring contract, observation contract, or proof strength.
+
+**Completion notes (2026-08-03):** Added `poche-interchange` and
+`docs/interchange.md`. Facet/Phon wire schemas now cover model and semantic
+identity, finite scopes, backend/version, confidence, subjects/rule origins,
+complete states, viewer-specific observations, player/chance/environment
+actions, raw round scores and final money outcomes, transitions, state diffs,
+finite/lasso traces, Prolog bindings, normalized solver results, statistics, and
+raw diagnostics. `ValidatedEvidence` re-establishes finite and relational
+invariants after structural decode, including deck partitions, action ownership,
+observation projection, trace continuity, winner ties, and pot division.
+Cross-model bundles may intentionally differ in model/backend/confidence while
+requiring identical schema, rule, scope, subject, observation, scoring, and rule
+origin identities. The complete fixture round-trips through Phon and all three
+named validation filters plus strict Clippy pass.
 
 ## Phase 4 — Strict Facet/Weavy Rust model
 
