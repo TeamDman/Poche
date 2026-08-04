@@ -53,7 +53,7 @@ fn usage() {
     eprintln!(
         "usage:\n  cargo run -p poche-xtask -- doctor\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
-         cargo run -p poche-xtask -- oracle check rust"
+         cargo run -p poche-xtask -- oracle check rust|alloy"
     );
 }
 
@@ -66,6 +66,7 @@ fn oracle(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     }
     match backend.as_deref() {
         Some(value) if value == OsStr::new("rust") => check_rust_oracle(),
+        Some(value) if value == OsStr::new("alloy") => check_alloy_oracle(),
         Some(value) => {
             eprintln!(
                 "oracle backend is not implemented yet: {}",
@@ -78,6 +79,115 @@ fn oracle(mut args: impl Iterator<Item = OsString>) -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+fn check_alloy_oracle() -> ExitCode {
+    let tool = Tool {
+        label: "Alloy",
+        override_var: Some("ALLOY_BIN"),
+        commands: &["alloy", "alloy.exe"],
+        version_args: &["version"],
+        accept_nonzero_with: None,
+    };
+    let command = match probe(&tool) {
+        Probe::Available { command, .. } => command,
+        Probe::Missing => {
+            eprintln!("Alloy is unavailable; set ALLOY_BIN or add alloy to PATH");
+            return ExitCode::FAILURE;
+        }
+        Probe::Failed { command, detail } => {
+            eprintln!(
+                "Alloy probe failed for {}: {detail}",
+                command.to_string_lossy()
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let model = root.join("models/alloy/poche.als");
+    let output_dir = root.join("target/alloy-oracle");
+    let output = match Command::new(command)
+        .current_dir(&root)
+        .arg("exec")
+        .args(["-c", "*", "-t", "none", "-o"])
+        .arg(&output_dir)
+        .args(["-f", "-n"])
+        .arg(&model)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("failed to execute Alloy: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let transcript = format!("{stdout}\n{stderr}");
+    if !output.status.success() {
+        eprintln!(
+            "Alloy oracle failed with {}\n{stdout}\n{stderr}",
+            output.status
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let witnesses = [
+        "CompleteRoundWitness",
+        "UnrestrictedBidWitness",
+        "ZeroBidSuccessWitness",
+        "SharedWinnerWitness",
+        "FirstJackWitness",
+        "RepeatedHighCardWitness",
+        "ParameterBoundaryWitness",
+    ];
+    let assertions = [
+        "CompleteDeckIsExactly52",
+        "CardConservationAndPartition",
+        "FollowSuitIsEnforced",
+        "DealerBidsLastInClockwiseOrder",
+        "WinnerIsEligibleAndHighest",
+        "ScoreAndPaymentAgree",
+        "ScheduleBoundariesAndFeasibility",
+        "FinalWinnersAreExactlyTheMaxima",
+    ];
+
+    for name in witnesses {
+        let Some(line) = transcript.lines().find(|line| line.contains(name)) else {
+            eprintln!("Alloy receipt output omitted witness {name}\n{transcript}");
+            return ExitCode::FAILURE;
+        };
+        if !line.contains("SAT") || line.contains("UNSAT") {
+            eprintln!("Alloy witness {name} was not satisfiable: {line}");
+            return ExitCode::FAILURE;
+        }
+    }
+    for name in assertions {
+        let Some(line) = transcript.lines().find(|line| line.contains(name)) else {
+            eprintln!("Alloy receipt output omitted assertion {name}\n{transcript}");
+            return ExitCode::FAILURE;
+        };
+        if !line.contains("UNSAT") {
+            eprintln!("Alloy found a counterexample to {name}: {line}");
+            return ExitCode::FAILURE;
+        }
+    }
+
+    let receipt = output_dir.join("receipt.json");
+    if !receipt.is_file() {
+        eprintln!("Alloy did not create {}", receipt.display());
+        return ExitCode::FAILURE;
+    }
+
+    println!(
+        "Alloy oracle: passed; {} SAT witnesses, {} UNSAT assertion checks; scopes recorded in {}",
+        witnesses.len(),
+        assertions.len(),
+        receipt.display()
+    );
+    ExitCode::SUCCESS
 }
 
 fn check_rust_oracle() -> ExitCode {

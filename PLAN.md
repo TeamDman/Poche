@@ -575,7 +575,7 @@ steps are in `docs/decisions/0002-github-head-and-pages-policy.md`.
 
 ## Phase 2 — Independent native oracle models
 
-### [ ] 2.1 Build the comprehensive Alloy oracle model
+### [x] 2.1 Build the comprehensive Alloy oracle model
 
 **Work:**
 
@@ -597,6 +597,17 @@ cargo run -p poche-xtask -- coverage audit --track alloy
 
 **Completion criteria:** Alloy 6.2.0 natively accepts the model; every applicable
 rule ID has a fact/predicate/assertion and recorded result or explicit limitation.
+
+**Completed 2026-08-03:** `models/alloy/poche.als` is an independent relational
+oracle over the complete 52-card deck, cyclic seats, parametric schedule,
+complete-round snapshots, phase traces, scoring/money separation, final winners,
+First Jack, and repeated-tie High Card. The native Alloy 6.2.0 runner completed
+seven satisfiable witnesses and eight assertions with no counterexample using
+seven-bit integers, the exact full deck, two-player/two-trick round scopes, and
+three-player selection/winner scopes as recorded in every command and generated
+receipt. `docs/alloy-oracle.md` records the proof boundary and intentional atomic
+deal abstraction. Strict Alloy coverage reports zero `todo` cells across all 61
+rules; physical and documentary exclusions retain reasons.
 
 ### [ ] 2.2 Build the comprehensive NuSMV oracle model
 
