@@ -896,7 +896,7 @@ named validation filters plus strict Clippy pass.
 
 ## Phase 4 — Strict Facet/Weavy Rust model
 
-### [ ] 4.1 Model strong phase-specific state, observations, and actions
+### [x] 4.1 Model strong phase-specific state, observations, and actions
 
 **Work:**
 
@@ -918,7 +918,17 @@ cargo test -p poche-model action_enumeration
 **Completion criteria:** The raw domain is finite/measurable, invalid local shapes
 are excluded where practical, and policy observations contain only allowed data.
 
-### [ ] 4.2 Encode initial, legal, transition, terminal, and scoring computations
+**Completion notes (2026-08-03):** Added `poche-model` with a complete
+three-round `1,2,1` game for the six-card/two-player scope. State is a Facet
+phase enum with distinct `AwaitingDeal`, `Bidding`, `Playing`, `Scoring`, and
+`Finished` payloads; fixed arrays, six-bit card sets, bid/trick progress enums,
+and private constructors/refinements exclude weak optional-field/ECS shapes.
+Chance has separate exact 120-value one-card and 180-value two-card partition
+domains. Per-player observations contain only that viewer's hand plus public
+state, and player/chance/environment actions have disjoint types. A conservative
+raw state-space measure is finite and all three named validation filters pass.
+
+### [x] 4.2 Encode initial, legal, transition, terminal, and scoring computations
 
 **Work:**
 
@@ -941,6 +951,20 @@ cargo test -p poche-model terminal_and_scoring
 
 **Completion criteria:** Every Rust-applicable rule has an executable formal
 computation and focused examples agree with the rule catalog.
+
+**Completion notes (2026-08-03):** Implemented prepared initial state, exact
+deal/bid/play/settle transitions, observation and legal-action projection,
+trump/lead/rank winner selection, captured-card and trick-credit movement,
+round scoring/payment events, cumulative score and pot updates, dealer rotation,
+the `1,2,1` schedule, terminal winner/pot division, and the sole absorbing
+`Finished` self-loop. Six cached pure `poche-formal`/Weavy kernels own bid bounds,
+follow-suit, winner, scoring, final-round, and winner-mask decisions; fixed-set
+and phase constructors own structural card movement. Transitions revalidate all
+residual invariants and attach rule/Typst origins to decisions and semantic
+diffs. The prepared first-dealer input is the documented micro-scope abstraction
+for the physical selection rules, which remain comprehensive in the independent
+native oracles. All four named example/terminal filters and strict Clippy pass;
+`docs/strict-rust-model.md` records the boundary.
 
 ### [ ] 4.3 Declare safety, consistency, and liveness properties
 

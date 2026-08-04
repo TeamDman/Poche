@@ -357,6 +357,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "poche-model"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "phon",
+ "poche-domain",
+ "poche-formal",
+]
+
+[[package]]
 name = "poche-oracle-rust"
 version = "0.1.0"
 
