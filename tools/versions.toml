@@ -1,0 +1,23 @@
+[rust]
+version = "1.96.0"
+
+[facet]
+version = "0.50.0-rc.5"
+
+[phon]
+version = "0.2.0-rc.5"
+
+[weavy]
+version = "0.2.2"
+
+[alloy]
+version = "6.2.0"
+
+[nusmv]
+version = "2.7.1"
+
+[scryer-prolog]
+version = "0.10.0-17-ge4d96925"
+
+[typst]
+version = "0.15.1"

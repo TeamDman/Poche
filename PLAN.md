@@ -406,7 +406,7 @@ checking a generator against its own output.
 
 ## Phase 1 — Repository, rules, and traceability foundation
 
-### [ ] 1.1 Record architecture, completeness, Pages, and licensing decisions
+### [x] 1.1 Record architecture, completeness, Pages, and licensing decisions
 
 **Work:**
 
@@ -427,7 +427,13 @@ if ($LASTEXITCODE -eq 0) { $open; throw "Architecture gates remain open" }
 evidence consequences; a fresh agent can identify the current-goal boundary and
 which choices govern every downstream track.
 
-### [ ] 1.2 Scaffold the reproducible workspace and native-tool doctor
+**Completion notes (2026-08-03):** `docs/decisions/0001-initial-modeling-decisions.md`
+records every gate and consequence. `LICENSE` contains the full MPL-2.0 text;
+workspace/package metadata uses the SPDX identifier `MPL-2.0`. A gate scan found
+zero `Open` rows. Deferred G8, G10, and G12 are explicitly outside this goal and
+therefore are not hidden blockers.
+
+### [x] 1.2 Scaffold the reproducible workspace and native-tool doctor
 
 **Work:**
 
@@ -448,7 +454,16 @@ cargo run -p poche-xtask -- doctor
 **Completion criteria:** A clean clone resolves dependencies and reports Rust,
 Alloy, NuSMV, Scryer, and Typst status without machine-specific committed paths.
 
-### [ ] 1.3 Copy, render, and establish repository ownership of `main.typ`
+**Completion notes (2026-08-03):** Added the Rust 1.96.0 workspace,
+`poche-xtask`, `Cargo.lock`, ignore policy, README, native-tool documentation,
+and `tools/versions.toml`. Published crates.io versions are pinned exactly:
+Facet 0.50.0-rc.5, Phon 0.2.0-rc.5, and Weavy 0.2.2. `cargo metadata`, workspace
+tests, formatting, and Clippy passed. `doctor` reported Rust 1.96.0, Alloy 6.2.0,
+NuSMV 2.7.1, Scryer `v0.10.0-17-ge4d96925`, and Typst 0.15.1 as available when
+given machine-local overrides. It also distinguishes missing tools from broken
+explicit overrides and handles NuSMV's version-bearing `-h` exit status 2.
+
+### [x] 1.3 Copy, render, and establish repository ownership of `main.typ`
 
 **Work:**
 
@@ -468,6 +483,17 @@ git ls-files "*.pdf"
 
 **Completion criteria:** `docs/main.typ` renders reproducibly, no generated PDF
 is tracked, and the migration did not destructively remove the prior source.
+
+**Completion notes (2026-08-03):** Copied the OneDrive source byte-for-byte:
+both files have SHA-256
+`74AFF8F332F89D9EB4EA31B9898A5D87B7F8741D9767EC7FA79AD810164ADCDD`.
+Official Typst 0.15.1 compiled it into an ignored five-page local PDF (192,974
+bytes). All five pages were rendered to PNG and visually inspected; headings,
+columns, tables, glyphs, and callouts were legible with no clipping or overlap.
+The template warns that TeX Gyre Termes/Cursor are absent locally, so Task 9.1
+must install those fonts in CI rather than silently depending on fallback fonts.
+The original OneDrive file remains untouched, `docs/main.pdf` is ignored, and no
+PDF is tracked.
 
 ### [ ] 1.4 Extract stable rule IDs and create the cross-track coverage ledger
 

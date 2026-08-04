@@ -1,0 +1,18 @@
+# Rust build output stays outside source control and outside OneDrive.
+/target/
+/tmp/
+
+# Local Typst output. GitHub Pages owns published artifacts.
+/docs/main.pdf
+/docs/build/
+/site/
+
+# Native-tool and checker scratch output.
+/artifacts/
+*.trace.tmp
+*.solver.tmp
+
+# Editor/OS noise.
+.DS_Store
+Thumbs.db
+*.swp
