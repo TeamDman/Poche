@@ -10,6 +10,8 @@ use std::io;
 use std::path::Path;
 use std::process::{Command, ExitCode, Output};
 
+use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
+
 const COVERAGE_TRACKS: [(&str, usize); 4] =
     [("rust", 3), ("alloy", 4), ("nusmv", 5), ("prolog", 6)];
 
@@ -34,6 +36,7 @@ fn main() -> ExitCode {
     match args.next().as_deref() {
         Some(command) if command == OsStr::new("doctor") => doctor(),
         Some(command) if command == OsStr::new("coverage") => coverage(args),
+        Some(command) if command == OsStr::new("oracle") => oracle(args),
         Some(command) => {
             eprintln!("unknown poche-xtask command: {}", command.to_string_lossy());
             usage();
@@ -49,8 +52,72 @@ fn main() -> ExitCode {
 fn usage() {
     eprintln!(
         "usage:\n  cargo run -p poche-xtask -- doctor\n  \
-         cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]"
+         cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
+         cargo run -p poche-xtask -- oracle check rust"
     );
+}
+
+fn oracle(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    let check = args.next();
+    let backend = args.next();
+    if check.as_deref() != Some(OsStr::new("check")) || args.next().is_some() {
+        usage();
+        return ExitCode::from(2);
+    }
+    match backend.as_deref() {
+        Some(value) if value == OsStr::new("rust") => check_rust_oracle(),
+        Some(value) => {
+            eprintln!(
+                "oracle backend is not implemented yet: {}",
+                value.to_string_lossy()
+            );
+            ExitCode::from(2)
+        }
+        None => {
+            usage();
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn check_rust_oracle() -> ExitCode {
+    let first_dealer = Seat::<2>::new(0).expect("two-player seat is valid");
+    let mut game = Game::new(first_dealer).expect("two-player game is valid");
+    let mut transitions = 0_u32;
+    let mut settled_rounds = 0_u32;
+
+    while transitions < 2_000 {
+        if let Err(error) = game.validate() {
+            eprintln!("Rust oracle invariant failed: {error:?}");
+            return ExitCode::FAILURE;
+        }
+        let action = match game.turn() {
+            Turn::Chance => Action::Deal(DeckOrder::standard()),
+            Turn::Player(_) => game
+                .legal_player_actions()
+                .into_iter()
+                .next()
+                .expect("an acting player has a legal action"),
+            Turn::Environment => Action::SettleRound,
+            Turn::Finished => break,
+        };
+        let transition = game.transition(action).expect("selected action is legal");
+        if transition.round_scores.is_some() {
+            settled_rounds += 1;
+        }
+        game = transition.next;
+        transitions += 1;
+    }
+
+    let GameState::Finished(finished) = game.state() else {
+        eprintln!("Rust oracle did not terminate within the smoke bound");
+        return ExitCode::FAILURE;
+    };
+    println!(
+        "Rust oracle: passed; players=2 rounds={settled_rounds} transitions={transitions} scores={:?} pot_cents={}",
+        finished.scores, finished.pot_cents
+    );
+    ExitCode::SUCCESS
 }
 
 fn coverage(mut args: impl Iterator<Item = OsString>) -> ExitCode {

@@ -642,7 +642,7 @@ cargo run -p poche-xtask -- coverage audit --track prolog
 **Completion criteria:** Installed Scryer loads the program and the query corpus
 returns expected forward/reverse answer sets for every applicable rule ID.
 
-### [ ] 2.4 Build the comprehensive conventional Rust oracle environment
+### [x] 2.4 Build the comprehensive conventional Rust oracle environment
 
 **Work:**
 
@@ -664,6 +664,20 @@ cargo run -p poche-xtask -- coverage audit --track rust
 
 **Completion criteria:** Every Rust-applicable rule ID has executable behavior
 and focused tests; the environment can replay fixed deals/actions deterministically.
+
+**Completion notes (2026-08-03):** Added `poche-oracle-rust`, an independent
+const-generic model supporting every rulebook player count from 2 through 51.
+Semantic state uses fixed arrays/fixed-capacity card zones and phase-specific
+variants for deal, bid, play, score, and finished states. It exposes explicit
+chance deals, player actions, environment settlement, per-player observations,
+raw round-score events, money separately from score, deterministic replay,
+First-Jack/High-Card selection, card conservation, follow-suit legality, trump
+winner selection, the parametric schedule, dealer rotation, shared winners, and
+pot division with explicit remainder. Ten focused tests passed, including
+complete deterministic games for 2 and 51 players. `poche-xtask oracle check
+rust` completed a 13-round two-player trace in 150 transitions with final scores
+`[60, 70]` and pot 180 cents. Strict Rust coverage reports 0 `todo` cells;
+workspace formatting, tests, and Clippy with `-D warnings` pass.
 
 ### [ ] 2.5 Audit oracle completeness without forcing premature agreement
 

@@ -1,5 +1,5 @@
 [package]
-name = "poche-xtask"
+name = "poche-oracle-rust"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -7,9 +7,6 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
-
-[dependencies]
-poche-oracle-rust = { path = "../poche-oracle-rust" }
 
 [lints]
 workspace = true
