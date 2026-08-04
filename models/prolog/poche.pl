@@ -519,6 +519,7 @@ test_names([
 run_named_tests([], Count, Count).
 run_named_tests([Name|Names], Count0, Count) :-
     ( once(oracle_test(Name)) ->
+        format("POCHE_PROLOG_TEST ~w PASS~n", [Name]),
         Count1 is Count0 + 1,
         run_named_tests(Names, Count1, Count)
     ; throw(error(poche_oracle_test_failed(Name), run_oracle_tests/0))

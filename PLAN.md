@@ -1173,7 +1173,7 @@ introduced.
 
 ## Phase 6 — Native tool integration and cross-model agreement
 
-### [ ] 6.1 Implement native runners and normalized fixture adapters
+### [x] 6.1 Implement native runners and normalized fixture adapters
 
 **Work:**
 
@@ -1191,6 +1191,20 @@ cargo run -p poche-xtask -- oracle check all
 
 **Completion criteria:** Every installed native tool executes its independent
 model reproducibly and returns typed success/failure/unknown diagnostics.
+
+**Completion notes (2026-08-03):** Added the dependency-free
+`poche-native-tools` crate and `docs/native-tools.md`. Its stable runner boundary
+discovers the three installed tools (with environment overrides), executes only
+the independent handwritten sources, and preserves exact command/version/exit
+metadata plus separate raw stdout/stderr. Strict parsers normalize 15 Alloy
+commands, 46 NuSMV properties, and 16 named Scryer queries; missing, duplicate,
+malformed, unexpected, or unknown-success output cannot pass. Alloy results also
+retain instance counts and exact receipt-derived command source/scopes. An
+explicit 53-pair adapter registry covers all 15 shared scenarios across all
+three native tools plus only their assigned property/query tracks, including
+constraint/mode notes and conjunctive selectors. Scryer now emits one stable
+named result per corpus query. Both required validation commands pass, including
+the aggregate conventional Rust + Alloy 6.2.0 + NuSMV 2.7.1 + Scryer execution.
 
 ### [ ] 6.2 Verify Prolog predecessor/successor agreement
 

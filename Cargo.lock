@@ -473,6 +473,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "poche-native-tools"
+version = "0.1.0"
+
+[[package]]
 name = "poche-oracle-rust"
 version = "0.1.0"
 
@@ -482,6 +486,7 @@ version = "0.1.0"
 dependencies = [
  "poche-check",
  "poche-conformance",
+ "poche-native-tools",
  "poche-oracle-rust",
 ]
 

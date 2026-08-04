@@ -42,10 +42,12 @@ cargo run -p poche-xtask -- oracle check nusmv
 
 The runner discovers `NuSMV` through `NUSMV_BIN` or `PATH`, invokes NuSMV with
 sound cone-of-influence reduction, and rejects any result reported false. It
-writes the full native transcript to `target/nusmv-oracle/native.log` so a
-future counterexample trace is preserved. It also writes normalized property
-lines to `target/nusmv-oracle/normalized-results.txt` for stable review and
-cross-model tooling. Both paths are ignored build evidence.
+preserves native stdout and stderr separately under `target/nusmv-oracle/` so a
+future counterexample trace is retained. It also writes typed normalized
+property lines to `normalized-results.txt` for stable review and cross-model
+tooling. The returned result count must exactly match the handwritten source
+property count; unfamiliar truth values or malformed/missing lines fail as
+`Unknown`. All paths are ignored build evidence.
 
 The checked result is exhaustive for the reachable state space of this fixed
 two-player symbolic abstraction. It is not a proof for other player counts or

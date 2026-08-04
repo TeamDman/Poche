@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 poche-check = { path = "../poche-check" }
 poche-conformance = { path = "../poche-conformance" }
+poche-native-tools = { path = "../poche-native-tools" }
 poche-oracle-rust = { path = "../poche-oracle-rust" }
 
 [lints]

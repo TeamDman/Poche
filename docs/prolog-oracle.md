@@ -18,9 +18,11 @@ cargo run -p poche-xtask -- oracle check prolog
 ```
 
 The runner discovers `scryer-prolog` through `SCRYER_PROLOG_BIN` or `PATH`,
-runs the embedded sixteen-query corpus, requires the
-`POCHE_PROLOG_OK tests=16` marker, and preserves the transcript under ignored
-`target/prolog-oracle/native.log`.
+runs the embedded sixteen-query corpus, requires a named
+`POCHE_PROLOG_TEST <name> PASS` result for every query plus the checked
+`POCHE_PROLOG_OK tests=16` aggregate, and preserves separate stdout/stderr and
+typed normalized results under ignored `target/prolog-oracle/`. Missing,
+duplicate, unknown, or malformed test results fail closed.
 
 ## Productive query modes
 

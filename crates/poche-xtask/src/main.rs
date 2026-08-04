@@ -12,6 +12,7 @@ use std::process::{Command, ExitCode, Output};
 
 use poche_check::{CheckScope, TerminationReason, analyze_liveness, explore};
 use poche_conformance::{Disposition, compare_rust_models};
+use poche_native_tools::{NativeBackend, NativeDisposition, run_backend};
 use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
 
 const COVERAGE_TRACKS: [(&str, usize); 4] =
@@ -57,7 +58,7 @@ fn usage() {
     eprintln!(
         "usage:\n  cargo run -p poche-xtask -- doctor\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
-         cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog\n  \
+         cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- oracle report\n  \
          cargo run -p poche-xtask -- compare rust-oracle rust-formal\n  \
          cargo run -p poche-xtask -- check rust-explicit --scope micro\n  \
@@ -209,6 +210,7 @@ fn oracle(mut args: impl Iterator<Item = OsString>) -> ExitCode {
         Some(value) if value == OsStr::new("alloy") => check_alloy_oracle(),
         Some(value) if value == OsStr::new("nusmv") => check_nusmv_oracle(),
         Some(value) if value == OsStr::new("prolog") => check_prolog_oracle(),
+        Some(value) if value == OsStr::new("all") => check_all_oracles(),
         Some(value) => {
             eprintln!(
                 "oracle backend is not implemented yet: {}",
@@ -300,279 +302,61 @@ fn oracle_report() -> ExitCode {
 }
 
 fn check_prolog_oracle() -> ExitCode {
-    const SUCCESS_MARKER: &str = "POCHE_PROLOG_OK tests=16";
-
-    let tool = Tool {
-        label: "Scryer Prolog",
-        override_var: Some("SCRYER_PROLOG_BIN"),
-        commands: &["scryer-prolog", "scryer-prolog.exe"],
-        version_args: &["--version"],
-        accept_nonzero_with: None,
-    };
-    let command = match probe(&tool) {
-        Probe::Available { command, .. } => command,
-        Probe::Missing => {
-            eprintln!("Scryer Prolog is unavailable; set SCRYER_PROLOG_BIN or add it to PATH");
-            return ExitCode::FAILURE;
-        }
-        Probe::Failed { command, detail } => {
-            eprintln!(
-                "Scryer Prolog probe failed for {}: {detail}",
-                command.to_string_lossy()
-            );
-            return ExitCode::FAILURE;
-        }
-    };
-
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let model = root.join("models/prolog/poche.pl");
-    let evidence_dir = root.join("target/prolog-oracle");
-    if let Err(error) = fs::create_dir_all(&evidence_dir) {
-        eprintln!("failed to create {}: {error}", evidence_dir.display());
-        return ExitCode::FAILURE;
-    }
-
-    let output = match Command::new(command)
-        .current_dir(&root)
-        .arg("-f")
-        .arg(&model)
-        .args(["-g", "poche:run_oracle_tests,halt"])
-        .output()
-    {
-        Ok(output) => output,
-        Err(error) => {
-            eprintln!("failed to execute Scryer Prolog: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let transcript = format!("{stdout}\n{stderr}");
-    let native_log = evidence_dir.join("native.log");
-    if let Err(error) = fs::write(&native_log, &transcript) {
-        eprintln!("failed to write {}: {error}", native_log.display());
-        return ExitCode::FAILURE;
-    }
-
-    if !output.status.success()
-        || !transcript.contains(SUCCESS_MARKER)
-        || transcript.contains("causes: error")
-    {
-        eprintln!(
-            "Scryer Prolog oracle failed; transcript preserved at {}",
-            native_log.display()
-        );
-        return ExitCode::FAILURE;
-    }
-
-    println!(
-        "Scryer Prolog oracle: passed; 16 forward/reverse queries; evidence in {}",
-        native_log.display()
-    );
-    ExitCode::SUCCESS
+    check_native_oracle(NativeBackend::ScryerProlog)
 }
 
 fn check_nusmv_oracle() -> ExitCode {
-    let tool = Tool {
-        label: "NuSMV",
-        override_var: Some("NUSMV_BIN"),
-        commands: &["NuSMV", "NuSMV.exe", "nusmv"],
-        version_args: &["-h"],
-        accept_nonzero_with: Some("NuSMV"),
-    };
-    let command = match probe(&tool) {
-        Probe::Available { command, .. } => command,
-        Probe::Missing => {
-            eprintln!("NuSMV is unavailable; set NUSMV_BIN or add NuSMV to PATH");
-            return ExitCode::FAILURE;
-        }
-        Probe::Failed { command, detail } => {
-            eprintln!(
-                "NuSMV probe failed for {}: {detail}",
-                command.to_string_lossy()
-            );
-            return ExitCode::FAILURE;
-        }
-    };
-
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let model = root.join("models/nusmv/poche.smv");
-    let evidence_dir = root.join("target/nusmv-oracle");
-    if let Err(error) = fs::create_dir_all(&evidence_dir) {
-        eprintln!("failed to create {}: {error}", evidence_dir.display());
-        return ExitCode::FAILURE;
-    }
-
-    let output = match Command::new(command)
-        .current_dir(&root)
-        .arg("-coi")
-        .arg(&model)
-        .output()
-    {
-        Ok(output) => output,
-        Err(error) => {
-            eprintln!("failed to execute NuSMV: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let transcript = format!("{stdout}\n{stderr}");
-    let native_log = evidence_dir.join("native.log");
-    if let Err(error) = fs::write(&native_log, &transcript) {
-        eprintln!("failed to write {}: {error}", native_log.display());
-        return ExitCode::FAILURE;
-    }
-
-    let result_lines: Vec<&str> = transcript
-        .lines()
-        .filter(|line| line.starts_with("-- specification") || line.starts_with("-- invariant"))
-        .collect();
-    let normalized = result_lines.join("\n") + "\n";
-    let normalized_log = evidence_dir.join("normalized-results.txt");
-    if let Err(error) = fs::write(&normalized_log, normalized) {
-        eprintln!("failed to write {}: {error}", normalized_log.display());
-        return ExitCode::FAILURE;
-    }
-
-    if !output.status.success() {
-        eprintln!(
-            "NuSMV oracle failed with {}; transcript preserved at {}",
-            output.status,
-            native_log.display()
-        );
-        return ExitCode::FAILURE;
-    }
-    if result_lines.len() < 40 {
-        eprintln!(
-            "NuSMV reported only {} properties; expected at least 40; transcript: {}",
-            result_lines.len(),
-            native_log.display()
-        );
-        return ExitCode::FAILURE;
-    }
-    if result_lines.iter().any(|line| !line.ends_with("is true")) {
-        eprintln!(
-            "NuSMV reported a false property; counterexample preserved at {}",
-            native_log.display()
-        );
-        return ExitCode::FAILURE;
-    }
-
-    println!(
-        "NuSMV oracle: passed; {} exhaustive properties; normalized evidence in {}",
-        result_lines.len(),
-        normalized_log.display()
-    );
-    ExitCode::SUCCESS
+    check_native_oracle(NativeBackend::NuSmv)
 }
 
 fn check_alloy_oracle() -> ExitCode {
-    let tool = Tool {
-        label: "Alloy",
-        override_var: Some("ALLOY_BIN"),
-        commands: &["alloy", "alloy.exe"],
-        version_args: &["version"],
-        accept_nonzero_with: None,
-    };
-    let command = match probe(&tool) {
-        Probe::Available { command, .. } => command,
-        Probe::Missing => {
-            eprintln!("Alloy is unavailable; set ALLOY_BIN or add alloy to PATH");
-            return ExitCode::FAILURE;
-        }
-        Probe::Failed { command, detail } => {
-            eprintln!(
-                "Alloy probe failed for {}: {detail}",
-                command.to_string_lossy()
-            );
-            return ExitCode::FAILURE;
-        }
-    };
+    check_native_oracle(NativeBackend::Alloy)
+}
 
+fn check_native_oracle(backend: NativeBackend) -> ExitCode {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let model = root.join("models/alloy/poche.als");
-    let output_dir = root.join("target/alloy-oracle");
-    let output = match Command::new(command)
-        .current_dir(&root)
-        .arg("exec")
-        .args(["-c", "*", "-t", "none", "-o"])
-        .arg(&output_dir)
-        .args(["-f", "-n"])
-        .arg(&model)
-        .output()
-    {
-        Ok(output) => output,
-        Err(error) => {
-            eprintln!("failed to execute Alloy: {error}");
-            return ExitCode::FAILURE;
+    let report = run_backend(&root, backend);
+    let result_count = report
+        .normalized
+        .as_ref()
+        .map_or(0, poche_native_tools::NormalizedRun::len);
+    match report.disposition {
+        NativeDisposition::Success => {
+            println!(
+                "{} oracle: passed; {result_count} typed native results; {}",
+                backend.id(),
+                report.diagnostic
+            );
+            println!("evidence: {}", report.evidence_directory.display());
+            ExitCode::SUCCESS
         }
-    };
+        NativeDisposition::Failure | NativeDisposition::Unknown => {
+            eprintln!(
+                "{} oracle: {:?}; {}",
+                backend.id(),
+                report.disposition,
+                report.diagnostic
+            );
+            eprintln!("evidence: {}", report.evidence_directory.display());
+            ExitCode::FAILURE
+        }
+    }
+}
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let transcript = format!("{stdout}\n{stderr}");
-    if !output.status.success() {
-        eprintln!(
-            "Alloy oracle failed with {}\n{stdout}\n{stderr}",
-            output.status
-        );
+fn check_all_oracles() -> ExitCode {
+    if check_rust_oracle() != ExitCode::SUCCESS {
         return ExitCode::FAILURE;
     }
-
-    let witnesses = [
-        "CompleteRoundWitness",
-        "UnrestrictedBidWitness",
-        "ZeroBidSuccessWitness",
-        "SharedWinnerWitness",
-        "FirstJackWitness",
-        "RepeatedHighCardWitness",
-        "ParameterBoundaryWitness",
-    ];
-    let assertions = [
-        "CompleteDeckIsExactly52",
-        "CardConservationAndPartition",
-        "FollowSuitIsEnforced",
-        "DealerBidsLastInClockwiseOrder",
-        "WinnerIsEligibleAndHighest",
-        "ScoreAndPaymentAgree",
-        "ScheduleBoundariesAndFeasibility",
-        "FinalWinnersAreExactlyTheMaxima",
-    ];
-
-    for name in witnesses {
-        let Some(line) = transcript.lines().find(|line| line.contains(name)) else {
-            eprintln!("Alloy receipt output omitted witness {name}\n{transcript}");
-            return ExitCode::FAILURE;
-        };
-        if !line.contains("SAT") || line.contains("UNSAT") {
-            eprintln!("Alloy witness {name} was not satisfiable: {line}");
+    for backend in [
+        NativeBackend::Alloy,
+        NativeBackend::NuSmv,
+        NativeBackend::ScryerProlog,
+    ] {
+        if check_native_oracle(backend) != ExitCode::SUCCESS {
             return ExitCode::FAILURE;
         }
     }
-    for name in assertions {
-        let Some(line) = transcript.lines().find(|line| line.contains(name)) else {
-            eprintln!("Alloy receipt output omitted assertion {name}\n{transcript}");
-            return ExitCode::FAILURE;
-        };
-        if !line.contains("UNSAT") {
-            eprintln!("Alloy found a counterexample to {name}: {line}");
-            return ExitCode::FAILURE;
-        }
-    }
-
-    let receipt = output_dir.join("receipt.json");
-    if !receipt.is_file() {
-        eprintln!("Alloy did not create {}", receipt.display());
-        return ExitCode::FAILURE;
-    }
-
-    println!(
-        "Alloy oracle: passed; {} SAT witnesses, {} UNSAT assertion checks; scopes recorded in {}",
-        witnesses.len(),
-        assertions.len(),
-        receipt.display()
-    );
+    println!("all four independent oracle tracks: passed");
     ExitCode::SUCCESS
 }
 

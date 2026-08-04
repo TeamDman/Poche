@@ -26,6 +26,11 @@ The runner discovers `alloy` from `ALLOY_BIN` or `PATH`, invokes the installed
 Alloy CLI with overflow rejection enabled, and writes only ignored evidence
 under `target/alloy-oracle/`.
 
+The shared native runner preserves `stdout.log`, `stderr.log`, the exact command,
+version, and exit code separately. Its normalized results retain SAT/UNSAT,
+instance counts, and the exact receipt-derived command source/scope. Any missing,
+duplicate, or unfamiliar command/result is an `Unknown` failure, never success.
+
 ## Recorded scopes
 
 Every command uses a seven-bit integer scope, the real 52-card deck, and six

@@ -53,5 +53,6 @@ cargo run -p poche-xtask -- oracle check rust
 cargo run -p poche-xtask -- oracle check alloy
 cargo run -p poche-xtask -- oracle check nusmv
 cargo run -p poche-xtask -- oracle check prolog
+cargo run -p poche-xtask -- oracle check all
 cargo run -p poche-xtask -- oracle report
 ```
