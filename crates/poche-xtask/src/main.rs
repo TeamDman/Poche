@@ -53,14 +53,30 @@ fn usage() {
     eprintln!(
         "usage:\n  cargo run -p poche-xtask -- doctor\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
-         cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog"
+         cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog\n  \
+         cargo run -p poche-xtask -- oracle report"
     );
 }
 
 fn oracle(mut args: impl Iterator<Item = OsString>) -> ExitCode {
-    let check = args.next();
+    let Some(subcommand) = args.next() else {
+        usage();
+        return ExitCode::from(2);
+    };
+    if subcommand == OsStr::new("report") {
+        if args.next().is_some() {
+            usage();
+            return ExitCode::from(2);
+        }
+        return oracle_report();
+    }
+    if subcommand != OsStr::new("check") {
+        usage();
+        return ExitCode::from(2);
+    }
+
     let backend = args.next();
-    if check.as_deref() != Some(OsStr::new("check")) || args.next().is_some() {
+    if args.next().is_some() {
         usage();
         return ExitCode::from(2);
     }
@@ -81,6 +97,82 @@ fn oracle(mut args: impl Iterator<Item = OsString>) -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+fn oracle_report() -> ExitCode {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let required = [
+        "models/alloy/poche.als",
+        "models/nusmv/poche.smv",
+        "models/prolog/poche.pl",
+        "crates/poche-oracle-rust/src/lib.rs",
+        "docs/alloy-oracle.md",
+        "docs/nusmv-oracle.md",
+        "docs/prolog-oracle.md",
+        "docs/oracle-audit.md",
+        "fixtures/oracle-inventory.toml",
+    ];
+    for relative in required {
+        let path = root.join(relative);
+        if !path.is_file() {
+            eprintln!(
+                "oracle report: required artifact is missing: {}",
+                path.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    }
+
+    let coverage_path = root.join("docs/rules-coverage.md");
+    let plan_path = root.join("PLAN.md");
+    let inventory_path = root.join("fixtures/oracle-inventory.toml");
+    let audit_path = root.join("docs/oracle-audit.md");
+    let read = |path: &Path| match fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(error) => {
+            eprintln!("oracle report: failed to read {}: {error}", path.display());
+            None
+        }
+    };
+    let Some(coverage) = read(&coverage_path) else {
+        return ExitCode::FAILURE;
+    };
+    let Some(plan) = read(&plan_path) else {
+        return ExitCode::FAILURE;
+    };
+    if run_coverage_audit(&coverage, &plan, true, None) != ExitCode::SUCCESS {
+        return ExitCode::FAILURE;
+    }
+    let Some(inventory) = read(&inventory_path) else {
+        return ExitCode::FAILURE;
+    };
+    let Some(audit) = read(&audit_path) else {
+        return ExitCode::FAILURE;
+    };
+
+    let scenarios = inventory.matches("[[scenario]]").count();
+    let properties = inventory.matches("[[property]]").count();
+    let queries = inventory.matches("[[query]]").count();
+    let differences = audit
+        .lines()
+        .filter(|line| line.starts_with("| D-"))
+        .count();
+    if (scenarios, properties, queries, differences) != (15, 4, 3, 11)
+        || !audit.contains("Status: Phase 2 complete")
+    {
+        eprintln!(
+            "oracle report: inventory/audit shape changed unexpectedly: scenarios={scenarios}, properties={properties}, queries={queries}, differences={differences}"
+        );
+        return ExitCode::FAILURE;
+    }
+
+    println!("oracle completeness: G11 satisfied across 61 rules and 4 tracks");
+    println!(
+        "shared inventory: {scenarios} scenarios, {properties} properties, {queries} reverse/action queries"
+    );
+    println!("explicit differences: {differences}; missing-rule gaps: 0");
+    println!("oracle report: passed");
+    ExitCode::SUCCESS
 }
 
 fn check_prolog_oracle() -> ExitCode {

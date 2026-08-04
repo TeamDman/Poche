@@ -1,0 +1,113 @@
+schema_version = 1
+status = "native-evidence-inventory"
+shared_serialization = "deferred-to-phase-3"
+
+[[scenario]]
+id = "schedule-boundaries"
+rules = ["R-GAME-001", "R-HAND-001", "R-HAND-002", "R-HAND-003", "R-HAND-004"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[scenario]]
+id = "complete-two-player-round"
+rules = ["R-GAME-003", "R-DEAL-001", "R-TRICK-001", "R-SCORE-001"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[scenario]]
+id = "unrestricted-total-bid"
+rules = ["R-BID-004"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[scenario]]
+id = "zero-bid-success"
+rules = ["R-BID-005", "R-SCORE-003"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[scenario]]
+id = "follow-suit-required"
+rules = ["R-TRICK-005"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[scenario]]
+id = "void-player-may-trump"
+rules = ["R-TRICK-006", "R-TRICK-007"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[scenario]]
+id = "off-suit-cannot-win"
+rules = ["R-TRICK-008", "R-TRICK-009", "R-TRICK-011"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[scenario]]
+id = "exact-partial-score"
+rules = ["R-SCORE-003", "R-SCORE-005"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[scenario]]
+id = "all-tricks-score"
+rules = ["R-SCORE-004", "R-SCORE-005"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[scenario]]
+id = "missed-bid-payment"
+rules = ["R-SCORE-002", "R-MONEY-001", "R-MONEY-002"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[scenario]]
+id = "shared-final-winner"
+rules = ["R-GAME-005", "R-MONEY-003", "R-FINISH-003", "R-FINISH-004"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[scenario]]
+id = "first-jack-seat-order"
+rules = ["R-RANDOM-002", "R-RANDOM-003", "R-RANDOM-006"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[scenario]]
+id = "high-card-repeated-tie"
+rules = ["R-RANDOM-004", "R-RANDOM-005", "R-RANDOM-006"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[scenario]]
+id = "dealer-rotation"
+rules = ["R-GAME-004", "R-ADVANCE-002"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[scenario]]
+id = "final-one-card-round"
+rules = ["R-ADVANCE-003", "R-FINISH-001"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[property]]
+id = "full-deck-conservation"
+rules = ["R-GAME-002", "R-DEAL-004", "R-TRICK-012", "R-ADVANCE-001"]
+tracks = ["rust", "alloy", "nusmv", "prolog"]
+
+[[property]]
+id = "no-reachable-deadlock"
+rules = ["R-GAME-003"]
+tracks = ["nusmv"]
+
+[[property]]
+id = "universal-termination"
+rules = ["R-ADVANCE-003", "R-FINISH-001"]
+tracks = ["nusmv", "rust-phase-5"]
+
+[[property]]
+id = "private-observation-does-not-leak"
+rules = ["R-GAME-004", "R-BID-003", "R-TRICK-004"]
+tracks = ["rust", "shared-phase-3"]
+
+[[query]]
+id = "legal-actions-from-state"
+rules = ["R-BID-002", "R-TRICK-003", "R-TRICK-005", "R-TRICK-006"]
+tracks = ["rust", "prolog"]
+
+[[query]]
+id = "predecessors-for-action-and-state"
+rules = ["R-GAME-003", "R-BID-003", "R-TRICK-004"]
+tracks = ["prolog", "shared-phase-6"]
+
+[[query]]
+id = "score-causes"
+rules = ["R-SCORE-002", "R-SCORE-003", "R-SCORE-004"]
+tracks = ["prolog"]

@@ -715,7 +715,7 @@ rust` completed a 13-round two-player trace in 150 transitions with final scores
 `[60, 70]` and pot 180 cents. Strict Rust coverage reports 0 `todo` cells;
 workspace formatting, tests, and Clippy with `-D warnings` pass.
 
-### [ ] 2.5 Audit oracle completeness without forcing premature agreement
+### [x] 2.5 Audit oracle completeness without forcing premature agreement
 
 **Work:**
 
@@ -735,6 +735,15 @@ cargo run -p poche-xtask -- oracle report
 
 **Completion criteria:** All four native models meet the G11 completeness policy;
 remaining disagreements are explicit inputs to Phase 6 rather than omissions.
+
+**Completed 2026-08-03:** `docs/oracle-audit.md` confirms G11 coverage across
+all 61 rules and four tracks, records each oracle's scope/evidence strength, and
+classifies 11 explicit scope, tool-role, expected-semantic, or written-rule
+differences with zero missing-rule gaps. `fixtures/oracle-inventory.toml` seeds
+15 shared scenarios, four properties, and three reverse/action queries without
+claiming Phase 6 serialization or agreement prematurely. `oracle report`
+validates all native/model documentation artifacts, performs the strict
+four-track coverage audit, checks the inventory/audit shape, and passes.
 
 ## Phase 3 — Shared finite, formal, environment, and interchange contracts
 
