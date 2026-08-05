@@ -606,6 +606,29 @@ fn external_tool_path(path: &Path) -> OsString {
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn run_prolog_fixture(root: &Path, fixture_id: &str, native_goal: &str) -> PrologFixtureReport {
+    run_prolog_model_fixture(
+        root,
+        fixture_id,
+        Path::new("models/prolog/poche.pl"),
+        "poche",
+        native_goal,
+    )
+}
+
+/// Execute one finite fixture from a repository-local handwritten Prolog model.
+///
+/// The module and goal are restricted to lowercase identifiers and the model
+/// must canonicalize beneath `root`; none of these values becomes arbitrary
+/// executable Prolog source.
+#[must_use]
+#[allow(clippy::too_many_lines)]
+pub fn run_prolog_model_fixture(
+    root: &Path,
+    fixture_id: &str,
+    model_path: &Path,
+    module: &str,
+    native_goal: &str,
+) -> PrologFixtureReport {
     let evidence_directory = root.join("target/prolog-conformance").join(fixture_id);
     let invalid_fixture = fixture_id.is_empty()
         || !fixture_id
@@ -615,7 +638,11 @@ pub fn run_prolog_fixture(root: &Path, fixture_id: &str, native_goal: &str) -> P
         || !native_goal
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte == b'_');
-    if invalid_fixture || invalid_goal {
+    let invalid_module = module.is_empty()
+        || !module
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_');
+    if invalid_fixture || invalid_goal || invalid_module {
         return PrologFixtureReport {
             fixture_id: fixture_id.to_owned(),
             native_goal: native_goal.to_owned(),
@@ -648,8 +675,45 @@ pub fn run_prolog_fixture(root: &Path, fixture_id: &str, native_goal: &str) -> P
             );
         }
     };
-    let model = root.join("models/prolog/poche.pl");
-    let goal = format!("poche:run_conformance_fixture({native_goal}),halt");
+    let model = if model_path.is_absolute() {
+        model_path.to_owned()
+    } else {
+        root.join(model_path)
+    };
+    let canonical_root = match fs::canonicalize(root) {
+        Ok(path) => path,
+        Err(error) => {
+            return prolog_fixture_without_raw(
+                fixture_id,
+                native_goal,
+                NativeDisposition::Failure,
+                format!("could not canonicalize repository root: {error}"),
+                evidence_directory,
+            );
+        }
+    };
+    let model = match fs::canonicalize(&model) {
+        Ok(path) if path.starts_with(&canonical_root) => path,
+        Ok(_) => {
+            return prolog_fixture_without_raw(
+                fixture_id,
+                native_goal,
+                NativeDisposition::Failure,
+                "Prolog fixture model must remain inside the repository".to_owned(),
+                evidence_directory,
+            );
+        }
+        Err(error) => {
+            return prolog_fixture_without_raw(
+                fixture_id,
+                native_goal,
+                NativeDisposition::Failure,
+                format!("could not resolve Prolog fixture model: {error}"),
+                evidence_directory,
+            );
+        }
+    };
+    let goal = format!("{module}:run_conformance_fixture({native_goal}),halt");
     let arguments = vec![
         OsString::from("-f"),
         model.as_os_str().to_owned(),

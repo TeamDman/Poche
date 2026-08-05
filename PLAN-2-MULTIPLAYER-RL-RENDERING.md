@@ -779,7 +779,7 @@ scope/limitations/rule coverage are in `docs/session-formal-models.md` and
 stable kind/expression rather than native output order and accepts NuSMV 2.7.1's
 combined total/deadlock-free diagnostic; focused parser tests pass.
 
-### [ ] 3.3 Build the Scryer Prolog policy/predecessor oracle
+### [x] 3.3 Build the Scryer Prolog policy/predecessor oracle
 
 Add `models/prolog/session.pl` independently. Provide relational queries for:
 
@@ -797,7 +797,19 @@ callbacks into Rust.
 for the bounded query corpus and controlled policy defects; explanations cite
 stable session/policy IDs.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed in the local Task 3.3 slice.
+`models/prolog/session.pl` independently exposes relational step/predecessor,
+policy decision/explanation, visibility, projection/revocation chain, replay,
+and causal-history queries without Rust callbacks. Native Scryer executes seven
+sorted fixtures totaling 63 rows: policy 11, successors 13, predecessors 12,
+visibility 16, grant/revoke chains 4, histories 3, and controlled defects 4.
+The CLI pins each complete answer set by count and BLAKE3 digest. Explanations
+carry stable session IDs; the defect corpus witnesses permissive outsider pause
+and room-wide hand disclosure alongside correct default-deny/exact-grant rows.
+`docs/session-formal-models.md` records every digest, productive modes, scope,
+and omissions. The generic native runner now safely selects repository-local
+Prolog models/modules; formatting, denied-warning clippy, runner tests, and the
+native corpus pass.
 
 ### [ ] 3.4 Add exhaustive Rust session checking
 

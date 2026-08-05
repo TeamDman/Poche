@@ -17,7 +17,7 @@ use poche_conformance::{
 use poche_native_tools::{
     AlloyCommandExpectation, AlloyCommandKind, AlloyOutcome, NativeBackend, NativeDisposition,
     NuSmvPropertyExpectation, NuSmvPropertyKind, run_all, run_alloy_suite, run_backend,
-    run_nusmv_suite,
+    run_nusmv_suite, run_prolog_model_fixture,
 };
 use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
 
@@ -144,16 +144,18 @@ fn session(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     match backend.as_deref() {
         Some(value) if value == OsStr::new("alloy") => session_alloy(),
         Some(value) if value == OsStr::new("nusmv") => session_nusmv(),
-        Some(value) if value == OsStr::new("prolog") => {
-            eprintln!("session Prolog oracle is not implemented yet");
-            ExitCode::FAILURE
-        }
+        Some(value) if value == OsStr::new("prolog") => session_prolog(),
         Some(value) if value == OsStr::new("all") => {
             let alloy = session_alloy();
             if alloy == ExitCode::SUCCESS {
                 let nusmv = session_nusmv();
                 if nusmv == ExitCode::SUCCESS {
-                    eprintln!("remaining session native oracles are not implemented yet");
+                    let prolog = session_prolog();
+                    if prolog == ExitCode::SUCCESS {
+                        eprintln!(
+                            "remaining exhaustive Rust session oracle is not implemented yet"
+                        );
+                    }
                 }
             }
             ExitCode::FAILURE
@@ -306,6 +308,84 @@ fn session_nusmv() -> ExitCode {
     if report.succeeded() && traces_match {
         ExitCode::SUCCESS
     } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn session_prolog() -> ExitCode {
+    let fixtures = [
+        (
+            "session-policy",
+            "policy_decisions",
+            11_usize,
+            "bc866fb812a92afa20d26f197a356bc86307b1479af6d836624117b6402e04f6",
+        ),
+        (
+            "session-successors",
+            "successors",
+            13,
+            "6d2fdd3044e24e09d532d3faf37652fd668fdf5d2f205f2e870413259d6372cb",
+        ),
+        (
+            "session-predecessors",
+            "predecessors",
+            12,
+            "fce25d53cce3449006108f711a5c28957363064699b57aec87dc519956fb9387",
+        ),
+        (
+            "session-visibility",
+            "visibility",
+            16,
+            "8ebef323c2929242b53ddb774569c67e6facd4f1b232b70c5eb6c3e7ba8e72cc",
+        ),
+        (
+            "session-grants",
+            "grant_chains",
+            4,
+            "98d2652614fc505cbfab64245a6f35325effbeabadfb04b6f3780a9689c1b00d",
+        ),
+        (
+            "session-histories",
+            "history_causes",
+            3,
+            "a35c7c6a3428854928cc3eaa02f59014a2f2e7212231da4913f9a456c86244b5",
+        ),
+        (
+            "session-defects",
+            "controlled_defects",
+            4,
+            "7883641e7f9687f4765beae11ed34ca4b6b2e3b1db0d51d7e504acfec721b7e9",
+        ),
+    ];
+    let mut succeeded = true;
+    for (fixture_id, goal, expected_count, expected_hash) in fixtures {
+        let report = run_prolog_model_fixture(
+            Path::new("."),
+            fixture_id,
+            Path::new("models/prolog/session.pl"),
+            "poche_session",
+            goal,
+        );
+        let mut canonical = String::new();
+        for answer in &report.answers {
+            canonical.push_str(answer);
+            canonical.push('\n');
+        }
+        let hash = blake3::hash(canonical.as_bytes()).to_hex().to_string();
+        println!(
+            "session Prolog {goal}: {:?}; answers={} blake3={hash}; {}",
+            report.disposition,
+            report.answers.len(),
+            report.diagnostic
+        );
+        succeeded &= report.disposition == NativeDisposition::Success
+            && report.answers.len() == expected_count
+            && hash == expected_hash;
+    }
+    if succeeded {
+        ExitCode::SUCCESS
+    } else {
+        eprintln!("session Prolog answer-set count or digest differs from the pinned corpus");
         ExitCode::FAILURE
     }
 }

@@ -24,7 +24,10 @@ pub use normalize::{
     NuSmvPropertyResult, PrologTestResult, normalize_alloy, normalize_alloy_commands,
     normalize_nusmv, normalize_prolog,
 };
-pub use runner::{run_all, run_alloy_suite, run_backend, run_nusmv_suite, run_prolog_fixture};
+pub use runner::{
+    run_all, run_alloy_suite, run_backend, run_nusmv_suite, run_prolog_fixture,
+    run_prolog_model_fixture,
+};
 
 /// A native backend whose handwritten model can be executed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
