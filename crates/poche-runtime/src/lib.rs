@@ -14,9 +14,11 @@ use poche_environment::GameEnvironment;
 use poche_protocol::{CountdownToken, ProtocolFrame, RoomId};
 use poche_session::PureSessionMachine;
 
+mod in_process;
 mod oracle_session;
 mod transcript;
 
+pub use in_process::*;
 pub use oracle_session::{OracleSessionGame, OracleSessionGameError};
 pub use transcript::*;
 
@@ -61,6 +63,48 @@ pub trait TransportPort {
     ///
     /// Returns a transport failure, never a semantic allow/deny result.
     fn send(&mut self, frame: &ProtocolFrame) -> Result<(), Self::Error>;
+}
+
+/// Authenticated authority-side command/event ingress.
+pub trait AuthorityTransportPort: TransportPort {
+    /// One transport-authenticated input.
+    type Ingress;
+
+    /// Receive the next input in deterministic transport order.
+    fn receive(&mut self) -> Option<Self::Ingress>;
+}
+
+/// Client-side port kept separate from authority execution.
+pub trait ClientPort {
+    /// Concrete transport carrying this client.
+    type Transport;
+    /// Adapter-specific failure.
+    type Error;
+
+    /// Stable application principal bound to the connection.
+    fn principal_id(&self) -> &poche_protocol::PrincipalId;
+
+    /// Submit one complete command.
+    ///
+    /// # Errors
+    ///
+    /// Rejects closed, unknown, or principal-mismatched connections and codec
+    /// failures before semantic execution.
+    fn submit(
+        &self,
+        transport: &mut Self::Transport,
+        command: poche_protocol::CommandEnvelope,
+    ) -> Result<(), Self::Error>;
+
+    /// Receive one exact viewer-scoped frame.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unknown connection or codec failure.
+    fn receive(
+        &self,
+        transport: &mut Self::Transport,
+    ) -> Result<Option<poche_protocol::ProtocolFrame>, Self::Error>;
 }
 
 /// Explicit composition of pure session state with one game type and I/O ports.

@@ -916,7 +916,7 @@ stderr-only diagnostics, NDJSON validity/redaction, invalid input, and
 deterministic cancellation. `cargo test -p poche-cli` and denied-warning clippy
 pass.
 
-### [ ] 4.2 Implement in-process multi-client transport and authoritative runtime
+### [x] 4.2 Implement in-process multi-client transport and authoritative runtime
 
 Define transport/client ports in `poche-runtime` and implement an
 `InProcessTransport` that can host multiple independently authenticated clients,
@@ -927,7 +927,22 @@ Typed direct delivery is the default; an NDJSON loopback mode tests framing.
 objects) create/join/play one full game without sockets; fault injection is
 deterministic; RL crates do not depend on this transport.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed in the local Task 4.2 slice.
+`poche-runtime` now defines separate client and authority transport ports plus a
+no-socket `InProcessTransport`, `ScriptedClient`, `ManualClock`, and
+`InProcessAuthority`. Connections bind one stable principal and reject spoofed
+envelopes before reduction. The centralized authority delegates all semantics
+to the existing authorize/decide/apply reducer, commits event batches
+atomically, schedules logical countdown events, and emits only viewer-scoped
+projections. Typed delivery is the default; canonical NDJSON mode round-trips
+both ingress and egress through the strict protocol codec. Duplicate, next-pair
+reorder, and disconnect faults have deterministic queue semantics, including an
+authority-level proof that duplicate create delivery leaves revision and
+processed-command cardinality unchanged. A three-client acceptance test hosts,
+joins, seats, readies, starts, and completes the real two-player Poche oracle's
+13-round schedule while a spectator receives scoped progress. The transport
+crate has no socket dependency, and no RL crate depends on it. Thirteen unit
+tests, the full-game integration test, and denied-warning clippy pass.
 
 ### [ ] 4.3 Deliver inspectable text play and replay
 
