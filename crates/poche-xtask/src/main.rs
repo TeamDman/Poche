@@ -134,6 +134,7 @@ fn usage() {
          cargo run -p poche-xtask -- rl episode --policy legal-random|heuristic --seed SEED\n  \
          cargo run -p poche-xtask -- rl benchmark --steps N --batch N\n  \
          cargo run -p poche-xtask -- rl baseline-manifest\n  \
+         cargo run -p poche-xtask -- rl train --manifest PATH\n  \
          cargo run -p poche-xtask -- rl evaluate --manifest PATH\n  \
          cargo run -p poche-xtask -- rl replay --manifest PATH --matchup NAME --seed SEED\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
@@ -156,6 +157,7 @@ fn rl(mut args: impl Iterator<Item = OsString>) -> ExitCode {
         Some(command) if command == OsStr::new("episode") => rl_episode(args),
         Some(command) if command == OsStr::new("benchmark") => rl_benchmark(args),
         Some(command) if command == OsStr::new("baseline-manifest") => rl_baseline_manifest(args),
+        Some(command) if command == OsStr::new("train") => rl_learned_command("train", args),
         Some(command) if command == OsStr::new("evaluate") => rl_evaluate(args),
         Some(command) if command == OsStr::new("replay") => rl_replay(args),
         _ => {
@@ -274,6 +276,16 @@ fn rl_evaluate(mut args: impl Iterator<Item = OsString>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let shape: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("RL manifest decode failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if shape.get("run_id").is_some() {
+        return run_learned_cargo_child("evaluate", path.as_os_str());
+    }
     let manifest: poche_rl::BaselineCorpusManifest = match serde_json::from_str(&text) {
         Ok(value) => value,
         Err(error) => {
@@ -298,6 +310,55 @@ fn rl_evaluate(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     };
     println!("{json}\nsemantic_hash={hash}");
     ExitCode::SUCCESS
+}
+
+fn rl_learned_command(action: &str, mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("--manifest")) {
+        usage();
+        return ExitCode::from(2);
+    }
+    let Some(path) = args.next() else {
+        usage();
+        return ExitCode::from(2);
+    };
+    if args.next().is_some() {
+        usage();
+        return ExitCode::from(2);
+    }
+    run_learned_cargo_child(action, &path)
+}
+
+fn run_learned_cargo_child(action: &str, path: &OsStr) -> ExitCode {
+    let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    match Command::new(cargo)
+        .current_dir(root)
+        .args([
+            OsStr::new("run"),
+            OsStr::new("-p"),
+            OsStr::new("poche-burn"),
+            OsStr::new("--bin"),
+            OsStr::new("poche-burn-run"),
+            OsStr::new("--offline"),
+            OsStr::new("--"),
+            OsStr::new(action),
+            OsStr::new("--manifest"),
+            path,
+        ])
+        .status()
+    {
+        Ok(status) if status.success() => ExitCode::SUCCESS,
+        Ok(status) => ExitCode::from(
+            status
+                .code()
+                .and_then(|code| u8::try_from(code).ok())
+                .unwrap_or(1),
+        ),
+        Err(error) => {
+            eprintln!("could not launch Burn RL command: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn rl_spec(mut args: impl Iterator<Item = OsString>) -> ExitCode {

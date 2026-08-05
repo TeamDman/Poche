@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/poche-check", "crates/poche-cli", "crates/poche-conformance", "crates/poche-domain", "crates/poche-environment", "crates/poche-formal", "crates/poche-interchange", "crates/poche-model", "crates/poche-native-tools", "crates/poche-oracle-rust", "crates/poche-protocol", "crates/poche-rl", "crates/poche-runtime", "crates/poche-session", "crates/poche-ui", "crates/poche-veilid", "crates/poche-web-spike", "crates/poche-xtask"]
+members = ["crates/poche-burn", "crates/poche-check", "crates/poche-cli", "crates/poche-conformance", "crates/poche-domain", "crates/poche-environment", "crates/poche-formal", "crates/poche-interchange", "crates/poche-model", "crates/poche-native-tools", "crates/poche-oracle-rust", "crates/poche-protocol", "crates/poche-rl", "crates/poche-runtime", "crates/poche-session", "crates/poche-ui", "crates/poche-veilid", "crates/poche-web-spike", "crates/poche-xtask"]
 resolver = "3"
 
 [workspace.package]
@@ -12,6 +12,7 @@ repository = "https://github.com/TeamDman/Poche"
 
 [workspace.dependencies]
 blake3 = "=1.8.5"
+burn = { version = "=0.21.0", default-features = false, features = ["std", "autodiff", "flex", "wgpu", "store"] }
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 curve25519-dalek = { version = "=5.0.0", default-features = false, features = ["precomputed-tables", "zeroize"] }
 datastar = { version = "=0.3.1", features = ["axum"] }

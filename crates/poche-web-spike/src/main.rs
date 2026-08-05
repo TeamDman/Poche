@@ -208,10 +208,31 @@ fn rl_replay_html(episode: &poche_rl::EpisodeTranscript) -> Result<String, Strin
 }
 
 fn selected_rl_episode() -> Result<poche_rl::EpisodeTranscript, String> {
+    if let Some(path) = std::env::var_os("POCHE_RL_EPISODE_PATH") {
+        return load_rl_episode(std::path::Path::new(&path));
+    }
     let mut random = poche_rl::LegalRandomPolicy::new(0xb453_0002 ^ 0x5000);
     let mut heuristic = poche_rl::HighCardHeuristicPolicy;
     poche_rl::run_episode_with_seat_policies(0xb453_0002, &mut random, &mut heuristic)
         .map_err(|error| format!("selected RL replay failed: {error:?}"))
+}
+
+fn load_rl_episode(path: &std::path::Path) -> Result<poche_rl::EpisodeTranscript, String> {
+    let bytes =
+        std::fs::read(path).map_err(|_| format!("could not read RL episode {}", path.display()))?;
+    let episode: poche_rl::EpisodeTranscript = serde_json::from_slice(&bytes)
+        .map_err(|_| "RL episode is not strict EpisodeTranscript JSON".to_owned())?;
+    let expected = poche_rl::RlSpec::poche_2p_v1()
+        .semantic_hash()
+        .map_err(|_| "could not hash RL spec".to_owned())?;
+    if episode.spec_id != poche_rl::SPEC_ID
+        || episode.spec_hash != expected
+        || episode.reward_id != poche_rl::REWARD_ID
+        || episode.illegal_action_count != 0
+    {
+        return Err("RL episode failed semantic validation".to_owned());
+    }
+    Ok(episode)
 }
 
 async fn index(State(state): State<AppState>) -> Response {
@@ -404,8 +425,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AuthorityHost, EMBEDDED_REPLAY, INDEX, LiveDemo, ReplayDeck, live_html, rl_replay_html,
-        selected_rl_episode,
+        AuthorityHost, EMBEDDED_REPLAY, INDEX, LiveDemo, ReplayDeck, live_html, load_rl_episode,
+        rl_replay_html, selected_rl_episode,
     };
     use poche_protocol::RoomPhase;
     use poche_ui::render_semantic_html;
@@ -422,6 +443,23 @@ mod tests {
         assert!(html.contains("Final scores</dt><dd>[99, 12]"));
         assert!(!html.contains("private_hand"));
         assert!(!html.contains("deck"));
+    }
+
+    #[test]
+    fn strict_external_learned_episode_uses_the_same_web_renderer() {
+        let episode = selected_rl_episode().expect("selected episode");
+        let directory = tempfile::tempdir().expect("temporary replay directory");
+        let path = directory.path().join("learned.json");
+        std::fs::write(&path, episode.canonical_json().expect("episode JSON"))
+            .expect("write temporary episode");
+        let loaded = load_rl_episode(&path).expect("strict learned episode");
+        assert_eq!(
+            loaded.semantic_hash().expect("loaded episode hash"),
+            episode.semantic_hash().expect("source episode hash")
+        );
+        let html = rl_replay_html(&loaded).expect("semantic web replay");
+        assert!(html.contains("Empirical replay only"));
+        assert!(!html.contains("private_hand"));
     }
 
     #[test]

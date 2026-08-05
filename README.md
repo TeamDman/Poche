@@ -18,6 +18,8 @@ fixtures and evidence.
   browser-only Veilid, and self-hosted Datastar status without overclaiming
 - [Native Veilid acceptance](docs/veilid-native-acceptance.md) — isolated-local
   limitation and opt-in public DHT/private-route lifecycle evidence
+- [Burn PPO learner and evaluation](docs/burn-learning.md) — CPU/WGPU backend,
+  frozen self-play, reproducibility, and score-first empirical results
 - [Deterministic live-client evidence](docs/live-client.md)
 - [Publication and format decision](docs/pages-publication.md)
 

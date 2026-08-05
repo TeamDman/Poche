@@ -289,7 +289,7 @@ default and must be confirmed by the named task before dependent implementation.
 | G26 | Decided | Can a browser-only public web app run Veilid with no on-device companion? | HTTP/WS passes without a companion, but the documented public bootstrap resets WSS before TLS and upstream 0.5.7 has no outbound-relay HTTPS topology. Direct Pages multiplayer is not advertised. | ADR 0004 selects a self-hostable, host-colocated Datastar authority for live browsers; native Veilid remains available without imposing a companion. |
 | G27 | Provisional | First RL tensor shape? | `poche-2p-v1`: fixed two-player full-rule game, seat-relative viewer encoding, fixed bid/card action vocabulary, legal mask, and explicit public-history strategy. Add other player counts as new specs. | Task 7.1 schema audit, random-policy parity, and user-visible manifest. |
 | G28 | Provisional | First reward projection? | `round-score-v1`: zero except at a round boundary, then the seat's raw rulebook points; terminal outcome and money are separately logged. No undocumented shaping or reward clipping. | Task 7.1 exact examples and baseline-return tests. |
-| G29 | Provisional | First learning algorithm? | Implement a small actor-critic PPO/GAE loop in Rust over Burn, with legal-logit masking and self-play against frozen checkpoints. Use Burn DQN only as an API reference/smoke comparison. | Task 8.1 controlled micro-environment test and recorded algorithm ADR. |
+| G29 | Decided | First learning algorithm? | Implemented a small actor-critic PPO/GAE loop in Rust over Burn, with legal-logit masking and self-play against frozen checkpoints. Burn DQN informed API usage only. | Task 8.1 controlled optimum passes on Flex; the identical update/checkpoint path passes WGPU; ADR 0003 and `docs/burn-learning.md` record the result. |
 | G30 | Decided | What liveness can be claimed once pause/network exist? | Preserve unconditional game termination only for the existing semantic game under its named scope. Session liveness is conditional on clock, delivery, player-action, and eventual-resume fairness. Paused/partitioned sessions may legitimately persist. | NuSMV/Rust properties must state assumptions and include counterexamples when each fairness assumption is removed. |
 | G31 | Decided | How is state-space explosion controlled? | Independently model game, session/authorization, and abstract transport; compose contracts and a small integration scope. Bound principals/messages/ticks and omit chat content/cryptographic bitstrings. | Coverage matrix and exact scope statements for every formal result. |
 | G32 | Decided | Which first client UI stack is used? | Keep the renderer-neutral `PresentationModel`; use shared egui for native/static-WASM replay and semantic HTML for the accessible live browser. Raw Vulkan remains a bounded future latency experiment. | ADR 0004 and `docs/rendering-topology-spike.md` record the executable portability, latency, distribution, accessibility, operations, privacy, and complexity comparison. |
@@ -1615,7 +1615,7 @@ throughput path by construction.
 
 ## Phase 8 - Burn learner, self-play, and empirical evaluation
 
-### [ ] 8.1 Prove Burn backend and algorithm primitives on controlled scopes
+### [x] 8.1 Prove Burn backend and algorithm primitives on controlled scopes
 
 Add `crates/poche-burn` depending on `poche-rl`, never the reverse. Pin Burn
 0.21.x or the exact approved release. Implement observation tensors, masked
@@ -1630,9 +1630,29 @@ example/API where useful, but close G29 with the actor-critic ADR.
 one available GPU backend; masks assign zero selection probability to illegal
 actions; the controlled task learns the preregistered behavior.
 
-**Completion notes:** Not started.
+**Completion notes (complete, 2026-08-05):** Added `poche-burn` with exact
+Burn 0.21.0 and the required one-way dependency on `poche-rl`. A backend-
+generic 307→hidden→hidden shared-trunk actor-critic emits 60 policy logits and
+one value. The same strict path implements one batched host/device transfer,
+legal-logit masking, clipped PPO loss, value loss, entropy, backward, Adam with
+norm clipping, and separate model/optimizer records. Illegal host probabilities
+are exactly zero and masked selections fail before device work.
 
-### [ ] 8.2 Implement PPO/GAE over turn-based rollout buffers
+The controlled two-context deterministic task has an exhaustive optimal action
+for each context. Starting from a fixed seed, the real PPO update changes both
+greedy decisions to those optima; the 0.2 trust-region clip is respected rather
+than demanding unbounded logits. CPU Flex model+optimizer checkpoints restore
+exact outputs. The explicit backend smoke then passed the identical full-rule
+observation/mask forward/backward/checkpoint transaction on Flex and the
+machine's default WGPU backend: both reported 51,994 model bytes, 103,766
+optimizer bytes, exact-zero illegal probability, and exact restored logits.
+Backend-specific output digests are
+`b65573ccf4324b6abd58e10c51ec40ecc03999259c1e1d4948adc26d1f5bf23b`
+(Flex) and
+`f6507295bf4781cd8b91a344c2466ecd6109284592c19c7568908447bf83baf4`
+(WGPU); cross-device bit identity is not claimed.
+
+### [x] 8.2 Implement PPO/GAE over turn-based rollout buffers
 
 Implement advantage/return calculation with explicit terminal and per-decision
 time handling, clipped policy objective, value loss, entropy term, gradient
@@ -1647,9 +1667,25 @@ allocations; batch host/device transfers.
 without semantic-schema mismatch; CPU/GPU runs use the same algorithm and
 produce appropriately qualified reproducibility evidence.
 
-**Completion notes:** Not started.
+**Completion notes (complete, 2026-08-05):** Implemented reverse-time GAE with
+explicit terminal reset and `gamma^decision_time_distance`, plus a hand-
+calculated test that distinguishes two-step discounting and terminal bootstrap.
+Full-rule collection uses `PocheRlEnv` only: it retains exact viewer
+observations/masks and pairs an action with that same seat's next observation,
+accumulating intervening raw `round-score-v1` reward and decision distance.
+There is no duplicated game rule or hidden-state input.
 
-### [ ] 8.3 Add self-play with frozen historical policies
+The learner validates flat shapes/finiteness/masks, computes gathered old/new
+log probabilities, clipped and unclipped policy objectives, value MSE, entropy,
+and gradient-norm clipping. Training uses deterministic seed-controlled
+sampling, Fisher-Yates minibatch order, four epochs, and batches host/device
+transfers. Reward clipping/shaping remains absent. Model and optimizer records
+resume together only after Burn version, model shape, spec ID/hash, reward ID,
+and artifact digests validate. Flex and WGPU execute the same generic update;
+their floating-point outputs are qualified per backend, not asserted bitwise
+equal. Exact numerical, masking, update, and checkpoint tests pass.
+
+### [x] 8.3 Add self-play with frozen historical policies
 
 Implement seat-randomized policy assignment, current-policy mirrors, and a
 bounded pool of immutable historical checkpoints inspired by PufferLib. Record
@@ -1661,9 +1697,23 @@ progress.
 schedules replay; catastrophic forgetting/regression can be detected against a
 fixed baseline suite; memory/storage bounds are explicit.
 
-**Completion notes:** Not started.
+**Completion notes (complete, 2026-08-05):** Added a bounded append-only
+`FrozenPolicyPool` whose ID/digest identities cannot be replaced or duplicated.
+Its deterministic schedule randomizes the current policy's seat from the seed
+and fails explicitly when full. The first run fixes capacity five and retains
+initial plus updates 1–4. Each update runs one current-policy mirror game and
+three seat-randomized games against the immutable prior checkpoint; every
+actual seat assignment is recorded in the training summary. Frozen bytes are
+loaded into a separate inference model and never mutated by the optimizer.
 
-### [ ] 8.4 Train the first full-rule policy and preserve artifacts responsibly
+Evaluation opponents are not drawn from this moving pool: legal-random and the
+heuristic remain fixed, held-out, seat-swapped baselines. The pool's memory/
+storage bound is five in-memory model+optimizer records during this short run;
+only the final large record persists beneath ignored `artifacts/`. Unit tests
+prove duplicate/full rejection and deterministic schedule replay, while the
+run recorded five distinct immutable artifact identities.
+
+### [x] 8.4 Train the first full-rule policy and preserve artifacts responsibly
 
 Run the preregistered `poche-2p-v1` training experiment. Store large weights,
 optimizer state, raw logs, and traces outside Git or as named CI/release
@@ -1675,9 +1725,29 @@ checkpoint loading rejects incompatible game/observation/action/reward hashes;
 failure to beat a baseline is reported as a result rather than hidden or
 reframed as formal evidence.
 
-**Completion notes:** Not started.
+**Completion notes (complete, 2026-08-05):** The committed manifest
+`rl/manifests/poche-ppo-v1.json` fixes Burn 0.21.0/Flex, 307×64×64×60 model,
+all preregistered PPO parameters, root seed 1347374915, four updates, four games
+per update, five frozen policies, 16 held-out seeds, and ignored artifact
+location. `cargo run -p poche-xtask --offline -- rl train --manifest
+rl/manifests/poche-ppo-v1.json` completed 16 full games and 1,240 same-seat
+transition rows. Mean total loss by update was 112.599, 80.789, 55.877, and
+42.578; this is a diagnostic curve, not proof of policy quality.
 
-### [ ] 8.5 Evaluate by Poche score and render representative behavior
+`model.bin`, `optimizer.bin`, full logs/summaries, and replay payloads stay under
+ignored `artifacts/rl/poche-ppo-v1-short`. The current concrete artifacts are
+identified by model digest
+`7e5438ee3a7c22fa41ff0d0a1409ffce8282ad2bd95f3075465ec13995b4d4f9`
+and optimizer digest
+`6a8f32c6fc660380918bd386ff3ceeda05360f9e515fb26467cf985234965776`.
+Burn deliberately generates random internal parameter IDs, so regenerated
+container digests differ; two clean repeat runs nevertheless reproduced every
+loss value and the fixed viewer-policy output digest
+`1aa3597e69074098bdeecc43b7ff3f52f0d25d9e5f0de1cb31d4a1cf21140a08`.
+The manifest/artifact digest checks reject semantic or concrete-file mismatch
+before loading, and evaluation rechecks the semantic output digest afterward.
+
+### [x] 8.5 Evaluate by Poche score and render representative behavior
 
 Evaluate current and frozen policies against legal-random and heuristic
 baselines on a fixed held-out seed corpus with seat swaps. Primary statistics
@@ -1692,7 +1762,26 @@ text/web replay path. State clearly that policy quality is empirical.
 <path>` regenerates the summary and selected episodes; no claim exceeds the
 measured corpus; evaluation never exposes hidden state to the policy.
 
-**Completion notes:** Not started.
+**Completion notes (complete, 2026-08-05):** The exact required command now
+dispatches learned manifests through the Burn evaluator while preserving the
+existing baseline-manifest path. It ran 64 full games: 16 held-out seeds across
+learned/legal-random and learned/heuristic with both seat assignments. Learned
+seat mean differentials were +2.625 versus legal-random as seat 0 (95% CI
+[-14.734, 19.984]), +24.125 as seat 1 (the reported seat-0 opponent interval
+[-40.289, -7.961]), +18.563 versus heuristic as seat 0 ([-3.094, 40.219]),
+and +15.438 as seat 1 (opponent interval [-33.696, 2.821]). Thus one interval
+excludes zero and three do not; no general superiority claim is made. Mean raw
+scores, all 13 mean round-score pairs, exact bids, 124-decision length, wins/
+ties, and zero illegal actions are recorded.
+
+Every matchup writes best/median/worst episodes as inspectable NDJSON and
+strict `EpisodeTranscript` JSON; no illegal/execution failure occurred, so the
+explicit failure selection is null rather than invented. The web app accepts a
+selected JSON through `POCHE_RL_EPISODE_PATH`, revalidates spec/reward/zero-
+illegal semantics, and renders it through `/rl/replay`; a test proves the same
+semantic hash and absence of `private_hand`. `docs/burn-learning.md` and
+`evidence/burn-poche-ppo-v1.json` contain commands, selected hashes, measured
+results, artifact policy, and empirical-only limitations.
 
 ## Phase 9 - Aggregate evidence, documentation, and handoff
 

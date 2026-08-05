@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-08-05",
+  "empirical_only": true,
+  "burn_version": "0.21.0",
+  "spec_id": "poche-2p-v1",
+  "spec_hash": "8852f8568ead1e40aad7bb4ca5b7725340cc01422e077ffddcd5d4f5665bf0bf",
+  "reward_id": "round-score-v1",
+  "backend_acceptance": [
+    {
+      "backend": "flex-cpu",
+      "forward_backward": true,
+      "checkpoint_round_trip": true,
+      "illegal_probability_sum": 0.0,
+      "model_bytes": 51994,
+      "optimizer_bytes": 103766,
+      "output_digest": "b65573ccf4324b6abd58e10c51ec40ecc03999259c1e1d4948adc26d1f5bf23b"
+    },
+    {
+      "backend": "wgpu-default",
+      "forward_backward": true,
+      "checkpoint_round_trip": true,
+      "illegal_probability_sum": 0.0,
+      "model_bytes": 51994,
+      "optimizer_bytes": 103766,
+      "output_digest": "f6507295bf4781cd8b91a344c2466ecd6109284592c19c7568908447bf83baf4"
+    }
+  ],
+  "training": {
+    "manifest": "rl/manifests/poche-ppo-v1.json",
+    "manifest_hash": "98e695a8b356e51499c0ce3b86907ad6cae758f3b476eee40fd9d72ec976e11a",
+    "backend": "flex-cpu",
+    "root_seed": 1347374915,
+    "episodes": 16,
+    "transition_rows": 1240,
+    "frozen_policies": 5,
+    "mean_total_loss_by_update": [112.59850025177002, 80.78937244415283, 55.87652349472046, 42.578110694885254],
+    "artifact_location": "artifacts/rl/poche-ppo-v1-short (ignored, local)",
+    "concrete_model_digest": "7e5438ee3a7c22fa41ff0d0a1409ffce8282ad2bd95f3075465ec13995b4d4f9",
+    "concrete_optimizer_digest": "6a8f32c6fc660380918bd386ff3ceeda05360f9e515fb26467cf985234965776",
+    "policy_probe_digest": "1aa3597e69074098bdeecc43b7ff3f52f0d25d9e5f0de1cb31d4a1cf21140a08",
+    "repeat_runs": 2,
+    "repeat_loss_and_policy_probe_identical": true,
+    "raw_record_digest_repeatable": false,
+    "raw_record_digest_note": "Burn record parameter IDs are randomly generated; concrete digests identify one artifact while the fixed policy probe identifies regenerated semantics"
+  },
+  "evaluation": {
+    "held_out_seeds": 16,
+    "games": 64,
+    "game_length_decisions": 124,
+    "illegal_actions": 0,
+    "failure_episode": null,
+    "matchups": [
+      {
+        "name": "learned-vs-legal-random",
+        "mean_scores": [52.3125, 49.6875],
+        "mean_differential_seat0": 2.625,
+        "differential_ci95": [-14.734075580226037, 19.984075580226037],
+        "wins": [8, 8],
+        "ties": 0,
+        "selected_hashes": {
+          "worst": "04354d1774432695ea680a805cd5b98dad85e91a7c0d3be482f95e2801d78bda",
+          "median": "077aa7b85ccacad1a96c2ca111d2157f34faf2689c1359df41bf90736e16ee6b",
+          "best": "20abf50aaa1142704349f49925d538a025cc32942b8fc5dd1fa2deba212cc4df"
+        }
+      },
+      {
+        "name": "legal-random-vs-learned",
+        "mean_scores": [43.1875, 67.3125],
+        "mean_differential_seat0": -24.125,
+        "differential_ci95": [-40.28943085914255, -7.9605691408574515],
+        "wins": [3, 13],
+        "ties": 0,
+        "selected_hashes": {
+          "worst": "3db071e93abfc160edfeb506c9a3dbe9e8a74e9e8e665e55f16c1cc605548c96",
+          "median": "f9f6854c8a6a403749374b5585aa69cb859c3f48ae091a5169b338a4214df173",
+          "best": "42e55067d02fbb2c99fafe4e544cc624168b8450ab0a36107b06d091f859560f"
+        }
+      },
+      {
+        "name": "learned-vs-heuristic",
+        "mean_scores": [67.3125, 48.75],
+        "mean_differential_seat0": 18.5625,
+        "differential_ci95": [-3.09377698651517, 40.21877698651517],
+        "wins": [10, 5],
+        "ties": 1,
+        "selected_hashes": {
+          "worst": "3dcbefb565cc9d4e98e71dbc5150d4007f5714f08d9e687149d449028ada74fb",
+          "median": "adc2da13e127d65678a5c1cca3d04019a701ba1f1f30b4f965bc0c934586b3fa",
+          "best": "ce3d952b3d7a9fe7e44a7ee58bd560d8484ec308688154e17e9c441295240456"
+        }
+      },
+      {
+        "name": "heuristic-vs-learned",
+        "mean_scores": [54.1875, 69.625],
+        "mean_differential_seat0": -15.4375,
+        "differential_ci95": [-33.69635683488062, 2.8213568348806177],
+        "wins": [6, 10],
+        "ties": 0,
+        "selected_hashes": {
+          "worst": "203c3fde9a189d0d47793a1856666120d6228966294f8174b9b2910f4d6e7a82",
+          "median": "48318685fc0ef412ae12fe513a514174166c0ed4df6b1cf413f064ff81b5bef9",
+          "best": "7d6ecfd8e6f14996c8c6beaf1bfb3186a4a452d8a46c91a966e398263f3d1a4b"
+        }
+      }
+    ]
+  },
+  "limitations": [
+    "three of four learned-seat score-differential confidence intervals include zero",
+    "the training and held-out corpora are intentionally small first-run diagnostics",
+    "WGPU and Flex are algorithmically identical but not bitwise cross-backend reproducible",
+    "large checkpoints and selected replay payloads are local ignored artifacts, not Git history",
+    "policy quality is empirical and does not strengthen any formal game claim"
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "run_id": "poche-ppo-v1-short",
+  "burn_version": "0.21.0",
+  "backend": "flex-cpu",
+  "spec_id": "poche-2p-v1",
+  "spec_hash": "8852f8568ead1e40aad7bb4ca5b7725340cc01422e077ffddcd5d4f5665bf0bf",
+  "reward_id": "round-score-v1",
+  "model": {
+    "observation_size": 307,
+    "hidden_size": 64,
+    "action_count": 60
+  },
+  "ppo": {
+    "gamma": 1.0,
+    "lambda": 0.95,
+    "clip": 0.2,
+    "value_coefficient": 0.5,
+    "entropy_coefficient": 0.01,
+    "gradient_norm_cap": 0.5,
+    "learning_rate": 0.0003,
+    "epochs": 4,
+    "minibatch_size": 256
+  },
+  "root_seed": 1347374915,
+  "updates": 4,
+  "episodes_per_update": 4,
+  "self_play_pool_capacity": 5,
+  "held_out_seeds": [
+    3778019104,
+    3778019105,
+    3778019106,
+    3778019107,
+    3778019108,
+    3778019109,
+    3778019110,
+    3778019111,
+    3778019112,
+    3778019113,
+    3778019114,
+    3778019115,
+    3778019116,
+    3778019117,
+    3778019118,
+    3778019119
+  ],
+  "artifact_directory": "artifacts/rl/poche-ppo-v1-short",
+  "empirical_only": true
+}
