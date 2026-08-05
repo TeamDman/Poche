@@ -481,7 +481,7 @@ stable Figue 4 targets Facet 0.46. The Veilid `AGENTS.md` restriction is recorde
 and no reference repository was modified. `git diff --check` and the phase-2
 guidance audit pass.
 
-### [ ] 1.3 Extract stable session and authorization rules
+### [x] 1.3 Extract stable session and authorization rules
 
 Create:
 
@@ -500,7 +500,18 @@ game-semantic, session-semantic, transport, security assumption, or UI only.
 and every security invariant has an immutable ID and full-track disposition;
 unknown commands and roles are default-deny.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed. `docs/session-rules.md` assigns 88
+immutable IDs across room, authorization, visibility, chat, logical-time, and
+fault behavior; every row records source, actor, preconditions, accepted effect,
+failure, and semantic class. `docs/session-coverage.md` gives every ID an
+explicit Rust/Alloy/NuSMV/Prolog/protocol/network/UI disposition, including
+reasoned non-applicability rather than silent omissions.
+`docs/capability-matrix.md` defines derived principal kinds, room/epoch/resource-
+scoped capabilities, command policy, stable deny reasons, normative evaluation
+order, and viewer projection boundaries. Unknown command, role, and principal
+paths are explicitly default-deny. A mechanical comparison found 88 rule rows,
+88 coverage rows, zero duplicates, zero missing/extra IDs, and zero malformed
+table rows. `git diff --check` and the phase-2 guidance audit pass.
 
 ## Phase 2 - Typed text protocol and pure session engine
 
