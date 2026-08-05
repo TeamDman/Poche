@@ -169,6 +169,7 @@
 
         <nav class="actions" aria-label="Rulebook links">
           <a class="button" href="poche-rules.pdf">Read the rulebook (PDF)</a>
+          <a class="button secondary" href="replay/">Explore projection replay</a>
           <a class="button secondary" href="poche-rules.pdf" download>Download PDF</a>
         </nav>
 
@@ -188,10 +189,26 @@
             </p>
           </section>
           <section>
+            <h2>Static replay</h2>
+            <p>
+              <a class="text-link" href="replay/">Inspect exact viewer projections</a>
+              in the shared egui/WASM client. This fixture has no live room or network.
+            </p>
+          </section>
+          <section>
+            <h2>Live multiplayer status</h2>
+            <p>
+              Pages does not host multiplayer. The
+              <a class="text-link" href="https://github.com/TeamDman/Poche/blob/model-checking/docs/deployment-modes.md">deployment matrix</a>
+              explains the self-hosted Datastar demo and why direct browser Veilid is unavailable.
+            </p>
+          </section>
+          <section>
             <h2>Reproducibility</h2>
             <p>
-              Built by GitHub Actions with pinned Typst 0.15.1. Generated PDF
-              and HTML output are not stored in Git history.
+              Built by GitHub Actions with pinned Typst 0.15.1, Rust 1.96.0,
+              and wasm-bindgen 0.2.126. Generated PDF/WASM/JS/HTML output is not
+              stored in Git history.
             </p>
           </section>
         </div>

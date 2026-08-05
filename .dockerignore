@@ -1,0 +1,14 @@
+.git
+.github
+.agents
+.codex
+artifacts
+docs
+models
+pages
+site
+target
+tmp
+*.pdf
+*.trace.tmp
+*.solver.tmp

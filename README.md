@@ -12,6 +12,11 @@ fixtures and evidence.
 - [Pretty rules](https://teamdman.github.io/Poche/) — generated from the
   `model-checking` rulebook source by GitHub Pages
 - [Direct rulebook PDF](https://teamdman.github.io/Poche/poche-rules.pdf)
+- [Static exact-projection replay](https://teamdman.github.io/Poche/replay/) —
+  browser egui/WASM fixture; no room authority or network
+- [Deployment-mode matrix](docs/deployment-modes.md) — native/static,
+  browser-only Veilid, and self-hosted Datastar status without overclaiming
+- [Deterministic live-client evidence](docs/live-client.md)
 - [Publication and format decision](docs/pages-publication.md)
 
 The completed first milestone covers the four models, named finite-scope
@@ -20,6 +25,25 @@ plan composes that game core with a text-first multiplayer session protocol,
 Veilid rooms, minimal rendering, and reinforcement learning without making
 network or UI state part of the formal game state. Automatic target-language
 generation and legacy-v2 comparison remain deferred.
+
+## Client and deployment status
+
+GitHub Pages publishes only the rulebook and static projection replay. Direct
+browser-only Veilid multiplayer is not supported from its HTTPS origin: the
+tested public WSS bootstrap path failed and Veilid 0.5.7 lacks the required
+outbound-relay HTTPS topology. No companion application is implied.
+
+The repository includes a native egui replay and a host-colocated
+Axum/Datastar deterministic authority demo. The latter is inspectable and
+container-buildable, but its named viewer routes, static development invite
+codes, and in-memory state are not authenticated production multiplayer. A
+native live Veilid client remains pending the separate Task 5.6 acceptance
+gate. See [the deployment-mode matrix](docs/deployment-modes.md) before exposing
+any process outside loopback.
+
+```pwsh
+cargo run --release -p poche-web-spike
+```
 
 ## Native tools
 

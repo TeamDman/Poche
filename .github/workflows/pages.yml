@@ -1,4 +1,4 @@
-name: Publish rulebook
+name: Publish rulebook and replay
 
 on:
   push:
@@ -6,6 +6,17 @@ on:
       - model-checking
     paths:
       - .github/workflows/pages.yml
+      - Cargo.lock
+      - Cargo.toml
+      - rust-toolchain.toml
+      - crates/poche-domain/**
+      - crates/poche-environment/**
+      - crates/poche-model/**
+      - crates/poche-oracle-rust/**
+      - crates/poche-protocol/**
+      - crates/poche-runtime/**
+      - crates/poche-session/**
+      - crates/poche-ui/**
       - docs/main.typ
       - pages/**
       - tools/versions.toml
@@ -48,6 +59,13 @@ jobs:
           test "$("$install_dir/typst" --version)" = "typst 0.15.1 (9dfd3a08)"
           echo "TYPST_BIN=$install_dir/typst" >> "$GITHUB_ENV"
 
+      - name: Install pinned Rust WebAssembly tools
+        run: |
+          rustup target add --toolchain 1.96.0 wasm32-unknown-unknown
+          cargo install --locked --version 0.2.126 wasm-bindgen-cli
+          test "$(rustc --version)" = "rustc 1.96.0 (ac68faa20 2026-05-25)"
+          test "$(wasm-bindgen --version)" = "wasm-bindgen 0.2.126"
+
       - name: Build publication artifact
         env:
           PUBLICATION_TIME: ${{ github.event.head_commit.timestamp }}
@@ -61,7 +79,11 @@ jobs:
             -e "s/__POCHE_BUILD_TIME__/${build_time}/g" \
             pages/index.html > site/index.html
           cp LICENSE site/LICENSE.txt
+          pwsh crates/poche-ui/web/build.ps1 -OutputDirectory site/replay
           test -s site/index.html
+          test -s site/replay/index.html
+          test -s site/replay/pkg/poche_ui.js
+          test -s site/replay/pkg/poche_ui_bg.wasm
           ! grep --recursive '__POCHE_' site
 
       - name: Configure GitHub Pages

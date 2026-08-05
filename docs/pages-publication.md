@@ -1,8 +1,8 @@
 # Rulebook publication
 
 The public “pretty view” is <https://teamdman.github.io/Poche/>. GitHub Pages
-serves a small landing page and a PDF compiled from `docs/main.typ`; neither
-generated file is committed to Git.
+serves a small landing page, a PDF compiled from `docs/main.typ`, and the static
+exact-projection egui/WASM replay; no generated artifact is committed to Git.
 
 ## Format decision
 
@@ -10,6 +10,8 @@ generated file is committed to Git.
 | --- | --- | --- |
 | PDF | Published; canonical pretty view | Typst 0.15.1 compiles the complete `charged-ieee` rulebook. CI installs TeX Gyre Termes and Cursor before compiling. |
 | Landing HTML | Published | Hand-authored, accessible navigation to the generated PDF, Typst source, and formal-evidence matrix. CI stamps it with the exact source commit and event time. |
+| Static egui/WASM replay | Published | Rust 1.96.0 and `wasm-bindgen` 0.2.126 build the checked exact-recipient fixture into `replay/`. It contains no authority, room transport, or live Veilid node. |
+| Live multiplayer | Not hosted by Pages | Direct HTTPS/WSS Veilid failed the G26 gate. The host-colocated Datastar authority is a separately run server; the current deterministic demo is not authenticated production multiplayer. |
 | Native Typst HTML | Evaluated and rejected for this milestone | `typst compile --features html --format html` warns that HTML is experimental and drops the template's page setup, two-column layout, title placement, vertical/horizontal spacing, and explicit alignment. Publishing it would not be a faithful pretty view. |
 
 This is the G13 fidelity gate, not a permanent rejection of Typst HTML. Revisit
@@ -29,8 +31,10 @@ experimental and warns that templates may not render properly:
   deployment; the previously published page continues to identify the exact
   commit that produced it rather than silently presenting itself as a newer
   build.
-- The Pages artifact contains only `index.html`, `poche-rules.pdf`, and the
-  MPL-2.0 license. The `site/` build directory and `docs/main.pdf` are ignored.
+- The Pages artifact contains the landing page, `poche-rules.pdf`, MPL-2.0
+  license, and generated `replay/` HTML/JS/WASM. It contains no live backend,
+  Veilid bundle, invitation, room state, transcript, or private user data. The
+  `site/` build directory and `docs/main.pdf` are ignored.
 
 ## Local reproduction
 
@@ -45,3 +49,13 @@ The workflow follows GitHub's custom Pages workflow shape: configure Pages,
 upload one Pages artifact, and deploy it from a job with `pages: write` and
 `id-token: write` permissions:
 <https://docs.github.com/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages>.
+
+Local replay reproduction requires Rust 1.96.0, the
+`wasm32-unknown-unknown` target, and exact `wasm-bindgen-cli` 0.2.126:
+
+```pwsh
+pwsh crates/poche-ui/web/build.ps1 -OutputDirectory site/replay
+```
+
+The deployment and trust distinctions are kept in
+[`deployment-modes.md`](deployment-modes.md).
