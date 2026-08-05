@@ -10,7 +10,7 @@ use std::io;
 use std::path::Path;
 use std::process::{Command, ExitCode, Output};
 
-use poche_check::{CheckScope, TerminationReason, analyze_liveness, explore};
+use poche_check::{CheckScope, TerminationReason, analyze_liveness, check_session, explore};
 use poche_conformance::{
     Disposition, compare_rust_alloy, compare_rust_models, compare_rust_nusmv, compare_rust_prolog,
 };
@@ -115,7 +115,7 @@ fn usage() {
         "usage:\n  cargo run -p poche-xtask -- doctor\n  \
          cargo run -p poche-xtask -- guidance audit PLAN.md\n  \
          cargo run -p poche-xtask -- protocol replay --all\n  \
-         cargo run -p poche-xtask -- session oracle check alloy|nusmv|prolog|all\n  \
+         cargo run -p poche-xtask -- session oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- oracle report\n  \
@@ -142,28 +142,88 @@ fn session(mut args: impl Iterator<Item = OsString>) -> ExitCode {
         return ExitCode::from(2);
     }
     match backend.as_deref() {
+        Some(value) if value == OsStr::new("rust") => session_rust(),
         Some(value) if value == OsStr::new("alloy") => session_alloy(),
         Some(value) if value == OsStr::new("nusmv") => session_nusmv(),
         Some(value) if value == OsStr::new("prolog") => session_prolog(),
         Some(value) if value == OsStr::new("all") => {
-            let alloy = session_alloy();
-            if alloy == ExitCode::SUCCESS {
-                let nusmv = session_nusmv();
-                if nusmv == ExitCode::SUCCESS {
-                    let prolog = session_prolog();
-                    if prolog == ExitCode::SUCCESS {
-                        eprintln!(
-                            "remaining exhaustive Rust session oracle is not implemented yet"
-                        );
-                    }
-                }
+            let results = [
+                session_rust(),
+                session_alloy(),
+                session_nusmv(),
+                session_prolog(),
+            ];
+            if results
+                .into_iter()
+                .all(|result| result == ExitCode::SUCCESS)
+            {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
             }
-            ExitCode::FAILURE
         }
         _ => {
             usage();
             ExitCode::from(2)
         }
+    }
+}
+
+fn session_rust() -> ExitCode {
+    let report = check_session();
+    println!(
+        "session Rust: scope={} states={} transitions={} accepted={} denied={} terminal={} max_depth={} safety={} semantic_hash={}",
+        report.scope,
+        report.stats.states,
+        report.stats.transitions,
+        report.stats.accepted_transitions,
+        report.stats.denied_transitions,
+        report.stats.terminal_states,
+        report.stats.maximum_depth,
+        report.safety_properties,
+        report.semantic_hash
+    );
+    for witness in &report.false_invariants {
+        println!(
+            "  expected-false {} minimal_actions={} trace={:?}",
+            witness.name,
+            witness.actions.len(),
+            witness.actions
+        );
+    }
+    println!(
+        "  liveness unconditional=false; conditional_assumptions={}",
+        report.liveness_assumptions.join(",")
+    );
+    let false_claims = report
+        .false_invariants
+        .iter()
+        .map(|witness| (witness.name, witness.actions.len()))
+        .collect::<Vec<_>>();
+    let pinned = report.stats.states == 800
+        && report.stats.transitions == 38_400
+        && report.stats.accepted_transitions == 5_872
+        && report.stats.denied_transitions == 32_528
+        && report.stats.terminal_states == 272
+        && report.stats.maximum_depth == 14
+        && report.safety_properties == 10
+        && report.semantic_hash
+            == "89c626a11bcef07d93007ba5a7bf097fa9dd88c94244775dec5c138a17e023b1"
+        && false_claims
+            == [
+                ("all-reachable-states-are-terminal", 0),
+                ("pause-is-unreachable", 5),
+                ("spectator-never-sees-a-hand", 2),
+            ];
+    if pinned
+        && !report.unconditional_termination
+        && report.every_state_has_terminal_path
+        && report.false_invariants.len() == 3
+    {
+        ExitCode::SUCCESS
+    } else {
+        eprintln!("session Rust fixed-point counts/hash differ from the pinned scope");
+        ExitCode::FAILURE
     }
 }
 

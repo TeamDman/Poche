@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+blake3 = "=1.8.5"
 poche-model = { path = "../poche-model" }
 poche-interchange = { path = "../poche-interchange" }
 phon.workspace = true

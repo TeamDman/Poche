@@ -123,3 +123,45 @@ The Prolog scope covers query-oriented parts of `S-ROOM-004` through
 `S-CHAT-007`, `S-TIME-003` through `S-TIME-004`, and `S-TIME-008`.
 It does not infer cryptographic validity, network delivery, arbitrary-length
 histories, chat text, or concrete card legality.
+
+## Rust exhaustive session checker
+
+`poche-check::explore_session` drains a deterministic BFS queue for the named
+`session-micro-host-2p-1spec-1countdown-1pause-1grant-1chat-1game-step`
+scope. It fixes one host/player, one other seated player, one spectator, and an
+outsider; all three members have bounded connected/disconnected states. Room
+state includes two readiness flags, one countdown, at most one start, one pause
+cycle, one pending request, one exact grant epoch, one chat-metadata slot, and a
+`SingleStepGamePort`. The concrete card graph is not embedded.
+
+```text
+cargo run -p poche-xtask -- session oracle check rust
+```
+
+The fixed point contains 800 states and 38,400 attempted-command edges: 5,872
+accepted and 32,528 default-denied. There are 272 terminal states, maximum BFS
+depth 14, and ten safety obligations. The canonical state/edge table hashes to
+`89c626a11bcef07d93007ba5a7bf097fa9dd88c94244775dec5c138a17e023b1`.
+The CLI pins all of those values.
+
+Safety covers at-most-once/readiness-gated start, phase/countdown consistency,
+fixed seats, exact spectator grant knowledge, outsider default deny, paused
+game immobility, atomic denials, bounded grant/chat metadata, and absorbing
+close. Unconditional termination is explicitly false because every state has
+an idle edge and pause/partition may persist. Every reachable state does have a
+path to a terminal state. Turning that existential fact into conditional
+progress requires the named NuSMV-compatible obligations: eventual readiness
+and arm, countdown expiry, player action, resume, and reconnect or stable
+delivery.
+
+Three known-false claims retain minimal BFS witnesses: “all states terminal”
+at depth 0; “pause unreachable” at depth 5 via ready/ready/arm/expire/pause;
+and “spectator never sees a hand” at depth 2 via exact request/grant. The last
+is intentional authorized visibility, not a privacy failure.
+
+The abstract game boundary is separately exercised against the real
+`OracleSessionGame`/`GameEnvironment` by
+`concrete_oracle_adapter_starts_and_replays_seeded_chance` and the full protocol
+transcript. This keeps session exploration small while preserving integration
+evidence for typed actions, explicit chance, public/private projections,
+settlement, and raw round scores.

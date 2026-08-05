@@ -7,6 +7,7 @@
 mod evidence;
 mod liveness;
 mod safety;
+mod session;
 
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
@@ -22,6 +23,7 @@ pub use liveness::{
     analyze_with_nonterminal_deadlock, analyze_with_nonterminal_stutter, progress_rank,
 };
 pub use safety::{PropertyMeasurements, SafetyFailure, SafetyReport, check_safety_catalog};
+pub use session::*;
 
 /// Stable name for a fully declared finite transition system.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

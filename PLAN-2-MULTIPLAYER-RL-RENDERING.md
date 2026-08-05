@@ -811,7 +811,7 @@ and omissions. The generic native runner now safely selects repository-local
 Prolog models/modules; formatting, denied-warning clippy, runner tests, and the
 native corpus pass.
 
-### [ ] 3.4 Add exhaustive Rust session checking
+### [x] 3.4 Add exhaustive Rust session checking
 
 Extend `poche-check` or add a session checker for a named scope such as one
 host, two seated players, one spectator, bounded connection states, one
@@ -826,7 +826,21 @@ then run separate integration fixtures against the real `GameEnvironment`.
 counts and semantic hashes are recorded; safety holds; liveness qualifications
 match NuSMV; known false invariants produce minimal traces.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed in the local Task 3.4 slice.
+`poche-check::explore_session` reaches a deterministic fixed point for one
+host/player, one other player, one spectator, bounded connection/readiness,
+one countdown/pause/grant/chat slot, and a one-action `SingleStepGamePort`.
+The pinned graph has 800 states, 38,400 action attempts (5,872 accepted and
+32,528 denied), 272 terminal states, maximum depth 14, ten safety properties,
+and semantic hash
+`89c626a11bcef07d93007ba5a7bf097fa9dd88c94244775dec5c138a17e023b1`.
+Unconditional termination is false; every state has a terminal path under the
+five named readiness/expiry/action/resume/reconnect enabling assumptions,
+matching NuSMV's qualification. Minimal witnesses have depths 0 (not every
+state terminal), 5 (pause reachable), and 2 (authorized spectator hand grant).
+`docs/session-formal-models.md` records the scope and separation from the full
+card graph. Focused exhaustive checks, denied-warning clippy, and the real
+`OracleSessionGame` integration fixture pass.
 
 ### [ ] 3.5 Audit full session coverage and cross-model agreement
 
