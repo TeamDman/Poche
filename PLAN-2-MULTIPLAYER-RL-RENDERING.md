@@ -1283,7 +1283,35 @@ Datastar server topology and a native Veilid client based on the recorded
 portability/privacy/operations evidence; do not silently require an on-device
 companion. The static replay/demo remains available in either case.
 
-**Completion notes:** Not started.
+**Completion notes (implementation in progress, 2026-08-05):** Added
+`poche-ui`, whose renderer-neutral `PresentationModel` consumes only an exact
+viewer `ProjectionPayload` plus explicitly public client supplements; it has no
+authority-state dependency. The checked golden transcript becomes a static
+host/alice/bob replay deck covering running, spectator grant, later no-grant,
+disconnect/reconnect, post-game, and closed checkpoints. The same egui widget
+tree is exposed through a native `poche-replay` binary and a WASM `WebHandle`;
+generated web output is directed to ignored `site/replay`.
+
+Native execution is proven: focused tests and denied-warning clippy pass, the
+5,590,016-byte release binary opened a live eframe/Glow top-level window named
+`Poche projection replay` with a nonzero Win32 handle, and the probe closed
+only that process. A timed run reached a window handle in 499.831 ms with a
+20,885,504-byte peak working set. The unchanged cursor-latency reference also
+ran for three seconds with direct ash/Vulkan `IMMEDIATE` presentation, one
+frame in flight, and latest Win32 cursor sampling; its release binary is
+3,819,008 bytes. The bounded comparison records the source/unsafe/control/
+accessibility/web costs without treating raw Vulkan as authorization for a UI
+rewrite.
+
+The checkbox and G26/G32 remain open. `wasm32-unknown-unknown` and the
+`wasm-bindgen` CLI are unavailable, so no browser replay is claimed. The pinned
+Veilid 0.5.7 source has no prebuilt artifact or npm package; its README requires
+direct WS bootstrap for HTTP and explicitly labels HTTPS/WSS outbound-relay
+operation unimplemented, but this source evidence does not replace the two
+required browser executions. Datastar 0.3.2 is not in the local Cargo cache, so
+no unportable absolute-path dependency is being presented as an executable
+server. Exact versions, commands, exposure, evidence, and remaining probes are
+tracked in `docs/rendering-topology-spike.md`.
 
 ### [ ] 6.2 Implement deterministic room and game rendering
 

@@ -1,0 +1,29 @@
+[package]
+name = "poche-ui"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "poche-replay"
+path = "src/main.rs"
+
+[dependencies]
+eframe.workspace = true
+poche-protocol = { path = "../poche-protocol" }
+poche-runtime = { path = "../poche-runtime" }
+serde_json.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+web-sys.workspace = true
+
+[lints]
+workspace = true
