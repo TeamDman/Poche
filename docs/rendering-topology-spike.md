@@ -14,22 +14,25 @@ Recorded on 2026-08-05 on Windows x86-64:
 - Veilid WASM 0.5.7 at local reference commit
   `76b2176926dc24e30f9427540384a04ae22e590c`;
 - Datastar Rust 0.3.2 at local reference commit
-  `b88ad8adf515300a67b7f0198d2eb63bc78d646b`;
+  `b88ad8adf515300a67b7f0198d2eb63bc78d646b`; the portable spike uses the
+  latest published `datastar` crate, 0.3.1, because 0.3.2 is not on crates.io;
 - cursor-latency at `6c077050235a199af3d386d3c52523b8e04fef45`
   and ash at `a9a1fb17e98a0cde146caada86200d809306200d`;
-- installed Edge 151.0.4129.59. No browser version is assigned to an unrun
-  row. The in-app browser was used to confirm that npm has no published
-  `veilid-wasm` package that could substitute for building the pinned source.
+- installed Edge 151.0.4129.59. Browser execution used the Codex in-app
+  browser, whose version is not exposed; the installed Edge version is
+  therefore not misattributed to those runs. The in-app browser also confirmed
+  that npm has no published `veilid-wasm` package that could substitute for
+  building the pinned source.
 
 ## Executable matrix
 
 | Spike | State | Executable evidence | Size/latency | Accessibility and deployment | Exposure and exact limitation |
 | --- | --- | --- | --- | --- | --- |
 | Native egui projection replay | Pass | `cargo test -p poche-ui --offline`; `cargo build -p poche-ui --bin poche-replay --release --offline`; launching `target/release/poche-replay.exe` produced a live top-level window titled `Poche projection replay` with nonzero handle `3279528`. The process was then closed by the probe. | 5,590,016-byte release executable. A second probe reached a nonzero window handle in 499.831 ms and reported 20,885,504 bytes peak working set. This is process/window startup, not input-to-photon latency. | One Rust widget path, keyboard-focusable controls, AccessKit enabled. Windows build uses eframe Glow; no Vulkan API is required. Native artifact distribution is required. | Consumes only exact-recipient `ProjectionPayload`; there is no transport or additional operator in this static replay. |
-| Pages-hostable egui/WASM replay | Source ready; execution open | `poche-ui` exports an eframe `WebHandle`, embeds the checked projection fixture, and includes `crates/poche-ui/web/index.html` plus a pinned packaging contract. `wasm32-unknown-unknown` and the `wasm-bindgen` CLI are not installed, so no WASM build, bundle size, console log, DOM/accessibility tree, or browser interaction is claimed. | Not measured. | Intended output is generated under ignored `site/replay`; Pages workflow is deliberately unchanged until a local browser pass. | Static fixture only: no live metadata or transport. |
+| Pages-hostable egui/WASM replay | Pass | Installed `wasm32-unknown-unknown` for Rust 1.96 and `wasm-bindgen-cli` 0.2.126, then `crates/poche-ui/web/build.ps1` built and packaged the real target. A Python static server was the only local process; the in-app browser loaded `http://127.0.0.1:4173/`, reported no console errors, and exercised Bob's ungranted, granted (`2C 3C`), and revoked checkpoints. | 3,545,279-byte WASM plus 73,769-byte generated JS and a 1,763-byte static page. Reload-to-ready was 121 ms locally. Three automated click-and-screenshot sequences took 836-872 ms; this includes browser automation and capture and is not input-to-photon latency. | Generated output lives only under ignored `site/replay`, so Pages can build it without repository history churn. Current eframe 0.33.3 web output is a canvas: the accessibility tree exposes the application root but not ordinary button/text semantics because its web AccessKit update path is not implemented. This is acceptable for a static engineering replay but not selected for the accessible live browser UI. | Static fixture only: no live metadata, authority, or transport. The browser receives exactly the checked viewer projections embedded in the bundle. |
 | Browser Veilid over HTTP/`ws://` | Open | No executable artifact exists locally and the package is not published on npm. The pinned Veilid README says browser nodes have WebSocket-only networking, no DNS-TXT bootstrap, and require a direct `ws://.../ws` bootstrap on HTTP. | Not measured. | Would need a local HTTP server, the pinned WASM build, and a reachable WS bootstrap/relay. | Browser network peers and bootstrap can observe ordinary network metadata; Poche private projections would remain application-encrypted. Source constraints are not a passing test. |
 | Browser Veilid over HTTPS/`wss://` | Open; source predicts failure | The pinned Veilid README labels HTTPS operation “Not currently implemented” because browser-trusted WSS/outbound relay support is required. This has not been upgraded to executable failure evidence because the pinned WASM artifact cannot yet be built. | Not measured. | A GitHub Pages origin cannot use insecure `ws://`; it needs production-equivalent WSS bootstrap/relay infrastructure with trusted certificates. | Running such a relay is additional public infrastructure and exposes network metadata. No on-device companion is silently introduced. |
-| Hostable Datastar Rust server | Open | Clean reference APIs and the 0.3.2 Axum examples were inspected. The crate is not in the local Cargo cache; no portable Poche dependency or executable has been fabricated from an absolute local path. | Not measured. | Ordinary accessible HTML/SSE can work in any browser; operator must build and host a native Rust service. | Candidate is a room-host-colocated authority adapter, not a projection-reading third-party relay. Exact trust and TLS evidence remains required. |
+| Hostable Datastar Rust server | Pass | `poche-web-spike` uses released `datastar` 0.3.1 and Axum 0.8.9, not an absolute reference-repository path. Its host-colocated `InProcessAuthority<OracleSessionGame<2>>` accepts a typed `CreateRoom` through canonical NDJSON ingress and the pure session reducer, then patches the exact host projection. In the in-app browser, projection buttons proved Bob ungranted, granted (`2C 3C`), then revoked. `Create room` returned `applied; revision 1; events 1`; `Reset authority` restored pending state, and a second create succeeded. Independent projection roots were verified one each, with no duplicate DOM ID. | 3,013,632-byte release server and 9,023,488-byte measured peak working set. Initial page load was 2,814 ms, dominated by the external client CDN. Browser-observed click-to-patched-DOM snapshots took 297/307/286 ms for the three Bob views, 288 ms for create, 290 ms for reset, and 302 ms for recreate. These include browser automation/snapshot overhead, not transport-only latency. | Ordinary headings, regions, lists, buttons, live status, and card-code elements appear in the browser accessibility tree. Deployment requires a native room-host service plus TLS/reverse proxy. The spike pins Datastar JS 1.0.0-RC.7 on jsDelivr; production should self-host that pinned asset for availability and metadata control. | The server is the room authority colocated with the room host, so the topology adds no separate projection-reading operator. The CDN can observe page-asset fetch metadata but receives no Poche projections. A third-party server operator would be a different threat model requiring an explicit decision. |
 | Direct ash/Vulkan reference | Pass, bounded | From the unchanged cursor-latency reference: `cargo run --release --offline -- --present-mode immediate --frames-in-flight 1 --hide-os-cursor --stop-after-duration 3s` opened and exited normally, reporting `IMMEDIATE`, one frame in flight, and hidden OS cursor. | 3,819,008-byte executable. The renderer is 1,301 Rust source lines with 56 `unsafe` tokens; no input-to-photon hardware measurement was attempted. | Windows/Linux native Vulkan distribution; no browser target or AccessKit semantics. | Direct control includes polling, a latest Win32 cursor query, process/thread priority, 1 ms timer request, explicit acquire/submit/present, and selectable FIFO/relaxed/mailbox/immediate modes. That control is useful for a dedicated latency experiment, not for the game-state boundary. |
 
 ## Timed native probe
@@ -57,12 +60,16 @@ Live command round trips must be measured in the eventual selected topology.
 
 ## Provisional architectural reading
 
-The pure `PresentationModel` and egui widget tree are the renderer boundary:
-native, WASM, or an eventual Datastar HTML adapter may consume the same
-viewer-scoped input without changing game/session semantics. Direct Vulkan is
-retained as a targeted future latency option, not the first UI implementation.
+The pure `PresentationModel` is the renderer boundary: native/WASM egui and the
+semantic Datastar HTML adapter consume the same viewer-scoped input without
+changing game/session semantics. The live browser evidence selects semantic
+HTML for accessibility while retaining shared egui for native clients and the
+static web replay. Direct Vulkan is retained as a targeted future latency
+option, not the first UI implementation.
 
-G32 remains provisional until the WASM row runs. G26 remains open until both
-HTTP/WS and production-equivalent HTTPS/WSS Veilid rows execute and the
-Datastar alternative runs. Consequently Pages still advertises only the
-rulebook, and no direct live browser topology has been selected.
+G32 is now evidence-closed in favor of a renderer-neutral presentation model,
+shared egui native/static-WASM replay, and semantic HTML for the live browser
+surface. G26 remains open until both HTTP/WS and production-equivalent
+HTTPS/WSS Veilid rows execute. The proven fallback is a self-hostable,
+host-colocated Datastar authority; Pages still advertises only the rulebook and
+static replay until the direct-browser transport decision closes.

@@ -1303,15 +1303,28 @@ frame in flight, and latest Win32 cursor sampling; its release binary is
 accessibility/web costs without treating raw Vulkan as authorization for a UI
 rewrite.
 
-The checkbox and G26/G32 remain open. `wasm32-unknown-unknown` and the
-`wasm-bindgen` CLI are unavailable, so no browser replay is claimed. The pinned
-Veilid 0.5.7 source has no prebuilt artifact or npm package; its README requires
-direct WS bootstrap for HTTP and explicitly labels HTTPS/WSS outbound-relay
-operation unimplemented, but this source evidence does not replace the two
-required browser executions. Datastar 0.3.2 is not in the local Cargo cache, so
-no unportable absolute-path dependency is being presented as an executable
-server. Exact versions, commands, exposure, evidence, and remaining probes are
-tracked in `docs/rendering-topology-spike.md`.
+The real Rust 1.96 WASM target and pinned `wasm-bindgen` 0.2.126 tool now build a
+3,545,279-byte WASM plus 73,769-byte generated JS. A local browser loaded it in
+121 ms to ready, reported no console errors, and rendered ungranted, granted,
+then revoked spectator checkpoints. Its canvas lacks ordinary DOM semantics,
+so it remains the static Pages replay rather than the accessible live web UI.
+
+The portable `poche-web-spike` uses published Datastar Rust 0.3.1/Axum rather
+than an absolute local dependency. Its 3,013,632-byte release server is the
+room-host-colocated authority: a browser-triggered typed `CreateRoom` traversed
+canonical NDJSON ingress and the pure reducer, returned revision 1/event 1 and
+the exact host projection, then reset and recreated successfully. Semantic
+viewer patches proved Bob ungranted, granted only host cards `2C 3C`, and later
+revoked. G32 is therefore evidence-closed around the renderer-neutral
+`PresentationModel`, shared egui native/static-WASM rendering, and semantic
+HTML for an accessible live browser surface.
+
+The checkbox and G26 remain open. The pinned Veilid 0.5.7 source has no prebuilt
+artifact or npm package; its README requires direct WS bootstrap for HTTP and
+explicitly labels HTTPS/WSS outbound-relay operation unimplemented, but source
+evidence does not replace the two required browser executions. Exact versions,
+commands, timings, sizes, exposure, evidence, and remaining probes are tracked
+in `docs/rendering-topology-spike.md`.
 
 ### [ ] 6.2 Implement deterministic room and game rendering
 

@@ -1,0 +1,89 @@
+<!doctype html>
+<!--
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <link rel="icon" href="data:,">
+    <title>Poche Datastar topology spike</title>
+    <script
+      type="module"
+      src="https://cdn.jsdelivr.net/gh/starfederation/datastar@1.0.0-RC.7/bundles/datastar.js"
+    ></script>
+    <style>
+      body {
+        max-width: 58rem;
+        margin: 0 auto;
+        padding: 1rem;
+        font: 1rem/1.5 system-ui, sans-serif;
+      }
+
+      nav,
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-block: 1rem;
+      }
+
+      button {
+        min-height: 2.75rem;
+        padding-inline: 0.9rem;
+      }
+
+      section,
+      main {
+        margin-block: 1rem;
+        padding-block: 0.5rem;
+        border-top: 1px solid currentColor;
+      }
+
+      code {
+        padding: 0.15rem 0.3rem;
+        border: 1px solid currentColor;
+        border-radius: 0.2rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Poche Datastar topology spike</h1>
+    <p>
+      This ordinary HTML client receives only viewer-scoped projections. The
+      process serving this page is colocated with the room authority in this
+      spike; it is not a third-party projection relay.
+    </p>
+
+    <nav aria-label="Projection checkpoints">
+      <button data-on:click="@get('/view/alice/0')">Alice player view</button>
+      <button data-on:click="@get('/view/bob/0')">Bob ungranted view</button>
+      <button data-on:click="@get('/view/bob/1')">Bob granted host hand</button>
+      <button data-on:click="@get('/view/bob/2')">Bob revoked view</button>
+    </nav>
+
+    <section aria-labelledby="authority-heading">
+      <h2 id="authority-heading">Typed authority round trip</h2>
+      <p>
+        The button creates a canonical Rust <code>CommandEnvelope</code>, sends
+        it through the same NDJSON loopback ingress and pure session reducer,
+        and patches the exact-recipient projection returned to the host.
+      </p>
+      <div class="actions">
+        <button data-on:click="@post('/authority/reset')">Reset authority</button>
+        <button data-on:click="@post('/authority/create')">Create room</button>
+      </div>
+      <div id="authority-result" aria-live="polite">
+        <p>Authority is pending. Select “Create room” once.</p>
+      </div>
+    </section>
+
+    <main id="projection">
+      <h2>No fixture projection selected</h2>
+      <p>Select an exact viewer checkpoint above.</p>
+    </main>
+  </body>
+</html>

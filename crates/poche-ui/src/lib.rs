@@ -10,10 +10,14 @@
 
 mod presentation;
 mod replay;
+mod semantic_html;
+#[cfg(feature = "egui")]
 mod widgets;
 
 pub use presentation::*;
 pub use replay::*;
+pub use semantic_html::*;
+#[cfg(feature = "egui")]
 pub use widgets::PocheReplayApp;
 
 /// Checked, viewer-scoped fixture embedded into native and web replay clients.
@@ -21,14 +25,14 @@ pub const EMBEDDED_REPLAY: &str =
     include_str!("../../../tests/fixtures/protocol/session-micro-v1.json");
 
 /// Browser handle for the static replay/demo.
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "egui"))]
 #[derive(Clone)]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub struct WebHandle {
     runner: eframe::WebRunner,
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "egui"))]
 #[wasm_bindgen::prelude::wasm_bindgen]
 impl WebHandle {
     /// Create a stopped browser replay runner.
@@ -75,7 +79,7 @@ impl WebHandle {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "egui"))]
 impl Default for WebHandle {
     fn default() -> Self {
         Self::new()

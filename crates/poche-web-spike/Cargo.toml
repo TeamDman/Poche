@@ -1,0 +1,22 @@
+[package]
+name = "poche-web-spike"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+axum.workspace = true
+datastar.workspace = true
+futures-util.workspace = true
+poche-protocol = { path = "../poche-protocol" }
+poche-runtime = { path = "../poche-runtime" }
+poche-session = { path = "../poche-session" }
+poche-ui = { path = "../poche-ui", default-features = false }
+tokio.workspace = true
+
+[lints]
+workspace = true
