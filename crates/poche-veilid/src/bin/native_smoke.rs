@@ -54,8 +54,7 @@ struct SmokeReport {
     final_revision: u64,
     final_scores: Vec<i32>,
     chat_messages: u64,
-    spectator_grant_verified: bool,
-    spectator_revoke_verified: bool,
+    verified: [&'static str; 4],
     public_network_opt_in: bool,
 }
 
@@ -1145,16 +1144,9 @@ async fn main() -> Result<(), String> {
         .await?;
         game_sequence = game_sequence.saturating_add(1);
     }
-    let (
-        final_revision,
-        final_scores,
-        chat_messages,
-        event_frames,
-        duplicate_replies,
-        denied_replies,
-    ) = {
+    let final_scores = {
         let locked = runtime.lock().await;
-        let scores = match &locked.authority.state.phase {
+        match &locked.authority.state.phase {
             SessionPhase::PostGame { game } => game
                 .public_projection()
                 .map_err(|error| format!("final projection: {error:?}"))?
@@ -1163,10 +1155,35 @@ async fn main() -> Result<(), String> {
                 .map(i32::from)
                 .collect(),
             _ => return Err("smoke did not finish in post-game".to_owned()),
-        };
+        }
+    };
+    send(
+        &player_identity,
+        &runtime,
+        &client_adapter,
+        &resolved,
+        &mut calls,
+        "player-leave",
+        CommandPayload::Leave,
+    )
+    .await?;
+    send(
+        &host_identity,
+        &runtime,
+        &client_adapter,
+        &resolved,
+        &mut calls,
+        "host-close",
+        CommandPayload::CloseRoom,
+    )
+    .await?;
+    let (final_revision, chat_messages, event_frames, duplicate_replies, denied_replies) = {
+        let locked = runtime.lock().await;
+        if !matches!(locked.authority.state.phase, SessionPhase::Closed) {
+            return Err("native leave/close sequence did not close the room".to_owned());
+        }
         (
             locked.authority.state.revision,
-            scores,
             locked.authority.chat_tail().len() as u64,
             locked.event_frames,
             locked.duplicate_replies,
@@ -1188,8 +1205,12 @@ async fn main() -> Result<(), String> {
         final_revision,
         final_scores,
         chat_messages,
-        spectator_grant_verified,
-        spectator_revoke_verified,
+        verified: [
+            "spectator-grant",
+            "spectator-revoke",
+            "player-leave",
+            "room-close",
+        ],
         public_network_opt_in: true,
     };
     println!(

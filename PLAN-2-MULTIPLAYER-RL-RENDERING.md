@@ -8,7 +8,7 @@
 
 **Predecessor:** `PLAN.md`, whose formal-modeling milestone is complete and must remain a truthful historical record
 
-**Last updated:** 2026-08-04
+**Last updated:** 2026-08-05
 
 ## How to update this plan
 
@@ -91,6 +91,33 @@ authority for what was built; the rows below govern this phase.
 - **Known source limitation:** None. The user messages, predecessor plan, local
   repositories, and current primary documentation were available during plan
   creation.
+
+### Final execution intent audit (2026-08-05)
+
+- **Pass 1 — extraction rerun:** Reread U30-U50 literally against the completed
+  implementation and handoff documentation. All 21 active requirements retain
+  their original qualifiers: three parallel tracks; text-first inspection;
+  Veilid browser feasibility as a topology decision; TPBAC-shaped key
+  authorization; complete room/countdown/pause lifecycle; independent formal
+  session models; no-network RL rollouts; CLI-template patterns; ephemeral chat;
+  stable-key reconnect; future-only spectator revocation; Burn CPU/GPU;
+  Puffer-inspired but Rust-native batching; raw round score; MPL-2.0; preservation
+  of the prior formal principles; any-player pause/unpause; egui-first rendering;
+  and the less-anonymous Datastar fallback.
+- **Pass 2 — traceability rerun:** Checked every U30-U50 row one-to-one against
+  the Guidance traceability table, all 42 completed task records through 9.3,
+  the 88-row session coverage audit, the four decided topology/RL closure gates,
+  and the README/contributor handoff. Every row has executable or documentary
+  evidence in its mapped task; no row is credited only by another requirement.
+- **Pass 3 — adversarial omission rerun:** Searched the final tree and evidence
+  for stale `planned`/`not implemented` claims, browser-Veilid overclaims,
+  companion-app assumptions, room-code authority, transport-ID authority,
+  unconditional session termination, revocation-as-erasure, room-broadcast
+  hands, host-trust anonymity claims, text/network in the RL hot path,
+  reward-shaping drift, proof/empirical conflation, untracked generated
+  artifacts, secret-bearing fixtures, and changes to `PLAN.md`. The remaining
+  limitations are explicit deferred production work; no user intent was omitted
+  or weakened without the user's direction.
 
 ## Outcome
 
@@ -278,17 +305,17 @@ default and must be confirmed by the named task before dependent implementation.
 | G15 | Decided | Does multiplayer state become part of `GameState`? | No. `SessionState` composes an optional game instance and controls whether game transitions may occur. Network/render/RL state stays outside both reducers. | A concrete rule that cannot be expressed by composition and a state-space/conformance analysis. |
 | G16 | Decided | What is the inspectable protocol? | Facet-reflected typed envelopes with canonical versioned NDJSON, one complete envelope per line. Phon may add a binary codec only after semantic parity tests. | Codec fixtures must round-trip with identical semantic hashes and unknown-version rejection. |
 | G17 | Decided | Does RL traverse NDJSON or a socket? | No. RL calls the same typed game/action semantics in process and uses preallocated batches. In-process protocol transport exists for parity and debugging only. | Benchmark and parity evidence; never external network traffic during ordinary rollouts. |
-| G18 | Provisional | First multiplayer authority model? | Host-authoritative room reducer and event log; signed participant commands; signed host events; no host migration. The host is trusted with full hidden game state for this phase. | Task 1.2 threat-model ADR, including explicit alternatives and user-visible trust statement. |
-| G19 | Provisional | What does a room code authorize? | A versioned/checksummed rendezvous locator plus expiring or one-time invite secret. Successful redemption binds a stable player public key to membership; the code is not a permanent bearer authority. | Native two-node create/join/replay/revoke spike in Task 5.2. |
-| G20 | Provisional | What identity persists? | An application-level player signing key stored through protected storage. Veilid node IDs and private routes are replaceable transport identities. Room membership refers to the stable application key. | Restart/reconnect test and secret-storage review in Tasks 5.1 and 5.3. |
+| G18 | Decided | First multiplayer authority model? | Host-authoritative room reducer and event log; signed participant commands; signed host events; no host migration. The host is trusted with full hidden game state for this phase. | Closed by ADR 0003, reducer/policy tests, loopback/native lifecycle acceptance, and the user-visible trust disclosures. |
+| G19 | Decided | What does a room code authorize? | A versioned/checksummed rendezvous locator plus expiring or one-time invite secret. Successful redemption binds a stable player public key to membership; the code is not a permanent bearer authority. | Closed by Task 5.2 codec/replay/cross-room/revocation tests and the public two-node redemption run. |
+| G20 | Decided | What identity persists? | An application-level player signing key stored through protected storage. Veilid node IDs and private routes are replaceable transport identities. Room membership refers to the stable application key. | Closed by protected-store restart, signed membership recovery, route-rotation, reconnect, and public native refresh evidence. |
 | G21 | Decided | How are authorization decisions modeled? | TPBAC-shaped immutable attempt and decision records, default deny, explicit allow, deny override, stable policy IDs/reasons, and audit-only policy support. | Cross-model authorization fixtures and controlled defects. |
 | G22 | Decided | First countdown behavior? | Host may arm only when minimum seats exist and every seated player is ready. Any seated player may unready or abort, cancelling the countdown. An authority clock emits a logical expiry event; expiry starts once if preconditions still hold. | Session rules and NuSMV/Rust liveness checks under named clock fairness. |
 | G23 | Decided | Who may pause/resume? | Any active player may pause a running game. While paused, any active player may unpause it. There is no vote, acknowledgement quorum, or special host override. Duplicate/same-revision commands remain idempotent under normal command ordering rules. | Rust/oracle coverage for authorization, pause blocking game advancement, any-player unpause, and concurrent/repeated commands. |
 | G24 | Decided | Is chat game state? | No. Chat is an authorized, rate/size-bounded session event stream with ephemeral first-phase retention. Formal models track send permission/count abstractly, not text content. | Protocol and policy tests; persistence remains deferred. |
 | G25 | Decided | What does spectator revocation mean? | Stop future hand projections/delivery at the next capability epoch. Never claim already delivered information can be forgotten. Hidden observations are produced per recipient and never room-broadcast. | Projection/noninterference tests and an Alloy bounded information-flow model. |
 | G26 | Decided | Can a browser-only public web app run Veilid with no on-device companion? | HTTP/WS passes without a companion, but the documented public bootstrap resets WSS before TLS and upstream 0.5.7 has no outbound-relay HTTPS topology. Direct Pages multiplayer is not advertised. | ADR 0004 selects a self-hostable, host-colocated Datastar authority for live browsers; native Veilid remains available without imposing a companion. |
-| G27 | Provisional | First RL tensor shape? | `poche-2p-v1`: fixed two-player full-rule game, seat-relative viewer encoding, fixed bid/card action vocabulary, legal mask, and explicit public-history strategy. Add other player counts as new specs. | Task 7.1 schema audit, random-policy parity, and user-visible manifest. |
-| G28 | Provisional | First reward projection? | `round-score-v1`: zero except at a round boundary, then the seat's raw rulebook points; terminal outcome and money are separately logged. No undocumented shaping or reward clipping. | Task 7.1 exact examples and baseline-return tests. |
+| G27 | Decided | First RL tensor shape? | `poche-2p-v1`: fixed two-player full-rule game, seat-relative viewer encoding, fixed bid/card action vocabulary, legal mask, and explicit public-history strategy. Add other player counts as new specs. | Closed by the immutable manifest/hash, hidden-state noninterference, scalar/batch parity, transcript replay, and Burn shape checks. |
+| G28 | Decided | First reward projection? | `round-score-v1`: zero except at a round boundary, then the seat's raw rulebook points; terminal outcome and money are separately logged. No undocumented shaping or reward clipping. | Closed by exact settlement fixtures, same-seat transition assembly, GAE tests, score-first baselines, training, and held-out evaluation. |
 | G29 | Decided | First learning algorithm? | Implemented a small actor-critic PPO/GAE loop in Rust over Burn, with legal-logit masking and self-play against frozen checkpoints. Burn DQN informed API usage only. | Task 8.1 controlled optimum passes on Flex; the identical update/checkpoint path passes WGPU; ADR 0003 and `docs/burn-learning.md` record the result. |
 | G30 | Decided | What liveness can be claimed once pause/network exist? | Preserve unconditional game termination only for the existing semantic game under its named scope. Session liveness is conditional on clock, delivery, player-action, and eventual-resume fairness. Paused/partitioned sessions may legitimately persist. | NuSMV/Rust properties must state assumptions and include counterexamples when each fairness assumption is removed. |
 | G31 | Decided | How is state-space explosion controlled? | Independently model game, session/authorization, and abstract transport; compose contracts and a small integration scope. Bound principals/messages/ticks and omit chat content/cryptographic bitstrings. | Coverage matrix and exact scope statements for every formal result. |
@@ -1202,12 +1229,12 @@ recovery behavior and the coverage rows for `S-AUTH-016`, `S-FAULT-002`,
 
 Native acceptance passed the complete Phase 4 scenario between two distinct
 Veilid nodes using validated DHT rendezvous, private routes, and `AppCall` for
-every remote command. The run made 172 calls and delivered 170 contiguous
-signed event frames through final revision 171. It covered room creation,
+every remote command. The run made 174 calls and delivered 172 contiguous
+signed event frames through final revision 173. It covered room creation,
 one-time join, seats, ready/countdown/abort, 13 game rounds ending 40-20,
 any-player pause/unpause plus denial while paused, three chat messages, exact
 duplicate handling, disconnect/DHT-route refresh/reconnect, and encrypted
-spectator grant/revoke. `TryAgain`/timeout reuse exact bytes; no-connection,
+spectator grant/revoke, player leave, and host close. `TryAgain`/timeout reuse exact bytes; no-connection,
 stale-route, and watch renewal release the stale route, reread/validate DHT,
 import the replacement route, and resend those same bytes.
 
@@ -1286,9 +1313,10 @@ contacts the public network or claims local application bytes crossed Veilid.
 With
 `POCHE_ALLOW_VEILID_PUBLIC_TEST=I_ACCEPT_PUBLIC_NETWORK_TRAFFIC`, two distinct
 clean native nodes proved DHT/private-route/`AppCall` delivery and the complete
-authorized lifecycle. The measured full run made 172 calls, emitted 170 signed
+authorized lifecycle. The final measured full run made 174 calls, emitted 172 signed
 event frames, handled one exact duplicate and one denial, refreshed/reconnected
-once, completed all 13 rounds at final revision 171 and score 40-20, exchanged
+once, completed all 13 rounds, made the player leave, closed through the host at
+final revision 173 while preserving score 40-20, exchanged
 three chats, and cryptographically verified spectator grant and revoke.
 Application signatures are verified independently of transport identity and
 viewer projections are encrypted to exact stable recipients.
@@ -1785,7 +1813,7 @@ results, artifact policy, and empirical-only limitations.
 
 ## Phase 9 - Aggregate evidence, documentation, and handoff
 
-### [ ] 9.1 Run workspace, license, protocol, and secret-safety gates
+### [x] 9.1 Run workspace, license, protocol, and secret-safety gates
 
 Run formatting, linting, docs, workspace tests, dependency/license audit,
 protocol fuzz/property tests, redaction tests, and ignored-artifact checks.
@@ -1796,9 +1824,34 @@ requires them.
 dirty reference is required; generated models/web/training artifacts are not
 tracked; secret scanners/fixtures contain no actual key/invite material.
 
-**Completion notes:** Not started.
+**Completion notes (complete, 2026-08-05):** Phase 8 entered the release
+gate from a clean synchronized commit at `279cb214322b3908bb7fca502177c606939133a4`.
+The first fresh offline workspace test run passed every unit, integration,
+native-formal, corpus, controlled-learning, renderer, and doc test in 169.5 s.
+Formatting and strict all-target workspace Clippy also pass after extracting a
+focused selected-replay writer from the evaluation summary. Workspace docs and
+targeted protocol fuzz, larger-scope proptests, CLI arbitrary-input, identity,
+redaction, and web projection tests also pass.
 
-### [ ] 9.2 Run formal, loopback, Veilid, and renderer acceptance
+Windows-target Cargo metadata audited 646 resolved packages: no license field
+is missing, every expression is permissive/data-font or MPL-2.0, no package is
+an external local path, and the sole Git source is the revision-pinned MPL-2.0
+`teamy-cancellation` 0.3.1 at `cc782906`. All new Burn Rust files carry an
+explicit MPL-2.0 notice; the root license and workspace package metadata cover
+older first-party files. Git tracks zero generated artifact candidates, while
+`artifacts/`, `target/`, `site/`, `docs/main.pdf`, and representative weights/
+WASM/PDF outputs resolve through `.gitignore`. Focused tracked-data scans found
+zero PEM private keys, serialized secret fields, full room codes, or the lab
+invite value in evidence/fixture/formal/page/RL data.
+
+A guarded fresh clone of exact pushed commit
+`279cb214322b3908bb7fca502177c606939133a4` passed `cargo check --workspace
+--locked --offline`, protocol decoder fuzz, and all Burn tests while sharing
+only Cargo's compiled target cache; source paths in Cargo output were solely
+inside the clone and the clone was removed afterward. This proves the committed
+source/lock do not require a sibling checkout or dirty reference worktree.
+
+### [x] 9.2 Run formal, loopback, Veilid, and renderer acceptance
 
 Run session coverage/oracles/conformance, loopback scenario, local Veilid
 scenario, and the deployment/browser matrix selected by G26. Record native tool
@@ -1808,9 +1861,51 @@ and Veilid versions, exact state/result counts, fixture hashes, and limitations.
 have evidence; formal results name exact scopes/fairness; external-network
 unavailability cannot be misreported as a semantic pass.
 
-**Completion notes:** Not started.
+**Completion notes (complete, 2026-08-05):** Fresh tool discovery pinned Rust
+1.96.0, Alloy 6.2.0, NuSMV 2.7.1, Scryer Prolog
+0.10.0-17-ge4d96925, and Typst 0.15.1. The user-owned WinGet Typst location is
+inaccessible to the sandbox identity, so its explicit path was verified under
+the host identity rather than misreported as missing.
 
-### [ ] 9.3 Run RL correctness, performance, GPU, and evaluation acceptance
+The aggregate session command explored the exact Rust lobby scope at 800
+states and 38,400 attempted-command edges (5,872 accepted, 32,528 denied, 272
+terminal, maximum depth 14) with semantic hash
+`89c626a11bcef07d93007ba5a7bf097fa9dd88c94244775dec5c138a17e023b1`.
+Alloy recognized 13 bounded results at its printed exact Seat/Snapshot/Int
+scopes. NuSMV recognized 16 properties, a total/deadlock-free FSM, the intended
+false unconditional-termination claim, true conditional CTL/LTL termination,
+and the four named missing-fairness counterexamples. Seven Scryer query corpora
+matched their pinned answer counts/digests. The 88-row catalog passed and four
+tracks agreed on 10 claims/31 observations with zero disagreements.
+
+The canonical-NDJSON loopback smoke passed all 178 inputs, 177 revisions, 13
+deals, and complete lifecycle/security behavior with transcript hash
+`ab90ff79acb755d72defaef22a37369a71a9125df64c91a8645260254934a075`
+and final public hash
+`be439108bb7ddb5695232faa074cb9180d1b34df6a1748598ad6e19c6f9759dd`.
+Veilid 0.5.7 then passed 26 transport/security tests and two compile-fail secret
+boundary docs. Its two-node isolated probe correctly had zero peers and no
+public/local readiness or private routes; this is recorded as the released
+topology limitation, not a semantic/network pass. The earlier explicit public
+acceptance remains the real-network evidence: 174 AppCalls/172 event frames,
+one duplicate, one denial, one reconnect, final revision 173, scores 40-20,
+chat three, and verified spectator grant/revoke, player leave, and room close
+over DHT/private routes.
+
+Native egui replay, WASM replay, and the Datastar server passed tests and fresh
+release builds; the ignored artifacts were 5,699,584-byte native replay,
+3,397,120-byte server, 3,643,651-byte WASM, 73,769-byte JS, and 1,763-byte page
+with zero publication sentinels. Pinned Typst generated a valid five-page,
+192,974-byte tagged PDF; Poppler rendered every page with no overlap, clipping,
+missing glyph, or placeholder defect. Local TeX Gyre fonts were unavailable,
+so that copy uses fallbacks; Pages installs and verifies the named fonts.
+A fresh in-app browser run exercised ordinary semantic HTML: Alice paused, Bob
+received and applied `Resume game`, and the spectator saw no hand. This
+reconfirms G26/G32: HTTPS Pages hosts rulebook/static replay only; live browsers
+use the host-colocated Datastar authority, while direct browser Veilid remains
+unsupported on HTTPS/WSS and no companion is implied.
+
+### [x] 9.3 Run RL correctness, performance, GPU, and evaluation acceptance
 
 Run scalar/batch parity, baseline corpus, allocation/performance benchmark,
 Burn CPU/GPU smoke, controlled learning task, full training manifest replay,
@@ -1821,9 +1916,49 @@ floating-point/training variability.
 GPU tensor execution is proven; training/evaluation artifacts are digest-bound;
 results emphasize score and carry empirical confidence labels.
 
-**Completion notes:** Not started.
+**Completion notes (complete, 2026-08-05):** The exact `poche-2p-v1` contract
+regenerated at 307 observation values, 60 actions, `round-score-v1`, and hash
+`8852f8568ead1e40aad7bb4ca5b7725340cc01422e077ffddcd5d4f5665bf0bf`.
+All 14 environment/batch/baseline tests passed, including hidden-state
+noninterference, mask round trips, same-seat reward attribution, scalar/
+preallocated/parallel equality, deterministic seeds, score-first transcripts,
+and fixed seat-swapped evaluation.
 
-### [ ] 9.4 Complete guidance audit, documentation, commits, and push
+Three one-million-decision release samples were network-free. Median throughput
+was 61,052.586/s direct, 64,747.282/s naive batch, 68,285.275/s preallocated,
+and 195,637.909/s across four partitions. Preallocation was slower than naive
+in one sample but about 5.5% faster at the median; crucially it reported zero
+hot reallocations in all samples versus 3,907 naive allocations. Exact ranges
+and the non-promise qualification are in `docs/rl-performance.md`.
+
+Fresh Flex CPU and default WGPU smoke executed the identical 307×60 forward,
+masked PPO backward, and checkpoint round trip. Both reported exactly zero
+illegal probability, 51,994 model bytes, 103,766 optimizer bytes, and their
+committed backend-specific output digests. The controlled two-context optimum,
+GAE fixture, clipping/update sanity, immutable pool, and record tests pass.
+
+The exact manifest replay again completed 16 full games/1,240 rows and
+reproduced every update loss (112.59850025177002, 80.78937244415283,
+55.87652349472046, 42.578110694885254) plus semantic policy probe
+`1aa3597e69074098bdeecc43b7ff3f52f0d25d9e5f0de1cb31d4a1cf21140a08`.
+Fresh concrete model/optimizer digests were `a9441efff094567614664c814d0f33bde63e3b9a5b35d2952d6d61064ba3ffe6`
+and `24b9fe07f507921247513fe43dd22fd60ef75800c545d1a00041daa158607717`;
+their difference from the earlier recorded containers is the disclosed Burn
+parameter-ID variability, not hidden semantic drift.
+
+Held-out evaluation reproduced all 64 games, score means/differentials/95%
+intervals, and 12 selected hashes exactly, with 124 decisions and zero illegal
+actions per game, `hidden_state_exposed=false`, and empirical-only labels. Only
+one of four intervals excludes zero. Final acceptance found and fixed a CLI
+dispatch gap: `rl replay` now detects a learned manifest, validates current
+checkpoint/evaluation/selection/episode hashes, and emits the same 126-line
+canonical NDJSON framing as baseline replay. Learned hash
+`adc2da13e127d65678a5c1cca3d04019a701ba1f1f30b4f965bc0c934586b3fa`
+and baseline hash
+`7ab24388ab33c34e4763e065e493b2529c6562c8d70b59e909f70920442fc5a9`
+passed; an unselected seed failed closed.
+
+### [~] 9.4 Complete guidance audit, documentation, commits, and push
 
 Update README and contributor docs with architecture, threat model, CLI, room
 codes, reconnect, chat, spectator grants, native/direct/hosted client modes and
@@ -1846,7 +1981,11 @@ are decided/deferred/blocked with exact conditions; all overall criteria below
 are checked; the local branch is clean and synchronized with the verified
 remote commit.
 
-**Completion notes:** Not started.
+**Completion notes (in progress, 2026-08-05):** All implementation/acceptance
+tasks through 9.3 are complete. The final documentation coverage, gate/U-row
+audit, triple intent audit, overall criteria, full workspace regression,
+commit/push, Pages status, clean-branch, and remote-SHA checks remain in
+progress; plan status stays `Execution in progress` until they all pass.
 
 ## Overall completion criteria
 

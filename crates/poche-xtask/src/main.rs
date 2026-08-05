@@ -206,6 +206,16 @@ fn rl_replay(mut args: impl Iterator<Item = OsString>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let shape: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("RL replay manifest decode failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if shape.get("run_id").is_some() {
+        return run_learned_replay_cargo_child(&path, &matchup, seed);
+    }
     let manifest: poche_rl::BaselineCorpusManifest = match serde_json::from_str(&text) {
         Ok(value) => value,
         Err(error) => {
@@ -329,6 +339,26 @@ fn rl_learned_command(action: &str, mut args: impl Iterator<Item = OsString>) ->
 }
 
 fn run_learned_cargo_child(action: &str, path: &OsStr) -> ExitCode {
+    run_burn_child([
+        OsString::from(action),
+        OsString::from("--manifest"),
+        path.to_owned(),
+    ])
+}
+
+fn run_learned_replay_cargo_child(path: &OsStr, matchup: &OsStr, seed: u64) -> ExitCode {
+    run_burn_child([
+        OsString::from("replay"),
+        OsString::from("--manifest"),
+        path.to_owned(),
+        OsString::from("--matchup"),
+        matchup.to_owned(),
+        OsString::from("--seed"),
+        OsString::from(seed.to_string()),
+    ])
+}
+
+fn run_burn_child(arguments: impl IntoIterator<Item = OsString>) -> ExitCode {
     let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     match Command::new(cargo)
@@ -341,10 +371,8 @@ fn run_learned_cargo_child(action: &str, path: &OsStr) -> ExitCode {
             OsStr::new("poche-burn-run"),
             OsStr::new("--offline"),
             OsStr::new("--"),
-            OsStr::new(action),
-            OsStr::new("--manifest"),
-            path,
         ])
+        .args(arguments)
         .status()
     {
         Ok(status) if status.success() => ExitCode::SUCCESS,

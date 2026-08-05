@@ -79,6 +79,15 @@ matchup's best/median/worst episode is written as both inspectable NDJSON and
 strict JSON. No failure episode occurred, so `failure_episode` is explicitly
 null.
 
+Selected learned episodes use the same inspectable CLI command as baseline
+episodes. The learned-manifest path validates the current concrete checkpoint,
+evaluation summary, selected row, and strict episode hash before printing
+NDJSON:
+
+```powershell
+cargo run -p poche-xtask --offline -- rl replay --manifest rl/manifests/poche-ppo-v1.json --matchup learned-vs-heuristic --seed 3778019106
+```
+
 To inspect one selected policy episode in the hostable semantic web renderer:
 
 ```powershell

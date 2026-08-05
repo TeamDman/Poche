@@ -48,8 +48,8 @@ rendezvous record. It does not retain or recreate the old invite code.
 The authoritative game/session state is recovered by the deterministic
 snapshot/transcript machinery established in Task 2.4; the transport layer
 does not invent a second game-state persistence format. Task 5.4 wires this
-recovery exchange into request handling, while Task 5.6 owns actual
-separate-process native-node lifecycle execution.
+recovery exchange into request handling; Task 5.6 subsequently exercised the
+same boundary in separate native processes.
 
 ## Recovery and revocation
 
@@ -89,5 +89,6 @@ They exercise host and client application-key restart, protected locator
 round-trip, explicit absence of the invite secret, host and recipient route
 rotation, wrong-key/tamper rejection, snapshot-tail gap/reorder rejection,
 strict host DHT capability persistence, and the current-authority removal gate.
-No claim of a two-native-node route run is made here; that topology gate remains
-explicitly assigned to Task 5.6.
+The separately guarded two-native-process DHT/private-route lifecycle is
+recorded in [`veilid-native-acceptance.md`](veilid-native-acceptance.md); these
+ordinary offline checks do not contact or substitute for that public run.

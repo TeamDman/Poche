@@ -1,6 +1,6 @@
 # Viewer projections and spectator hand capabilities
 
-Task 2.3 defines one privacy boundary for native, web, CLI, replay, and later RL
+Task 2.3 defines one privacy boundary for native, web, CLI, replay, and RL
 clients. `project_viewer(state, recipient, expected_projection_epoch)` is pure:
 it reads the authoritative session and returns the only ordinary network-safe
 `ProjectionPayload` shape. The host receives no implicit privilege through this
@@ -84,5 +84,8 @@ Focused tests establish:
   reconnecting player's current hand;
 - protocol validation for player/vector/card bounds and the pinned schema.
 
-Network encryption to the exact recipient remains Task 5 evidence. Snapshot and
-tail replay of these projections remains Task 2.4; neither is claimed here.
+Snapshot/tail replay remains separate Task 2.4 evidence. Exact-recipient HPKE
+delivery, capture scans, wrong-recipient rejection, and native byte transport
+are separate Task 5 evidence in
+[`veilid-projection-privacy.md`](veilid-projection-privacy.md); the focused tests
+listed here do not silently inherit those stronger claims.

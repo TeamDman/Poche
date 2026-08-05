@@ -86,10 +86,11 @@ countdown display estimates, and the compiled AppCall/watch APIs. Existing
 session/runtime tests independently prove duplicate idempotence, authorization,
 authority-clock countdown, pause, chat, and full-game behavior. The guarded
 public smoke then carries the complete scenario between distinct native Veilid
-nodes over DHT discovery, private routes, and `AppCall`: 172 calls produced 170
-contiguous signed event frames and final revision 171, with exact duplicate
+nodes over DHT discovery, private routes, and `AppCall`: 174 calls produced 172
+contiguous signed event frames and final revision 173, with exact duplicate
 handling, denial while paused, route refresh/reconnect, 13 rounds, chat, and
-encrypted spectator grant/revocation ending at score 40-20.
+encrypted spectator grant/revocation, then player leave and host close, while
+preserving the completed score 40-20.
 
 The local command intentionally combines the network-free semantic/formal suite
 with a reproducible released-0.5.7 topology diagnostic. It does not claim

@@ -807,3 +807,90 @@ pub fn evaluate(manifest: &TrainingRunManifest) -> Result<LearnedEvaluationSumma
     .map_err(|_| TrainingError::Io)?;
     Ok(summary)
 }
+
+/// Load one evaluation-selected learned episode as a strict, secret-free replay.
+///
+/// # Errors
+/// Rejects stale/tampered evaluation metadata, checkpoint drift, an unselected
+/// seed, or episode semantic/hash drift.
+pub fn replay_selected(
+    manifest: &TrainingRunManifest,
+    matchup_name: &str,
+    seed: u64,
+) -> Result<EpisodeTranscript, TrainingError> {
+    manifest.validate()?;
+    let artifact = manifest.artifact_path();
+    let model_bytes = std::fs::read(artifact.join("model.bin")).map_err(|_| TrainingError::Io)?;
+    let optimizer_bytes =
+        std::fs::read(artifact.join("optimizer.bin")).map_err(|_| TrainingError::Io)?;
+    let checkpoint: CheckpointManifest = serde_json::from_slice(
+        &std::fs::read(artifact.join("checkpoint.json")).map_err(|_| TrainingError::Io)?,
+    )
+    .map_err(|_| TrainingError::Record)?;
+    checkpoint
+        .validate(
+            &manifest.spec_id,
+            &manifest.spec_hash,
+            &manifest.reward_id,
+            &model_bytes,
+            &optimizer_bytes,
+        )
+        .map_err(|_| TrainingError::Record)?;
+    let summary: LearnedEvaluationSummary = serde_json::from_slice(
+        &std::fs::read(artifact.join("evaluation-summary.json")).map_err(|_| TrainingError::Io)?,
+    )
+    .map_err(|_| TrainingError::Evaluation)?;
+    if summary.schema_version != 1
+        || summary.run_id != manifest.run_id
+        || summary.manifest_hash != manifest.semantic_hash()?
+        || summary.checkpoint_digest != checkpoint.model_digest
+        || summary.corpus_seeds != manifest.held_out_seeds
+        || summary.hidden_state_exposed
+        || !summary.empirical_only
+    {
+        return Err(TrainingError::Evaluation);
+    }
+    let matchup = summary
+        .matchups
+        .iter()
+        .find(|matchup| matchup.name == matchup_name)
+        .ok_or(TrainingError::Evaluation)?;
+    let selected = matchup
+        .selected
+        .iter()
+        .find(|selected| selected.seed == seed)
+        .ok_or(TrainingError::Evaluation)?;
+    if !matches!(selected.label.as_str(), "worst" | "median" | "best")
+        || !matches!(
+            matchup_name,
+            "learned-vs-legal-random"
+                | "legal-random-vs-learned"
+                | "learned-vs-heuristic"
+                | "heuristic-vs-learned"
+        )
+    {
+        return Err(TrainingError::Evaluation);
+    }
+    let filename = format!("{matchup_name}-{}-{seed}.json", selected.label);
+    let episode: EpisodeTranscript = serde_json::from_slice(
+        &std::fs::read(artifact.join("replays").join(filename)).map_err(|_| TrainingError::Io)?,
+    )
+    .map_err(|_| TrainingError::Evaluation)?;
+    let episode_hash = episode
+        .semantic_hash()
+        .map_err(|_| TrainingError::Evaluation)?;
+    if episode.schema_version != 1
+        || episode.spec_id != manifest.spec_id
+        || episode.spec_hash != manifest.spec_hash
+        || episode.reward_id != manifest.reward_id
+        || episode.seed != seed
+        || episode.seat_policies != matchup.seat_policies
+        || episode.final_scores != selected.final_scores
+        || episode.score_differential_seat0 != selected.differential_seat0
+        || episode.illegal_action_count != 0
+        || episode_hash != selected.semantic_hash
+    {
+        return Err(TrainingError::Evaluation);
+    }
+    Ok(episode)
+}

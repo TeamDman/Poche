@@ -36,18 +36,22 @@
   },
   "public_lifecycle": {
     "command": "cargo run -p poche-xtask --offline -- multiplayer smoke --transport veilid-public",
-    "wall_seconds_including_compilation": 167.5,
+    "precompiled_wall_seconds": 98.7,
     "transport": "veilid-0.5.7-public-dht-private-route-app-call",
-    "calls": 172,
-    "event_frames": 170,
+    "calls": 174,
+    "event_frames": 172,
     "duplicate_replies": 1,
     "denied_replies": 1,
     "reconnects": 1,
-    "final_revision": 171,
+    "final_revision": 173,
     "final_scores": [40, 20],
     "chat_messages": 3,
-    "spectator_grant_verified": true,
-    "spectator_revoke_verified": true
+    "verified": [
+      "spectator-grant",
+      "spectator-revoke",
+      "player-leave",
+      "room-close"
+    ]
   },
   "limitations": [
     "released 0.5.7 isolated LocalNetwork bootstrap does not provide PublicInternet private-route readiness",

@@ -25,6 +25,12 @@ flowchart LR
   nusmv --> evidence
   prolog --> evidence
   evidence --> acceptance["Pairwise conformance + acceptance matrix"]
+  signed["App-key-signed command\ncanonical NDJSON or typed direct"] --> session["Default-deny SessionState"]
+  session --> game["Optional GameEnvironment"]
+  game --> projection["Ordered events + viewer projection"]
+  projection --> client["Text / egui / HTML / Veilid"]
+  game --> rollout["poche-2p-v1 direct batches"]
+  rollout --> burn["Burn PPO / frozen self-play"]
 ```
 
 Rule IDs are stable semantic handles, not line numbers. Prose can move while an
@@ -49,8 +55,11 @@ accepted.
 | Alloy | Relational structure, card identity/partition, bounded lifecycle consistency, invalid-state rejection, and small witnesses | Unbounded truth, universal game termination, or policy-quality evidence |
 | NuSMV | Symbolic transition systems, invariants, CTL/LTL safety/liveness, deadlock checks, and temporal counterexamples | Full cross-trick card identity where the model intentionally keeps counts only, or results for undeclared player/schedule scopes |
 | Scryer Prolog | Legal successors, finite relational answer sets, score causes, rule explanations, and bounded ground predecessor/action questions | Universal temporal proof or productivity of an unconstrained reverse query |
+| Session Rust | Complete typed room reduction, default-deny policy, app identity binding, deterministic replay, viewer projections, and exhaustive finite lobby exploration | Availability of an external network, honest-host hidden-information fairness, or unconditional session termination |
+| Session Alloy / NuSMV / Prolog | Bounded authorization structure, symbolic lifecycle/liveness, and relational action/predecessor explanations over their printed scopes | The cryptographic primitives, full network implementation, 52-card game product state, or claims beyond each receipt's exact abstraction |
 | Facet + Phon | Schema reflection, transport, evidence identity, semantic-envelope validation, and replayable diffs/traces | Proof that an encoded state is legal solely because bytes decoded |
 | `proptest` / `Arbitrary` | Broad sampled pressure on implementations and controlled defect discovery | Exhaustiveness over the full deck or every action trace |
+| Burn PPO | Tensor policy/value inference, masked optimization, frozen self-play, checkpoint replay, and empirical score evaluation | Formal proof, policy optimality, or permission to duplicate/change game rules inside the learner |
 
 The non-Rust model files are independent oracles. They are not generated from
 Rust, and Rust is not generated from them. Shared fixtures select comparable
@@ -92,13 +101,24 @@ record the limitation; do not hide the computation behind a callback.
   winner mask, and pot division remain separate data. `terminal_status` returns
   a semantic outcome, never an RL reward.
 
-This boundary is intentionally compatible with a later
-state → observation → policy → action → reward loop, but RL is not implemented
-in the current goal. Raw end-of-round score is the intended intermediary reward
-signal because score is the game's objective; a later goal must still define
-and version the exact reward projection. Training results will be empirical
-evidence about a policy and evaluation distribution. They will not prove
-legality, termination, rule consistency, or global optimality.
+The implemented `poche-2p-v1` RL contract uses this boundary directly. It fixes
+a 307-value seat-relative observation, a 60-action vocabulary and mandatory
+legal mask, and the `round-score-v1` projection. Reward is zero between scoring
+boundaries and the seat's raw rulebook points at settlement because score is the
+game's objective. Money, winners, score differential, and other diagnostics
+remain separate metrics. Training results are empirical evidence about a named
+policy and evaluation distribution. They do not prove legality, termination,
+rule consistency, agreement between oracles, or global optimality.
+
+`SessionState` is a separate reducer. It owns identity, membership, readiness,
+countdown, pause/resume, chat metadata, spectator capabilities, and the gate for
+entering `GameEnvironment`; it never becomes part of `GameState`. Renderers
+receive only typed viewer projections. Veilid and in-process transports carry
+the same command/event meanings, while RL calls the environment directly and
+does not parse text or open a socket. See
+[`docs/session-engine.md`](docs/session-engine.md),
+[`docs/protocol-v1.md`](docs/protocol-v1.md), and
+[`docs/rl-environment.md`](docs/rl-environment.md).
 
 ## Native tools and reproducible commands
 
@@ -131,6 +151,16 @@ Use the smallest command that proves the claim you changed:
 | Rust/NuSMV | `cargo run -p poche-xtask -- compare rust nusmv --scope micro` |
 | Complete acceptance gate | `cargo run -p poche-xtask -- compare all --scope micro` |
 | Acceptance source revisions | `cargo run -p poche-xtask -- acceptance hashes` |
+| Session rule/track completeness | `cargo run -p poche-xtask -- session coverage audit --all` |
+| All native session oracles | `cargo run -p poche-xtask -- session oracle check all` |
+| Session cross-model agreement | `cargo run -p poche-xtask -- session compare all --scope lobby-micro` |
+| Canonical protocol transcripts | `cargo run -p poche-xtask -- protocol replay --all` |
+| Full no-socket room/game scenario | `cargo run -p poche-xtask -- multiplayer smoke --transport in-process` |
+| Isolated-local Veilid behavior | `cargo run -p poche-xtask --offline -- multiplayer smoke --transport veilid-local` |
+| RL semantic contract | `cargo run -p poche-xtask --offline -- rl spec` |
+| Baseline evaluation | `cargo run -p poche-xtask --offline -- rl evaluate --manifest rl/manifests/baseline-v1.json` |
+| PPO training/evaluation | `cargo run -p poche-xtask --offline -- rl train --manifest rl/manifests/poche-ppo-v1.json` then `rl evaluate` with the same manifest |
+| Selected learned replay | `cargo run -p poche-xtask --offline -- rl replay --manifest rl/manifests/poche-ppo-v1.json --matchup learned-vs-heuristic --seed 3778019106` |
 | Rulebook PDF | `& $env:TYPST_BIN compile --root . docs/main.typ "$env:TEMP\poche-rules.pdf"` |
 
 Backend-specific scopes, expected SAT/UNSAT polarity, property counts, query
@@ -151,7 +181,7 @@ Use these words precisely in code, docs, commits, and reviews:
 | Sampled | Unit/property/fuzz scenarios ran; untested values and traces may remain |
 | Conformance | Two independent models agree on a declared common projection; model-specific facts outside it are not compared |
 | Controlled defect | A deliberately weakened/mutated rule produces the expected witness, counterexample, or failure and demonstrates discrimination |
-| Trained (future) | A policy achieved empirical metrics on a named distribution; this is never silently upgraded to formal proof |
+| Trained | A policy completed the exact named manifest and achieved empirical metrics on a named distribution; this is never silently upgraded to formal proof |
 
 ## Change workflow
 
@@ -177,11 +207,38 @@ Before release-level acceptance, run:
 
 ```pwsh
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo run -p poche-xtask -- coverage audit --all
-cargo run -p poche-xtask -- compare all --scope micro
+cargo clippy --workspace --all-targets --offline -- -D warnings
+cargo test --workspace --offline
+cargo run -p poche-xtask --offline -- coverage audit --all
+cargo run -p poche-xtask --offline -- compare all --scope micro
+cargo run -p poche-xtask --offline -- session coverage audit --all
+cargo run -p poche-xtask --offline -- session compare all --scope lobby-micro
+cargo run -p poche-xtask --offline -- protocol replay --all
+cargo run -p poche-xtask --offline -- multiplayer smoke --transport veilid-local
 ```
+
+The local Veilid command checks semantic behavior and records the released
+0.5.7 isolated-topology limitation; it does not contact the public network or
+prove public routing. The public two-process command is deliberately guarded by
+an exact environment acknowledgement. Use it only for a release that changes
+native transport behavior and follow
+[`docs/veilid-native-acceptance.md`](docs/veilid-native-acceptance.md).
+
+Before changing multiplayer, also inspect the
+[capability matrix](docs/capability-matrix.md),
+[deployment modes](docs/deployment-modes.md), and
+[session coverage](docs/session-coverage.md). A room code is a temporary invite,
+never a durable authorization token. Stable application keys authorize
+membership; transport IDs do not. Revocation stops future spectator hand
+delivery and cannot erase prior knowledge. The host-authoritative process can
+inspect every hand, and a Datastar operator can additionally observe ordinary
+server metadata; do not describe either topology as trustless or anonymous.
+
+RL changes must update the immutable spec/manifest ID when observation, action,
+history, mask, reward, or tensor semantics change. Keep large weights, replay
+corpora, logs, PDFs, and web bundles ignored. Commit the small manifest,
+semantic probe, digest, and score-first summary needed to reproduce and classify
+the result.
 
 ## LLM-authored changes
 
@@ -210,8 +267,11 @@ The pull-request template turns these obligations into a review checklist.
 
 ## Deferred boundaries
 
-Reinforcement learning, automatic target-language generation, and comparison
-with legacy `v2` are retained design context, not current evidence tracks. A
-contribution may preserve their interfaces or document a future question, but
-must not mark deferred plan work complete or make it block the current formal
-milestone without an explicit new goal.
+Automatic target-language generation and comparison with legacy `v2` remain
+deferred design context. Multiplayer deliberately stops short of trustless
+dealing, host migration, production account/matchmaking/moderation services, a
+packaged end-user Veilid client, and production hardening of the hostable web
+demo. Rendering deliberately stops before card art, animation, sound, and
+polished/mobile accessibility work. RL currently fixes only two-player
+`poche-2p-v1`; more player counts, recurrent/population policies, distributed
+training, and claims of optimal play require new versioned plans and evidence.

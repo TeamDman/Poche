@@ -53,17 +53,20 @@ $env:POCHE_ALLOW_VEILID_PUBLIC_TEST='I_ACCEPT_PUBLIC_NETWORK_TRAFFIC'
 cargo run -p poche-xtask --offline -- multiplayer smoke --transport veilid-public
 ```
 
-The successful run took 167.5 seconds including compilation and reported:
+The final successful precompiled run took 98.7 seconds and reported:
 
-- 172 request/reply calls and 170 signed contiguous event frames;
+- 174 request/reply calls and 172 signed contiguous event frames;
 - one exact duplicate reply and one authorization denial;
 - one disconnect, validated DHT/private-route refresh, and reconnect;
 - room creation, one-time code redemption, seats, ready/countdown/abort;
-- all 13 rounds, final revision 171, and final score 40-20;
+- all 13 rounds, player leave, host close, final revision 173, and preserved
+  final score 40-20;
 - any-player pause and unpause, with a game action denied while paused;
 - three chat messages; and
 - spectator request/grant/revoke with exact-recipient decryption succeeding
-  only while the grant was current.
+  only while the grant was current; and
+- explicit `spectator-grant`, `spectator-revoke`, `player-leave`, and
+  `room-close` verification flags in the strict report.
 
 The authority is the real `InProcessAuthority<OracleSessionGame<2>>` reducer.
 Every remote command crosses Veilid as transport schema v2 and includes a

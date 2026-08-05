@@ -30,7 +30,7 @@ The model covers the relational parts of `S-ROOM-001`, `S-ROOM-003` through
 `S-VIEW-001` through `S-VIEW-002`, `S-VIEW-004` through `S-VIEW-007`,
 `S-VIEW-010`, `S-VIEW-013`, `S-TIME-004`, `S-TIME-006` through
 `S-TIME-007`, and `S-FAULT-007`. Other Alloy cells retain their explicit
-planned or reasoned-N/A disposition in `session-coverage.md`.
+abstracted, deferred, or reasoned-N/A disposition in `session-coverage.md`.
 
 The abstraction is deliberately current-state and future-delivery oriented.
 `seesHand` is derived from self-knowledge plus exact owner-to-viewer grants;
@@ -77,9 +77,9 @@ The temporal model covers the lifecycle portions of `S-ROOM-004` through
 `S-ROOM-013`, `S-ROOM-016`, `S-ROOM-019` through `S-ROOM-020`,
 `S-ROOM-022` through `S-ROOM-024`, `S-TIME-001` through `S-TIME-004`,
 `S-TIME-006` through `S-TIME-008`, and `S-FAULT-004`, `S-FAULT-007`,
-and `S-FAULT-008`. The coverage matrix retains planned or reasoned-N/A
-dispositions for unrelated protocol, cryptographic, knowledge, chat-content,
-and concrete-game rules.
+and `S-FAULT-008`. The coverage matrix retains abstracted, deferred, or
+reasoned-N/A dispositions for unrelated protocol, cryptographic, knowledge,
+chat-content, and concrete-game rules.
 
 ## Scryer Prolog policy and predecessor oracle
 

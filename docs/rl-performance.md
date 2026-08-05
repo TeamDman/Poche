@@ -19,6 +19,17 @@ one action-vector allocation per batch iteration. Four independent thread
 partitions produce the larger improvement without duplicating the game rules.
 Exact per-seed sequential and parallel rollout signatures are tested equal.
 
+The Phase 9 release gate repeated the same million-decision command three times
+after the Burn integration. Median decisions/s were 61,052.586 direct,
+64,747.282 naive batch, 68,285.275 preallocated batch, and 195,637.909 across
+four thread partitions. The respective observed ranges were
+58,728.000–77,539.180, 55,664.831–74,827.612,
+58,347.717–73,380.393, and 183,157.847–220,646.540. Preallocation was slower
+than naive batching in one noisy sample but approximately 5.5% faster at the
+median, while its zero-hot-reallocation result held in every sample. This
+supports retaining the allocation discipline without claiming stable timing
+ordering from any single run.
+
 The hot-path buffers include observations, legal masks, actions, rewards,
 terminals, seats, episode indices, and seeds. A second fixed-capacity assembler
 pairs each seat action with that same seat's next observation or terminal,
