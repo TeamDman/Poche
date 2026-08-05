@@ -286,13 +286,13 @@ default and must be confirmed by the named task before dependent implementation.
 | G23 | Decided | Who may pause/resume? | Any active player may pause a running game. While paused, any active player may unpause it. There is no vote, acknowledgement quorum, or special host override. Duplicate/same-revision commands remain idempotent under normal command ordering rules. | Rust/oracle coverage for authorization, pause blocking game advancement, any-player unpause, and concurrent/repeated commands. |
 | G24 | Decided | Is chat game state? | No. Chat is an authorized, rate/size-bounded session event stream with ephemeral first-phase retention. Formal models track send permission/count abstractly, not text content. | Protocol and policy tests; persistence remains deferred. |
 | G25 | Decided | What does spectator revocation mean? | Stop future hand projections/delivery at the next capability epoch. Never claim already delivered information can be forgotten. Hidden observations are produced per recipient and never room-broadcast. | Projection/noninterference tests and an Alloy bounded information-flow model. |
-| G26 | Open | Can a browser-only public web app run Veilid with no on-device companion? | Test direct `veilid-wasm` on HTTP and production-equivalent HTTPS/WSS with no Poche or Veilid native process on the client device. Do not advertise direct Pages multiplayer until it passes. Failure is architecture evidence: compare a hostable Datastar server and a native Veilid client rather than automatically imposing a companion. | Task 6.1 browser/topology matrix must select and explain the supported live topology, privacy boundary, distribution model, and renderer consequences. External service deployment still requires separate authorization. |
+| G26 | Decided | Can a browser-only public web app run Veilid with no on-device companion? | HTTP/WS passes without a companion, but the documented public bootstrap resets WSS before TLS and upstream 0.5.7 has no outbound-relay HTTPS topology. Direct Pages multiplayer is not advertised. | ADR 0004 selects a self-hostable, host-colocated Datastar authority for live browsers; native Veilid remains available without imposing a companion. |
 | G27 | Provisional | First RL tensor shape? | `poche-2p-v1`: fixed two-player full-rule game, seat-relative viewer encoding, fixed bid/card action vocabulary, legal mask, and explicit public-history strategy. Add other player counts as new specs. | Task 7.1 schema audit, random-policy parity, and user-visible manifest. |
 | G28 | Provisional | First reward projection? | `round-score-v1`: zero except at a round boundary, then the seat's raw rulebook points; terminal outcome and money are separately logged. No undocumented shaping or reward clipping. | Task 7.1 exact examples and baseline-return tests. |
 | G29 | Provisional | First learning algorithm? | Implement a small actor-critic PPO/GAE loop in Rust over Burn, with legal-logit masking and self-play against frozen checkpoints. Use Burn DQN only as an API reference/smoke comparison. | Task 8.1 controlled micro-environment test and recorded algorithm ADR. |
 | G30 | Decided | What liveness can be claimed once pause/network exist? | Preserve unconditional game termination only for the existing semantic game under its named scope. Session liveness is conditional on clock, delivery, player-action, and eventual-resume fairness. Paused/partitioned sessions may legitimately persist. | NuSMV/Rust properties must state assumptions and include counterexamples when each fairness assumption is removed. |
 | G31 | Decided | How is state-space explosion controlled? | Independently model game, session/authorization, and abstract transport; compose contracts and a small integration scope. Bound principals/messages/ticks and omit chat content/cryptographic bitstrings. | Coverage matrix and exact scope statements for every formal result. |
-| G32 | Provisional | Which first client UI stack is used? | Prefer a simple egui projection renderer with shared native/web UI logic where supported. Replace it only for a concrete incompatibility or materially better evidence. If browser-only Veilid fails, compare egui native/Vulkan-capable distribution with an egui web replay or Datastar browser client; do not couple renderer semantics to transport. | Task 6.1 executable comparison using the local cursor-latency, ash, Datastar, and Datastar Rust references; record portability, latency, bundle/distribution, accessibility, operations, privacy, and implementation complexity. |
+| G32 | Decided | Which first client UI stack is used? | Keep the renderer-neutral `PresentationModel`; use shared egui for native/static-WASM replay and semantic HTML for the accessible live browser. Raw Vulkan remains a bounded future latency experiment. | ADR 0004 and `docs/rendering-topology-spike.md` record the executable portability, latency, distribution, accessibility, operations, privacy, and complexity comparison. |
 
 ## Security and protocol invariants
 
@@ -1252,7 +1252,7 @@ public-network testing is rate-limited and never required for ordinary CI.
 
 ## Phase 6 - Minimal rendering and web delivery
 
-### [ ] 6.1 Close browser transport and Rust UI gates with executable spikes
+### [x] 6.1 Close browser transport and Rust UI gates with executable spikes
 
 Build the smallest possible viewer/client against protocol fixtures, then test:
 
@@ -1319,12 +1319,20 @@ revoked. G32 is therefore evidence-closed around the renderer-neutral
 `PresentationModel`, shared egui native/static-WASM rendering, and semantic
 HTML for an accessible live browser surface.
 
-The checkbox and G26 remain open. The pinned Veilid 0.5.7 source has no prebuilt
-artifact or npm package; its README requires direct WS bootstrap for HTTP and
-explicitly labels HTTPS/WSS outbound-relay operation unimplemented, but source
-evidence does not replace the two required browser executions. Exact versions,
-commands, timings, sizes, exposure, evidence, and remaining probes are tracked
-in `docs/rendering-topology-spike.md`.
+The pinned, unchanged Veilid 0.5.7 source was built for browser WASM with WSS
+enabled. With no native Poche or Veilid process, HTTP/direct WS reached
+`AttachedFull`, 31 live peers, and public readiness in 20.264 seconds. The same
+artifact using WSS stayed `Attaching` with zero peers for 20.112 seconds, and a
+separate TLS probe showed the documented bootstrap resetting the handshake.
+Because an HTTPS Pages origin cannot fall back to insecure WS and upstream has
+no outbound-relay deployment, G26 closes against direct Pages multiplayer.
+
+ADR 0004 closes G26/G32 and selects the self-hostable, host-colocated Datastar
+authority plus semantic HTML for live browsers, shared egui for native/static
+WASM, and no implicit companion. The raw WSS-enabled Veilid package is
+8,879,727 bytes of WASM plus 407,153 bytes of JavaScript before optional
+`wasm-opt`. Exact commands, timings, sizes, exposure, and failure evidence are
+tracked in `docs/rendering-topology-spike.md`.
 
 ### [ ] 6.2 Implement deterministic room and game rendering
 

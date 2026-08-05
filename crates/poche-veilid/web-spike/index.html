@@ -1,0 +1,75 @@
+<!doctype html>
+<!--
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <link rel="icon" href="data:,">
+    <title>Poche browser-only Veilid probe</title>
+    <style>
+      body {
+        max-width: 58rem;
+        margin: 0 auto;
+        padding: 1rem;
+        font: 1rem/1.5 system-ui, sans-serif;
+      }
+
+      label,
+      button,
+      input {
+        display: block;
+        margin-block: 0.5rem;
+      }
+
+      input {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 0.5rem;
+      }
+
+      button {
+        min-height: 2.75rem;
+        padding-inline: 0.9rem;
+      }
+
+      output,
+      pre {
+        display: block;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Poche browser-only Veilid probe</h1>
+      <p>
+        This page loads the pinned upstream Veilid 0.5.7 WASM module directly.
+        It has no native Poche or Veilid companion and accepts exactly one
+        explicit WebSocket bootstrap URL.
+      </p>
+      <p id="environment"></p>
+      <label for="bootstrap">Bootstrap URL</label>
+      <input id="bootstrap" spellcheck="false">
+      <button id="start" type="button">Start browser node</button>
+      <button id="shutdown" type="button" disabled>Shut down browser node</button>
+      <h2>Result</h2>
+      <output id="result" aria-live="polite">WASM not loaded.</output>
+      <dl>
+        <dt>Veilid version</dt><dd id="version">unknown</dd>
+        <dt>Attachment state</dt><dd id="attachment">not started</dd>
+        <dt>Live peers</dt><dd id="peers">0</dd>
+        <dt>Public internet ready</dt><dd id="ready">false</dd>
+      </dl>
+      <h2>Updates</h2>
+      <pre id="updates" aria-live="polite"></pre>
+    </main>
+    <script type="module" src="./probe.js"></script>
+  </body>
+</html>
+
