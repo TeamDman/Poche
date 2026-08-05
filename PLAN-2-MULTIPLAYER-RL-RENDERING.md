@@ -1388,7 +1388,7 @@ retained honestly—revocation is future-only, not erasure. The downloadable
 13-line test transcript used `application/x-ndjson` and exposed neither a
 `POCHE-LAB` code nor command/secret material. See `docs/live-client.md`.
 
-### [ ] 6.4 Publish only deployment modes proven by Task 6.1
+### [x] 6.4 Publish only deployment modes proven by Task 6.1
 
 Extend existing Pages automation to publish the web replay/demo and, only if
 G26's browser-only test passes, direct Veilid live multiplayer. Generated
@@ -1403,7 +1403,22 @@ client, browser-only Veilid, and Datastar-hosted modes according to what was
 actually proven; the trust/anonymity difference is conspicuous; generated
 assets do not inflate Git history.
 
-**Completion notes:** Not started.
+**Completion notes:** Completed 2026-08-05. Pages run
+[`31026114728`](https://github.com/TeamDman/Poche/actions/runs/31026114728)
+built and deployed commit `16f213252e3c447216582b462a498fbf27800379`
+with pinned Typst 0.15.1, Rust 1.96.0, and `wasm-bindgen` 0.2.126. HTTPS probes
+returned 200 for the landing page, `replay/`, and its `application/wasm` asset;
+the in-app browser followed the public replay link and reached the active
+`Poche projection replay` WASM application. Generated 3,544,207-byte WASM and
+73,769-byte JS remained under ignored `site/` and out of Git history. README,
+landing page, `docs/pages-publication.md`, and `docs/deployment-modes.md` now
+distinguish the rulebook, static browser/native replay, unsupported direct
+HTTPS/WSS browser Veilid, not-yet-released native live Veilid client, and the
+host-colocated Datastar development authority. Trust/anonymity and the current
+demo's unauthenticated named-viewer/static-code/in-memory limitations are
+conspicuous. A multi-stage container recipe and loopback-first bind/run commands
+are checked in; Docker was unavailable on the evidence host, so no image-run
+claim is made.
 
 ## Phase 7 - Vectorized RL environment and baselines
 

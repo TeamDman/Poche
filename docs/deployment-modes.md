@@ -6,7 +6,7 @@ in the dependency graph” is not treated as a deployable client.
 | Mode | Status | Where it runs | Trust and anonymity | Entry point |
 | --- | --- | --- | --- | --- |
 | Rulebook | Published | GitHub Pages | Static public artifact; GitHub/CDN observes ordinary HTTP metadata | <https://teamdman.github.io/Poche/poche-rules.pdf> |
-| Exact-projection replay, browser | Published after Task 6.4 workflow passes | GitHub Pages, static egui/WASM | No authority/network/user data; checked fixture only | <https://teamdman.github.io/Poche/replay/> |
+| Exact-projection replay, browser | Published by Pages run `31026114728` | GitHub Pages, static egui/WASM | No authority/network/user data; checked fixture only | <https://teamdman.github.io/Poche/replay/> |
 | Exact-projection replay, native | Proven locally | Native egui process | No authority/network/user data; checked fixture only | `cargo run --release -p poche-ui --bin poche-replay` |
 | Browser-only Veilid | Unsupported | A Pages HTTPS origin cannot use the passing insecure-WS development path | No companion is implied; the tested public WSS bootstrap reset before TLS and Veilid 0.5.7 documents the missing outbound-relay HTTPS topology | Evidence in `rendering-topology-spike.md` |
 | Host-colocated Datastar authority demo | Proven locally; self-hostable development mode | One Axum process plus ordinary browsers | Operator owns full state and can inspect every hand. Current named viewer routes and static invite codes are not authenticated, state is in-memory, and this is not anonymous/trustless production multiplayer | `cargo run --release -p poche-web-spike` |

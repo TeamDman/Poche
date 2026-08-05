@@ -38,7 +38,7 @@ is not a substitute for that per-run evidence.
 | Scryer base oracle | finite generic/bounded relational query modes | `oracle check prolog` | 16 named queries pass |
 | Rust ↔ Scryer | ground two-player one-card transitions plus finite score/explanation relations | `compare rust prolog --fixtures tests/fixtures/prolog` | six fixtures; 264 exact order-independent rows; three ground bounded predecessors; 20 explanation bindings |
 | Phon evidence | typed and semantically refined wire envelopes | interchange and injected-defect tests | model/rules/schema/scope/scoring/observation/backend/confidence identities survive roundtrip and are revalidated |
-| Rulebook publication | exact `model-checking` source commit, pinned compiler/digest/fonts, generated output untracked | Pages run [`30882134532`](https://github.com/TeamDman/Poche/actions/runs/30882134532) and [publication decision](pages-publication.md) | `200 text/html` landing page and `200 application/pdf` five-page rulebook from commit `7bd7d2db4771955a5613fb7cc5a85bc90f30c2d8`; all pages visually inspected |
+| Rulebook and replay publication | exact `model-checking` source commit, pinned compilers/digest/fonts, generated output untracked | Pages run [`31026114728`](https://github.com/TeamDman/Poche/actions/runs/31026114728) and [publication decision](pages-publication.md) | `200` landing/PDF/replay/WASM from commit `16f213252e3c447216582b462a498fbf27800379`; public browser reached the active replay and Pages explicitly disclaims live multiplayer |
 
 ## Applicable comparison surfaces
 

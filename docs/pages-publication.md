@@ -59,3 +59,19 @@ pwsh crates/poche-ui/web/build.ps1 -OutputDirectory site/replay
 
 The deployment and trust distinctions are kept in
 [`deployment-modes.md`](deployment-modes.md).
+
+## Static replay publication evidence
+
+GitHub Actions run
+[`31026114728`](https://github.com/TeamDman/Poche/actions/runs/31026114728)
+built and deployed commit `16f213252e3c447216582b462a498fbf27800379` on
+2026-08-05. The build and deploy jobs both passed. Independent HTTPS checks
+returned 200 for `/Poche/`, `/Poche/replay/`, and
+`/Poche/replay/pkg/poche_ui_bg.wasm`; the WASM response was
+`application/wasm`. The landing page named the exact commit and stated that
+Pages has no live multiplayer backend. The in-app browser followed the public
+replay link and reached the active `Poche projection replay` application.
+
+The generated replay consisted of a 1,763-byte page, 73,769-byte JavaScript
+module, and 3,544,207-byte WASM module in this build. `git status` remained free
+of generated assets because `site/` is ignored.
