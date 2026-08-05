@@ -15,8 +15,10 @@ use poche_protocol::{CountdownToken, ProtocolFrame, RoomId};
 use poche_session::PureSessionMachine;
 
 mod oracle_session;
+mod transcript;
 
 pub use oracle_session::{OracleSessionGame, OracleSessionGameError};
+pub use transcript::*;
 
 /// External logical-time scheduling port.
 pub trait ClockPort {

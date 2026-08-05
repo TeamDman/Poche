@@ -87,6 +87,7 @@ fn main() -> ExitCode {
     match args.next().as_deref() {
         Some(command) if command == OsStr::new("doctor") => doctor(),
         Some(command) if command == OsStr::new("guidance") => guidance(args),
+        Some(command) if command == OsStr::new("protocol") => protocol(args),
         Some(command) if command == OsStr::new("coverage") => coverage(args),
         Some(command) if command == OsStr::new("oracle") => oracle(args),
         Some(command) if command == OsStr::new("compare") => compare(args),
@@ -108,6 +109,7 @@ fn usage() {
     eprintln!(
         "usage:\n  cargo run -p poche-xtask -- doctor\n  \
          cargo run -p poche-xtask -- guidance audit PLAN.md\n  \
+         cargo run -p poche-xtask -- protocol replay --all\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- oracle report\n  \
@@ -120,6 +122,76 @@ fn usage() {
          cargo run -p poche-xtask -- check rust-explicit --scope micro\n  \
          cargo run -p poche-xtask -- check rust-explicit --property game-terminates"
     );
+}
+
+fn protocol(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    let subcommand = args.next();
+    let mode = args.next();
+    if args.next().is_some() {
+        usage();
+        return ExitCode::from(2);
+    }
+    if subcommand.as_deref() == Some(OsStr::new("render-builtin")) && mode.is_none() {
+        return match poche_runtime::render_builtin_transcript() {
+            Ok(transcript) => {
+                println!("{transcript}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("protocol transcript render failed: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    if subcommand.as_deref() != Some(OsStr::new("replay"))
+        || mode.as_deref() != Some(OsStr::new("--all"))
+    {
+        usage();
+        return ExitCode::from(2);
+    }
+    let fixture_root = Path::new("tests/fixtures/protocol");
+    let entries = match fs::read_dir(fixture_root) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!(
+                "protocol replay could not list {}: {error}",
+                fixture_root.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut paths: Vec<_> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension() == Some(OsStr::new("json")))
+        .collect();
+    paths.sort();
+    if paths.is_empty() {
+        eprintln!("protocol replay found no JSON fixtures");
+        return ExitCode::FAILURE;
+    }
+    for path in &paths {
+        let fixture = match fs::read_to_string(path) {
+            Ok(fixture) => fixture,
+            Err(error) => {
+                eprintln!("protocol replay could not read {}: {error}", path.display());
+                return ExitCode::FAILURE;
+            }
+        };
+        let report = match poche_runtime::verify_transcript(&fixture) {
+            Ok(report) => report,
+            Err(error) => {
+                eprintln!("protocol replay failed for {}: {error}", path.display());
+                return ExitCode::FAILURE;
+            }
+        };
+        println!(
+            "protocol replay: passed; fixture={} steps={} final-state={}",
+            report.fixture_id, report.steps, report.final_state_hash
+        );
+    }
+    println!("protocol replay all: passed; fixtures={}", paths.len());
+    ExitCode::SUCCESS
 }
 
 fn check(mut args: impl Iterator<Item = OsString>) -> ExitCode {

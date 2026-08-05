@@ -105,3 +105,8 @@ supplies real Ed25519 verification, recipient encryption, and invite
 issuance/storage around the canonical bytes; Tasks 2.2-2.3 test authorization
 and projection semantics but do not claim cryptographic authenticity,
 confidential transport, or trustless hosting.
+
+The Task 2.4 boundary is now implemented in `protocol-replay.md`: a golden
+micro-session transcript and inspectable replay-prefix snapshot exercise this
+engine, while full Poche rules remain covered by the independent oracle and
+formal conformance suites.

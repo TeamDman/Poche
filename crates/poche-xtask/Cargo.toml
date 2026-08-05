@@ -14,6 +14,7 @@ poche-check = { path = "../poche-check" }
 poche-conformance = { path = "../poche-conformance" }
 poche-native-tools = { path = "../poche-native-tools" }
 poche-oracle-rust = { path = "../poche-oracle-rust" }
+poche-runtime = { path = "../poche-runtime" }
 
 [lints]
 workspace = true

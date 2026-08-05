@@ -653,7 +653,7 @@ work. Focused suites, decoder fuzz/compile-fail tests, full workspace tests
 warnings, formatting, the phase-2 guidance audit, and the unchanged `PLAN.md`
 check all pass.
 
-### [ ] 2.4 Add deterministic transcripts, snapshots, and replay
+### [x] 2.4 Add deterministic transcripts, snapshots, and replay
 
 Add golden fixtures under `tests/fixtures/protocol/` for room creation, join,
 ready/countdown abort, start, game actions, pause/resume, chat, spectator grant
@@ -669,7 +669,30 @@ the same semantic state hash and viewer projections.
 replays every fixture deterministically; single-line deletions/reorders or a
 controlled reducer defect produce a precise first-divergence report.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed after locally committed Task 2.3
+(`0822dc9`; remote push retained as an open requirement after the environment
+usage-limit gate rejected network escalation). Added a 32-step secret-free
+golden fixture at `tests/fixtures/protocol/session-micro-v1.json` covering
+create, referenced one-time joins, seats/readiness, countdown abort/start,
+chance, pause/denied advance/unpause, chat, hand request/deny/grant/duplicate/
+revoke, disconnect/reconnect, actions, round expiry/settlement, stale input,
+post-game/reset, and close. Every step commits the resolved command identity,
+authorization/semantic outcome, event-kind sequence, complete semantic state,
+and all viewer-projection hashes; privacy checkpoints retain complete typed
+recipient projections. Snapshot v1 stores canonical secret-reference input
+prefix bytes in `SnapshotPayload`, restores through the same pure reducer, and
+then replays the tail. Its final state and every final viewer projection equal
+full genesis replay. Deleted/reordered steps and a controlled dropped-revoke
+apply defect report the exact first divergent step/field. Runtime tests prove
+fixture/rendered text excludes both invite verifiers. Added
+`cargo run -p poche-xtask -- protocol replay --all`, which scans all JSON
+fixtures and reports the pinned final state
+`678455b9937db722bd8e25c3585aa2c678455ba31522b3a9e07f36daffa3b662`.
+`docs/protocol-replay.md`, session-engine docs, and Rust/protocol coverage cells
+record scope and the deliberately inspectable (not fast-hydration) snapshot
+choice. Formatting, workspace denied-warning clippy, replay command, focused
+tests, the 137-second full workspace/native conformance suite, plan diff checks,
+and the unchanged `PLAN.md` check pass.
 
 ### [ ] 2.5 Prove typed/direct, NDJSON, and optional Phon semantic parity
 
