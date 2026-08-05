@@ -1,0 +1,17 @@
+[package]
+name = "poche-runtime"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+poche-environment = { path = "../poche-environment" }
+poche-protocol = { path = "../poche-protocol" }
+poche-session = { path = "../poche-session" }
+
+[lints]
+workspace = true

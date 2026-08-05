@@ -515,7 +515,7 @@ table rows. `git diff --check` and the phase-2 guidance audit pass.
 
 ## Phase 2 - Typed text protocol and pure session engine
 
-### [ ] 2.1 Add protocol and session crates with versioned envelopes
+### [x] 2.1 Add protocol and session crates with versioned envelopes
 
 Add workspace crates:
 
@@ -538,7 +538,24 @@ per line; canonical fixtures round-trip byte-for-byte where required; fuzzing
 never panics or accepts ambiguous control input; no secret type implements a
 diagnostic formatter that reveals material.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed. Added `poche-protocol`,
+`poche-session`, and `poche-runtime`. All command/event/snapshot/projection/error
+roots are Facet-reflected, versioned, bounded typed frames with the required
+identity, epoch, revision, correlation/causation, payload, and public signature
+metadata. Commands and events have distinct unsigned shapes and domain-
+separated length-framed canonical signing bytes; diagnostic JSON is never the
+unframed signing input. Protocol v1 pins schema hash
+`3ddae49c42a09098814ea49e88a55be382c8b5d5e9d2293bfc6150a1e9a788d1`, an
+exact signed-byte vector, and `fixtures/protocol/command-chat-v1.ndjson`.
+Strict decode rejects unknown versions/tags/fields, invalid UTF-8/JSON/IDs/
+signatures/payloads, CRLF/interior control delimiters, multiple/missing frames,
+oversize input, and every noncanonical spelling. A valid seed, all single-byte
+mutations, and 10,000 deterministic arbitrary inputs prove no decoder panic and
+that every accepted input re-encodes byte-for-byte. Compile-fail tests prove
+secret key material is not `Debug`, `Display`, or `Clone`. The pure API requires
+an immutable allow decision before `decide`, and runtime clock/transport ports
+remain outside reduction. Workspace clippy passed; all workspace tests passed
+when the 75-second native conformance suite was given its own process window.
 
 ### [ ] 2.2 Implement room lifecycle, policy decisions, and game gating
 

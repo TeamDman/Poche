@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/poche-check", "crates/poche-conformance", "crates/poche-domain", "crates/poche-environment", "crates/poche-formal", "crates/poche-interchange", "crates/poche-model", "crates/poche-native-tools", "crates/poche-oracle-rust", "crates/poche-xtask"]
+members = ["crates/poche-check", "crates/poche-conformance", "crates/poche-domain", "crates/poche-environment", "crates/poche-formal", "crates/poche-interchange", "crates/poche-model", "crates/poche-native-tools", "crates/poche-oracle-rust", "crates/poche-protocol", "crates/poche-runtime", "crates/poche-session", "crates/poche-xtask"]
 resolver = "3"
 
 [workspace.package]
@@ -11,8 +11,11 @@ license = "MPL-2.0"
 repository = "https://github.com/TeamDman/Poche"
 
 [workspace.dependencies]
+blake3 = "=1.8.5"
 facet = "=0.50.0-rc.5"
 phon = "=0.2.0-rc.5"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
 weavy = "=0.2.2"
 
 [workspace.lints.rust]
