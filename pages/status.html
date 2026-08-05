@@ -1,0 +1,941 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="What Poche implements today, the formal, networking, rendering, and reinforcement-learning experiments, and what their evidence does and does not establish.">
+    <title>Poche engineering status</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #172122;
+        --muted: #526364;
+        --paper: #f3eddf;
+        --panel: #fffdf7;
+        --panel-strong: #ffffff;
+        --line: #d4cbb8;
+        --accent: #8b2f2f;
+        --accent-dark: #642020;
+        --green: #286148;
+        --green-bg: #e6f1e9;
+        --amber: #7a5418;
+        --amber-bg: #f8edcf;
+        --red: #872f35;
+        --red-bg: #f7e3e3;
+        --blue: #28566f;
+        --blue-bg: #e4eff4;
+        --code: #252d2c;
+        --shadow: rgba(53, 42, 23, 0.13);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 8% 0%, rgba(139, 47, 47, 0.14), transparent 28rem),
+          radial-gradient(circle at 100% 30%, rgba(40, 86, 111, 0.1), transparent 34rem),
+          var(--paper);
+        font-family: Georgia, "Times New Roman", serif;
+      }
+
+      a {
+        color: var(--accent-dark);
+        text-underline-offset: 0.16em;
+      }
+
+      a:hover,
+      a:focus-visible {
+        color: var(--accent);
+      }
+
+      .shell {
+        width: min(76rem, calc(100% - 2rem));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        position: sticky;
+        z-index: 10;
+        top: 0;
+        border-bottom: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+        background: color-mix(in srgb, var(--paper) 88%, transparent);
+        backdrop-filter: blur(1rem);
+      }
+
+      .topbar .shell {
+        display: flex;
+        min-height: 3.75rem;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1.5rem;
+      }
+
+      .brand {
+        color: var(--ink);
+        font-size: 1.12rem;
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      .topnav {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 0.35rem 1rem;
+        font: 650 0.82rem/1.3 system-ui, sans-serif;
+      }
+
+      main {
+        padding: clamp(3rem, 8vw, 6.5rem) 0 5rem;
+      }
+
+      .eyebrow {
+        margin: 0 0 0.85rem;
+        color: var(--accent);
+        font: 750 0.76rem/1.3 system-ui, sans-serif;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        max-width: 12ch;
+        margin-bottom: 1.5rem;
+        font-size: clamp(3rem, 8vw, 6.6rem);
+        font-weight: 500;
+        line-height: 0.92;
+        letter-spacing: -0.052em;
+      }
+
+      .lede {
+        max-width: 47rem;
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: clamp(1.08rem, 2.4vw, 1.42rem);
+        line-height: 1.62;
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.7rem;
+        margin-top: 2rem;
+      }
+
+      .button {
+        display: inline-flex;
+        min-height: 2.9rem;
+        align-items: center;
+        justify-content: center;
+        padding: 0.78rem 1.05rem;
+        border: 1px solid var(--accent);
+        border-radius: 0.35rem;
+        color: #fff;
+        background: var(--accent);
+        font: 700 0.9rem/1 system-ui, sans-serif;
+        text-decoration: none;
+      }
+
+      .button.secondary {
+        color: var(--accent-dark);
+        background: transparent;
+      }
+
+      .button:hover,
+      .button:focus-visible {
+        color: #fff;
+        background: var(--accent-dark);
+        outline: 0.18rem solid color-mix(in srgb, var(--accent) 28%, transparent);
+        outline-offset: 0.14rem;
+      }
+
+      .button.secondary:hover,
+      .button.secondary:focus-visible {
+        color: var(--panel-strong);
+      }
+
+      .status-line {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1px;
+        margin-top: clamp(3rem, 7vw, 5.5rem);
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 0.7rem;
+        background: var(--line);
+        box-shadow: 0 1rem 3rem var(--shadow);
+      }
+
+      .status-line div {
+        min-height: 7.6rem;
+        padding: 1.2rem;
+        background: var(--panel);
+      }
+
+      .status-line strong {
+        display: block;
+        margin-bottom: 0.45rem;
+        font: 750 0.78rem/1.25 system-ui, sans-serif;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+      }
+
+      .status-line span {
+        color: var(--muted);
+        line-height: 1.45;
+      }
+
+      .section {
+        padding-top: clamp(4.5rem, 9vw, 8rem);
+      }
+
+      .section-heading {
+        display: grid;
+        grid-template-columns: minmax(12rem, 0.65fr) minmax(18rem, 1.35fr);
+        gap: 2rem;
+        align-items: end;
+        margin-bottom: 2rem;
+      }
+
+      .section-heading h2 {
+        margin-bottom: 0;
+        font-size: clamp(2rem, 5vw, 3.8rem);
+        font-weight: 500;
+        line-height: 1;
+        letter-spacing: -0.038em;
+      }
+
+      .section-heading p {
+        max-width: 43rem;
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 1.04rem;
+        line-height: 1.65;
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1rem;
+      }
+
+      .metric {
+        padding: 1.3rem;
+        border: 1px solid var(--line);
+        border-radius: 0.6rem;
+        background: color-mix(in srgb, var(--panel) 94%, transparent);
+      }
+
+      .metric b {
+        display: block;
+        color: var(--accent-dark);
+        font: 500 clamp(2rem, 4vw, 3.4rem)/1 Georgia, serif;
+        letter-spacing: -0.04em;
+      }
+
+      .metric span {
+        display: block;
+        margin-top: 0.55rem;
+        color: var(--muted);
+        font: 650 0.78rem/1.4 system-ui, sans-serif;
+      }
+
+      .architecture {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1rem;
+        padding: 1.25rem;
+        border: 1px solid var(--line);
+        border-radius: 0.7rem;
+        background: var(--panel);
+        box-shadow: 0 1rem 3rem var(--shadow);
+      }
+
+      .architecture article {
+        position: relative;
+        padding: 1.2rem;
+        border-radius: 0.45rem;
+        background: color-mix(in srgb, var(--paper) 65%, var(--panel));
+      }
+
+      .architecture article:not(:last-child)::after {
+        position: absolute;
+        top: 50%;
+        right: -0.74rem;
+        width: 0.45rem;
+        height: 0.45rem;
+        border-top: 2px solid var(--accent);
+        border-right: 2px solid var(--accent);
+        content: "";
+        transform: translateY(-50%) rotate(45deg);
+      }
+
+      .step {
+        color: var(--accent);
+        font: 750 0.7rem/1 system-ui, sans-serif;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+      }
+
+      .architecture h3 {
+        margin: 0.7rem 0 0.5rem;
+        font-size: 1.15rem;
+      }
+
+      .architecture p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.5;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+      }
+
+      .card {
+        display: flex;
+        min-height: 15rem;
+        flex-direction: column;
+        padding: clamp(1.25rem, 3vw, 1.8rem);
+        border: 1px solid var(--line);
+        border-radius: 0.65rem;
+        background: color-mix(in srgb, var(--panel) 95%, transparent);
+      }
+
+      .card-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .card h3 {
+        margin-bottom: 0;
+        font-size: clamp(1.2rem, 2vw, 1.55rem);
+        line-height: 1.2;
+      }
+
+      .card p {
+        margin: 1rem 0 0;
+        color: var(--muted);
+        line-height: 1.58;
+      }
+
+      .card .result {
+        margin-top: auto;
+        padding-top: 1.1rem;
+        color: var(--ink);
+        font-size: 0.94rem;
+      }
+
+      .badge {
+        display: inline-flex;
+        flex: 0 0 auto;
+        align-items: center;
+        padding: 0.38rem 0.55rem;
+        border-radius: 99rem;
+        font: 750 0.68rem/1 system-ui, sans-serif;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .pass {
+        color: var(--green);
+        background: var(--green-bg);
+      }
+
+      .selected {
+        color: var(--blue);
+        background: var(--blue-bg);
+      }
+
+      .bounded {
+        color: var(--amber);
+        background: var(--amber-bg);
+      }
+
+      .unsupported {
+        color: var(--red);
+        background: var(--red-bg);
+      }
+
+      .method-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 0.65rem;
+        background: var(--line);
+      }
+
+      .method-grid article {
+        padding: 1.35rem;
+        background: var(--panel);
+      }
+
+      .method-grid h3 {
+        margin-bottom: 0.65rem;
+        font-size: 1.12rem;
+      }
+
+      .method-grid p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.93rem;
+        line-height: 1.52;
+      }
+
+      .lifecycle {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 0.65rem;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        counter-reset: lifecycle;
+      }
+
+      .lifecycle li {
+        min-height: 8.5rem;
+        padding: 1rem;
+        border: 1px solid var(--line);
+        border-radius: 0.5rem;
+        background: var(--panel);
+        counter-increment: lifecycle;
+      }
+
+      .lifecycle li::before {
+        display: block;
+        margin-bottom: 0.8rem;
+        color: var(--accent);
+        content: "0" counter(lifecycle);
+        font: 750 0.72rem/1 system-ui, sans-serif;
+        letter-spacing: 0.1em;
+      }
+
+      .lifecycle strong {
+        display: block;
+        font: 750 0.85rem/1.35 system-ui, sans-serif;
+      }
+
+      .lifecycle span {
+        display: block;
+        margin-top: 0.42rem;
+        color: var(--muted);
+        font-size: 0.88rem;
+        line-height: 1.42;
+      }
+
+      .callout {
+        display: grid;
+        grid-template-columns: minmax(11rem, 0.55fr) minmax(20rem, 1.45fr);
+        gap: 2rem;
+        padding: clamp(1.4rem, 4vw, 2.4rem);
+        border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
+        border-radius: 0.7rem;
+        background: color-mix(in srgb, var(--red-bg) 72%, var(--panel));
+      }
+
+      .callout h2 {
+        margin-bottom: 0;
+        font-size: clamp(1.65rem, 3vw, 2.4rem);
+        font-weight: 500;
+        line-height: 1.05;
+      }
+
+      .callout ul {
+        margin: 0;
+        padding-left: 1.2rem;
+      }
+
+      .callout li {
+        padding-left: 0.25rem;
+        line-height: 1.55;
+      }
+
+      .callout li + li {
+        margin-top: 0.55rem;
+      }
+
+      .commands {
+        display: grid;
+        gap: 0.65rem;
+      }
+
+      .command {
+        display: grid;
+        grid-template-columns: minmax(9rem, 0.35fr) minmax(18rem, 1.65fr);
+        gap: 1rem;
+        align-items: center;
+        padding: 0.85rem 1rem;
+        border: 1px solid var(--line);
+        border-radius: 0.45rem;
+        background: var(--panel);
+      }
+
+      .command span {
+        color: var(--muted);
+        font: 700 0.76rem/1.35 system-ui, sans-serif;
+      }
+
+      code {
+        color: var(--code);
+        font: 0.82rem/1.55 ui-monospace, "Cascadia Mono", "SFMono-Regular", monospace;
+        overflow-wrap: anywhere;
+      }
+
+      .source-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem 1.25rem;
+        margin-top: 1.5rem;
+        font: 700 0.84rem/1.4 system-ui, sans-serif;
+      }
+
+      footer {
+        padding: 2rem 0 3rem;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font: 0.76rem/1.6 ui-monospace, "Cascadia Mono", monospace;
+        overflow-wrap: anywhere;
+      }
+
+      @media (max-width: 62rem) {
+        .status-line,
+        .metrics,
+        .method-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .architecture {
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .architecture article:nth-child(2)::after {
+          display: none;
+        }
+
+        .lifecycle {
+          grid-template-columns: repeat(3, 1fr);
+        }
+      }
+
+      @media (max-width: 42rem) {
+        .topbar {
+          position: static;
+        }
+
+        .topbar .shell,
+        .section-heading,
+        .callout,
+        .command {
+          grid-template-columns: 1fr;
+        }
+
+        .topbar .shell {
+          display: grid;
+          padding: 0.85rem 0;
+        }
+
+        .topnav {
+          justify-content: flex-start;
+        }
+
+        .status-line,
+        .metrics,
+        .architecture,
+        .cards,
+        .method-grid,
+        .lifecycle {
+          grid-template-columns: 1fr;
+        }
+
+        .architecture article::after {
+          display: none;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --ink: #f5eddc;
+          --muted: #c8bda8;
+          --paper: #151a19;
+          --panel: #202624;
+          --panel-strong: #fff8e8;
+          --line: #4d5048;
+          --accent: #d68072;
+          --accent-dark: #f1a69a;
+          --green: #b8e3c9;
+          --green-bg: #214233;
+          --amber: #f2d49a;
+          --amber-bg: #493a20;
+          --red: #f2b8bc;
+          --red-bg: #4b292d;
+          --blue: #b9dceb;
+          --blue-bg: #263e49;
+          --code: #f3ead8;
+          --shadow: rgba(0, 0, 0, 0.35);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="shell">
+        <a class="brand" href="./">Poche</a>
+        <nav class="topnav" aria-label="Project pages">
+          <a href="poche-rules.pdf">Rulebook</a>
+          <a href="replay/">Projection replay</a>
+          <a href="#experiments">Experiments</a>
+          <a href="https://github.com/TeamDman/Poche/tree/model-checking">Source</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section aria-labelledby="page-title">
+        <p class="eyebrow">Engineering status · Phase 2 complete</p>
+        <h1 id="page-title">What we built. What we learned.</h1>
+        <p class="lede">
+          Poche is now more than a rules document: it is a typed game engine,
+          four independent formal models, a multiplayer session protocol,
+          viewer-correct rendering, native-network experiments, and a first
+          reinforcement-learning pipeline. This page separates working pieces
+          from experiments, and experiments from claims.
+        </p>
+        <nav class="hero-actions" aria-label="Primary project links">
+          <a class="button" href="poche-rules.pdf">Read the rules</a>
+          <a class="button secondary" href="replay/">Open static replay</a>
+          <a class="button secondary" href="https://github.com/TeamDman/Poche/blob/model-checking/PLAN-2-MULTIPLAYER-RL-RENDERING.md">Read the completed plan</a>
+        </nav>
+
+        <div class="status-line" aria-label="Current deployment status">
+          <div>
+            <strong>Published</strong>
+            <span>Rulebook and exact-projection egui/WASM replay on GitHub Pages.</span>
+          </div>
+          <div>
+            <strong>Working locally</strong>
+            <span>Native egui replay and host-colocated Datastar room demo.</span>
+          </div>
+          <div>
+            <strong>Acceptance proven</strong>
+            <span>Native Veilid DHT/private-route protocol; no packaged player client.</span>
+          </div>
+          <div>
+            <strong>Not hosted here</strong>
+            <span>Pages is static. It is not a live room server or Veilid companion.</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="snapshot-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">At a glance</p>
+            <h2 id="snapshot-title">A checkable system</h2>
+          </div>
+          <p>
+            Strong types prevent many malformed states, but the evidence does
+            not stop at types. The system also enumerates finite scopes, asks
+            relational and temporal questions, replays canonical transcripts,
+            and checks independent models for disagreement.
+          </p>
+        </div>
+
+        <div class="metrics">
+          <div class="metric"><b>61</b><span>stable game-rule IDs traced from the rulebook</span></div>
+          <div class="metric"><b>88</b><span>multiplayer session and authorization rules</span></div>
+          <div class="metric"><b>800</b><span>reachable states in the exact session micro-scope</span></div>
+          <div class="metric"><b>0</b><span>unclassified cross-model disagreements at acceptance</span></div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="architecture-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Architecture</p>
+            <h2 id="architecture-title">One meaning, several consumers</h2>
+          </div>
+          <p>
+            Game rules, room rules, transport, presentation, and learning are
+            deliberately separate. Network or UI code cannot silently become a
+            second game engine, and training avoids text parsing and sockets.
+          </p>
+        </div>
+
+        <div class="architecture">
+          <article>
+            <span class="step">01 · Command</span>
+            <h3>Typed and signed</h3>
+            <p>Versioned commands have canonical NDJSON for inspection and direct typed ingress for fast paths.</p>
+          </article>
+          <article>
+            <span class="step">02 · Session</span>
+            <h3>Default deny</h3>
+            <p><code>SessionState</code> owns membership, countdown, pause, chat, grants, and authorization reasons.</p>
+          </article>
+          <article>
+            <span class="step">03 · Game</span>
+            <h3>Rules stay pure</h3>
+            <p><code>GameEnvironment</code> owns chance, legal actions, transition, settlement, and terminal meaning.</p>
+          </article>
+          <article>
+            <span class="step">04 · Consumers</span>
+            <h3>Scoped outputs</h3>
+            <p>Text, egui, HTML, Veilid, replay, and RL consume events or viewer-safe projections.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="experiments" aria-labelledby="experiments-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Experiment ledger</p>
+            <h2 id="experiments-title">Outcomes, including failures</h2>
+          </div>
+          <p>
+            “Pass” means the named executable scenario worked. “Selected” means
+            the result changed the architecture. “Bounded” and “empirical” are
+            deliberately weaker labels than proof.
+          </p>
+        </div>
+
+        <div class="cards">
+          <article class="card">
+            <div class="card-head">
+              <h3>Browser Veilid over HTTP</h3>
+              <span class="badge pass">Pass</span>
+            </div>
+            <p>A browser-only Veilid 0.5.7 node connected by insecure <code>ws://</code> with no native companion, reaching public-ready with 28–31 peers.</p>
+            <p class="result"><strong>Meaning:</strong> the WASM/browser architecture is viable in development, but HTTP cannot protect a real public card game.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Browser Veilid over HTTPS</h3>
+              <span class="badge unsupported">Unsupported</span>
+            </div>
+            <p>From a real HTTPS origin, the tested public <code>wss://</code> bootstrap reset before TLS and the node remained attaching with zero peers.</p>
+            <p class="result"><strong>Decision:</strong> do not advertise direct Pages multiplayer and do not smuggle in a companion app as a hidden requirement.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Native Veilid protocol</h3>
+              <span class="badge pass">Acceptance pass</span>
+            </div>
+            <p>Two native processes exercised DHT rendezvous, private routes, one-time invite redemption, signed commands/events, reconnect, chat, pause/resume, exact-recipient hand delivery, leave, and close.</p>
+            <p class="result"><strong>Observed:</strong> 174 calls, 172 contiguous event frames, final revision 173. This proves the protocol scenario—not a packaged client or network availability theorem.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Datastar + Axum</h3>
+              <span class="badge selected">Selected fallback</span>
+            </div>
+            <p>A self-hostable, host-colocated server drove the real typed authority and patched accessible semantic HTML for viewer-specific room state.</p>
+            <p class="result"><strong>Tradeoff:</strong> it is easier for ordinary browsers, but less anonymous. The current named routes, static invites, and in-memory state are development scaffolding.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Shared egui renderer</h3>
+              <span class="badge pass">Pass</span>
+            </div>
+            <p>The same projection model builds as a native Windows client and a Pages-hostable WASM replay. Privacy checks covered ungranted, granted, and revoked spectator views.</p>
+            <p class="result"><strong>Decision:</strong> retain egui for native/static replay; use semantic HTML for the accessible live browser surface.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Direct Vulkan reference</h3>
+              <span class="badge bounded">Bounded pass</span>
+            </div>
+            <p>The <code>ash</code>-based latency reference demonstrated direct presentation control and low-level timing choices on native platforms.</p>
+            <p class="result"><strong>Decision:</strong> useful for a future focused latency experiment, but too costly in portability and accessibility to become the first Poche renderer.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Loopback multiplayer</h3>
+              <span class="badge pass">Pass</span>
+            </div>
+            <p>A no-socket canonical-NDJSON scenario processed 178 inputs and all 13 deals, including abort/re-arm, pause by one player, resume by another, chat, grant/revoke, reconnect, completion, reset, and close.</p>
+            <p class="result"><strong>Meaning:</strong> protocol semantics can be inspected and tested without relying on an external network.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Burn PPO learner</h3>
+              <span class="badge bounded">Empirical</span>
+            </div>
+            <p>CPU and WGPU ran the same 307-input, 60-action masked policy/value path. A short frozen-self-play PPO run replayed from a pinned manifest.</p>
+            <p class="result"><strong>Outcome:</strong> score improved in the small held-out corpus, but only one of four 95% score-difference intervals excluded zero. This is a first experiment, not solved Poche.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="formal-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Formal methods</p>
+            <h2 id="formal-title">Different tools, different questions</h2>
+          </div>
+          <p>
+            The non-Rust models are handwritten independent oracles. Agreement
+            is checked only on declared common projections; none is treated as a
+            syntax skin over Rust.
+          </p>
+        </div>
+
+        <div class="method-grid">
+          <article>
+            <h3>Rust + Weavy</h3>
+            <p>Executes the complete game and exhaustively explores exact finite micro-scopes, with replayable counterexamples and controlled defects.</p>
+          </article>
+          <article>
+            <h3>Alloy</h3>
+            <p>Checks relational structure: ownership, partitions, membership, seat uniqueness, default deny, grant scope, and invalid witnesses—within printed bounds.</p>
+          </article>
+          <article>
+            <h3>NuSMV</h3>
+            <p>Checks temporal safety and liveness. It proves conditional termination under named fairness and deliberately finds infinite idle, paused, or missing-event traces without it.</p>
+          </article>
+          <article>
+            <h3>Scryer Prolog</h3>
+            <p>Answers forward and backward questions: legal successors, denied actions, predecessor causes, visibility, and grant/revoke explanations over productive finite modes.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="lifecycle-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Multiplayer semantics</p>
+            <h2 id="lifecycle-title">The lifecycle now modeled</h2>
+          </div>
+          <p>
+            Room state composes around the game rather than polluting it. An
+            application key, not a room code or transient transport identity,
+            is the durable authorization principal.
+          </p>
+        </div>
+
+        <ol class="lifecycle">
+          <li><strong>Create and invite</strong><span>Host creates; a compact one-time/expiring code locates and redeems membership.</span></li>
+          <li><strong>Join and seat</strong><span>Membership and seat occupancy remain separate typed concepts.</span></li>
+          <li><strong>Ready and countdown</strong><span>All seated players ready; any seated player may abort before authority expiry.</span></li>
+          <li><strong>Play and pause</strong><span>Only legal game actions advance; any player may pause and any player may resume.</span></li>
+          <li><strong>Chat and spectate</strong><span>Bounded ephemeral chat; exact hand request, owner grant, and future-only revoke.</span></li>
+          <li><strong>Recover and finish</strong><span>Stable-key reconnect, snapshot + tail, post-game, leave, reset, and absorbing close.</span></li>
+        </ol>
+      </section>
+
+      <section class="section" aria-labelledby="rl-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Reinforcement learning</p>
+            <h2 id="rl-title">Score-first, network-free</h2>
+          </div>
+          <p>
+            The first immutable contract, <code>poche-2p-v1</code>, exposes only
+            the acting seat’s hand plus public history. Policies must select a
+            masked legal action. Reward is zero between rounds and raw Poche
+            score at settlement—no material proxy, terminal bonus, or hidden
+            state feature.
+          </p>
+        </div>
+
+        <div class="metrics">
+          <div class="metric"><b>307</b><span>seat-relative observation values</span></div>
+          <div class="metric"><b>60</b><span>fixed bid/card action slots</span></div>
+          <div class="metric"><b>0</b><span>illegal actions in accepted baseline and learned evaluation</span></div>
+          <div class="metric"><b>64</b><span>held-out learned-policy games in the first evaluation</span></div>
+        </div>
+
+        <div class="source-links">
+          <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/rl-environment.md">RL environment contract</a>
+          <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/burn-learning.md">Burn training and evaluation</a>
+          <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/rl-performance.md">Rollout performance evidence</a>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="limits-title">
+        <div class="callout">
+          <h2 id="limits-title">What this does not claim</h2>
+          <ul>
+            <li>The host-authoritative process owns every hand. This is not mental poker, MPC, consensus, or protection from a cheating host.</li>
+            <li>Room codes are temporary invitations, not permanent bearer credentials. Transport node IDs and routes are not application authorization.</li>
+            <li>Spectator revocation stops future delivery; it cannot erase cards a person already saw.</li>
+            <li>A paused, partitioned, abandoned, or permanently hostless session may persist. Session termination needs explicit fairness assumptions.</li>
+            <li>Alloy results are bounded, NuSMV results describe its declared abstraction, Prolog completeness is query-mode specific, and sampled Rust tests are not exhaustive full-deck proof.</li>
+            <li>Training and evaluation measure policies on named finite corpora. They do not prove optimal play, rule consistency, or formal correctness.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="reproduce-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Reproduce</p>
+            <h2 id="reproduce-title">Inspect the evidence</h2>
+          </div>
+          <p>These are ordinary offline or local commands. Public Veilid acceptance is separately guarded and never runs as a routine test or RL rollout.</p>
+        </div>
+
+        <div class="commands">
+          <div class="command"><span>Formal game acceptance</span><code>cargo run -p poche-xtask --offline -- compare all --scope micro</code></div>
+          <div class="command"><span>Formal session acceptance</span><code>cargo run -p poche-xtask --offline -- session compare all --scope lobby-micro</code></div>
+          <div class="command"><span>Inspectable protocol</span><code>cargo run -p poche-xtask --offline -- protocol replay --all</code></div>
+          <div class="command"><span>No-socket full lifecycle</span><code>cargo run -p poche-xtask --offline -- multiplayer smoke --transport in-process</code></div>
+          <div class="command"><span>Static native replay</span><code>cargo run --release -p poche-ui --bin poche-replay</code></div>
+          <div class="command"><span>Hostable browser demo</span><code>cargo run --locked --release -p poche-web-spike</code></div>
+          <div class="command"><span>RL semantic contract</span><code>cargo run -p poche-xtask --offline -- rl spec</code></div>
+        </div>
+
+        <div class="source-links">
+          <a href="https://github.com/TeamDman/Poche/blob/model-checking/README.md">Repository overview</a>
+          <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/acceptance-matrix.md">Game acceptance matrix</a>
+          <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/session-coverage.md">Session coverage matrix</a>
+          <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/deployment-modes.md">Deployment modes</a>
+          <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/veilid-native-acceptance.md">Native Veilid evidence</a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="shell">
+        Published from
+        <a href="https://github.com/TeamDman/Poche/commit/__POCHE_GIT_SHA__">__POCHE_GIT_SHA__</a><br>
+        Source event time: __POCHE_BUILD_TIME__ · Evidence labels and counts are scoped to the completed phase-two acceptance record · MPL-2.0
+      </div>
+    </footer>
+  </body>
+</html>

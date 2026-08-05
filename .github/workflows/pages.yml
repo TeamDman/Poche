@@ -76,13 +76,17 @@ jobs:
           "$TYPST_BIN" compile --root . docs/main.typ site/poche-rules.pdf
           test -s site/poche-rules.pdf
           build_time="${PUBLICATION_TIME:-workflow-dispatch}"
-          sed \
-            -e "s/__POCHE_GIT_SHA__/${GITHUB_SHA}/g" \
-            -e "s/__POCHE_BUILD_TIME__/${build_time}/g" \
-            pages/index.html > site/index.html
+          for source in pages/*.html; do
+            output="site/$(basename "$source")"
+            sed \
+              -e "s/__POCHE_GIT_SHA__/${GITHUB_SHA}/g" \
+              -e "s/__POCHE_BUILD_TIME__/${build_time}/g" \
+              "$source" > "$output"
+          done
           cp LICENSE site/LICENSE.txt
           pwsh crates/poche-ui/web/build.ps1 -OutputDirectory site/replay
           test -s site/index.html
+          test -s site/status.html
           test -s site/replay/index.html
           test -s site/replay/pkg/poche_ui.js
           test -s site/replay/pkg/poche_ui_bg.wasm

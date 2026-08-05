@@ -12,6 +12,8 @@ was exhaustive, bounded, symbolic, queried, sampled, or merely empirical.
 - [Typst rule source](docs/main.typ)
 - [Pretty rules](https://teamdman.github.io/Poche/) — generated from the
   `model-checking` branch by GitHub Pages
+- [Engineering status](https://teamdman.github.io/Poche/status.html) — what is
+  implemented, what each experiment established, and the remaining boundaries
 - [Direct rulebook PDF](https://teamdman.github.io/Poche/poche-rules.pdf)
 - [Static exact-projection replay](https://teamdman.github.io/Poche/replay/) —
   browser egui/WASM fixture; no room authority or network
