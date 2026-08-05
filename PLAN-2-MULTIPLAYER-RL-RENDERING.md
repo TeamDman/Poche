@@ -1084,7 +1084,20 @@ expired, replayed, cross-room, and revoked codes fail; successful redemption
 creates membership for the joining stable key; no invite secret is written in
 plaintext to DHT or logs.
 
-**Completion notes:** Not started.
+**Completion notes (implementation in progress, 2026-08-05):** Added the
+compact redacted/zeroing `p3-` room-code codec, a strict bounded one-subkey DFLT
+rendezvous schema, application-host/network/version/expiry binding, hashed
+authority-side invite verifiers, stable-key signed redemption tests, and the
+released Veilid 0.5.7 create/open/set/get/flush/private-route/`app_call`
+adapter. Codec/session acceptance rejects invalid, expired, replayed,
+cross-room, and revoked codes and scans the serialized DHT shape for structural
+absence of invite material. The checkbox remains open because this is not
+mislabelled as the required two-native-node execution: 0.5.7 private routes
+require `PublicInternet`, ordinary loopback/LAN nodes are `LocalNetwork`, and
+the released virtual-network path is incomplete (core does not consume the
+configuration and virtual-router machine allocation remains unimplemented).
+The real native execution evidence is intentionally retained for the isolated
+local topology/public-network opt-in work shared with Task 5.6.
 
 ### [ ] 5.3 Implement membership reconnect without the original code
 

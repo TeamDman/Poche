@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+blake3.workspace = true
 facet.workspace = true
 poche-protocol = { path = "../poche-protocol" }
 

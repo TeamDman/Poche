@@ -58,7 +58,7 @@ pub struct MemberState {
 /// One authority-known invite verifier. The raw invite never enters events.
 #[derive(Clone, PartialEq, Eq)]
 pub struct InviteRecord {
-    verifier: String,
+    verifier: [u8; 32],
     pub expires_after_revision: u64,
     pub consumed: bool,
     pub revoked: bool,
@@ -86,12 +86,12 @@ impl InviteRecord {
         verifier: impl Into<String>,
         expires_after_revision: u64,
     ) -> Result<Self, SessionInvariantError> {
-        let verifier = verifier.into();
-        if verifier.is_empty() || verifier.len() > 256 {
+        let candidate = verifier.into();
+        if candidate.is_empty() || candidate.len() > 256 {
             return Err(SessionInvariantError::InvalidInvite);
         }
         Ok(Self {
-            verifier,
+            verifier: invite_verifier(candidate.as_bytes()),
             expires_after_revision,
             consumed: false,
             revoked: false,
@@ -99,8 +99,15 @@ impl InviteRecord {
     }
 
     pub(crate) fn matches(&self, candidate: &str) -> bool {
-        constant_time_equal(self.verifier.as_bytes(), candidate.as_bytes())
+        constant_time_equal(&self.verifier, &invite_verifier(candidate.as_bytes()))
     }
+}
+
+fn invite_verifier(candidate: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"poche-session-invite-v1\0");
+    hasher.update(candidate);
+    *hasher.finalize().as_bytes()
 }
 
 fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {

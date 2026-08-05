@@ -24,6 +24,17 @@ pub struct ApplicationPublicIdentity {
     pub encryption_public_key: String,
 }
 
+impl ApplicationPublicIdentity {
+    /// Validate schema, principal binding, signing key, and recipient key.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable public-identity category.
+    pub fn validate(&self) -> Result<(), IdentityCryptoError> {
+        validate_public_identity(self).map(|_| ())
+    }
+}
+
 /// Secret application identity.
 ///
 /// This type intentionally implements neither `Debug`, `Display`, `Clone`, nor

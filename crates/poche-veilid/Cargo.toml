@@ -16,14 +16,17 @@ insecure-development = []
 [dependencies]
 blake3.workspace = true
 curve25519-dalek.workspace = true
+data-encoding.workspace = true
 ed25519-dalek.workspace = true
 getrandom.workspace = true
 poche-protocol = { path = "../poche-protocol" }
 serde.workspace = true
+serde_json.workspace = true
 veilid-core = { workspace = true, optional = true }
 
 [dev-dependencies]
-serde_json.workspace = true
+poche-runtime = { path = "../poche-runtime" }
+poche-session = { path = "../poche-session" }
 
 [lints]
 workspace = true

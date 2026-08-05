@@ -10,12 +10,23 @@
 //! the network stack.
 
 mod identity;
+mod rendezvous;
+mod room_code;
 mod store;
 
 pub use identity::*;
+pub use rendezvous::*;
+pub use room_code::*;
 pub use store::*;
 
 #[cfg(feature = "veilid")]
+mod veilid_rendezvous;
+#[cfg(feature = "veilid")]
 mod veilid_store;
 #[cfg(feature = "veilid")]
+pub use veilid_rendezvous::*;
+#[cfg(feature = "veilid")]
 pub use veilid_store::*;
+
+#[cfg(test)]
+mod redemption_tests;
