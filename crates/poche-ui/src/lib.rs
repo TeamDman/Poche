@@ -8,17 +8,19 @@
 //! It cannot inspect the authoritative session state and therefore cannot
 //! accidentally turn UI filtering into the private-hand security boundary.
 
+mod live;
 mod presentation;
 mod replay;
 mod semantic_html;
 #[cfg(feature = "egui")]
 mod widgets;
 
+pub use live::*;
 pub use presentation::*;
 pub use replay::*;
 pub use semantic_html::*;
 #[cfg(feature = "egui")]
-pub use widgets::PocheReplayApp;
+pub use widgets::{PocheReplayApp, render_live_client};
 
 /// Checked, viewer-scoped fixture embedded into native and web replay clients.
 pub const EMBEDDED_REPLAY: &str =

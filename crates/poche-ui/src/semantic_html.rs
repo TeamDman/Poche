@@ -4,7 +4,7 @@
 
 use std::fmt::Write;
 
-use crate::{HandPresentation, PresentationModel, action_label};
+use crate::{HandPresentation, LiveClientPresentation, PresentationModel, action_label};
 
 /// Render a semantic HTML fragment from the same deterministic model as egui.
 ///
@@ -48,6 +48,16 @@ pub fn render_semantic_html_with_root_id(model: &PresentationModel, root_id: &st
         );
     }
     html.push_str("</ul></section>");
+
+    if let Some(countdown) = model.countdown {
+        let _ = write!(
+            html,
+            "<section aria-label=\"Countdown\"><h3>Countdown</h3><p>Authority tick {}; deadline {}; {} ticks remaining.</p></section>",
+            countdown.logical_now,
+            countdown.deadline_tick,
+            countdown.remaining()
+        );
+    }
 
     if let Some(table) = &model.table {
         let _ = write!(
@@ -116,6 +126,97 @@ pub fn render_semantic_html_with_root_id(model: &PresentationModel, root_id: &st
     html
 }
 
+/// Render the complete live-client shell around an exact viewer projection.
+///
+/// Command payloads remain server-side. Buttons contain only escaped opaque
+/// control IDs and endpoint paths; the adapter must resolve those IDs through
+/// [`LiveClientPresentation::command`] before submitting to the authority.
+#[must_use]
+pub fn render_live_semantic_html(
+    live: &LiveClientPresentation,
+    root_id: &str,
+    command_endpoint: &str,
+) -> String {
+    let mut html = format!("<article id=\"{}\">", escape_html(root_id));
+    let _ = write!(
+        html,
+        "<header><h2>Live room client</h2><dl><dt>Identity</dt><dd>{}</dd><dt>Room</dt><dd>{}</dd></dl>",
+        escape_html(&live.projection.viewer),
+        escape_html(&live.room_id)
+    );
+    if let Some(code) = &live.room_code {
+        let _ = write!(html, "<p>Join code: <code>{}</code></p>", escape_html(code));
+    }
+    html.push_str("</header>");
+
+    if !live.hand_requests.is_empty() {
+        html.push_str(
+            "<section aria-label=\"Pending hand requests\"><h3>Pending hand requests</h3><ul>",
+        );
+        for request in &live.hand_requests {
+            let _ = write!(
+                html,
+                "<li>{} requests {} hand (request {})</li>",
+                escape_html(request.recipient.as_str()),
+                escape_html(request.player.as_str()),
+                escape_html(request.request_id.as_str())
+            );
+        }
+        html.push_str("</ul></section>");
+    }
+    if !live.hand_grants.is_empty() {
+        html.push_str("<section aria-label=\"Active hand grants\"><h3>Active hand grants</h3><ul>");
+        for grant in &live.hand_grants {
+            let _ = write!(
+                html,
+                "<li>{} may view {} hand from epoch {}</li>",
+                escape_html(grant.recipient.as_str()),
+                escape_html(grant.player.as_str()),
+                grant.grant_epoch
+            );
+        }
+        html.push_str("</ul></section>");
+    }
+
+    if !live.controls.is_empty() {
+        html.push_str(
+            "<section aria-label=\"Typed commands\"><h3>Commands</h3><div class=\"actions\">",
+        );
+        let prefix = command_endpoint.trim_end_matches('/');
+        for control in &live.controls {
+            let endpoint = format!("{prefix}/{}", control.id);
+            let _ = write!(
+                html,
+                "<button data-command-id=\"{}\" data-on:click=\"@post('{}')\">{}</button>",
+                escape_html(&control.id),
+                escape_html(&endpoint),
+                escape_html(&control.label)
+            );
+        }
+        html.push_str("</div></section>");
+    }
+    if let Some(href) = &live.transcript_href {
+        let _ = write!(
+            html,
+            "<p><a href=\"{}\" download>Export canonical transcript</a></p>",
+            escape_html(href)
+        );
+    }
+    if let Some(href) = &live.replay_href {
+        let _ = write!(
+            html,
+            "<p><a href=\"{}\">Replay exact projection history</a></p>",
+            escape_html(href)
+        );
+    }
+    html.push_str(&render_semantic_html_with_root_id(
+        &live.projection,
+        &format!("{root_id}-projection"),
+    ));
+    html.push_str("</article>");
+    html
+}
+
 fn render_hand(html: &mut String, heading: &str, hand: &HandPresentation) {
     let _ = write!(
         html,
@@ -149,11 +250,12 @@ fn escape_html(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use poche_protocol::{ProjectionPayload, RoomPhase};
+    use poche_protocol::{InviteProof, ProjectionPayload, RoomPhase};
 
     use crate::{
-        ChatPresentation, ConnectionPresentation, NoticePresentation, PresentationInput,
-        PresentationModel, render_semantic_html, render_semantic_html_with_root_id,
+        ChatPresentation, ConnectionPresentation, LiveClientInput, LiveClientPresentation,
+        NoticePresentation, PresentationInput, PresentationModel, render_live_semantic_html,
+        render_semantic_html, render_semantic_html_with_root_id,
     };
 
     #[test]
@@ -192,5 +294,47 @@ mod tests {
         assert!(html.contains("&lt;script&gt;alert(&#39;no&#39;)&lt;/script&gt;"));
         assert!(html.contains("&quot;quoted&quot;"));
         assert!(!html.contains("<script>"));
+    }
+
+    #[test]
+    fn live_html_exposes_only_control_ids_not_typed_payload_secrets() {
+        let projection = PresentationModel::from_input(PresentationInput {
+            viewer: "candidate".to_owned(),
+            projection: ProjectionPayload {
+                phase: RoomPhase::Lobby,
+                members: Vec::new(),
+                public_game_state: None,
+                own_hand: None,
+                granted_hands: Vec::new(),
+                public_history: Vec::new(),
+            },
+            legal_actions: Vec::new(),
+            connection: ConnectionPresentation::Connected,
+            countdown: None,
+            chat: Vec::new(),
+            notices: Vec::new(),
+        });
+        let live = LiveClientPresentation::from_input(
+            projection,
+            LiveClientInput {
+                room_id: "room".to_owned(),
+                room_code: Some("DISPLAY-CODE".to_owned()),
+                join_proof: Some(InviteProof::new("runtime-only-secret").unwrap()),
+                seat_count: 2,
+                chat_draft: None,
+                countdown_command: None,
+                next_grant_epoch: 1,
+                hand_requests: Vec::new(),
+                hand_grants: Vec::new(),
+                transcript_href: None,
+                replay_href: None,
+            },
+        );
+
+        let html = render_live_semantic_html(&live, "live", "/command/candidate");
+        assert!(html.contains("Join with room code"));
+        assert!(html.contains("DISPLAY-CODE"));
+        assert!(html.contains("data-command-id=\"join-room\""));
+        assert!(!html.contains("runtime-only-secret"));
     }
 }

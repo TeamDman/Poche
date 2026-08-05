@@ -25,8 +25,12 @@ use poche_runtime::{
 use poche_session::SessionState;
 use poche_ui::{
     ConnectionPresentation, EMBEDDED_REPLAY, PresentationInput, PresentationModel, ReplayDeck,
-    render_semantic_html, render_semantic_html_with_root_id,
+    render_live_semantic_html, render_semantic_html, render_semantic_html_with_root_id,
 };
+
+mod demo;
+
+use demo::LiveDemo;
 
 const INDEX: &str = include_str!("../web/index.html");
 
@@ -34,6 +38,7 @@ const INDEX: &str = include_str!("../web/index.html");
 struct AppState {
     replay: Arc<ReplayDeck>,
     authority: Arc<Mutex<AuthorityHost>>,
+    live: Arc<Mutex<LiveDemo>>,
 }
 
 struct AuthorityHost {
@@ -129,11 +134,26 @@ fn router(state: AppState) -> Router {
         .route("/view/{viewer}/{ordinal}", get(view_checkpoint))
         .route("/authority/create", post(authority_create))
         .route("/authority/reset", post(authority_reset))
+        .route("/live/{viewer}", get(live_view))
+        .route("/live/{viewer}/command/{control}", post(live_command))
+        .route("/live/setup/{stage}", post(live_setup))
+        .route("/live/clock/advance", post(live_advance_clock))
+        .route("/live/{viewer}/disconnect", post(live_disconnect))
+        .route("/live/{viewer}/transcript.ndjson", get(live_transcript))
+        .route("/live/{viewer}/replay", get(live_replay))
         .with_state(state)
 }
 
-async fn index() -> Html<&'static str> {
-    Html(INDEX)
+async fn index(State(state): State<AppState>) -> Response {
+    let live = state
+        .live
+        .lock()
+        .map_err(|_| "live authority lock poisoned".to_owned())
+        .and_then(|demo| live_html(&demo, "host"));
+    match live {
+        Ok(live) => Html(INDEX.replace("__LIVE_CLIENT__", &live)).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+    }
 }
 
 async fn view_checkpoint(
@@ -190,6 +210,102 @@ async fn authority_reset(State(state): State<AppState>) -> Response {
     }
 }
 
+async fn live_view(State(state): State<AppState>, Path(viewer): Path<String>) -> Response {
+    with_live(&state, |demo| live_html(demo, &viewer))
+}
+
+async fn live_command(
+    State(state): State<AppState>,
+    Path((viewer, control)): Path<(String, String)>,
+) -> Response {
+    with_live(&state, |demo| {
+        demo.control(&viewer, &control)?;
+        live_html(demo, &viewer)
+    })
+}
+
+async fn live_setup(State(state): State<AppState>, Path(scenario): Path<String>) -> Response {
+    with_live(&state, |demo| {
+        demo.setup(&scenario)?;
+        live_html(demo, "host")
+    })
+}
+
+async fn live_advance_clock(State(state): State<AppState>) -> Response {
+    with_live(&state, |demo| {
+        demo.advance_clock()?;
+        live_html(demo, "host")
+    })
+}
+
+async fn live_disconnect(State(state): State<AppState>, Path(viewer): Path<String>) -> Response {
+    with_live(&state, |demo| {
+        demo.disconnect(&viewer)?;
+        live_html(demo, &viewer)
+    })
+}
+
+async fn live_transcript(State(state): State<AppState>, Path(viewer): Path<String>) -> Response {
+    let transcript = state
+        .live
+        .lock()
+        .map_err(|_| "live authority lock poisoned".to_owned())
+        .and_then(|demo| {
+            demo.transcript(&viewer)
+                .ok_or_else(|| "unknown viewer or empty transcript".to_owned())
+        });
+    match transcript {
+        Ok(transcript) => (
+            [
+                ("content-type", "application/x-ndjson; charset=utf-8"),
+                (
+                    "content-disposition",
+                    "attachment; filename=exact-projection-transcript.ndjson",
+                ),
+            ],
+            transcript,
+        )
+            .into_response(),
+        Err(error) => (StatusCode::NOT_FOUND, error).into_response(),
+    }
+}
+
+async fn live_replay(State(state): State<AppState>, Path(viewer): Path<String>) -> Response {
+    let replay = state
+        .live
+        .lock()
+        .map_err(|_| "live authority lock poisoned".to_owned())
+        .and_then(|demo| demo.replay_html(&viewer));
+    match replay {
+        Ok(replay) => Html(replay).into_response(),
+        Err(error) => (StatusCode::NOT_FOUND, error).into_response(),
+    }
+}
+
+fn with_live(
+    state: &AppState,
+    operation: impl FnOnce(&mut LiveDemo) -> Result<String, String>,
+) -> Response {
+    let result = state
+        .live
+        .lock()
+        .map_err(|_| "live authority lock poisoned".to_owned())
+        .and_then(|mut demo| operation(&mut demo));
+    match result {
+        Ok(elements) => patch_response(elements),
+        Err(error) => (StatusCode::CONFLICT, error).into_response(),
+    }
+}
+
+fn live_html(demo: &LiveDemo, viewer: &str) -> Result<String, String> {
+    let live = demo.view(viewer)?;
+    Ok(render_live_semantic_html(
+        &live,
+        "live-client",
+        &format!("/live/{viewer}/command"),
+    ))
+}
+
 fn patch_response(elements: String) -> Response {
     let event = PatchElements::new(elements).write_as_axum_sse_event();
     Sse::new(stream::once(async move { Ok::<_, Infallible>(event) })).into_response()
@@ -203,6 +319,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         replay: Arc::new(ReplayDeck::from_json(EMBEDDED_REPLAY)?),
         authority: Arc::new(Mutex::new(AuthorityHost::new()?)),
+        live: Arc::new(Mutex::new(LiveDemo::new()?)),
     };
     let listener = tokio::net::TcpListener::bind(address).await?;
     println!(
@@ -215,7 +332,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthorityHost, EMBEDDED_REPLAY, INDEX, ReplayDeck};
+    use super::{AuthorityHost, EMBEDDED_REPLAY, INDEX, LiveDemo, ReplayDeck, live_html};
     use poche_protocol::RoomPhase;
     use poche_ui::render_semantic_html;
 
@@ -257,5 +374,17 @@ mod tests {
         assert!(INDEX.contains("<button data-on:click="));
         assert!(INDEX.contains("datastar@1.0.0-RC.7/bundles/datastar.js"));
         assert!(INDEX.contains("aria-live=\"polite\""));
+        assert!(INDEX.contains("__LIVE_CLIENT__"));
+    }
+
+    #[test]
+    fn live_html_keeps_typed_payloads_and_invite_proofs_server_side() {
+        let demo = LiveDemo::new().expect("demo");
+        let alice = live_html(&demo, "alice").expect("alice live view");
+        assert!(alice.contains("POCHE-LAB-ALICE"));
+        assert!(alice.contains("data-command-id=\"join-room\""));
+        assert!(!alice.contains("InviteProof"));
+        assert!(!alice.contains("RedeemInvite"));
+        assert!(!alice.contains("CommandPayload"));
     }
 }

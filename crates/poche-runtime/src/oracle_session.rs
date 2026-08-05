@@ -2,7 +2,7 @@ use poche_environment::{
     EnvironmentAction, GameEnvironment, OracleChanceAction, OracleEnvironment, OraclePlayerAction,
     TurnOwner,
 };
-use poche_oracle_rust::{Card, DeckOrder, Game, PhaseTag, RuleViolation, Seat, Turn};
+use poche_oracle_rust::{Action, Card, DeckOrder, Game, PhaseTag, RuleViolation, Seat, Turn};
 use poche_protocol::{
     ChanceWire, GameActionWire, GamePublicStateWire, PlayedCardWire, PrincipalId, PublicGamePhase,
     PublicTurnWire,
@@ -24,6 +24,30 @@ pub enum OracleSessionGameError {
     ChanceProvenanceMismatch,
     InvalidProjection,
     Rule(RuleViolation),
+}
+
+impl<const PLAYERS: usize> OracleSessionGame<PLAYERS> {
+    /// Return the current actor's legal choices in protocol form.
+    ///
+    /// Callers must still expose these only to the exact acting player; the
+    /// authority validates any submitted action independently.
+    #[must_use]
+    pub fn legal_player_actions(&self) -> Vec<GameActionWire> {
+        let standard = Card::standard_deck();
+        self.game
+            .legal_player_actions()
+            .into_iter()
+            .filter_map(|action| match action {
+                Action::Bid { tricks, .. } => Some(GameActionWire::Bid { tricks }),
+                Action::Play { card, .. } => standard
+                    .iter()
+                    .position(|candidate| *candidate == card)
+                    .and_then(|index| u8::try_from(index).ok())
+                    .map(|card| GameActionWire::Play { card }),
+                Action::Deal(_) | Action::SettleRound => None,
+            })
+            .collect()
+    }
 }
 
 impl<const PLAYERS: usize> SessionGame for OracleSessionGame<PLAYERS> {
@@ -244,6 +268,7 @@ mod tests {
             })
             .unwrap();
         assert!(matches!(dealt.game.turn(), GameTurn::Player(_)));
+        assert!(!dealt.game.legal_player_actions().is_empty());
         assert!(!dealt.terminal);
     }
 

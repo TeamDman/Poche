@@ -1334,7 +1334,7 @@ WASM, and no implicit companion. The raw WSS-enabled Veilid package is
 `wasm-opt`. Exact commands, timings, sizes, exposure, and failure evidence are
 tracked in `docs/rendering-topology-spike.md`.
 
-### [ ] 6.2 Implement deterministic room and game rendering
+### [x] 6.2 Implement deterministic room and game rendering
 
 Add the selected egui-first client renderer and, when Task 6.1 selects the
 Datastar topology, its browser/server adapter. Minimum surfaces:
@@ -1348,9 +1348,23 @@ same projection/event stream yields the same presentation model; native egui,
 egui/WASM, or Datastar rendering differences never change semantics; inaccessible
 or unauthorized controls are not the only enforcement layer.
 
-**Completion notes:** Not started.
+**Completion notes:** Completed 2026-08-05. `poche-ui` now has a pure
+`LiveClientPresentation` over the existing exact-recipient
+`PresentationModel`; its opaque IDs retain typed `CommandPayload`s server-side
+and resolve against a fresh presentation. Shared egui widgets and semantic HTML
+cover identity, codes, members/seats/readiness, logical countdown, own/granted
+hands, table/legal actions/scores/pot, pause/resume, chat, grants, reconnect,
+policy notices, transcript export, and replay without reading authority state.
+`poche-web-spike::LiveDemo` drives a real
+`InProcessAuthority<OracleSessionGame<2>>` through canonical NDJSON rather than
+mutating fixture state. Invented/stale IDs fail closed, and a direct typed
+spectator `Pause` bypass test is still denied `D-NOT-SEATED` by the authority.
+`cargo test -p poche-web-spike -p poche-ui -p poche-runtime` and strict focused
+Clippy passed; browser interaction submitted a real legal `bid 0` and observed
+the projected actor/bid transition. Exact commands and evidence are in
+`docs/live-client.md`.
 
-### [ ] 6.3 Verify multi-view privacy and interaction behavior
+### [x] 6.3 Verify multi-view privacy and interaction behavior
 
 Run client/browser tests with host, two players, an ungranted spectator, and a
 granted then revoked spectator. Inspect rendered text/widgets/DOM, client state,
@@ -1361,7 +1375,18 @@ selected topology's threat model.
 pause, chat, and reconnect are usable; revocation changes future spectator view;
 no hidden hand is present in unauthorized client state.
 
-**Completion notes:** Not started.
+**Completion notes:** Completed 2026-08-05. Focused tests decode every
+spectator network projection before a grant and after revoke and require
+`own_hand = None` plus empty `granted_hands`; the authorized interval contains
+exactly Alice's cards, and the recipient transcript contains no invitation
+value. The release server was exercised in the in-app browser with host, Alice,
+Bob, and spectator. DOM snapshots proved ungranted -> Alice `3C` granted ->
+future view revoked, a visible/abortable logical countdown, Alice pause -> Bob
+resume, attributed spectator chat, transport loss -> typed reconnect, legal
+game action, and exact-recipient replay. Historical authorized projections are
+retained honestly—revocation is future-only, not erasure. The downloadable
+13-line test transcript used `application/x-ndjson` and exposed neither a
+`POCHE-LAB` code nor command/secret material. See `docs/live-client.md`.
 
 ### [ ] 6.4 Publish only deployment modes proven by Task 6.1
 

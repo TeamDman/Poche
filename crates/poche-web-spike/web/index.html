@@ -51,12 +51,46 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
     </style>
   </head>
   <body>
-    <h1>Poche Datastar topology spike</h1>
+    <h1>Poche deterministic live client</h1>
     <p>
       This ordinary HTML client receives only viewer-scoped projections. The
-      process serving this page is colocated with the room authority in this
-      spike; it is not a third-party projection relay.
+      self-hosted process serving this page is colocated with the room authority;
+      it is not a third-party projection relay. Buttons carry opaque control IDs,
+      while typed commands and policy enforcement remain at the authority.
     </p>
+
+    <nav aria-label="Live viewer identity">
+      <button data-on:click="@get('/live/host')">Host view</button>
+      <button data-on:click="@get('/live/alice')">Alice player view</button>
+      <button data-on:click="@get('/live/bob')">Bob player view</button>
+      <button data-on:click="@get('/live/spectator')">Spectator view</button>
+    </nav>
+
+    <section aria-labelledby="scenario-heading">
+      <h2 id="scenario-heading">Deterministic scenario controls</h2>
+      <p>
+        These test-harness controls reset one local authority and use the same
+        typed command path as the live controls below.
+      </p>
+      <div class="actions">
+        <button data-on:click="@post('/live/setup/pending')">Setup pending</button>
+        <button data-on:click="@post('/live/setup/lobby')">Setup lobby</button>
+        <button data-on:click="@post('/live/setup/countdown')">Setup countdown</button>
+        <button data-on:click="@post('/live/setup/running')">Setup running</button>
+        <button data-on:click="@post('/live/clock/advance')">Advance authority clock</button>
+      </div>
+      <div class="actions">
+        <button data-on:click="@post('/live/host/disconnect')">Disconnect host</button>
+        <button data-on:click="@post('/live/alice/disconnect')">Disconnect Alice</button>
+        <button data-on:click="@post('/live/bob/disconnect')">Disconnect Bob</button>
+        <button data-on:click="@post('/live/spectator/disconnect')">Disconnect spectator</button>
+      </div>
+    </section>
+
+    __LIVE_CLIENT__
+
+    <details>
+      <summary>Topology-spike evidence fixtures</summary>
 
     <nav aria-label="Projection checkpoints">
       <button data-on:click="@get('/view/alice/0')">Alice player view</button>
@@ -85,5 +119,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
       <h2>No fixture projection selected</h2>
       <p>Select an exact viewer checkpoint above.</p>
     </main>
+    </details>
   </body>
 </html>

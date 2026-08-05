@@ -3,11 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use eframe::egui;
-use poche_protocol::{GameActionWire, RoomPhase};
+use poche_protocol::{CommandPayload, GameActionWire, RoomPhase};
 
 use crate::{
-    ConnectionPresentation, EMBEDDED_REPLAY, HandPresentation, PresentationModel, ReplayDeck,
-    action_label,
+    ConnectionPresentation, EMBEDDED_REPLAY, HandPresentation, LiveClientPresentation,
+    PresentationModel, ReplayDeck, action_label,
 };
 
 /// Read-only fixture client used to prove the shared native/web egui path.
@@ -123,6 +123,17 @@ fn render_projection(ui: &mut egui::Ui, model: &PresentationModel) {
         });
     });
 
+    if let Some(countdown) = model.countdown {
+        ui.separator();
+        ui.heading("Countdown");
+        ui.label(format!(
+            "authority tick {} · deadline {} · {} ticks remaining",
+            countdown.logical_now,
+            countdown.deadline_tick,
+            countdown.remaining()
+        ));
+    }
+
     if let Some(table) = &model.table {
         ui.separator();
         ui.heading("Public table");
@@ -172,6 +183,77 @@ fn render_projection(ui: &mut egui::Ui, model: &PresentationModel) {
             }
         });
     }
+
+    if !model.chat.is_empty() {
+        ui.separator();
+        ui.collapsing("Chat", |ui| {
+            for message in &model.chat {
+                ui.label(format!("{}: {}", message.principal, message.text));
+            }
+        });
+    }
+
+    for notice in &model.notices {
+        ui.label(format!("{}: {}", notice.reason_code, notice.message));
+    }
+}
+
+/// Render the complete live-client shell and return at most one typed command.
+///
+/// The caller submits the returned payload through the normal authority path;
+/// rendering never mutates session or game state directly.
+#[must_use]
+pub fn render_live_client(
+    ui: &mut egui::Ui,
+    live: &LiveClientPresentation,
+) -> Option<CommandPayload> {
+    ui.heading("Live room client");
+    ui.label(format!("identity: {}", live.projection.viewer));
+    ui.label(format!("room: {}", live.room_id));
+    if let Some(code) = &live.room_code {
+        ui.label(format!("join code: {code}"));
+    }
+    if !live.hand_requests.is_empty() {
+        ui.collapsing("Pending hand requests", |ui| {
+            for request in &live.hand_requests {
+                ui.label(format!(
+                    "{} requests {} hand ({})",
+                    request.recipient.as_str(),
+                    request.player.as_str(),
+                    request.request_id.as_str()
+                ));
+            }
+        });
+    }
+    if !live.hand_grants.is_empty() {
+        ui.collapsing("Active hand grants", |ui| {
+            for grant in &live.hand_grants {
+                ui.label(format!(
+                    "{} may view {} hand from epoch {}",
+                    grant.recipient.as_str(),
+                    grant.player.as_str(),
+                    grant.grant_epoch
+                ));
+            }
+        });
+    }
+    if let Some(href) = &live.transcript_href {
+        ui.hyperlink_to("Export canonical transcript", href);
+    }
+    if let Some(href) = &live.replay_href {
+        ui.hyperlink_to("Replay exact projection history", href);
+    }
+    let mut selected = None;
+    ui.horizontal_wrapped(|ui| {
+        for control in &live.controls {
+            if ui.button(&control.label).clicked() && selected.is_none() {
+                selected = Some(control.payload.clone());
+            }
+        }
+    });
+    ui.separator();
+    render_projection(ui, &live.projection);
+    selected
 }
 
 fn render_hand(ui: &mut egui::Ui, heading: &str, hand: &HandPresentation) {
