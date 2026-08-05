@@ -44,21 +44,29 @@ and uses `app_call` for invite redemption. Both request and response are capped
 at Veilid's 32768-byte limit. DHT values are discovery hints, never command or
 event authority.
 
-Pure acceptance currently proves canonical code round-trip, mutation and
+Pure acceptance proves canonical code round-trip, mutation and
 expiry rejection, strict/bounded/secret-free record encoding, host/network
 binding, stable-key membership creation, and invalid/replayed/cross-room/
-revoked denial. The released adapter builds with denied warnings.
+revoked denial. The released adapter builds with denied warnings. The opt-in
+public-network acceptance additionally used two distinct native Veilid nodes:
+the host created the encrypted DHT record and private route, and the client
+opened and validated the record, imported the route, redeemed the one-time
+code over `AppCall`, and became a durable stable-key member. The complete
+game/lifecycle run reused the resulting transport without exposing invite
+material in the DHT value, structured output, or diagnostics.
 
-The remaining Task 5.2 gate is a real two-native-node execution. A loopback or
-ordinary LAN address belongs to Veilid's `LocalNetwork` routing domain, while
-0.5.7 private-route allocation requires a ready `PublicInternet` routing
-domain. The released `virtual-network` configuration is not an executable
-substitute: the configuration is not consumed by core networking and the
-published virtual-router server still leaves machine allocation unimplemented.
-Consequently Poche does not label the codec/unit evidence as a native transport
-pass. Task 5.6 will provide an isolated routable local topology or require an
-explicit opt-in public-network run; ordinary unit tests never contact the
-public Veilid network.
+An isolated local probe records an upstream topology limitation instead of
+mislabeling local bytes as Veilid success. A loopback or ordinary LAN address
+belongs to Veilid's `LocalNetwork` routing domain, while 0.5.7 private-route
+allocation requires a ready `PublicInternet` routing domain. Released direct
+bootstrap also excludes `LocalNetwork` peers, and the released
+`virtual-network` configuration is not an executable substitute: core does not
+consume the configuration and the published virtual-router server leaves
+machine allocation unimplemented. The diagnostic-only probe enables
+`footgun-nodeid-target` solely to make two isolated nodes start; it obtains zero
+peers and deliberately performs no application send. Actual byte-delivery
+acceptance therefore requires the separately guarded public-network command.
+Ordinary unit, CI, and RL workflows never contact the public Veilid network.
 
 Evidence commands:
 
@@ -66,4 +74,11 @@ Evidence commands:
 cargo test -p poche-veilid
 cargo test -p poche-veilid --features veilid
 cargo clippy -p poche-veilid --all-targets --features veilid -- -D warnings
+cargo run -p poche-xtask --offline -- transport test veilid-local
+$env:POCHE_ALLOW_VEILID_PUBLIC_TEST='I_ACCEPT_PUBLIC_NETWORK_TRAFFIC'
+cargo run -p poche-xtask --offline -- transport test veilid-public
 ```
+
+See `docs/veilid-native-acceptance.md` and
+`evidence/veilid-native-acceptance.json` for measured results and the opt-in
+boundary.

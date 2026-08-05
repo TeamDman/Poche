@@ -7,8 +7,11 @@ revision, and host-signed result remain the semantic boundary.
 
 ## Wire contract
 
-`TransportCommandCall` carries one complete stable-key-signed
-`CommandEnvelope`. `TransportCommandReply` binds the command ID, disposition,
+Transport schema v2 `TransportCommandCall` carries the stable application's
+public identity plus one complete stable-key-signed `CommandEnvelope`; decoding
+revalidates the signature before the authority sees the command. A node ID or
+route is never accepted as the caller. `TransportCommandReply` binds the
+command ID, disposition,
 base/current revisions, optional denial, and authority-ordered event frames.
 Public errors may follow the events. Viewer state may appear only as one
 host-signed exact-recipient `EncryptedProjectionPacket`; plaintext projection
@@ -67,22 +70,31 @@ Chat, pause/unpause, countdown, and game commands all use the same
 `CommandEnvelope`, application signature, authorization, decision, revision,
 and reply path. There is no transport-only chat or game shortcut.
 
-## Current evidence boundary
+## Native acceptance boundary
 
 ```powershell
 cargo test -p poche-veilid --features veilid --offline
 cargo clippy -p poche-veilid --all-targets --features veilid --offline -- -D warnings
+cargo run -p poche-xtask --offline -- multiplayer smoke --transport veilid-local
+$env:POCHE_ALLOW_VEILID_PUBLIC_TEST='I_ACCEPT_PUBLIC_NETWORK_TRAFFIC'
+cargo run -p poche-xtask --offline -- multiplayer smoke --transport veilid-public
 ```
 
 These checks exercise strict call/reply codecs, exact-command retry binding,
 every retry category, released 0.5.7 error mapping, watch/route hint semantics,
 countdown display estimates, and the compiled AppCall/watch APIs. Existing
 session/runtime tests independently prove duplicate idempotence, authorization,
-authority-clock countdown, pause, chat, and full-game behavior.
+authority-clock countdown, pause, chat, and full-game behavior. The guarded
+public smoke then carries the complete scenario between distinct native Veilid
+nodes over DHT discovery, private routes, and `AppCall`: 172 calls produced 170
+contiguous signed event frames and final revision 171, with exact duplicate
+handling, denial while paused, route refresh/reconnect, 13 rounds, chat, and
+encrypted spectator grant/revocation ending at score 40-20.
 
-The Task 5.4 checkbox remains open until the complete Phase 4 scenario crosses
-a local multi-node Veilid harness. Veilid 0.5.7 private-route allocation
-requires `PublicInternet`; ordinary loopback/LAN nodes do not satisfy it, and
-the released virtual-network implementation is incomplete. The opt-in native
-topology and separate-process evidence are therefore retained for Task 5.6
-rather than relabeling the wire/unit harness as a native pass.
+The local command intentionally combines the network-free semantic/formal suite
+with a reproducible released-0.5.7 topology diagnostic. It does not claim
+private-route delivery because released local bootstrap excludes LocalNetwork
+peers while private routes require PublicInternet readiness. Actual transport
+delivery is owned by the explicit public opt-in command; it is excluded from
+ordinary CI and RL. Full measurements and limitations are in
+`docs/veilid-native-acceptance.md`.

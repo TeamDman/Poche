@@ -11,6 +11,22 @@ publish = false
 [features]
 default = []
 veilid = ["dep:veilid-core"]
+veilid-local-test = [
+    "veilid",
+    "veilid-core/footgun-nodeid-target",
+    "dep:tempfile",
+    "dep:tokio",
+]
+veilid-public-test = [
+    "veilid",
+    "insecure-development",
+    "dep:poche-environment",
+    "dep:poche-oracle-rust",
+    "dep:poche-runtime",
+    "dep:poche-session",
+    "dep:tempfile",
+    "dep:tokio",
+]
 insecure-development = []
 
 [dependencies]
@@ -19,9 +35,15 @@ curve25519-dalek.workspace = true
 data-encoding.workspace = true
 ed25519-dalek.workspace = true
 getrandom.workspace = true
+poche-environment = { path = "../poche-environment", optional = true }
+poche-oracle-rust = { path = "../poche-oracle-rust", optional = true }
 poche-protocol = { path = "../poche-protocol" }
+poche-runtime = { path = "../poche-runtime", optional = true }
+poche-session = { path = "../poche-session", optional = true }
 serde.workspace = true
 serde_json.workspace = true
+tempfile = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 veilid-core = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -29,6 +51,21 @@ poche-runtime = { path = "../poche-runtime" }
 poche-session = { path = "../poche-session" }
 tempfile.workspace = true
 tokio.workspace = true
+
+[[bin]]
+name = "poche-veilid-local-probe"
+path = "src/bin/local_probe.rs"
+required-features = ["veilid-local-test"]
+
+[[bin]]
+name = "poche-veilid-public-probe"
+path = "src/bin/public_probe.rs"
+required-features = ["veilid-public-test"]
+
+[[bin]]
+name = "poche-veilid-native-smoke"
+path = "src/bin/native_smoke.rs"
+required-features = ["veilid-public-test"]
 
 [lints]
 workspace = true

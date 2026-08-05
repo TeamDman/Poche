@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-08-05",
+  "veilid_version": "0.5.7",
+  "local": {
+    "public_network_used": false,
+    "transport_command": "cargo run -p poche-xtask --offline -- transport test veilid-local",
+    "multiplayer_command": "cargo run -p poche-xtask --offline -- multiplayer smoke --transport veilid-local",
+    "veilid_unit_tests": 26,
+    "compile_fail_docs": 2,
+    "session_coverage_rows": 88,
+    "formal_disagreements": 0,
+    "lifecycle_inputs": 178,
+    "lifecycle_final_revision": 177,
+    "lifecycle_deals": 13,
+    "lifecycle_transcript_sha256": "ab90e615248277543885458ace964941188296672157219461767be0fd12a075",
+    "lifecycle_public_sha256": "be43746c4341750d73a4100cd6a5c80c3752501399e16252c2211650b589e9dd",
+    "isolated_probe": {
+      "nodes": 2,
+      "peers": 0,
+      "public_ready": false,
+      "local_ready": false,
+      "private_routes": false,
+      "result": "expected released-0.5.7 topology limitation"
+    }
+  },
+  "public_transport": {
+    "explicit_opt_in": "POCHE_ALLOW_VEILID_PUBLIC_TEST=I_ACCEPT_PUBLIC_NETWORK_TRAFFIC",
+    "command": "cargo run -p poche-xtask --offline -- transport test veilid-public",
+    "nodes": 2,
+    "host_peers": 64,
+    "client_peers": 52,
+    "dht": true,
+    "private_route": true,
+    "app_call": true
+  },
+  "public_lifecycle": {
+    "command": "cargo run -p poche-xtask --offline -- multiplayer smoke --transport veilid-public",
+    "wall_seconds_including_compilation": 167.5,
+    "transport": "veilid-0.5.7-public-dht-private-route-app-call",
+    "calls": 172,
+    "event_frames": 170,
+    "duplicate_replies": 1,
+    "denied_replies": 1,
+    "reconnects": 1,
+    "final_revision": 171,
+    "final_scores": [40, 20],
+    "chat_messages": 3,
+    "spectator_grant_verified": true,
+    "spectator_revoke_verified": true
+  },
+  "limitations": [
+    "released 0.5.7 isolated LocalNetwork bootstrap does not provide PublicInternet private-route readiness",
+    "public commands are manual and explicitly environment-guarded",
+    "acceptance uses temporary insecure-development protected stores",
+    "native protocol acceptance is not a packaged player client",
+    "browser-only HTTPS/WSS Veilid remains unsupported"
+  ]
+}

@@ -16,6 +16,8 @@ fixtures and evidence.
   browser egui/WASM fixture; no room authority or network
 - [Deployment-mode matrix](docs/deployment-modes.md) — native/static,
   browser-only Veilid, and self-hosted Datastar status without overclaiming
+- [Native Veilid acceptance](docs/veilid-native-acceptance.md) — isolated-local
+  limitation and opt-in public DHT/private-route lifecycle evidence
 - [Deterministic live-client evidence](docs/live-client.md)
 - [Publication and format decision](docs/pages-publication.md)
 
@@ -36,10 +38,11 @@ outbound-relay HTTPS topology. No companion application is implied.
 The repository includes a native egui replay and a host-colocated
 Axum/Datastar deterministic authority demo. The latter is inspectable and
 container-buildable, but its named viewer routes, static development invite
-codes, and in-memory state are not authenticated production multiplayer. A
-native live Veilid client remains pending the separate Task 5.6 acceptance
-gate. See [the deployment-mode matrix](docs/deployment-modes.md) before exposing
-any process outside loopback.
+codes, and in-memory state are not authenticated production multiplayer. The
+native Veilid protocol has passed guarded two-node DHT/private-route lifecycle
+acceptance, but no packaged end-user client is released. See [the deployment-
+mode matrix](docs/deployment-modes.md) before exposing any process outside
+loopback.
 
 ```pwsh
 cargo run --release -p poche-web-spike

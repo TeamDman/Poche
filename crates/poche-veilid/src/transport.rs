@@ -8,9 +8,9 @@ use poche_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::EncryptedProjectionPacket;
+use crate::{ApplicationPublicIdentity, EncryptedProjectionPacket, verify_command_signature};
 
-const TRANSPORT_SCHEMA_VERSION: u16 = 1;
+const TRANSPORT_SCHEMA_VERSION: u16 = 2;
 const MAX_TRANSPORT_CALL_BYTES: usize = 30_000;
 
 /// Stable transport failures used by retry policy without leaking Veilid
@@ -55,6 +55,7 @@ pub enum TransportWireError {
 #[serde(deny_unknown_fields)]
 pub struct TransportCommandCall {
     pub schema_version: u16,
+    pub identity: ApplicationPublicIdentity,
     pub command: CommandEnvelope,
 }
 
@@ -64,10 +65,16 @@ impl TransportCommandCall {
     /// # Errors
     ///
     /// Rejects malformed command envelopes before network use.
-    pub fn new(command: CommandEnvelope) -> Result<Self, TransportWireError> {
+    pub fn new(
+        identity: ApplicationPublicIdentity,
+        command: CommandEnvelope,
+    ) -> Result<Self, TransportWireError> {
         verified_command_semantic_hash(&command).map_err(|_| TransportWireError::InvalidCommand)?;
+        verify_command_signature(&command, &identity)
+            .map_err(|_| TransportWireError::InvalidCommand)?;
         Ok(Self {
             schema_version: TRANSPORT_SCHEMA_VERSION,
+            identity,
             command,
         })
     }
@@ -112,7 +119,8 @@ impl TransportCommandCall {
             return Err(TransportWireError::InvalidCommand);
         }
         verified_command_semantic_hash(&self.command)
-            .map(|_| ())
+            .map_err(|_| TransportWireError::InvalidCommand)?;
+        verify_command_signature(&self.command, &self.identity)
             .map_err(|_| TransportWireError::InvalidCommand)
     }
 }
@@ -405,10 +413,30 @@ fn retry_command_hash(command: &CommandEnvelope) -> Result<SemanticHash, Transpo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        ApplicationIdentity, ExplicitInsecureDevelopment, IdentityStoragePolicy,
+        InsecureMemoryIdentityStore,
+    };
     use poche_protocol::{
         CommandPayload, CorrelationId, PROTOCOL_VERSION_V1, PrincipalId, RoomId,
         SIGNATURE_DOMAIN_V1, SignatureAlgorithm, SignatureBytes, SignatureIntent,
     };
+    use std::{
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+
+    fn block_on<T>(future: impl Future<Output = T>) -> T {
+        let mut future = pin!(future);
+        let mut context = Context::from_waker(Waker::noop());
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
 
     fn command() -> CommandEnvelope {
         let principal = PrincipalId::new("transport-principal").unwrap();
@@ -433,9 +461,42 @@ mod tests {
         .attach_signature(SignatureBytes::new("0".repeat(128)).unwrap())
     }
 
+    fn cryptographic_call() -> TransportCommandCall {
+        let store = InsecureMemoryIdentityStore::new(
+            ExplicitInsecureDevelopment::AcknowledgeSecretsAreNotProtected,
+        );
+        let identity = block_on(ApplicationIdentity::load_or_create(
+            &store,
+            IdentityStoragePolicy::AllowExplicitInsecure(
+                ExplicitInsecureDevelopment::AcknowledgeSecretsAreNotProtected,
+            ),
+        ))
+        .unwrap();
+        let public = identity.public();
+        let unsigned = poche_protocol::UnsignedCommandEnvelope {
+            protocol_version: PROTOCOL_VERSION_V1,
+            room_id: RoomId::new("transport-room").unwrap(),
+            session_epoch: 1,
+            command_id: CommandId::new("transport-command").unwrap(),
+            principal_id: public.principal_id.clone(),
+            expected_revision: 7,
+            correlation_id: CorrelationId::new("transport-correlation").unwrap(),
+            causation_id: None,
+            payload: CommandPayload::Chat {
+                text: "signed transport".to_owned(),
+            },
+            signature_intent: SignatureIntent {
+                domain_version: SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: public.principal_id.clone(),
+            },
+        };
+        TransportCommandCall::new(public, identity.sign_command(unsigned).unwrap()).unwrap()
+    }
+
     #[test]
     fn command_call_is_strict_canonical_and_bounded() {
-        let call = TransportCommandCall::new(command()).unwrap();
+        let call = cryptographic_call();
         let encoded = call.encode().unwrap();
         assert_eq!(TransportCommandCall::decode(&encoded).unwrap(), call);
 
@@ -443,8 +504,8 @@ mod tests {
         noncanonical.extend_from_slice(&encoded);
         assert!(TransportCommandCall::decode(&noncanonical).is_err());
         let unknown = String::from_utf8(encoded).unwrap().replace(
-            "{\"schema_version\":1,",
-            "{\"unknown\":0,\"schema_version\":1,",
+            "{\"schema_version\":2,",
+            "{\"unknown\":0,\"schema_version\":2,",
         );
         assert_eq!(
             TransportCommandCall::decode(unknown.as_bytes()),

@@ -464,6 +464,16 @@ pub struct AuthorityOutcome {
     pub revision: u64,
 }
 
+/// One newly committed pure event retained for network/replay adapters.
+///
+/// The journal is authoritative revision order, not a transport delivery
+/// queue. Duplicate commands do not append a second copy.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommittedAuthorityEvent<G> {
+    pub revision: u64,
+    pub event: SessionEvent<G>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum InProcessAuthorityError<E> {
     Transport(InProcessTransportError),
@@ -479,6 +489,7 @@ pub struct InProcessAuthority<G: SessionGame> {
     pub transport: InProcessTransport,
     chat_tail: ChatTail,
     next_delivery: u64,
+    committed_events: Vec<CommittedAuthorityEvent<G>>,
 }
 
 impl<G: SessionGame> InProcessAuthority<G> {
@@ -503,6 +514,7 @@ impl<G: SessionGame> InProcessAuthority<G> {
             transport,
             chat_tail: ChatTail::new(chat_capacity),
             next_delivery: 0,
+            committed_events: Vec::new(),
         }
     }
 
@@ -510,6 +522,19 @@ impl<G: SessionGame> InProcessAuthority<G> {
     #[must_use]
     pub const fn chat_tail(&self) -> &ChatTail {
         &self.chat_tail
+    }
+
+    /// Return the gap-free committed event tail strictly after `revision`.
+    ///
+    /// Network adapters use this to construct signed protocol events after
+    /// invoking the same reducer as the loopback runtime.
+    #[must_use]
+    pub fn committed_events_after(&self, revision: u64) -> Vec<CommittedAuthorityEvent<G>> {
+        self.committed_events
+            .iter()
+            .filter(|entry| entry.revision > revision)
+            .cloned()
+            .collect()
     }
 
     /// Process at most one authenticated transport input.
@@ -673,6 +698,14 @@ impl<G: SessionGame> InProcessAuthority<G> {
         self.state = candidate;
         if !already_applied {
             for event in events {
+                self.committed_events.push(CommittedAuthorityEvent {
+                    revision: event
+                        .provenance
+                        .base_revision
+                        .saturating_add(u64::from(event.provenance.event_index))
+                        .saturating_add(1),
+                    event: event.clone(),
+                });
                 if let SessionEventKind::ChatPosted { principal, text } = &event.kind {
                     self.chat_tail.push(ChatEntry {
                         revision: event.provenance.base_revision

@@ -4134,6 +4134,8 @@ dependencies = [
  "data-encoding",
  "ed25519-dalek",
  "getrandom 0.3.4",
+ "poche-environment",
+ "poche-oracle-rust",
  "poche-protocol",
  "poche-runtime",
  "poche-session",

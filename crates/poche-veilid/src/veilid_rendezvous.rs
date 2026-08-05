@@ -343,6 +343,11 @@ impl VeilidRendezvous {
         Ok(Self { api, routing })
     }
 
+    /// Clone the initialized API handle for adjacent Veilid crypto operations.
+    pub fn api(&self) -> VeilidAPI {
+        self.api.clone()
+    }
+
     /// Allocate a current private route, create one owner-only DFLT subkey,
     /// publish the bounded record, and issue a compact invite code.
     ///

@@ -98,6 +98,7 @@ fn main() -> ExitCode {
         Some(command) if command == OsStr::new("guidance") => guidance(args),
         Some(command) if command == OsStr::new("protocol") => protocol(args),
         Some(command) if command == OsStr::new("session") => session(args),
+        Some(command) if command == OsStr::new("transport") => transport(args),
         Some(command) if command == OsStr::new("multiplayer") => multiplayer(args),
         Some(command) if command == OsStr::new("rl") => rl(args),
         Some(command) if command == OsStr::new("coverage") => coverage(args),
@@ -126,7 +127,9 @@ fn usage() {
          cargo run -p poche-xtask -- session oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- session coverage audit --all\n  \
          cargo run -p poche-xtask -- session compare all --scope lobby-micro\n  \
+         cargo run -p poche-xtask -- transport test veilid-local|veilid-public\n  \
          cargo run -p poche-xtask -- multiplayer smoke --transport in-process\n  \
+         cargo run -p poche-xtask -- multiplayer smoke --transport veilid-local|veilid-public\n  \
          cargo run -p poche-xtask -- rl spec\n  \
          cargo run -p poche-xtask -- rl episode --policy legal-random|heuristic --seed SEED\n  \
          cargo run -p poche-xtask -- rl benchmark --steps N --batch N\n  \
@@ -434,12 +437,60 @@ struct MultiplayerSmokeEvidence {
 fn multiplayer(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     if args.next().as_deref() != Some(OsStr::new("smoke"))
         || args.next().as_deref() != Some(OsStr::new("--transport"))
-        || args.next().as_deref() != Some(OsStr::new("in-process"))
-        || args.next().is_some()
     {
         usage();
         return ExitCode::from(2);
     }
+    let Some(transport) = args.next() else {
+        usage();
+        return ExitCode::from(2);
+    };
+    if args.next().is_some() {
+        usage();
+        return ExitCode::from(2);
+    }
+    if transport == OsStr::new("veilid-local") {
+        let semantic = multiplayer_in_process_smoke();
+        if semantic != ExitCode::SUCCESS {
+            return semantic;
+        }
+        let topology = run_cargo_child(&[
+            "run",
+            "-p",
+            "poche-veilid",
+            "--features",
+            "veilid-local-test",
+            "--bin",
+            "poche-veilid-local-probe",
+            "--offline",
+        ]);
+        if topology == ExitCode::SUCCESS {
+            println!(
+                "multiplayer smoke: veilid-local semantic suite passed; released 0.5.7 isolated topology limitation reproduced; use explicitly opted-in veilid-public for DHT/private-route byte delivery"
+            );
+        }
+        return topology;
+    }
+    if transport == OsStr::new("veilid-public") {
+        return run_cargo_child(&[
+            "run",
+            "-p",
+            "poche-veilid",
+            "--features",
+            "veilid-public-test",
+            "--bin",
+            "poche-veilid-native-smoke",
+            "--offline",
+        ]);
+    }
+    if transport != OsStr::new("in-process") {
+        usage();
+        return ExitCode::from(2);
+    }
+    multiplayer_in_process_smoke()
+}
+
+fn multiplayer_in_process_smoke() -> ExitCode {
     let report = match poche_runtime::run_in_process_smoke(0x5eed) {
         Ok(report) => report,
         Err(error) => {
@@ -516,6 +567,80 @@ fn multiplayer(mut args: impl Iterator<Item = OsString>) -> ExitCode {
         evidence.report.final_public_hash
     );
     ExitCode::SUCCESS
+}
+
+fn transport(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("test")) {
+        usage();
+        return ExitCode::from(2);
+    }
+    let Some(topology) = args.next() else {
+        usage();
+        return ExitCode::from(2);
+    };
+    if args.next().is_some() {
+        usage();
+        return ExitCode::from(2);
+    }
+    if topology == OsStr::new("veilid-local") {
+        let units = run_cargo_child(&[
+            "test",
+            "-p",
+            "poche-veilid",
+            "--features",
+            "veilid",
+            "--offline",
+        ]);
+        if units != ExitCode::SUCCESS {
+            return units;
+        }
+        return run_cargo_child(&[
+            "run",
+            "-p",
+            "poche-veilid",
+            "--features",
+            "veilid-local-test",
+            "--bin",
+            "poche-veilid-local-probe",
+            "--offline",
+        ]);
+    }
+    if topology == OsStr::new("veilid-public") {
+        return run_cargo_child(&[
+            "run",
+            "-p",
+            "poche-veilid",
+            "--features",
+            "veilid-public-test",
+            "--bin",
+            "poche-veilid-public-probe",
+            "--offline",
+        ]);
+    }
+    usage();
+    ExitCode::from(2)
+}
+
+fn run_cargo_child(arguments: &[&str]) -> ExitCode {
+    let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    match Command::new(cargo)
+        .current_dir(root)
+        .args(arguments)
+        .status()
+    {
+        Ok(status) if status.success() => ExitCode::SUCCESS,
+        Ok(status) => ExitCode::from(
+            status
+                .code()
+                .and_then(|code| u8::try_from(code).ok())
+                .unwrap_or(1),
+        ),
+        Err(error) => {
+            eprintln!("could not launch nested cargo command: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn session(mut args: impl Iterator<Item = OsString>) -> ExitCode {

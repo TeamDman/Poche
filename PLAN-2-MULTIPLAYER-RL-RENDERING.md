@@ -1066,7 +1066,7 @@ offline. Implementation also recorded that released 0.5.7 exposes synchronous
 protected-store methods while the newer local checkout retains the same version
 label but adds async `VeilidAPI` conveniences; Poche targets the release.
 
-### [ ] 5.2 Implement DHT rendezvous, private routes, and invite codes
+### [x] 5.2 Implement DHT rendezvous, private routes, and invite codes
 
 Create a host-owned DFLT rendezvous record containing only bounded public room
 metadata, current private-route rendezvous material (encrypted as required),
@@ -1084,20 +1084,33 @@ expired, replayed, cross-room, and revoked codes fail; successful redemption
 creates membership for the joining stable key; no invite secret is written in
 plaintext to DHT or logs.
 
-**Completion notes (implementation in progress, 2026-08-05):** Added the
+**Completion notes (complete, 2026-08-05):** Added the
 compact redacted/zeroing `p3-` room-code codec, a strict bounded one-subkey DFLT
 rendezvous schema, application-host/network/version/expiry binding, hashed
 authority-side invite verifiers, stable-key signed redemption tests, and the
 released Veilid 0.5.7 create/open/set/get/flush/private-route/`app_call`
 adapter. Codec/session acceptance rejects invalid, expired, replayed,
 cross-room, and revoked codes and scans the serialized DHT shape for structural
-absence of invite material. The checkbox remains open because this is not
-mislabelled as the required two-native-node execution: 0.5.7 private routes
-require `PublicInternet`, ordinary loopback/LAN nodes are `LocalNetwork`, and
-the released virtual-network path is incomplete (core does not consume the
-configuration and virtual-router machine allocation remains unimplemented).
-The real native execution evidence is intentionally retained for the isolated
-local topology/public-network opt-in work shared with Task 5.6.
+absence of invite material.
+
+The required real execution passed with two distinct native Veilid 0.5.7 nodes
+under the explicit public-network guard. The host created/flushed the encrypted
+DFLT record and private route; the client resolved and validated the record,
+imported the route, redeemed the one-time code by `AppCall`, and became a
+durable stable-key member. The separate transport probe reached 64 host/52
+client peers with DHT, private route, and reply all true, and the full lifecycle
+reused that construction without exposing invite material in the DHT value or
+diagnostics.
+
+The local criterion was not weakened or mislabeled: the reproducible isolated
+probe proves released 0.5.7 direct bootstrap skips `LocalNetwork` peers while
+private routes require `PublicInternet`, and the released virtual-network path
+is incomplete. It therefore records zero peers/no route as an expected upstream
+topology limit and performs no application send. Actual byte-delivery evidence
+is the manual public gate; normal tests, CI, and RL remain network-free. Exact
+commands, measurements, limitations, and machine-readable evidence are in
+`docs/veilid-native-acceptance.md` and
+`evidence/veilid-native-acceptance.json`.
 
 ### [x] 5.3 Implement membership reconnect without the original code
 
@@ -1152,7 +1165,7 @@ paths compile against their exact APIs. Actual separate-process private-route
 execution is not misreported here: it remains the explicit public/topology
 acceptance gate in Task 5.6.
 
-### [ ] 5.4 Carry commands, events, countdown, pause, and chat over Veilid
+### [x] 5.4 Carry commands, events, countdown, pause, and chat over Veilid
 
 Implement retry categories for `TryAgain`, timeout, no connection, stale route,
 watch renewal, duplicate delivery, and shutdown. Treat DHT watch notifications
@@ -1164,15 +1177,18 @@ scenario over Veilid; forced disconnect/reorder/retry does not duplicate state;
 countdown uses authority time and clients display estimates only; chat and game
 commands obey the same app authorization.
 
-**Completion notes (implementation in progress, 2026-08-05):** Added strict
+**Completion notes (complete, 2026-08-05):** Added strict
 bounded/canonical `TransportCommandCall` and `TransportCommandReply` schemas,
-including contiguous authority-event revision validation and rejection of
-invalid disposition/frame mixtures. Added `CommandRetryState`, bound to the
-command ID and full canonical signed command bytes, with explicit same-route,
+with transport schema v2 carrying and verifying the stable application's full
+public identity rather than trusting a node or route. Replies enforce
+contiguous authority-event revision validation and reject invalid
+disposition/frame mixtures. Added `CommandRetryState`, bound to the command ID
+and full canonical signed command bytes, with explicit same-route,
 validated-rendezvous refresh, shutdown, permanent-failure, and exhaustion
-outcomes for every required failure category. Added non-authoritative
-watch/route hint classifiers and a countdown display estimate that can only
-wait for the authority transition.
+outcomes for every required failure category. Added non-authoritative watch/
+route hint classifiers and a countdown display estimate that can only wait for
+the authority transition. `InProcessAuthority` now retains a committed event
+journal for exact post-revision delivery; duplicates never append twice.
 
 The released Veilid 0.5.7 adapter now keeps resolved DHT records open for
 watches; classifies `ValueChange`, dead watch, dead route, and shutdown updates
@@ -1184,13 +1200,24 @@ APIs. `docs/veilid-command-transport.md` records retry, authority, clock, and
 recovery behavior and the coverage rows for `S-AUTH-016`, `S-FAULT-002`,
 `S-FAULT-003`, and `S-FAULT-006` are updated.
 
-Evidence so far: `cargo test -p poche-veilid --features veilid --offline`
-passes 25 units plus 2 compile-fail docs, and feature-specific clippy passes
-with warnings denied. The checkbox remains open: the required complete Phase 4
-scenario has not been mislabeled as running across multiple native Veilid
-nodes. Private routes still require the Task 5.6 public/topology gate described
-under Task 5.2; ordinary loopback/LAN and the incomplete released virtual
-network cannot supply that evidence.
+Native acceptance passed the complete Phase 4 scenario between two distinct
+Veilid nodes using validated DHT rendezvous, private routes, and `AppCall` for
+every remote command. The run made 172 calls and delivered 170 contiguous
+signed event frames through final revision 171. It covered room creation,
+one-time join, seats, ready/countdown/abort, 13 game rounds ending 40-20,
+any-player pause/unpause plus denial while paused, three chat messages, exact
+duplicate handling, disconnect/DHT-route refresh/reconnect, and encrypted
+spectator grant/revoke. `TryAgain`/timeout reuse exact bytes; no-connection,
+stale-route, and watch renewal release the stale route, reread/validate DHT,
+import the replacement route, and resend those same bytes.
+
+The exact local commands also pass 26 Veilid units, 2 compile-fail docs, the
+88-row coverage audit, zero Rust/Alloy/NuSMV/Scryer disagreements, and the
+network-free lifecycle. Released 0.5.7 cannot form private routes in the
+isolated LocalNetwork topology, so its diagnostic is explicitly separate from
+the guarded public byte-delivery acceptance. Evidence and limitations are in
+`docs/veilid-command-transport.md`, `docs/veilid-native-acceptance.md`, and
+`evidence/veilid-native-acceptance.json`.
 
 ### [x] 5.5 Encrypt and deliver viewer-specific private projections
 
@@ -1233,7 +1260,7 @@ feature clippy pass with warnings denied, and the updated 88-rule session
 coverage audit passes. Separate-node byte delivery remains honestly assigned
 to Task 5.6 rather than weakening this cryptographic acceptance.
 
-### [ ] 5.6 Run native Veilid security and lifecycle acceptance
+### [x] 5.6 Run native Veilid security and lifecycle acceptance
 
 Provide a reproducible local test-network command, documented prerequisites,
 and a separate opt-in public-network smoke test that does not run in normal RL
@@ -1248,7 +1275,31 @@ cargo run -p poche-xtask -- multiplayer smoke --transport veilid-local
 spectate across separate nodes; fault and unauthorized-command suites pass;
 public-network testing is rate-limited and never required for ordinary CI.
 
-**Completion notes:** Not started.
+**Completion notes (complete, 2026-08-05):** `poche-xtask` now exposes both
+documented local commands plus environment-guarded `veilid-public` transport
+and full-lifecycle commands. The local transport gate passes 26 units and 2
+compile-fail docs; the local multiplayer gate passes the complete 88-row
+coverage/formal/in-process suite with zero oracle disagreements and then
+reproduces the honest released-0.5.7 isolated-topology limitation. It never
+contacts the public network or claims local application bytes crossed Veilid.
+
+With
+`POCHE_ALLOW_VEILID_PUBLIC_TEST=I_ACCEPT_PUBLIC_NETWORK_TRAFFIC`, two distinct
+clean native nodes proved DHT/private-route/`AppCall` delivery and the complete
+authorized lifecycle. The measured full run made 172 calls, emitted 170 signed
+event frames, handled one exact duplicate and one denial, refreshed/reconnected
+once, completed all 13 rounds at final revision 171 and score 40-20, exchanged
+three chats, and cryptographically verified spectator grant and revoke.
+Application signatures are verified independently of transport identity and
+viewer projections are encrypted to exact stable recipients.
+
+The public commands use ephemeral nodes, are explicit/manual, and are absent
+from unit tests, CI, and RL. The diagnostic-only local feature and temporary
+insecure-development protected stores are conspicuously documented; neither is
+a production configuration. This is native protocol acceptance, not a packaged
+end-user client. Commands, prerequisites, trust boundary, exact results, and
+limitations are recorded in `docs/veilid-native-acceptance.md` and
+`evidence/veilid-native-acceptance.json`.
 
 ## Phase 6 - Minimal rendering and web delivery
 

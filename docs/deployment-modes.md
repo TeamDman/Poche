@@ -10,7 +10,7 @@ in the dependency graph” is not treated as a deployable client.
 | Exact-projection replay, native | Proven locally | Native egui process | No authority/network/user data; checked fixture only | `cargo run --release -p poche-ui --bin poche-replay` |
 | Browser-only Veilid | Unsupported | A Pages HTTPS origin cannot use the passing insecure-WS development path | No companion is implied; the tested public WSS bootstrap reset before TLS and Veilid 0.5.7 documents the missing outbound-relay HTTPS topology | Evidence in `rendering-topology-spike.md` |
 | Host-colocated Datastar authority demo | Proven locally; self-hostable development mode | One Axum process plus ordinary browsers | Operator owns full state and can inspect every hand. Current named viewer routes and static invite codes are not authenticated, state is in-memory, and this is not anonymous/trustless production multiplayer | `cargo run --release -p poche-web-spike` |
-| Native live Veilid client | Not released | Intended native process | Transport adapters and crypto boundaries exist, but separate-process lifecycle/security acceptance in Task 5.6 is still open | Do not advertise/download yet |
+| Native live Veilid protocol | Acceptance proven; no packaged player client yet | Two native Veilid processes on the opt-in public network | Stable application keys authorize commands independently of node IDs/routes; DHT/private routes expose network metadata to Veilid peers, while exact-recipient projections remain encrypted | `cargo run -p poche-xtask --offline -- multiplayer smoke --transport veilid-public` with the explicit environment guard; see `veilid-native-acceptance.md` |
 
 ## Datastar demo connection configuration
 
