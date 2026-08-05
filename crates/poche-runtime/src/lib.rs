@@ -16,10 +16,12 @@ use poche_session::PureSessionMachine;
 
 mod in_process;
 mod oracle_session;
+mod text;
 mod transcript;
 
 pub use in_process::*;
 pub use oracle_session::{OracleSessionGame, OracleSessionGameError};
+pub use text::*;
 pub use transcript::*;
 
 /// External logical-time scheduling port.

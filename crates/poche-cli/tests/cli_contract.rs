@@ -102,3 +102,40 @@ fn zero_deadline_cancels_before_machine_output() {
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("--stop-after-ms elapsed"));
 }
+
+#[test]
+fn checked_transcript_replays_as_text_json_and_ndjson() {
+    let fixture_root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/protocol");
+    let script = fixture_root.join("session-micro-v1.script.ndjson");
+    let transcript = fixture_root.join("session-micro-v1.json");
+    let script = script.to_string_lossy();
+    let transcript = transcript.to_string_lossy();
+
+    let text = poche(&["--output", "text", "transcript", "replay", &script]);
+    assert!(text.status.success());
+    let rendered = String::from_utf8(text.stdout).expect("replay text should be UTF-8");
+    assert!(rendered.contains("actor=alice command=abort"));
+    assert!(rendered.contains("outcome: deny:D-PAUSED"));
+    assert!(rendered.contains("events: hand-capabilities-expired-round, game-advanced"));
+    assert!(rendered.contains("final-state:"));
+
+    let json = poche(&["--output", "json", "transcript", "replay", &script]);
+    assert!(json.status.success());
+    let summary: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(summary["schema"], "poche.transcript.replay-summary.v1");
+    assert_eq!(summary["steps"], 32);
+
+    let ndjson = poche(&["--output", "ndjson", "transcript", "replay", &script]);
+    assert!(ndjson.status.success());
+    let lines = String::from_utf8(ndjson.stdout).unwrap();
+    assert_eq!(lines.lines().count(), 33);
+    let final_record: serde_json::Value =
+        serde_json::from_str(lines.lines().last().unwrap()).unwrap();
+    assert_eq!(final_record["record"], "summary");
+    assert_eq!(final_record["steps"], 32);
+
+    let inspect = poche(&["--output", "text", "transcript", "inspect", &transcript]);
+    assert!(inspect.status.success());
+    assert_eq!(inspect.stdout, rendered.as_bytes());
+}

@@ -566,6 +566,7 @@ name = "poche-cli"
 version = "0.1.0"
 dependencies = [
  "eyre",
+ "poche-runtime",
  "serde",
  "serde_json",
  "teamy-cancellation",

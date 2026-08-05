@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 eyre = "=0.6.12"
+poche-runtime = { path = "../poche-runtime" }
 serde.workspace = true
 serde_json.workspace = true
 teamy-cancellation = { git = "https://github.com/TeamDman/teamy-cancellation.git", tag = "v0.3.1", default-features = false, features = ["ctrlc", "tracing"] }

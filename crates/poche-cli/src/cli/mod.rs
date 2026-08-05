@@ -122,7 +122,7 @@ pub fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<ParseOu
                 index += 1;
                 global.output = arguments
                     .get(index)
-                    .ok_or_else(|| ParseError::new("--output requires text or json"))?
+                    .ok_or_else(|| ParseError::new("--output requires text, json, or ndjson"))?
                     .parse()?;
             }
             "--stop-after-ms" => {
@@ -182,7 +182,7 @@ pub fn help(path: &[String]) -> String {
         format!("Poche help for {}", path.join(" "))
     };
     format!(
-        "{heading}\n\nUSAGE:\n  poche [GLOBAL OPTIONS] <GROUP> <COMMAND> [ARGS]\n\nGLOBAL OPTIONS:\n  --debug\n  --log-filter <DIRECTIVES>\n  --log-file <NDJSON-PATH>\n  --output <text|json>\n  --stop-after-ms <MILLISECONDS>\n  --help\n  --version\n\nCOMMANDS:\n  room host|join|show|ready|unready|countdown|abort|pause|resume|leave|close\n  game observe|actions|act\n  chat send|tail\n  spectator request-hand|grant-hand|revoke-hand\n  transcript record|replay|inspect\n  identity show|create\n"
+        "{heading}\n\nUSAGE:\n  poche [GLOBAL OPTIONS] <GROUP> <COMMAND> [ARGS]\n\nGLOBAL OPTIONS:\n  --debug\n  --log-filter <DIRECTIVES>\n  --log-file <NDJSON-PATH>\n  --output <text|json|ndjson>\n  --stop-after-ms <MILLISECONDS>\n  --help\n  --version\n\nCOMMANDS:\n  room host|join|show|ready|unready|countdown|abort|pause|resume|leave|close\n  game observe|actions|act\n  chat send|tail\n  spectator request-hand|grant-hand|revoke-hand\n  transcript record|replay|inspect\n  identity show|create\n"
     )
 }
 

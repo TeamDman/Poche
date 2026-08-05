@@ -944,7 +944,7 @@ joins, seats, readies, starts, and completes the real two-player Poche oracle's
 crate has no socket dependency, and no RL crate depends on it. Thirteen unit
 tests, the full-game integration test, and denied-warning clippy pass.
 
-### [ ] 4.3 Deliver inspectable text play and replay
+### [x] 4.3 Deliver inspectable text play and replay
 
 Create concise text projections for lobby, countdown, game observation, legal
 actions, pause state, chat, spectator grants, and results. Also support raw
@@ -957,7 +957,22 @@ aborts one countdown, starts another, pauses/resumes, completes a game, and
 replays to the same hashes. A new agent can inspect the transcript and identify
 every action/decision/event without a graphical client.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed in the local Task 4.3 slice.
+Added pure text renderers for lobby/countdown/running/paused/post-game viewer
+projections, supplied legal actions, attributed escaped chat, spectator grants,
+and final scores. The renderers consume typed scoped data and cannot access
+authority state or calculate semantics. Added the canonical 32-line
+`session-micro-v1.script.ndjson` driver beside its golden transcript. It covers
+two players and a spectator, abort/re-arm, pause/denied action/resume, chat,
+grant/revoke, disconnect/reconnect, completion, stale denial, reset, and close.
+Script replay compares typed ingress, strict canonical NDJSON ingress, and the
+checked state/projection hashes; its final hash remains
+`678455b9937db722bd8e25c3585aa2c678455ba31522b3a9e07f36daffa3b662`.
+`poche transcript replay` emits complete inspectable text, a JSON summary, or
+33 raw NDJSON output records; `transcript inspect` presents the checked full
+transcript without executing it. Runtime/CLI tests assert every required text
+shape and action/decision/event markers. `protocol replay --all`, focused
+tests, and denied-warning clippy pass.
 
 ### [ ] 4.4 Add ephemeral chat and transcript-safe redaction
 

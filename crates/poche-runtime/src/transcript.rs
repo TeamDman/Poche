@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 const FIXTURE_SCHEMA_VERSION: u16 = 1;
 const FIXTURE_ID: &str = "micro-session-v1";
+const BUILTIN_SNAPSHOT_AFTER_STEP: usize = 23;
 const ALICE_INVITE: &str = "runtime-only-alice-invite";
 const BOB_INVITE: &str = "runtime-only-bob-invite";
 
@@ -254,6 +255,29 @@ pub struct TranscriptVerification {
     pub final_state_hash: String,
 }
 
+/// Canonical output record for one replayed script.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "record", rename_all = "snake_case")]
+pub enum TranscriptOutputRecord {
+    Step {
+        index: usize,
+        step: Box<GoldenStep>,
+    },
+    Summary {
+        fixture_id: String,
+        steps: usize,
+        final_state_hash: String,
+    },
+}
+
+/// All presentations derived from one typed script replay.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScriptReplay {
+    pub transcript: GoldenTranscript,
+    pub output_ndjson: String,
+    pub text: String,
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ControlledReplayDefect {
@@ -280,11 +304,133 @@ struct ReplayContext {
 pub fn render_builtin_transcript() -> Result<String, String> {
     let transcript = generate_transcript(
         &builtin_inputs(),
-        23,
+        BUILTIN_SNAPSHOT_AFTER_STEP,
         &ControlledReplayDefect::None,
         ReplayCodec::Typed,
     )?;
     serde_json::to_string(&transcript).map_err(|error| error.to_string())
+}
+
+/// Render the built-in secret-free input script as canonical NDJSON.
+///
+/// # Errors
+///
+/// Returns a serialization failure without exposing runtime invite material.
+pub fn render_builtin_script_ndjson() -> Result<String, String> {
+    render_fixture_script_ndjson(&builtin_inputs())
+}
+
+/// Replay a canonical fixture script through typed and canonical-NDJSON ingress.
+///
+/// # Errors
+///
+/// Rejects ambiguous/noncanonical script framing or the first semantic/codec
+/// disagreement.
+pub fn replay_fixture_script_ndjson(script: &str) -> Result<ScriptReplay, String> {
+    let inputs = parse_fixture_script_ndjson(script)?;
+    if inputs.len() <= BUILTIN_SNAPSHOT_AFTER_STEP {
+        return Err(format!(
+            "fixture script requires at least {} inputs for the pinned snapshot checkpoint",
+            BUILTIN_SNAPSHOT_AFTER_STEP + 1
+        ));
+    }
+    let typed = generate_transcript(
+        &inputs,
+        BUILTIN_SNAPSHOT_AFTER_STEP,
+        &ControlledReplayDefect::None,
+        ReplayCodec::Typed,
+    )?;
+    let ndjson = generate_transcript(
+        &inputs,
+        BUILTIN_SNAPSHOT_AFTER_STEP,
+        &ControlledReplayDefect::None,
+        ReplayCodec::CanonicalNdjson,
+    )?;
+    compare_transcripts(&typed, &ndjson).map_err(|error| format!("typed/NDJSON {error}"))?;
+    let output_ndjson = render_transcript_output_ndjson(&typed)?;
+    let text = crate::render_transcript_text(&typed);
+    Ok(ScriptReplay {
+        transcript: typed,
+        output_ndjson,
+        text,
+    })
+}
+
+/// Verify a checked-in script against a checked-in full transcript.
+///
+/// # Errors
+///
+/// Returns the first script, codec, or expected-transcript divergence.
+pub fn verify_fixture_script_against_transcript(
+    script: &str,
+    expected_transcript: &str,
+) -> Result<TranscriptVerification, String> {
+    let replay = replay_fixture_script_ndjson(script)?;
+    let expected: GoldenTranscript = serde_json::from_str(expected_transcript)
+        .map_err(|error| format!("fixture JSON: {error}"))?;
+    compare_transcripts(&expected, &replay.transcript)?;
+    Ok(TranscriptVerification {
+        fixture_id: replay.transcript.fixture_id,
+        steps: replay.transcript.steps.len(),
+        final_state_hash: replay.transcript.final_state_hash,
+    })
+}
+
+fn render_fixture_script_ndjson(inputs: &[FixtureInput]) -> Result<String, String> {
+    let mut output = String::new();
+    for input in inputs {
+        output.push_str(&serde_json::to_string(input).map_err(|error| error.to_string())?);
+        output.push('\n');
+    }
+    Ok(output)
+}
+
+fn parse_fixture_script_ndjson(script: &str) -> Result<Vec<FixtureInput>, String> {
+    if script.is_empty() || !script.ends_with('\n') || script.contains('\r') {
+        return Err("fixture script requires nonempty LF-terminated NDJSON".to_owned());
+    }
+    let mut inputs = Vec::new();
+    for (index, line) in script[..script.len() - 1].split('\n').enumerate() {
+        if line.is_empty() {
+            return Err(format!("fixture script line {} is empty", index + 1));
+        }
+        let input: FixtureInput = serde_json::from_str(line)
+            .map_err(|_| format!("fixture script line {} is invalid JSON", index + 1))?;
+        let canonical = serde_json::to_string(&input).map_err(|error| error.to_string())?;
+        if canonical != line {
+            return Err(format!(
+                "fixture script line {} is not canonical JSON",
+                index + 1
+            ));
+        }
+        inputs.push(input);
+    }
+    Ok(inputs)
+}
+
+/// Render every transcript step plus one terminal summary as canonical NDJSON.
+///
+/// # Errors
+///
+/// Returns a serialization failure.
+pub fn render_transcript_output_ndjson(transcript: &GoldenTranscript) -> Result<String, String> {
+    let mut output = String::new();
+    for (index, step) in transcript.steps.iter().enumerate() {
+        let record = TranscriptOutputRecord::Step {
+            index,
+            step: Box::new(step.clone()),
+        };
+        output.push_str(&serde_json::to_string(&record).map_err(|error| error.to_string())?);
+        output.push('\n');
+    }
+    let summary = TranscriptOutputRecord::Summary {
+        fixture_id: transcript.fixture_id.clone(),
+        steps: transcript.steps.len(),
+        final_state_hash: transcript.final_state_hash.clone(),
+    };
+    output.push_str(&serde_json::to_string(&summary).map_err(|error| error.to_string())?);
+    output.push('\n');
+    Ok(output)
 }
 
 /// Replay and verify one checked-in transcript.
@@ -1285,5 +1431,52 @@ mod tests {
         let fixture = include_str!("../../../tests/fixtures/protocol/session-micro-v1.json");
         let verification = verify_transcript_codec_parity(fixture).unwrap();
         assert_eq!(verification.steps, 32);
+        let script =
+            include_str!("../../../tests/fixtures/protocol/session-micro-v1.script.ndjson");
+        let script_verification =
+            verify_fixture_script_against_transcript(script, fixture).unwrap();
+        assert_eq!(script_verification, verification);
+    }
+
+    #[test]
+    fn canonical_script_replay_is_complete_inspectable_and_secret_free() {
+        let script = render_builtin_script_ndjson().unwrap();
+        let replay = replay_fixture_script_ndjson(&script).unwrap();
+        assert_eq!(script.lines().count(), 32);
+        assert_eq!(replay.output_ndjson.lines().count(), 33);
+        assert!(
+            replay
+                .output_ndjson
+                .lines()
+                .all(|line| serde_json::from_str::<TranscriptOutputRecord>(line).is_ok())
+        );
+        for marker in [
+            "actor=host command=create",
+            "actor=alice command=abort",
+            "actor=host command=arm-final",
+            "action=pause",
+            "outcome: deny:D-PAUSED",
+            "action=unpause",
+            "action=chat:inspectable hello",
+            "action=grant-hand",
+            "action=revoke-hand",
+            "events: hand-capabilities-expired-round, game-advanced",
+            "final-state:",
+        ] {
+            assert!(replay.text.contains(marker), "missing text marker {marker}");
+        }
+        let persisted = format!("{script}{}{}", replay.output_ndjson, replay.text);
+        assert!(!persisted.contains(ALICE_INVITE));
+        assert!(!persisted.contains(BOB_INVITE));
+    }
+
+    #[test]
+    fn fixture_script_framing_fails_closed() {
+        let script = render_builtin_script_ndjson().unwrap();
+        assert!(replay_fixture_script_ndjson(script.trim_end()).is_err());
+        assert!(replay_fixture_script_ndjson(&script.replace('\n', "\r\n")).is_err());
+        let first = script.lines().next().unwrap();
+        let noncanonical = format!(" {first}\n");
+        assert!(replay_fixture_script_ndjson(&noncanonical).is_err());
     }
 }

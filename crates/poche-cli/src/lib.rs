@@ -64,8 +64,14 @@ pub fn run_from(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
                 command_action = action,
                 "command parsed"
             );
-            let output = cli::output::CommandReceipt::parsed(group, action);
-            cli::output::emit(&output, parsed.global.output)?;
+            let emitted = match parsed.command {
+                cli::Command::Transcript(command) => command.invoke(parsed.global.output)?,
+                _ => false,
+            };
+            if !emitted {
+                let output = cli::output::CommandReceipt::parsed(group, action);
+                cli::output::emit(&output, parsed.global.output)?;
+            }
             cancellation.bail_if_cancelled()?;
             Ok(())
         }

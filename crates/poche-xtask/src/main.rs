@@ -119,6 +119,7 @@ fn usage() {
         "usage:\n  cargo run -p poche-xtask -- doctor\n  \
          cargo run -p poche-xtask -- guidance audit PLAN.md\n  \
          cargo run -p poche-xtask -- protocol replay --all\n  \
+         cargo run -p poche-xtask -- protocol render-script\n  \
          cargo run -p poche-xtask -- session oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- session coverage audit --all\n  \
          cargo run -p poche-xtask -- session compare all --scope lobby-micro\n  \
@@ -723,6 +724,10 @@ fn session_prolog() -> ExitCode {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "protocol orchestration keeps render and paired transcript/script replay failure handling together"
+)]
 fn protocol(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     let subcommand = args.next();
     let mode = args.next();
@@ -738,6 +743,18 @@ fn protocol(mut args: impl Iterator<Item = OsString>) -> ExitCode {
             }
             Err(error) => {
                 eprintln!("protocol transcript render failed: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    if subcommand.as_deref() == Some(OsStr::new("render-script")) && mode.is_none() {
+        return match poche_runtime::render_builtin_script_ndjson() {
+            Ok(script) => {
+                print!("{script}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("protocol script render failed: {error}");
                 ExitCode::FAILURE
             }
         };
@@ -769,6 +786,7 @@ fn protocol(mut args: impl Iterator<Item = OsString>) -> ExitCode {
         eprintln!("protocol replay found no JSON fixtures");
         return ExitCode::FAILURE;
     }
+    let mut scripts = 0;
     for path in &paths {
         let fixture = match fs::read_to_string(path) {
             Ok(fixture) => fixture,
@@ -788,8 +806,42 @@ fn protocol(mut args: impl Iterator<Item = OsString>) -> ExitCode {
             "protocol replay: passed; codecs=typed,canonical-ndjson fixture={} steps={} final-state={}",
             report.fixture_id, report.steps, report.final_state_hash
         );
+        let stem = path
+            .file_stem()
+            .and_then(OsStr::to_str)
+            .expect("JSON fixture stem should be UTF-8");
+        let script_path = path.with_file_name(format!("{stem}.script.ndjson"));
+        let script = match fs::read_to_string(&script_path) {
+            Ok(script) => script,
+            Err(error) => {
+                eprintln!(
+                    "protocol replay could not read companion {}: {error}",
+                    script_path.display()
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+        let script_report =
+            match poche_runtime::verify_fixture_script_against_transcript(&script, &fixture) {
+                Ok(report) => report,
+                Err(error) => {
+                    eprintln!(
+                        "protocol script replay failed for {}: {error}",
+                        script_path.display()
+                    );
+                    return ExitCode::FAILURE;
+                }
+            };
+        scripts += 1;
+        println!(
+            "protocol script replay: passed; fixture={} steps={} final-state={}",
+            script_report.fixture_id, script_report.steps, script_report.final_state_hash
+        );
     }
-    println!("protocol replay all: passed; fixtures={}", paths.len());
+    println!(
+        "protocol replay all: passed; fixtures={} scripts={scripts}",
+        paths.len()
+    );
     ExitCode::SUCCESS
 }
 

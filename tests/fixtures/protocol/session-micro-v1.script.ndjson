@@ -1,0 +1,32 @@
+{"kind":"command","principal":"host","command_id":"create","revision":"current","operation":{"kind":"create_room"}}
+{"kind":"command","principal":"alice","command_id":"join-alice","revision":"current","operation":{"kind":"redeem_invite_ref","invite_ref":"alice"}}
+{"kind":"command","principal":"bob","command_id":"join-bob","revision":"current","operation":{"kind":"redeem_invite_ref","invite_ref":"bob"}}
+{"kind":"command","principal":"host","command_id":"seat-host","revision":"current","operation":{"kind":"take_seat","seat":0}}
+{"kind":"command","principal":"alice","command_id":"seat-alice","revision":"current","operation":{"kind":"take_seat","seat":1}}
+{"kind":"command","principal":"host","command_id":"ready-host","revision":"current","operation":{"kind":"ready"}}
+{"kind":"command","principal":"alice","command_id":"ready-alice","revision":"current","operation":{"kind":"ready"}}
+{"kind":"command","principal":"host","command_id":"arm-abort","revision":"current","operation":{"kind":"arm_countdown","deadline_tick":10,"token":"countdown-abort"}}
+{"kind":"command","principal":"alice","command_id":"abort","revision":"current","operation":{"kind":"abort_countdown"}}
+{"kind":"command","principal":"host","command_id":"arm-final","revision":"current","operation":{"kind":"arm_countdown","deadline_tick":20,"token":"countdown-final"}}
+{"kind":"command","principal":"system-clock","command_id":"expire-final","revision":"current","operation":{"kind":"countdown_expired","token":"countdown-final"}}
+{"kind":"command","principal":"system-game","command_id":"deal-standard","revision":"current","operation":{"kind":"apply_standard_chance"}}
+{"kind":"command","principal":"alice","command_id":"pause","revision":"current","operation":{"kind":"pause"}}
+{"kind":"command","principal":"host","command_id":"action-paused","revision":"current","operation":{"kind":"game_bid","tricks":0}}
+{"kind":"command","principal":"host","command_id":"unpause","revision":"current","operation":{"kind":"unpause"}}
+{"kind":"command","principal":"bob","command_id":"chat-bob","revision":"current","operation":{"kind":"chat","text":"inspectable hello"}}
+{"kind":"command","principal":"bob","command_id":"request-denied","revision":"current","operation":{"kind":"request_hand","player":"host"}}
+{"kind":"command","principal":"host","command_id":"deny-request","revision":"current","operation":{"kind":"deny_hand","request_id":"request-denied","player":"host","recipient":"bob"}}
+{"kind":"command","principal":"bob","command_id":"request-granted","revision":"current","operation":{"kind":"request_hand","player":"host"}}
+{"kind":"command","principal":"host","command_id":"grant-bob","revision":"current","operation":{"kind":"grant_hand","request_id":"request-granted","player":"host","recipient":"bob","grant_epoch":1}}
+{"kind":"duplicate_command","command_id":"grant-bob"}
+{"kind":"command","principal":"host","command_id":"revoke-bob","revision":"current","operation":{"kind":"revoke_hand","player":"host","recipient":"bob","grant_epoch":1}}
+{"kind":"command","principal":"bob","command_id":"request-round","revision":"current","operation":{"kind":"request_hand","player":"host"}}
+{"kind":"command","principal":"host","command_id":"grant-round","revision":"current","operation":{"kind":"grant_hand","request_id":"request-round","player":"host","recipient":"bob","grant_epoch":3}}
+{"kind":"transport_disconnect","principal":"alice","observation_id":"disconnect-alice"}
+{"kind":"command","principal":"alice","command_id":"reconnect-alice","revision":"current","operation":{"kind":"reconnect"}}
+{"kind":"command","principal":"host","command_id":"action-host","revision":"current","operation":{"kind":"game_bid","tricks":0}}
+{"kind":"command","principal":"alice","command_id":"action-alice","revision":"current","operation":{"kind":"game_bid","tricks":0}}
+{"kind":"command","principal":"system-game","command_id":"settle","revision":"current","operation":{"kind":"settle"}}
+{"kind":"command","principal":"bob","command_id":"stale-chat","revision":{"previous":1},"operation":{"kind":"chat","text":"must be stale"}}
+{"kind":"command","principal":"host","command_id":"reset","revision":"current","operation":{"kind":"reset_lobby"}}
+{"kind":"command","principal":"host","command_id":"close","revision":"current","operation":{"kind":"close_room"}}

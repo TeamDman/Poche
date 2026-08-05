@@ -11,6 +11,7 @@ pub enum OutputFormat {
     #[default]
     Text,
     Json,
+    Ndjson,
 }
 
 impl FromStr for OutputFormat {
@@ -20,7 +21,8 @@ impl FromStr for OutputFormat {
         match value {
             "text" => Ok(Self::Text),
             "json" => Ok(Self::Json),
-            _ => Err(ParseError::new("--output requires text or json")),
+            "ndjson" => Ok(Self::Ndjson),
+            _ => Err(ParseError::new("--output requires text, json, or ndjson")),
         }
     }
 }
@@ -63,6 +65,10 @@ pub fn emit(receipt: &CommandReceipt, format: OutputFormat) -> Result<()> {
         OutputFormat::Json => format!(
             "{}\n",
             serde_json::to_string(receipt).wrap_err("failed to encode JSON output")?
+        ),
+        OutputFormat::Ndjson => format!(
+            "{}\n",
+            serde_json::to_string(receipt).wrap_err("failed to encode NDJSON output")?
         ),
     };
     write_stdout(&rendered)
