@@ -2,9 +2,10 @@ use curve25519_dalek::montgomery::MontgomeryPoint;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use poche_protocol::{
     CommandEnvelope, EventEnvelope, PrincipalId, SignatureAlgorithm, SignatureBytes,
-    UnsignedCommandEnvelope, UnsignedEventEnvelope, canonical_command_signed_bytes,
-    canonical_command_verification_bytes, canonical_event_signed_bytes,
-    canonical_event_verification_bytes,
+    SnapshotEnvelope, UnsignedCommandEnvelope, UnsignedEventEnvelope, UnsignedSnapshotEnvelope,
+    canonical_command_signed_bytes, canonical_command_verification_bytes,
+    canonical_event_signed_bytes, canonical_event_verification_bytes,
+    canonical_snapshot_signed_bytes, canonical_snapshot_verification_bytes,
 };
 use serde::{Deserialize, Serialize};
 
@@ -183,6 +184,40 @@ impl ApplicationIdentity {
         ))
     }
 
+    /// Sign the protocol-defined canonical recovery-snapshot domain.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a snapshot with another principal/key intent or invalid
+    /// encoding.
+    pub fn sign_snapshot(
+        &self,
+        snapshot: UnsignedSnapshotEnvelope,
+    ) -> Result<SnapshotEnvelope, IdentityCryptoError> {
+        let public = self.public();
+        if snapshot.principal_id != public.principal_id
+            || snapshot.signature_intent.key_id != public.principal_id
+            || snapshot.signature_intent.algorithm != SignatureAlgorithm::Ed25519
+        {
+            return Err(IdentityCryptoError::PrincipalMismatch);
+        }
+        let bytes = canonical_snapshot_signed_bytes(&snapshot)
+            .map_err(|_| IdentityCryptoError::ProtocolEncoding)?;
+        let signature = self.signing.sign(&bytes).to_bytes();
+        Ok(snapshot.attach_signature(
+            SignatureBytes::new(hex(&signature))
+                .map_err(|_| IdentityCryptoError::InvalidSignature)?,
+        ))
+    }
+
+    pub(crate) fn sign_application_bytes(
+        &self,
+        bytes: &[u8],
+    ) -> Result<SignatureBytes, IdentityCryptoError> {
+        SignatureBytes::new(hex(&self.signing.sign(bytes).to_bytes()))
+            .map_err(|_| IdentityCryptoError::InvalidSignature)
+    }
+
     fn from_blob(blob: &crate::SecretIdentityBlob) -> Result<Self, IdentityStoreError> {
         blob.with_bytes(|bytes| {
             if bytes.len() != SECRET_BYTES || &bytes[..4] != SECRET_MAGIC {
@@ -264,6 +299,36 @@ pub fn verify_event_signature(
     verify(&key, &bytes, event.signature.signature.as_str())
 }
 
+/// Strictly verify an authority-signed recovery snapshot.
+///
+/// # Errors
+///
+/// Returns a public-identity, principal, codec, or signature failure.
+pub fn verify_snapshot_signature(
+    snapshot: &SnapshotEnvelope,
+    identity: &ApplicationPublicIdentity,
+) -> Result<(), IdentityCryptoError> {
+    let key = validate_public_identity(identity)?;
+    if snapshot.principal_id != identity.principal_id
+        || snapshot.signature.key_id != identity.principal_id
+        || snapshot.signature.algorithm != SignatureAlgorithm::Ed25519
+    {
+        return Err(IdentityCryptoError::PrincipalMismatch);
+    }
+    let bytes = canonical_snapshot_verification_bytes(snapshot)
+        .map_err(|_| IdentityCryptoError::ProtocolEncoding)?;
+    verify(&key, &bytes, snapshot.signature.signature.as_str())
+}
+
+pub(crate) fn verify_application_bytes(
+    identity: &ApplicationPublicIdentity,
+    bytes: &[u8],
+    signature: &SignatureBytes,
+) -> Result<(), IdentityCryptoError> {
+    let key = validate_public_identity(identity)?;
+    verify(&key, bytes, signature.as_str())
+}
+
 fn validate_public_identity(
     identity: &ApplicationPublicIdentity,
 ) -> Result<VerifyingKey, IdentityCryptoError> {
@@ -323,7 +388,8 @@ mod tests {
     };
     use poche_protocol::{
         CommandId, CommandPayload, CorrelationId, EventId, EventPayload, PROTOCOL_VERSION_V1,
-        RoomId, SIGNATURE_DOMAIN_V1, SignatureIntent,
+        RoomId, RoomPhase, SIGNATURE_DOMAIN_V1, SemanticHash, SignatureIntent, SnapshotId,
+        SnapshotPayload,
     };
     use std::future::Future;
     use std::pin::pin;
@@ -494,6 +560,42 @@ mod tests {
         revision_changed.current_revision = 9;
         assert_eq!(
             verify_event_signature(&revision_changed, &public),
+            Err(IdentityCryptoError::InvalidSignature)
+        );
+
+        let snapshot = UnsignedSnapshotEnvelope {
+            protocol_version: PROTOCOL_VERSION_V1,
+            room_id: RoomId::new("identity-room").unwrap(),
+            session_epoch: 1,
+            snapshot_id: SnapshotId::new("identity-snapshot").unwrap(),
+            principal_id: public.principal_id.clone(),
+            current_revision: 8,
+            correlation_id: CorrelationId::new("identity-snapshot-correlation").unwrap(),
+            causation_id: EventId::new("identity-snapshot-cause").unwrap(),
+            payload: SnapshotPayload {
+                schema_hash: SemanticHash([1; 32]),
+                state_hash: SemanticHash([2; 32]),
+                event_tail_revision: 8,
+                phase: RoomPhase::Lobby,
+                members: Vec::new(),
+                state: b"viewer-scoped-state".to_vec(),
+            },
+            signature_intent: SignatureIntent {
+                domain_version: SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: public.principal_id.clone(),
+            },
+        };
+        let signed_snapshot = first.sign_snapshot(snapshot).unwrap();
+        assert_eq!(verify_snapshot_signature(&signed_snapshot, &public), Ok(()));
+        assert_eq!(
+            verify_snapshot_signature(&signed_snapshot, &second.public()),
+            Err(IdentityCryptoError::PrincipalMismatch)
+        );
+        let mut changed_snapshot = signed_snapshot;
+        changed_snapshot.payload.state.push(0xff);
+        assert_eq!(
+            verify_snapshot_signature(&changed_snapshot, &public),
             Err(IdentityCryptoError::InvalidSignature)
         );
     }

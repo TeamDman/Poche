@@ -1099,7 +1099,7 @@ configuration and virtual-router machine allocation remains unimplemented).
 The real native execution evidence is intentionally retained for the isolated
 local topology/public-network opt-in work shared with Task 5.6.
 
-### [ ] 5.3 Implement membership reconnect without the original code
+### [x] 5.3 Implement membership reconnect without the original code
 
 Persist the room locator and membership credential/capability bound to the
 stable player key. On restart or private-route change, resolve current
@@ -1110,7 +1110,47 @@ snapshot + event tail, and resume the same membership/seat when policy permits.
 route replacement does not change principal identity; reconnect needs no invite
 code; removed/banned/revoked membership cannot reconnect as active.
 
-**Completion notes:** Not started.
+**Completion notes (complete, 2026-08-05):** Added a host-signed, stable-key
+`MembershipCredential`; a strict zeroing `MembershipLocator` whose persisted
+shape contains the encrypted DHT locator and credential but structurally omits
+the invite secret; explicit protected/insecure-development membership stores;
+and released Veilid protected-store integration. A persisted member can now
+open and validate refreshed DHT rendezvous data without the original code,
+then prove a replacement recipient route and route epoch with both the signed
+protocol `Reconnect` command and a stable-application-key signature. Room,
+network, host, session epoch, principal, credential, route, and expiry
+mutations fail closed.
+
+Host publication now persists the encrypted DHT record key and DHT owner
+keypair only in Veilid protected storage under a hashed room key.
+`resume_host_room` requires the same stable host application identity, reopens
+that owner record, allocates a new private route, increments `route_epoch`, and
+republishes without retaining or recreating the old invite. Client and host
+application identities are reloaded in restart tests; strict/checksummed
+client and host secret blobs, wrong-key/forgery, route replacement, corruption,
+expiry, and secret/debug scans are covered.
+
+Recovery now uses a host-signed viewer snapshot plus a bounded, gap-free,
+host-signed authority event tail. Tests reject wrong hosts, mutation,
+oversized state, deletion, and reordering and ensure diagnostics redact the
+viewer payload. The session regression
+`removed_member_cannot_reconnect_with_the_former_stable_principal` proves that
+a cryptographically valid former identity does not override current
+authoritative membership or restore its released seat. The two gates and
+reproduction commands are documented in `docs/membership-reconnect.md`, with
+coverage updates for `S-ROOM-020`, `S-AUTH-013`, `S-AUTH-018`, `S-AUTH-019`,
+`S-FAULT-004`, and `S-FAULT-005`.
+`RemoveMember` is the v1 membership-revocation operation; v1 deliberately has
+no second banned-but-active membership state that could bypass that gate.
+
+Evidence: `cargo test --workspace --offline` passed the complete workspace and
+native Alloy/NuSMV/Scryer-backed suite; `cargo test -p poche-veilid --features
+veilid --offline` passed 18 units plus 2 compile-fail docs; both `cargo clippy
+--workspace --all-targets --offline -- -D warnings` and the feature-specific
+Veilid clippy gate passed. The released 0.5.7 DHT/protected-store/private-route
+paths compile against their exact APIs. Actual separate-process private-route
+execution is not misreported here: it remains the explicit public/topology
+acceptance gate in Task 5.6.
 
 ### [ ] 5.4 Carry commands, events, countdown, pause, and chat over Veilid
 

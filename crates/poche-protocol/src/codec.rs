@@ -4,7 +4,8 @@ use serde::Serialize;
 
 use crate::{
     CommandEnvelope, EnvelopeValidationError, EventEnvelope, ProtocolFrame, SemanticHash,
-    SignatureAlgorithm, SignatureIntent, UnsignedCommandEnvelope, UnsignedEventEnvelope,
+    SignatureAlgorithm, SignatureIntent, SnapshotEnvelope, UnsignedCommandEnvelope,
+    UnsignedEventEnvelope, UnsignedSnapshotEnvelope,
 };
 
 /// Safe application payload ceiling below Veilid's 32,768-byte operation bound.
@@ -12,6 +13,7 @@ pub const MAX_FRAME_BYTES: usize = 30_000;
 
 const COMMAND_SIGNING_DOMAIN: &[u8] = b"POCHE\0COMMAND\0V1";
 const EVENT_SIGNING_DOMAIN: &[u8] = b"POCHE\0EVENT\0V1";
+const SNAPSHOT_SIGNING_DOMAIN: &[u8] = b"POCHE\0SNAPSHOT\0V1";
 
 /// Stable descriptor hashed as the v1 reflected/wire schema identity.
 ///
@@ -234,6 +236,56 @@ pub fn canonical_event_verification_bytes(event: &EventEnvelope) -> Result<Vec<u
         Some(event.causation_id.as_str()),
         &event.payload,
         &event.signature.intent(),
+    )
+}
+
+/// Produce versioned length-framed canonical bytes for an unsigned snapshot.
+///
+/// # Errors
+///
+/// Returns an error for invalid fields or an unencodable registered payload.
+pub fn canonical_snapshot_signed_bytes(
+    snapshot: &UnsignedSnapshotEnvelope,
+) -> Result<Vec<u8>, CodecError> {
+    snapshot.validate().map_err(CodecError::InvalidEnvelope)?;
+    signing_bytes(
+        SNAPSHOT_SIGNING_DOMAIN,
+        snapshot.protocol_version,
+        snapshot.room_id.as_str(),
+        snapshot.session_epoch,
+        snapshot.snapshot_id.as_str(),
+        snapshot.principal_id.as_str(),
+        snapshot.current_revision,
+        snapshot.correlation_id.as_str(),
+        Some(snapshot.causation_id.as_str()),
+        &snapshot.payload,
+        &snapshot.signature_intent,
+    )
+}
+
+/// Reconstruct canonical snapshot bytes for strict signature verification.
+///
+/// # Errors
+///
+/// Returns an error for invalid fields or an unencodable registered payload.
+pub fn canonical_snapshot_verification_bytes(
+    snapshot: &SnapshotEnvelope,
+) -> Result<Vec<u8>, CodecError> {
+    ProtocolFrame::Snapshot(snapshot.clone())
+        .validate()
+        .map_err(CodecError::InvalidEnvelope)?;
+    signing_bytes(
+        SNAPSHOT_SIGNING_DOMAIN,
+        snapshot.protocol_version,
+        snapshot.room_id.as_str(),
+        snapshot.session_epoch,
+        snapshot.snapshot_id.as_str(),
+        snapshot.principal_id.as_str(),
+        snapshot.current_revision,
+        snapshot.correlation_id.as_str(),
+        Some(snapshot.causation_id.as_str()),
+        &snapshot.payload,
+        &snapshot.signature.intent(),
     )
 }
 

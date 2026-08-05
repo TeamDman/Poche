@@ -714,6 +714,22 @@ pub struct SnapshotPayload {
     pub state: Vec<u8>,
 }
 
+/// Snapshot fields before the host signature is attached.
+#[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnsignedSnapshotEnvelope {
+    pub protocol_version: u16,
+    pub room_id: RoomId,
+    pub session_epoch: u64,
+    pub snapshot_id: SnapshotId,
+    pub principal_id: PrincipalId,
+    pub current_revision: u64,
+    pub correlation_id: CorrelationId,
+    pub causation_id: EventId,
+    pub payload: SnapshotPayload,
+    pub signature_intent: SignatureIntent,
+}
+
 /// Host-signed recovery snapshot.
 #[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -728,6 +744,42 @@ pub struct SnapshotEnvelope {
     pub causation_id: EventId,
     pub payload: SnapshotPayload,
     pub signature: SignatureMetadata,
+}
+
+impl UnsignedSnapshotEnvelope {
+    /// Attach a host signature without changing signed fields.
+    #[must_use]
+    pub fn attach_signature(self, signature: SignatureBytes) -> SnapshotEnvelope {
+        SnapshotEnvelope {
+            protocol_version: self.protocol_version,
+            room_id: self.room_id,
+            session_epoch: self.session_epoch,
+            snapshot_id: self.snapshot_id,
+            principal_id: self.principal_id,
+            current_revision: self.current_revision,
+            correlation_id: self.correlation_id,
+            causation_id: self.causation_id,
+            payload: self.payload,
+            signature: SignatureMetadata {
+                domain_version: self.signature_intent.domain_version,
+                algorithm: self.signature_intent.algorithm,
+                key_id: self.signature_intent.key_id,
+                signature,
+            },
+        }
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), EnvelopeValidationError> {
+        validate_unsigned_common(
+            self.protocol_version,
+            &self.room_id,
+            &self.principal_id,
+            &self.correlation_id,
+            &self.signature_intent,
+        )?;
+        require_ids(self.snapshot_id.validate() && self.causation_id.validate())?;
+        validate_members(&self.payload.members)
+    }
 }
 
 /// Stable public denial/error code.

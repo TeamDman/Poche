@@ -599,6 +599,47 @@ fn transport_disconnect_cancels_countdown_and_stable_key_reconnects() {
 }
 
 #[test]
+fn removed_member_cannot_reconnect_with_the_former_stable_principal() {
+    let mut state = two_player_lobby();
+    let disconnect = decide_transport_disconnect(
+        &state,
+        &principal("alice"),
+        &command_id("disconnect-before-removal"),
+        SemanticHash([0xd2; 32]),
+        &correlation("disconnect-before-removal-correlation"),
+    )
+    .unwrap();
+    for event in disconnect {
+        state = apply(&state, &event).unwrap();
+    }
+    assert_eq!(
+        state.member(&principal("alice")).unwrap().connection,
+        ConnectionState::Disconnected
+    );
+    let remove = signed(
+        &state,
+        principal("host"),
+        "remove-disconnected-alice",
+        CommandPayload::RemoveMember {
+            target: principal("alice"),
+        },
+    );
+    state = execute(&state, &remove).0;
+    assert!(state.member(&principal("alice")).is_none());
+
+    let reconnect = signed(
+        &state,
+        principal("alice"),
+        "removed-alice-reconnect",
+        CommandPayload::Reconnect,
+    );
+    assert_eq!(
+        deny_reason(&authorize(&state, &reconnect)),
+        DenyReason::UnknownPrincipal
+    );
+}
+
+#[test]
 fn controlled_invalid_states_and_stale_events_are_rejected() {
     let state = two_player_lobby();
     let mut duplicate_seat = state.clone();
