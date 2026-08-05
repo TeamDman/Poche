@@ -751,7 +751,7 @@ current/future knowledge abstraction, omissions, exact covered rule IDs, and
 bounded nature of the results; applicable cells in `docs/session-coverage.md`
 carry Task 3.1 evidence. Formatting and the native Alloy command pass.
 
-### [ ] 3.2 Build the NuSMV lifecycle/liveness oracle
+### [x] 3.2 Build the NuSMV lifecycle/liveness oracle
 
 Add `models/nusmv/session.smv` independently. Model logical ticks, readiness,
 abort/expiry races, start, running, selected pause protocol, resume,
@@ -764,7 +764,20 @@ intended liveness under named fairness assumptions.
 counterexamples; removing readiness, eventual-expiry, eventual-action, or
 eventual-resume assumptions demonstrates why each liveness claim needs it.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed in the local Task 3.2 slice.
+`models/nusmv/session.smv` independently models a two-member lifecycle,
+readiness, abort/expiry ordering, one-start safety, a two-action abstract game,
+pause/resume, durable membership across disconnect/reconnect, post-game, and
+absorbing close. NuSMV 2.7.1 recognizes all 16 properties: nine lifecycle/
+safety holds, conditional CTL and LTL termination holds, unconditional
+termination is false, and four single-assumption omissions are false. All five
+counterexamples are nonterminal lassos; the CLI checks the four omission traces
+use their exact modes. The FSM is total and deadlock-free. The assumptions are
+explicit finite scheduler modes rather than global fairness clauses, and exact
+scope/limitations/rule coverage are in `docs/session-formal-models.md` and
+`docs/session-coverage.md`. The native runner now correlates catalog/results by
+stable kind/expression rather than native output order and accepts NuSMV 2.7.1's
+combined total/deadlock-free diagnostic; focused parser tests pass.
 
 ### [ ] 3.3 Build the Scryer Prolog policy/predecessor oracle
 

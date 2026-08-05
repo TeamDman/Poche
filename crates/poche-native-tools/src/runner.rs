@@ -1199,20 +1199,34 @@ fn parse_nusmv_suite(
         ));
     }
     let mut names = BTreeSet::new();
-    for (entry, result) in catalog.iter().zip(&mut results) {
+    let mut ordered_results = Vec::with_capacity(results.len());
+    for entry in &catalog {
         if !names.insert(entry.name.as_str()) {
             return Err(format!("duplicate NuSMV property name: {}", entry.name));
         }
-        if entry.kind != result.kind
-            || collapse_spaces(&entry.expression) != collapse_spaces(&result.expression)
-        {
+        let expression = collapse_spaces(&entry.expression);
+        let matches = results
+            .iter()
+            .enumerate()
+            .filter(|(_, result)| {
+                entry.kind == result.kind && collapse_spaces(&result.expression) == expression
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let [index] = matches.as_slice() else {
             return Err(format!(
-                "NuSMV property catalog/result order differs at {}: catalog={:?}, result={:?}",
-                entry.name, entry.expression, result.expression
+                "NuSMV property catalog/result identity is not unique at {}: {:?}",
+                entry.name, entry.expression
             ));
-        }
+        };
+        let mut result = results.remove(*index);
         result.name = Some(entry.name.clone());
+        ordered_results.push(result);
     }
+    if !results.is_empty() {
+        return Err("NuSMV emitted results absent from its named catalog".to_owned());
+    }
+    let results = ordered_results;
     let raw_traces = parse_nusmv_counterexamples(transcript)?;
     let mut counterexamples = Vec::with_capacity(raw_traces.len());
     for trace in raw_traces {
@@ -1384,16 +1398,20 @@ fn parse_nusmv_result_line(
 }
 
 fn parse_nusmv_fsm(transcript: &str) -> Result<NuSmvFsmDiagnostics, String> {
+    let total_and_deadlock_free =
+        transcript.contains("The transition relation is total: No deadlock state exists");
     let transition_total = if transcript.contains("The transition relation is not total.") {
         false
-    } else if transcript.contains("The transition relation is total.") {
+    } else if total_and_deadlock_free || transcript.contains("The transition relation is total.") {
         true
     } else {
         return Err("NuSMV check_fsm omitted transition-totality result".to_owned());
     };
     let deadlock_free = if transcript.contains("transition relation is not deadlock-free.") {
         false
-    } else if transcript.contains("transition relation is deadlock-free.") {
+    } else if total_and_deadlock_free
+        || transcript.contains("transition relation is deadlock-free.")
+    {
         true
     } else {
         return Err("NuSMV check_fsm omitted deadlock result".to_owned());
@@ -1698,7 +1716,6 @@ A deadlock state is:
 mode = deadlock
 phase = stuck
 ##########################################################
--- specification AF phase = finished  is true
 -- invariant !bad  is false
 Trace Description: Counterexample
 Trace Type: Counterexample
@@ -1708,6 +1725,7 @@ Trace Type: Counterexample
   -> Input: 1.2 <-
   -> State: 1.2 <-
     phase = stuck
+-- specification AF phase = finished  is true
 ";
         let (results, traces, fsm) = parse_nusmv_suite(transcript).unwrap();
         assert_eq!(results.len(), 2);
@@ -1720,6 +1738,15 @@ Trace Type: Counterexample
         assert!(!fsm.transition_total);
         assert!(!fsm.deadlock_free);
         assert_eq!(fsm.deadlock_state.unwrap()["phase"], "stuck");
+    }
+
+    #[test]
+    fn nusmv_fsm_parser_accepts_combined_totality_diagnostic() {
+        let fsm = parse_nusmv_fsm("The transition relation is total: No deadlock state exists\n")
+            .unwrap();
+        assert!(fsm.transition_total);
+        assert!(fsm.deadlock_free);
+        assert!(fsm.deadlock_state.is_none());
     }
 
     #[test]

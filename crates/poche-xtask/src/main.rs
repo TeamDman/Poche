@@ -16,7 +16,8 @@ use poche_conformance::{
 };
 use poche_native_tools::{
     AlloyCommandExpectation, AlloyCommandKind, AlloyOutcome, NativeBackend, NativeDisposition,
-    run_all, run_alloy_suite, run_backend,
+    NuSmvPropertyExpectation, NuSmvPropertyKind, run_all, run_alloy_suite, run_backend,
+    run_nusmv_suite,
 };
 use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
 
@@ -142,10 +143,7 @@ fn session(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     }
     match backend.as_deref() {
         Some(value) if value == OsStr::new("alloy") => session_alloy(),
-        Some(value) if value == OsStr::new("nusmv") => {
-            eprintln!("session NuSMV oracle is not implemented yet");
-            ExitCode::FAILURE
-        }
+        Some(value) if value == OsStr::new("nusmv") => session_nusmv(),
         Some(value) if value == OsStr::new("prolog") => {
             eprintln!("session Prolog oracle is not implemented yet");
             ExitCode::FAILURE
@@ -153,7 +151,10 @@ fn session(mut args: impl Iterator<Item = OsString>) -> ExitCode {
         Some(value) if value == OsStr::new("all") => {
             let alloy = session_alloy();
             if alloy == ExitCode::SUCCESS {
-                eprintln!("remaining session native oracles are not implemented yet");
+                let nusmv = session_nusmv();
+                if nusmv == ExitCode::SUCCESS {
+                    eprintln!("remaining session native oracles are not implemented yet");
+                }
             }
             ExitCode::FAILURE
         }
@@ -218,6 +219,91 @@ fn session_alloy() -> ExitCode {
         );
     }
     if report.succeeded() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn session_nusmv() -> ExitCode {
+    use NuSmvPropertyKind::{Invariant, Specification};
+
+    let expectations = [
+        ("countdown_is_ready", Invariant, true),
+        ("started_phase_has_one_start", Invariant, true),
+        ("durable_membership_survives_route_loss", Invariant, true),
+        ("closed_is_absorbing", Specification, true),
+        ("abort_wins_before_later_expiry", Specification, true),
+        ("stale_expiry_cannot_start", Specification, true),
+        ("paused_game_action_does_not_advance", Specification, true),
+        ("pause_and_resume_are_player_gated", Specification, true),
+        ("session_deadlock_free", Specification, true),
+        ("unconditional_session_termination", Specification, false),
+        ("conditional_session_termination", Specification, true),
+        ("conditional_ltl_session_termination", Specification, true),
+        ("missing_readiness_refutes_liveness", Specification, false),
+        ("missing_expiry_refutes_liveness", Specification, false),
+        ("missing_action_refutes_liveness", Specification, false),
+        ("missing_resume_refutes_liveness", Specification, false),
+    ]
+    .into_iter()
+    .map(|(name, kind, holds)| NuSmvPropertyExpectation {
+        name: name.to_owned(),
+        kind,
+        holds,
+    })
+    .collect::<Vec<_>>();
+    let report = run_nusmv_suite(
+        Path::new("."),
+        "session-nusmv",
+        Path::new("models/nusmv/session.smv"),
+        &expectations,
+    );
+    println!(
+        "session NuSMV: {:?}; {}",
+        report.disposition, report.diagnostic
+    );
+    for result in &report.results {
+        println!(
+            "  {} {:?} holds={}",
+            result.name.as_deref().unwrap_or("<unnamed>"),
+            result.kind,
+            result.holds
+        );
+    }
+    if let Some(fsm) = &report.fsm {
+        println!(
+            "  FSM transition_total={} deadlock_free={}",
+            fsm.transition_total, fsm.deadlock_free
+        );
+    }
+    let expected_counterexample_modes = [
+        ("missing_readiness_refutes_liveness", "missing_readiness"),
+        ("missing_expiry_refutes_liveness", "missing_expiry"),
+        ("missing_action_refutes_liveness", "missing_action"),
+        ("missing_resume_refutes_liveness", "missing_resume"),
+    ];
+    let traces_match = expected_counterexample_modes.iter().all(|(name, mode)| {
+        report.counterexamples.iter().any(|trace| {
+            trace.property_name == *name
+                && trace.loop_start.is_some()
+                && trace.states.iter().any(|state| {
+                    state.assignments.get("mode").map(String::as_str) == Some(*mode)
+                        && state.assignments.get("terminal").map(String::as_str) == Some("FALSE")
+                })
+        })
+    }) && report.counterexamples.iter().any(|trace| {
+        trace.property_name == "unconditional_session_termination"
+            && trace.loop_start.is_some()
+            && trace
+                .states
+                .iter()
+                .any(|state| state.assignments.get("terminal").map(String::as_str) == Some("FALSE"))
+    });
+    if !traces_match {
+        eprintln!("session NuSMV counterexamples did not match their named omission modes");
+    }
+    if report.succeeded() && traces_match {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE

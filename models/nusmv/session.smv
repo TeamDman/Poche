@@ -1,0 +1,193 @@
+-- This Source Code Form is subject to the terms of the Mozilla Public
+-- License, v. 2.0. If a copy of the MPL was not distributed with this
+-- file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+-- Independent temporal session oracle handwritten from docs/session-rules.md.
+-- Scope: one host/player p0, one durable player p1, one countdown token,
+-- one abstract two-action game, and one logical command per transition.
+-- Network delivery, clocks, cryptographic bytes, and concrete cards are
+-- abstracted to commands. The constant scheduler modes make every liveness
+-- assumption explicit; there is no hidden global FAIRNESS constraint.
+
+MODULE main
+
+VAR
+  command : {idle, mark_ready0, mark_ready1, unready0, unready1, arm_countdown,
+             abort0, abort1, expire, game_action, pause0, pause1,
+             resume0, resume1, disconnect1, reconnect1, settle, close_room};
+  mode : {unconstrained, fair_all, missing_readiness, missing_expiry,
+          missing_action, missing_resume};
+  phase : {lobby, countdown, running, paused, post_game, closed};
+  member1 : boolean;
+  ready0 : boolean;
+  ready1 : boolean;
+  connected1 : boolean;
+  countdown_live : boolean;
+  start_count : 0..1;
+  game_steps : 0..2;
+  pause_exercised : boolean;
+
+DEFINE
+  -- p0 is the durable host/player and remains locally connected. p1 keeps the
+  -- same membership/seat across route loss and reconnect.
+  all_ready_connected := ready0 & ready1 & connected1;
+  terminal := phase = post_game | phase = closed;
+  accepted_arm := phase = lobby & all_ready_connected &
+                  command = arm_countdown;
+  accepted_abort := phase = countdown &
+                    (command = abort0 | command = abort1);
+  accepted_expire := phase = countdown & countdown_live &
+                     all_ready_connected & command = expire;
+  accepted_action := phase = running & command = game_action;
+  accepted_pause := phase = running &
+                    (command = pause0 | (command = pause1 & connected1));
+  accepted_resume := phase = paused &
+                     (command = resume0 | (command = resume1 & connected1));
+
+ASSIGN
+  init(mode) := {unconstrained, fair_all, missing_readiness, missing_expiry,
+                 missing_action, missing_resume};
+  next(mode) := mode;
+
+  init(command) := idle;
+  next(command) := case
+    mode = fair_all & phase = lobby & !ready0 : mark_ready0;
+    mode = fair_all & phase = lobby & !ready1 : mark_ready1;
+    mode = fair_all & phase = lobby : arm_countdown;
+    mode = fair_all & phase = countdown : expire;
+    mode = fair_all & accepted_action & !pause_exercised : pause0;
+    mode = fair_all & phase = running & game_steps = 0 : game_action;
+    mode = fair_all & phase = running & !pause_exercised : pause0;
+    mode = fair_all & phase = paused : resume0;
+    mode = fair_all & phase = running : game_action;
+    mode = missing_readiness : idle;
+    mode = missing_expiry & phase = lobby & !ready0 : mark_ready0;
+    mode = missing_expiry & phase = lobby & !ready1 : mark_ready1;
+    mode = missing_expiry & phase = lobby : arm_countdown;
+    mode = missing_expiry : idle;
+    mode = missing_action & phase = lobby & !ready0 : mark_ready0;
+    mode = missing_action & phase = lobby & !ready1 : mark_ready1;
+    mode = missing_action & phase = lobby : arm_countdown;
+    mode = missing_action & phase = countdown : expire;
+    mode = missing_action : idle;
+    mode = missing_resume & phase = lobby & !ready0 : mark_ready0;
+    mode = missing_resume & phase = lobby & !ready1 : mark_ready1;
+    mode = missing_resume & phase = lobby : arm_countdown;
+    mode = missing_resume & phase = countdown : expire;
+    mode = missing_resume & accepted_action : pause0;
+    mode = missing_resume & phase = running & game_steps = 0 : game_action;
+    mode = missing_resume & phase = running : pause0;
+    mode = missing_resume : idle;
+    mode = unconstrained : {idle, mark_ready0, mark_ready1, unready0,
+      unready1, arm_countdown, abort0, abort1, expire, game_action, pause0,
+      pause1, resume0, resume1, disconnect1, reconnect1, settle, close_room};
+    TRUE : idle;
+  esac;
+
+  init(phase) := lobby;
+  next(phase) := case
+    phase = closed : closed;
+    command = close_room : closed;
+    accepted_arm : countdown;
+    phase = countdown &
+      (accepted_abort | command = unready0 | command = unready1 |
+       command = disconnect1) : lobby;
+    accepted_expire : running;
+    accepted_pause : paused;
+    accepted_resume : running;
+    accepted_action & game_steps = 1 : post_game;
+    TRUE : phase;
+  esac;
+
+  init(member1) := TRUE;
+  next(member1) := member1;
+
+  init(ready0) := FALSE;
+  next(ready0) := case
+    terminal | accepted_expire : FALSE;
+    phase = lobby & command = mark_ready0 : TRUE;
+    (phase = lobby | phase = countdown) & command = unready0 : FALSE;
+    TRUE : ready0;
+  esac;
+
+  init(ready1) := FALSE;
+  next(ready1) := case
+    terminal | accepted_expire | command = disconnect1 : FALSE;
+    phase = lobby & connected1 & command = mark_ready1 : TRUE;
+    (phase = lobby | phase = countdown) & command = unready1 : FALSE;
+    TRUE : ready1;
+  esac;
+
+  init(connected1) := TRUE;
+  next(connected1) := case
+    command = disconnect1 : FALSE;
+    command = reconnect1 & phase != closed : TRUE;
+    TRUE : connected1;
+  esac;
+
+  init(countdown_live) := FALSE;
+  next(countdown_live) := case
+    accepted_arm : TRUE;
+    phase = countdown &
+      (accepted_abort | accepted_expire | command = unready0 |
+       command = unready1 | command = disconnect1) : FALSE;
+    phase = closed : FALSE;
+    TRUE : countdown_live;
+  esac;
+
+  init(start_count) := 0;
+  next(start_count) := case
+    accepted_expire : 1;
+    TRUE : start_count;
+  esac;
+
+  init(game_steps) := 0;
+  next(game_steps) := case
+    accepted_action & game_steps < 2 : game_steps + 1;
+    TRUE : game_steps;
+  esac;
+
+  init(pause_exercised) := FALSE;
+  next(pause_exercised) := pause_exercised | accepted_pause;
+
+-- Structural and transition safety.
+INVARSPEC NAME countdown_is_ready :=
+  phase != countdown | all_ready_connected & countdown_live;
+INVARSPEC NAME started_phase_has_one_start :=
+  !(phase = running | phase = paused | phase = post_game) | start_count = 1;
+INVARSPEC NAME durable_membership_survives_route_loss := member1;
+CTLSPEC NAME closed_is_absorbing := AG (phase = closed -> AX phase = closed);
+CTLSPEC NAME abort_wins_before_later_expiry :=
+  AG (accepted_abort -> AX (phase = lobby & !countdown_live));
+CTLSPEC NAME stale_expiry_cannot_start :=
+  AG (phase = lobby & start_count = 0 & command = expire ->
+      AX (phase = lobby & start_count = 0));
+CTLSPEC NAME paused_game_action_does_not_advance :=
+  AG (phase = paused & command = game_action -> AX phase = paused);
+CTLSPEC NAME pause_and_resume_are_player_gated :=
+  AG ((accepted_pause -> AX phase = paused) &
+      (accepted_resume -> AX phase = running));
+CTLSPEC NAME session_deadlock_free := AG EX TRUE;
+
+-- Unconditional termination is deliberately false: the unconstrained idle
+-- lobby, an unresumed pause, or route loss may persist forever.
+CTLSPEC NAME unconditional_session_termination := AF terminal;
+
+-- fair_all is the conjunction of eventual readiness/arm, eventual expiry,
+-- eventual accepted game action, and eventual resume. It deliberately runs
+-- through a pause before the second abstract action.
+CTLSPEC NAME conditional_session_termination :=
+  mode != fair_all | AF terminal;
+LTLSPEC NAME conditional_ltl_session_termination :=
+  mode != fair_all | F terminal;
+
+-- Each controlled mode removes exactly one named obligation while retaining
+-- the deterministic prefix supplied by the other obligations. Expected FALSE.
+CTLSPEC NAME missing_readiness_refutes_liveness :=
+  mode != missing_readiness | AF terminal;
+CTLSPEC NAME missing_expiry_refutes_liveness :=
+  mode != missing_expiry | AF terminal;
+CTLSPEC NAME missing_action_refutes_liveness :=
+  mode != missing_action | AF terminal;
+CTLSPEC NAME missing_resume_refutes_liveness :=
+  mode != missing_resume | AF terminal;
