@@ -14,12 +14,14 @@ mod membership;
 mod rendezvous;
 mod room_code;
 mod store;
+mod transport;
 
 pub use identity::*;
 pub use membership::*;
 pub use rendezvous::*;
 pub use room_code::*;
 pub use store::*;
+pub use transport::*;
 
 #[cfg(feature = "veilid")]
 mod veilid_membership_store;

@@ -1164,7 +1164,33 @@ scenario over Veilid; forced disconnect/reorder/retry does not duplicate state;
 countdown uses authority time and clients display estimates only; chat and game
 commands obey the same app authorization.
 
-**Completion notes:** Not started.
+**Completion notes (implementation in progress, 2026-08-05):** Added strict
+bounded/canonical `TransportCommandCall` and `TransportCommandReply` schemas,
+including contiguous authority-event revision validation and rejection of
+invalid disposition/frame mixtures. Added `CommandRetryState`, bound to the
+command ID and full canonical signed command bytes, with explicit same-route,
+validated-rendezvous refresh, shutdown, permanent-failure, and exhaustion
+outcomes for every required failure category. Added non-authoritative
+watch/route hint classifiers and a countdown display estimate that can only
+wait for the authority transition.
+
+The released Veilid 0.5.7 adapter now keeps resolved DHT records open for
+watches; classifies `ValueChange`, dead watch, dead route, and shutdown updates
+only as refresh/lifecycle hints; maps `TryAgain`, timeout, no connection,
+invalid target/stale route, shutdown, malformed, and oversize failures without
+diagnostic leakage; and provides strict client call plus host decode/reply
+methods over the exact `app_call`, `app_call_reply`, and `watch_dht_values`
+APIs. `docs/veilid-command-transport.md` records retry, authority, clock, and
+recovery behavior and the coverage rows for `S-AUTH-016`, `S-FAULT-002`,
+`S-FAULT-003`, and `S-FAULT-006` are updated.
+
+Evidence so far: `cargo test -p poche-veilid --features veilid --offline`
+passes 25 units plus 2 compile-fail docs, and feature-specific clippy passes
+with warnings denied. The checkbox remains open: the required complete Phase 4
+scenario has not been mislabeled as running across multiple native Veilid
+nodes. Private routes still require the Task 5.6 public/topology gate described
+under Task 5.2; ordinary loopback/LAN and the incomplete released virtual
+network cannot supply that evidence.
 
 ### [ ] 5.5 Encrypt and deliver viewer-specific private projections
 

@@ -3,11 +3,14 @@ use std::{str::FromStr, time::Duration};
 use poche_protocol::RoomId;
 use veilid_core::{
     CRYPTO_KIND_VLD0, DHTSchema, KeyPair, RecordKey, RouteId, RoutingContext, Target, VeilidAPI,
+    VeilidAPIError, VeilidAppCall, VeilidUpdate,
 };
 
 use crate::{
     ApplicationIdentity, MembershipLocator, PublicRoomMetadata, RENDEZVOUS_DFLT_OWNER_SUBKEYS,
-    RENDEZVOUS_DHT_SUBKEY, RendezvousError, RendezvousRecord, RoomCode, RoomCodeError, RoomNetwork,
+    RENDEZVOUS_DHT_SUBKEY, RendezvousError, RendezvousHint, RendezvousRecord, RoomCode,
+    RoomCodeError, RoomNetwork, TransportCommandCall, TransportCommandReply, TransportFailure,
+    TransportWireError, classify_rendezvous_route_hint, classify_rendezvous_value_hint,
 };
 
 const MAX_APP_CALL_BYTES: usize = 32_768;
@@ -26,6 +29,12 @@ pub enum VeilidRendezvousError {
     NotFound,
     Conflict,
     Unavailable,
+    TryAgain,
+    Timeout,
+    NoConnection,
+    StaleRoute,
+    WatchRenewal,
+    Shutdown,
     OversizedMessage,
 }
 
@@ -39,6 +48,13 @@ impl From<RendezvousError> for VeilidRendezvousError {
     fn from(_: RendezvousError) -> Self {
         Self::InvalidRecord
     }
+}
+
+/// Command-call failure preserving whether transport retry is safe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VeilidCommandError {
+    Transport(TransportFailure),
+    Wire(TransportWireError),
 }
 
 /// A host's open owner-only DFLT record and allocated current private route.
@@ -270,6 +286,7 @@ impl HostRoomCapability {
 
 /// A client-validated rendezvous and imported remote private route.
 pub struct ResolvedRoom {
+    record_key: RecordKey,
     record: RendezvousRecord,
     route_id: RouteId,
 }
@@ -289,9 +306,20 @@ impl ResolvedRoom {
     /// # Errors
     ///
     /// Returns a stable availability category.
-    pub fn release(self, api: &VeilidAPI) -> Result<(), VeilidRendezvousError> {
-        api.release_private_route(self.route_id)
-            .map_err(|_| VeilidRendezvousError::Unavailable)
+    pub async fn release(self, api: &VeilidAPI) -> Result<(), VeilidRendezvousError> {
+        let routing = api
+            .routing_context()
+            .map_err(|_| VeilidRendezvousError::Unavailable)?;
+        let _ = routing
+            .cancel_dht_watch(self.record_key.clone(), None)
+            .await;
+        let record_result = routing.close_dht_record(self.record_key).await;
+        let route_result = api.release_private_route(self.route_id);
+        if record_result.is_err() || route_result.is_err() {
+            Err(VeilidRendezvousError::Unavailable)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -510,7 +538,9 @@ impl VeilidRendezvous {
             .await
             .map_err(|_| VeilidRendezvousError::NotFound)?;
         let result = self.read_open_record(&record_key, code, now_unix_ms).await;
-        let _ = self.routing.close_dht_record(record_key).await;
+        if result.is_err() {
+            let _ = self.routing.close_dht_record(record_key).await;
+        }
         result
     }
 
@@ -538,8 +568,54 @@ impl VeilidRendezvous {
         let result = self
             .read_open_membership_record(&record_key, membership, now_unix_ms)
             .await;
-        let _ = self.routing.close_dht_record(record_key).await;
+        if result.is_err() {
+            let _ = self.routing.close_dht_record(record_key).await;
+        }
         result
+    }
+
+    /// Install or renew a non-authoritative DHT watch for the open rendezvous
+    /// record. Every notification must still trigger a fresh validated read.
+    ///
+    /// # Errors
+    ///
+    /// A refused/dead watch is classified as watch renewal; shutdown and
+    /// permanent API failures remain distinct.
+    pub async fn renew_rendezvous_watch(
+        &self,
+        room: &ResolvedRoom,
+    ) -> Result<(), VeilidRendezvousError> {
+        match self
+            .routing
+            .watch_dht_values(room.record_key.clone(), None, None, None)
+            .await
+        {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(VeilidRendezvousError::WatchRenewal),
+            Err(error) => Err(map_veilid_error(&error)),
+        }
+    }
+
+    /// Classify a Veilid update only as a refresh/lifecycle hint. No value or
+    /// notification order is exposed as an authoritative game event.
+    #[must_use]
+    pub fn classify_update(room: &ResolvedRoom, update: &VeilidUpdate) -> RendezvousHint {
+        match update {
+            VeilidUpdate::ValueChange(change) if change.key == room.record_key => {
+                classify_rendezvous_value_hint(
+                    true,
+                    change.count != 0 && !change.subkeys.is_empty(),
+                )
+            }
+            VeilidUpdate::RouteChange(change)
+                if change.dead_remote_routes.contains(&room.route_id)
+                    || change.dead_routes.contains(&room.route_id) =>
+            {
+                classify_rendezvous_route_hint(true)
+            }
+            VeilidUpdate::Shutdown => RendezvousHint::Shutdown,
+            _ => RendezvousHint::Ignore,
+        }
     }
 
     /// Send a request/reply message to the resolved host private route.
@@ -561,11 +637,62 @@ impl VeilidRendezvous {
             .routing
             .app_call(Target::RouteId(room.route_id.clone()), request)
             .await
-            .map_err(|_| VeilidRendezvousError::Unavailable)?;
+            .map_err(|error| map_veilid_error(&error))?;
         if response.len() > MAX_APP_CALL_BYTES {
             return Err(VeilidRendezvousError::OversizedMessage);
         }
         Ok(response)
+    }
+
+    /// Send one strict signed command call and decode one strict authority
+    /// reply. Retry orchestration uses [`crate::CommandRetryState`] so the
+    /// caller cannot mutate the command between attempts.
+    ///
+    /// # Errors
+    ///
+    /// Separates retryable transport categories from permanent wire failures.
+    pub async fn command_call(
+        &self,
+        room: &ResolvedRoom,
+        call: &TransportCommandCall,
+    ) -> Result<TransportCommandReply, VeilidCommandError> {
+        let request = call.encode().map_err(VeilidCommandError::Wire)?;
+        let response = self
+            .app_call(room, request)
+            .await
+            .map_err(|error| VeilidCommandError::Transport(error.into()))?;
+        TransportCommandReply::decode(&response).map_err(VeilidCommandError::Wire)
+    }
+
+    /// Decode an incoming host-side `AppCall` without trusting its transport
+    /// sender or route as an application principal.
+    ///
+    /// # Errors
+    ///
+    /// Returns only bounded, redacted wire categories.
+    pub fn decode_command_call(
+        incoming: &VeilidAppCall,
+    ) -> Result<TransportCommandCall, TransportWireError> {
+        TransportCommandCall::decode(incoming.message())
+    }
+
+    /// Reply exactly once to an incoming Veilid `AppCall` with a strict
+    /// authority result.
+    ///
+    /// # Errors
+    ///
+    /// Separates serialization from transport failure and enforces both the
+    /// Poche and Veilid response ceilings.
+    pub async fn reply_command_call(
+        &self,
+        incoming: &VeilidAppCall,
+        reply: &TransportCommandReply,
+    ) -> Result<(), VeilidCommandError> {
+        let encoded = reply.encode().map_err(VeilidCommandError::Wire)?;
+        self.api
+            .app_call_reply(incoming.id(), encoded)
+            .await
+            .map_err(|error| VeilidCommandError::Transport(map_veilid_error(&error).into()))
     }
 
     async fn read_open_record(
@@ -587,7 +714,11 @@ impl VeilidRendezvous {
             .api
             .import_remote_private_route(route_blob)
             .map_err(|_| VeilidRendezvousError::InvalidRecord)?;
-        Ok(ResolvedRoom { record, route_id })
+        Ok(ResolvedRoom {
+            record_key: record_key.clone(),
+            record,
+            route_id,
+        })
     }
 
     async fn read_open_membership_record(
@@ -611,7 +742,11 @@ impl VeilidRendezvous {
             .api
             .import_remote_private_route(route_blob)
             .map_err(|_| VeilidRendezvousError::InvalidRecord)?;
-        Ok(ResolvedRoom { record, route_id })
+        Ok(ResolvedRoom {
+            record_key: record_key.clone(),
+            record,
+            route_id,
+        })
     }
 
     async fn rotate_resumed_host_route(
@@ -760,6 +895,39 @@ fn host_room_store_key(room_id: &RoomId) -> String {
     format!("{HOST_ROOM_KEY_PREFIX}{}", hasher.finalize().to_hex())
 }
 
+fn map_veilid_error(error: &VeilidAPIError) -> VeilidRendezvousError {
+    match error {
+        VeilidAPIError::TryAgain { .. } => VeilidRendezvousError::TryAgain,
+        VeilidAPIError::Timeout => VeilidRendezvousError::Timeout,
+        VeilidAPIError::NoConnection { .. } => VeilidRendezvousError::NoConnection,
+        VeilidAPIError::InvalidTarget { .. } => VeilidRendezvousError::StaleRoute,
+        VeilidAPIError::Shutdown | VeilidAPIError::NotInitialized => {
+            VeilidRendezvousError::Shutdown
+        }
+        _ => VeilidRendezvousError::Unavailable,
+    }
+}
+
+impl From<VeilidRendezvousError> for TransportFailure {
+    fn from(error: VeilidRendezvousError) -> Self {
+        match error {
+            VeilidRendezvousError::TryAgain => Self::TryAgain,
+            VeilidRendezvousError::Timeout => Self::Timeout,
+            VeilidRendezvousError::NoConnection => Self::NoConnection,
+            VeilidRendezvousError::StaleRoute => Self::StaleRoute,
+            VeilidRendezvousError::WatchRenewal => Self::WatchRenewal,
+            VeilidRendezvousError::Shutdown => Self::Shutdown,
+            VeilidRendezvousError::OversizedMessage => Self::Oversized,
+            VeilidRendezvousError::InvalidCode
+            | VeilidRendezvousError::InvalidMembership
+            | VeilidRendezvousError::InvalidRecord => Self::InvalidMessage,
+            VeilidRendezvousError::NotFound
+            | VeilidRendezvousError::Conflict
+            | VeilidRendezvousError::Unavailable => Self::Permanent,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -773,6 +941,12 @@ mod tests {
             VeilidRendezvousError::NotFound,
             VeilidRendezvousError::Conflict,
             VeilidRendezvousError::Unavailable,
+            VeilidRendezvousError::TryAgain,
+            VeilidRendezvousError::Timeout,
+            VeilidRendezvousError::NoConnection,
+            VeilidRendezvousError::StaleRoute,
+            VeilidRendezvousError::WatchRenewal,
+            VeilidRendezvousError::Shutdown,
             VeilidRendezvousError::OversizedMessage,
         ];
         for error in errors {
@@ -806,5 +980,42 @@ mod tests {
         let mut corrupt = encoded;
         corrupt[8] ^= 1;
         assert!(HostRoomCapability::decode(&corrupt).is_err());
+    }
+
+    #[test]
+    fn released_api_errors_map_to_explicit_retry_categories_without_messages() {
+        let cases = [
+            (
+                VeilidAPIError::try_again("secret retry diagnostic"),
+                VeilidRendezvousError::TryAgain,
+                TransportFailure::TryAgain,
+            ),
+            (
+                VeilidAPIError::timeout(),
+                VeilidRendezvousError::Timeout,
+                TransportFailure::Timeout,
+            ),
+            (
+                VeilidAPIError::no_connection("secret route diagnostic"),
+                VeilidRendezvousError::NoConnection,
+                TransportFailure::NoConnection,
+            ),
+            (
+                VeilidAPIError::invalid_target("stale route secret"),
+                VeilidRendezvousError::StaleRoute,
+                TransportFailure::StaleRoute,
+            ),
+            (
+                VeilidAPIError::shutdown(),
+                VeilidRendezvousError::Shutdown,
+                TransportFailure::Shutdown,
+            ),
+        ];
+        for (source, expected, retry) in cases {
+            let mapped = map_veilid_error(&source);
+            assert_eq!(mapped, expected);
+            assert_eq!(TransportFailure::from(mapped), retry);
+            assert!(!format!("{mapped:?}").contains("secret"));
+        }
     }
 }
