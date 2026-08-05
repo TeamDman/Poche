@@ -694,7 +694,7 @@ choice. Formatting, workspace denied-warning clippy, replay command, focused
 tests, the 137-second full workspace/native conformance suite, plan diff checks,
 and the unchanged `PLAN.md` check pass.
 
-### [ ] 2.5 Prove typed/direct, NDJSON, and optional Phon semantic parity
+### [x] 2.5 Prove typed/direct, NDJSON, and optional Phon semantic parity
 
 Run each fixture directly through typed commands and through NDJSON decode. If a
 Phon codec is added, run it as a third path. Compare decisions, events,
@@ -705,7 +705,23 @@ deserialization.
 input fails closed; NDJSON remains the normative inspectable form even if Phon
 is smaller/faster.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed after locally committed Task 2.4
+(`d09abfb`). Every normal command in every checked JSON transcript now runs
+independently as an already-typed envelope and through canonical NDJSON encode
+plus strict bounded decode. Both paths perform the full authorization, semantic
+decision/error, event apply, prefix-snapshot restore/tail replay, and scoped
+projection pipeline. Exact `GoldenTranscript` equality compares command
+identities, allows/denials, event sequences, semantic state hashes, complete
+privacy-checkpoint projections, per-viewer hashes, and snapshot evidence.
+`protocol replay --all` reports `codecs=typed,canonical-ndjson` and the same
+pinned final state for both paths. No Phon protocol codec was added, so no third
+path is claimed; canonical NDJSON remains normative. Existing strict decoder
+tests cover unknown version/tag/field, ambiguous controls, noncanonical input,
+malformed bytes, and 10,000 deterministic arbitrary inputs without semantic
+entry. Protocol/runtime/xtask tests, workspace denied-warning clippy,
+formatting, replay, diff checks, the immediately preceding full workspace/native
+suite, and unchanged `PLAN.md` check pass. Codec parity and limitations are
+recorded in protocol/replay docs and coverage.
 
 ## Phase 3 - Independent formal session models
 

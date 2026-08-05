@@ -4,6 +4,11 @@ The normative inspectable transport is one canonical JSON envelope followed by
 one LF byte. The implementation lives in `poche-protocol`; this document records
 the interoperability constraints rather than duplicating its Rust types.
 
+The checked protocol transcript is replayed both directly from typed envelopes
+and through this canonical NDJSON decoder. Full semantic transcripts—including
+errors, events, snapshots, projections, and hashes—must match exactly. Phon is
+not currently an enabled protocol codec.
+
 ## Identity
 
 - Protocol version: `1`

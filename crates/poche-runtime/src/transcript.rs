@@ -6,7 +6,7 @@ use poche_protocol::{
     DenyReason, GameActionWire, GamePublicStateWire, InviteProof, PROTOCOL_VERSION_V1, PrincipalId,
     ProjectionPayload, PublicGamePhase, PublicTurnWire, RoomId, SIGNATURE_DOMAIN_V1, SemanticHash,
     SignatureAlgorithm, SignatureBytes, SignatureIntent, SnapshotPayload, UnsignedCommandEnvelope,
-    protocol_schema_hash, verified_command_semantic_hash,
+    decode_command_line, encode_command_line, protocol_schema_hash, verified_command_semantic_hash,
 };
 use poche_session::{
     AuthorizedCommand, ConnectionState, GameTransition, GameTurn, HandCapabilityExpiry,
@@ -261,6 +261,12 @@ enum ControlledReplayDefect {
     DropFirstEvent { command_id: String },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReplayCodec {
+    Typed,
+    CanonicalNdjson,
+}
+
 struct ReplayContext {
     state: SessionState<TranscriptGame>,
     commands: BTreeMap<String, CommandEnvelope>,
@@ -272,7 +278,12 @@ struct ReplayContext {
 ///
 /// Returns a precise runner or JSON serialization failure.
 pub fn render_builtin_transcript() -> Result<String, String> {
-    let transcript = generate_transcript(&builtin_inputs(), 23, &ControlledReplayDefect::None)?;
+    let transcript = generate_transcript(
+        &builtin_inputs(),
+        23,
+        &ControlledReplayDefect::None,
+        ReplayCodec::Typed,
+    )?;
     serde_json::to_string(&transcript).map_err(|error| error.to_string())
 }
 
@@ -299,6 +310,7 @@ pub fn verify_transcript(text: &str) -> Result<TranscriptVerification, String> {
         &inputs,
         expected.snapshot.after_step,
         &ControlledReplayDefect::None,
+        ReplayCodec::Typed,
     )?;
     compare_transcripts(&expected, &actual)?;
     Ok(TranscriptVerification {
@@ -308,15 +320,51 @@ pub fn verify_transcript(text: &str) -> Result<TranscriptVerification, String> {
     })
 }
 
+/// Prove that direct typed and strict canonical NDJSON ingress have identical
+/// semantic results for one checked transcript.
+///
+/// # Errors
+///
+/// Returns the first field-level divergence or codec failure.
+pub fn verify_transcript_codec_parity(text: &str) -> Result<TranscriptVerification, String> {
+    let expected: GoldenTranscript =
+        serde_json::from_str(text).map_err(|error| format!("fixture JSON: {error}"))?;
+    let inputs: Vec<_> = expected
+        .steps
+        .iter()
+        .map(|step| step.input.clone())
+        .collect();
+    let typed = generate_transcript(
+        &inputs,
+        expected.snapshot.after_step,
+        &ControlledReplayDefect::None,
+        ReplayCodec::Typed,
+    )?;
+    let ndjson = generate_transcript(
+        &inputs,
+        expected.snapshot.after_step,
+        &ControlledReplayDefect::None,
+        ReplayCodec::CanonicalNdjson,
+    )?;
+    compare_transcripts(&expected, &typed)?;
+    compare_transcripts(&typed, &ndjson).map_err(|error| format!("typed/NDJSON {error}"))?;
+    Ok(TranscriptVerification {
+        fixture_id: typed.fixture_id,
+        steps: typed.steps.len(),
+        final_state_hash: typed.final_state_hash,
+    })
+}
+
 fn generate_transcript(
     inputs: &[FixtureInput],
     snapshot_after_step: usize,
     defect: &ControlledReplayDefect,
+    codec: ReplayCodec,
 ) -> Result<GoldenTranscript, String> {
     if inputs.is_empty() || snapshot_after_step >= inputs.len() {
         return Err("snapshot step must select a non-empty transcript prefix".to_owned());
     }
-    let (full_context, steps) = run_inputs(new_context()?, inputs, defect)?;
+    let (full_context, steps) = run_inputs(new_context()?, inputs, defect, codec)?;
     let final_state_hash = state_hash(&full_context.state)?;
 
     let prefix = &inputs[..=snapshot_after_step];
@@ -329,12 +377,13 @@ fn generate_transcript(
         new_context()?,
         &restored_inputs,
         &ControlledReplayDefect::None,
+        codec,
     )?;
     let snapshot_state_hash = state_hash(&restored.state)?;
     let payload = snapshot_payload(&restored.state, prefix_bytes)?;
     let payload_bytes = serde_json::to_vec(&payload).map_err(|error| error.to_string())?;
     let snapshot_payload_hash = hash_bytes(&payload_bytes);
-    let (tail_replayed, _) = run_inputs(restored, tail, &ControlledReplayDefect::None)?;
+    let (tail_replayed, _) = run_inputs(restored, tail, &ControlledReplayDefect::None, codec)?;
     let tail_hash = state_hash(&tail_replayed.state)?;
     if tail_hash != final_state_hash {
         return Err(format!(
@@ -385,6 +434,7 @@ fn run_inputs(
     mut context: ReplayContext,
     inputs: &[FixtureInput],
     defect: &ControlledReplayDefect,
+    codec: ReplayCodec,
 ) -> Result<(ReplayContext, Vec<GoldenStep>), String> {
     let mut steps = Vec::with_capacity(inputs.len());
     for input in inputs {
@@ -397,6 +447,7 @@ fn run_inputs(
             } => {
                 let command =
                     signed_command(&context.state, actor, command_id, revision, operation)?;
+                let command = ingress_command(command, codec)?;
                 context.commands.insert(command_id.clone(), command.clone());
                 execute_command(&mut context.state, &command, defect)?
             }
@@ -424,6 +475,20 @@ fn run_inputs(
         });
     }
     Ok((context, steps))
+}
+
+fn ingress_command(
+    command: CommandEnvelope,
+    codec: ReplayCodec,
+) -> Result<CommandEnvelope, String> {
+    match codec {
+        ReplayCodec::Typed => Ok(command),
+        ReplayCodec::CanonicalNdjson => {
+            let line =
+                encode_command_line(&command).map_err(|error| format!("NDJSON encode: {error}"))?;
+            decode_command_line(&line).map_err(|error| format!("NDJSON decode: {error}"))
+        }
+    }
 }
 
 type StepOutcome = (Option<String>, String, String, Vec<String>);
@@ -1174,8 +1239,13 @@ mod tests {
 
     #[test]
     fn deletion_reorder_and_controlled_apply_defect_report_first_divergence() {
-        let expected =
-            generate_transcript(&builtin_inputs(), 23, &ControlledReplayDefect::None).unwrap();
+        let expected = generate_transcript(
+            &builtin_inputs(),
+            23,
+            &ControlledReplayDefect::None,
+            ReplayCodec::Typed,
+        )
+        .unwrap();
 
         let mut deleted = expected.clone();
         deleted.steps.remove(15);
@@ -1193,6 +1263,7 @@ mod tests {
             &ControlledReplayDefect::DropFirstEvent {
                 command_id: "revoke-bob".to_owned(),
             },
+            ReplayCodec::Typed,
         )
         .unwrap();
         let mut defective = expected.clone();
@@ -1207,5 +1278,12 @@ mod tests {
         assert!(!rendered.contains(ALICE_INVITE));
         assert!(!rendered.contains(BOB_INVITE));
         assert!(rendered.contains("invite_ref"));
+    }
+
+    #[test]
+    fn checked_fixture_has_exact_typed_and_canonical_ndjson_semantic_parity() {
+        let fixture = include_str!("../../../tests/fixtures/protocol/session-micro-v1.json");
+        let verification = verify_transcript_codec_parity(fixture).unwrap();
+        assert_eq!(verification.steps, 32);
     }
 }

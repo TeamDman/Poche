@@ -178,7 +178,7 @@ fn protocol(mut args: impl Iterator<Item = OsString>) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        let report = match poche_runtime::verify_transcript(&fixture) {
+        let report = match poche_runtime::verify_transcript_codec_parity(&fixture) {
             Ok(report) => report,
             Err(error) => {
                 eprintln!("protocol replay failed for {}: {error}", path.display());
@@ -186,7 +186,7 @@ fn protocol(mut args: impl Iterator<Item = OsString>) -> ExitCode {
             }
         };
         println!(
-            "protocol replay: passed; fixture={} steps={} final-state={}",
+            "protocol replay: passed; codecs=typed,canonical-ndjson fixture={} steps={} final-state={}",
             report.fixture_id, report.steps, report.final_state_hash
         );
     }

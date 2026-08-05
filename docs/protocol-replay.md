@@ -62,5 +62,21 @@ only returning a final checksum mismatch.
 
 Fixtures and rendered diagnostics are scanned to ensure neither runtime-only
 invite verifier appears. No secret key material is part of the runner or file.
-Task 2.5 will drive these same typed meanings through canonical NDJSON and any
-enabled Phon codec; Task 2.4 does not claim that parity early.
+Task 2.4 itself does not claim cross-codec parity early.
+
+## Codec parity
+
+Task 2.5 materializes every normal fixture command twice: once as the
+already-typed `CommandEnvelope`, and once by canonical NDJSON encode followed by
+the strict bounded decoder. Each path independently performs authorization,
+semantic decision, event application, snapshot recovery, and viewer projection.
+The resulting `GoldenTranscript` values must be exactly equal, which compares
+denials/errors, events, state hashes, scoped projection payloads/hashes, and
+snapshot evidence—not only successful parsing.
+
+`protocol replay --all` runs both enabled paths and identifies them in its
+receipt. No Phon protocol codec has been added, so no third path is claimed.
+Canonical NDJSON remains the normative inspectable transport. The malformed,
+unknown-version/tag/field, ambiguous-control, and deterministic arbitrary-byte
+corpora remain fail-closed tests in `poche-protocol` and run in the workspace
+suite.

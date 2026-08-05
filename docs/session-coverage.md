@@ -50,7 +50,7 @@ fixture; `query` = forward/reverse Prolog query; `safety` = Alloy/NuSMV safety;
 | `S-AUTH-001` | checked Tasks 2.1-2.2 default-deny defect | planned default-deny | planned denied transition | planned unknown-role/action queries | planned unknown fixture | planned attack e2e | planned reason display |
 | `S-AUTH-002` | checked Task 2.1 envelope schema | planned field abstraction | planned binding flags | planned validation query | planned golden/malformed | planned signed e2e | N/A: envelope internal |
 | `S-AUTH-003` | planned crypto vectors | N/A: unforgeability assumed | planned valid-signature flag | planned valid-signature assumption query | planned bad-signature fixture | planned attack e2e | planned safe error |
-| `S-AUTH-004` | checked Task 2.1 canonical vectors/fuzz | N/A: byte encoding outside relational scope | N/A: byte encoding outside temporal scope | planned canonical relation only | planned exact byte vectors | planned cross-codec e2e | N/A: diagnostic only |
+| `S-AUTH-004` | checked Tasks 2.1/2.5 canonical parity/fuzz | N/A: byte encoding outside relational scope | N/A: byte encoding outside temporal scope | planned canonical relation only | checked Task 2.5 typed/NDJSON transcript | planned cross-codec e2e | N/A: diagnostic only |
 | `S-AUTH-005` | checked Tasks 2.2/2.4 replay hashes | planned idempotence assertion | planned duplicate safety | planned duplicate query | checked Task 2.4 duplicate transcript | planned retry e2e | planned stable result |
 | `S-AUTH-006` | checked Task 2.2 wrong-room unit | planned room-binding assertion | planned wrong-room flag | planned deny query | planned cross-room fixture | planned attack e2e | planned reason display |
 | `S-AUTH-007` | checked Task 2.2 stale-epoch unit | planned epoch assertion | planned stale-epoch flag | planned deny query | planned stale fixture | planned reconnect/revoke e2e | planned reason display |
@@ -129,7 +129,7 @@ fixture; `query` = forward/reverse Prolog query; `safety` = Alloy/NuSMV safety;
 | `S-FAULT-007` | checked Task 2.2 host-loss/no-election unit | planned no-migration | planned liveness counterexample | planned impossible-host query | planned unavailable event | planned host shutdown | planned host-unavailable screen |
 | `S-FAULT-008` | planned evidence classification | N/A: network fact outside relational result | planned partition counterexample | planned availability query | planned disposition metadata | planned unavailable harness | planned honest limitation |
 | `S-FAULT-009` | planned no-network assertion/benchmark | N/A: RL path outside session model | N/A: rollout path outside lifecycle | N/A: rollout path outside query model | planned direct-call parity only | planned network-spy zero calls | N/A: renderer optional |
-| `S-FAULT-010` | checked Task 2.1 fuzz/no semantic entry | N/A: parser outside model | N/A: parser outside model | N/A: parser outside model | planned malformed corpus | planned malformed e2e | planned safe error |
+| `S-FAULT-010` | checked Task 2.1 fuzz/no semantic entry | N/A: parser outside model | N/A: parser outside model | N/A: parser outside model | checked Tasks 2.1/2.5 malformed corpus/parity | planned malformed e2e | planned safe error |
 | `S-FAULT-011` | planned redaction/error unit | N/A: diagnostics outside model | N/A: diagnostics outside model | planned public-reason query | planned error fixtures | planned logs/capture scan | planned redacted error |
 
 ## Completion protocol
