@@ -94,15 +94,15 @@ fixture; `query` = forward/reverse Prolog query; `safety` = Alloy/NuSMV safety;
 
 | Rule | Rust | Alloy | NuSMV | Prolog | Protocol | Network | UI |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `S-CHAT-001` | checked Task 2.2 member chat gate | abstracted Task 3.1: permission assertion | abstracted Task 3.2: chat action | queried Task 3.3 member chat policy | checked Task 2.4 chat transcript | planned e2e | planned composer |
-| `S-CHAT-002` | checked Task 2.1 UTF-8/size validation | N/A: text omitted | abstracted Task 3.2: bounded flag | N/A: text omitted | planned boundary corpus | planned oversize e2e | planned validation error |
-| `S-CHAT-003` | checked Task 2.2 logical rate unit | abstracted Task 3.1: bounded counter | abstracted Task 3.2: rate state | abstracted Task 3.3: rate query | planned rate fixture | planned burst e2e | planned retry display |
-| `S-CHAT-004` | checked Task 2.2 attributed event | abstracted Task 3.1: attribution assertion | abstracted Task 3.2: sender state | abstracted Task 3.3: who-sent query | checked Tasks 2.4/4.3 attributed replay | planned parity | checked Task 4.3 escaped sender text; egui pending |
-| `S-CHAT-005` | deferred integration phases: retention unit | N/A: durable history out of scope | abstracted Task 3.2: bounded count | abstracted Task 3.3: recent-chat query | planned truncation fixture | planned restart e2e | planned ephemeral notice |
-| `S-CHAT-006` | checked Task 2.1 newline/control fuzz | N/A: parser outside scope | N/A: parser outside scope | N/A: parser outside scope | planned newline/control corpus | planned injection e2e | planned literal text render |
-| `S-CHAT-007` | checked Task 2.2 phase-preserving chat | abstracted Task 3.1: phase permission | abstracted Task 3.2: phase transitions | queried Task 3.3 phase-preserving self-loop | checked Task 2.4 running-phase fixture | planned e2e | planned multi-phase composer |
-| `S-CHAT-008` | deferred integration phases: abstraction audit | abstracted Task 3.1: bounded metadata only | abstracted Task 3.2: bounded metadata | abstracted Task 3.3: permission/count query | N/A: modeling rule | N/A: content not formal | N/A: content still rendered |
-| `S-CHAT-009` | deferred integration phases: redaction/secret scan | N/A: secrets omitted | N/A: secrets omitted | abstracted Task 3.3: no-auto-source query | planned safe system text | planned capture scan | planned UI scan |
+| `S-CHAT-001` | checked Task 2.2 member chat gate | abstracted Task 3.1: permission assertion | abstracted Task 3.2: chat action | queried Task 3.3 member chat policy | checked Task 2.4 chat transcript | checked Task 4.4 member/outsider loopback | planned composer |
+| `S-CHAT-002` | checked Task 2.1 UTF-8/size validation | N/A: text omitted | abstracted Task 3.2: bounded flag | N/A: text omitted | checked Task 4.4 strict NDJSON boundary | checked Task 4.4 oversize rejection | planned validation error |
+| `S-CHAT-003` | checked Task 2.2 logical rate unit | abstracted Task 3.1: bounded counter | abstracted Task 3.2: rate state | abstracted Task 3.3: rate query | checked Task 4.4 rate denial | checked Task 4.4 burst sequence | planned retry display |
+| `S-CHAT-004` | checked Task 2.2 attributed event | abstracted Task 3.1: attribution assertion | abstracted Task 3.2: sender state | abstracted Task 3.3: who-sent query | checked Tasks 2.4/4.3/4.4 attributed replay/export | checked Task 4.4 attributed tail | checked Task 4.3 escaped sender text; egui pending |
+| `S-CHAT-005` | checked Task 4.4 bounded tail/truncation | N/A: durable history out of scope | abstracted Task 3.2: bounded count | abstracted Task 3.3: recent-chat query | checked Task 4.4 public tail export | checked Task 4.4 in-memory runtime; restart loss specified | planned ephemeral notice |
+| `S-CHAT-006` | checked Task 2.1 newline/control fuzz | N/A: parser outside scope | N/A: parser outside scope | N/A: parser outside scope | checked Task 4.4 escaped single-frame export | checked Task 4.4 duplicate/injection loopback | checked Task 4.3 literal escaped text; egui pending |
+| `S-CHAT-007` | checked Task 2.2 phase-preserving chat | abstracted Task 3.1: phase permission | abstracted Task 3.2: phase transitions | queried Task 3.3 phase-preserving self-loop | checked Tasks 2.4/4.3 running-phase fixture | checked Task 4.4 lobby/closed phases; full phases Task 4.5 | planned multi-phase composer |
+| `S-CHAT-008` | checked Task 4.4 content-free bounded runtime tail | abstracted Task 3.1: bounded metadata only | abstracted Task 3.2: bounded metadata | abstracted Task 3.3: permission/count query | N/A: modeling rule | N/A: content not formal | N/A: content still rendered |
+| `S-CHAT-009` | checked Task 4.4 export secret scan | N/A: secrets omitted | N/A: secrets omitted | abstracted Task 3.3: no-auto-source query | checked Task 4.4 public-only export type | checked Task 4.4 capture scan | planned UI scan |
 
 ## Logical time
 

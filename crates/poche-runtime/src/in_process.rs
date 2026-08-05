@@ -15,7 +15,10 @@ use poche_session::{
     decide, decide_transport_disconnect, project_viewer,
 };
 
-use crate::{AuthorityTransportPort, ClientPort, ClockPort, TransportPort};
+use crate::{
+    AuthorityTransportPort, ChatEntry, ChatTail, ClientPort, ClockPort, DEFAULT_CHAT_TAIL_CAPACITY,
+    TransportPort,
+};
 
 /// Framing mode for an otherwise identical no-socket loopback path.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -474,12 +477,23 @@ pub struct InProcessAuthority<G: SessionGame> {
     pub state: SessionState<G>,
     pub clock: ManualClock,
     pub transport: InProcessTransport,
+    chat_tail: ChatTail,
     next_delivery: u64,
 }
 
 impl<G: SessionGame> InProcessAuthority<G> {
     #[must_use]
     pub const fn new(state: SessionState<G>, transport: InProcessTransport) -> Self {
+        Self::with_chat_capacity(state, transport, DEFAULT_CHAT_TAIL_CAPACITY)
+    }
+
+    /// Compose an authority with an explicit ephemeral chat-tail capacity.
+    #[must_use]
+    pub const fn with_chat_capacity(
+        state: SessionState<G>,
+        transport: InProcessTransport,
+        chat_capacity: usize,
+    ) -> Self {
         Self {
             state,
             clock: ManualClock {
@@ -487,8 +501,15 @@ impl<G: SessionGame> InProcessAuthority<G> {
                 scheduled: Vec::new(),
             },
             transport,
+            chat_tail: ChatTail::new(chat_capacity),
             next_delivery: 0,
         }
+    }
+
+    /// Borrow the retained public chat tail. It is never part of game state.
+    #[must_use]
+    pub const fn chat_tail(&self) -> &ChatTail {
+        &self.chat_tail
     }
 
     /// Process at most one authenticated transport input.
@@ -639,11 +660,30 @@ impl<G: SessionGame> InProcessAuthority<G> {
         &mut self,
         events: &[SessionEvent<G>],
     ) -> Result<(), InProcessAuthorityError<G::Error>> {
+        let already_applied = events.first().is_some_and(|event| {
+            self.state.processed_commands.iter().any(|record| {
+                record.command_id == event.provenance.command_id
+                    && record.command_hash == event.provenance.command_hash
+            })
+        });
         let mut candidate = self.state.clone();
         for event in events {
             candidate = apply(&candidate, event).map_err(InProcessAuthorityError::Session)?;
         }
         self.state = candidate;
+        if !already_applied {
+            for event in events {
+                if let SessionEventKind::ChatPosted { principal, text } = &event.kind {
+                    self.chat_tail.push(ChatEntry {
+                        revision: event.provenance.base_revision
+                            + u64::from(event.provenance.event_index)
+                            + 1,
+                        principal_id: principal.clone(),
+                        text: text.clone(),
+                    });
+                }
+            }
+        }
         for event in events {
             match &event.kind {
                 SessionEventKind::CountdownArmed {

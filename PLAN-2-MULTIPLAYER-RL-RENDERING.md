@@ -974,7 +974,7 @@ transcript without executing it. Runtime/CLI tests assert every required text
 shape and action/decision/event markers. `protocol replay --all`, focused
 tests, and denied-warning clippy pass.
 
-### [ ] 4.4 Add ephemeral chat and transcript-safe redaction
+### [x] 4.4 Add ephemeral chat and transcript-safe redaction
 
 Implement bounded chat through the same authorization/event service, but retain
 only the configured in-memory tail. Escape/render user text as data. Add rate,
@@ -985,7 +985,22 @@ can include chat while never including private protocol material.
 oversize/rate tests fail closed; formal coverage tracks permission and count,
 not unbounded content.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed in the local Task 4.4 slice.
+Added a configurable fixed-capacity `ChatTail` whose entries contain only the
+accepted event revision, stable principal ID, and message text. The in-process
+authority records a `ChatPosted` event only on its first application, so a
+deterministically duplicated transport delivery cannot duplicate the side
+stream. The tail is explicitly memory-only, truncates oldest-first, supports a
+zero capacity, and exports strict NDJSON without serializing command envelopes,
+invites, signatures, capabilities, or viewer-private projections. An end-to-end
+canonical-NDJSON test covers member attribution, outsider default denial,
+closed-room denial, the logical rate limit, protocol-boundary oversize
+rejection, bounded truncation, duplicate delivery, newline/carriage-return and
+JSON-looking control injection, and secret/private-field scans. The canonical
+CLI replay also asserts that its accepted chat action crosses the loopback path;
+live native-room attachment remains in the transport/client phases. Focused
+runtime/CLI tests and denied-warning clippy pass, and the coverage matrix now
+tracks bounded permission/count metadata rather than unbounded formal content.
 
 ### [ ] 4.5 Run the loopback acceptance scenario
 

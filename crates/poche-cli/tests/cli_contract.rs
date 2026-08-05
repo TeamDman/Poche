@@ -117,6 +117,7 @@ fn checked_transcript_replays_as_text_json_and_ndjson() {
     let rendered = String::from_utf8(text.stdout).expect("replay text should be UTF-8");
     assert!(rendered.contains("actor=alice command=abort"));
     assert!(rendered.contains("outcome: deny:D-PAUSED"));
+    assert!(rendered.contains("action=chat:inspectable hello"));
     assert!(rendered.contains("events: hand-capabilities-expired-round, game-advanced"));
     assert!(rendered.contains("final-state:"));
 
