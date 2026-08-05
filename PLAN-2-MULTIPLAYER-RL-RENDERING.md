@@ -439,7 +439,7 @@ spoofing. `cargo fmt --all -- --check`, `cargo clippy -p poche-xtask
 `guidance audit` commands pass. `git diff --exit-code -- PLAN.md` confirms the
 predecessor remained byte-for-byte untouched.
 
-### [ ] 1.2 Record composition, threat model, dependency, and open-gate decisions
+### [x] 1.2 Record composition, threat model, dependency, and open-gate decisions
 
 Create `docs/decisions/0003-session-network-rl-architecture.md` (using the next
 available ADR number if 0003 is occupied). It must:
@@ -467,7 +467,19 @@ available ADR number if 0003 is occupied). It must:
 pause, persistence, browser, reward, or dependency assumption. License files and
 source provenance are compatible with MPL-2.0.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Complete. Added accepted ADR
+`docs/decisions/0003-session-network-rl-architecture.md`. It fixes the separate
+game/session composition, signed host-authoritative threat model, host access to
+all hands, app-key versus Veilid identity, one-time invite/durable membership,
+TPBAC decision shape, exact any-player pause/unpause semantics, countdown race,
+chat and spectator boundaries, and conditional session liveness. It registers
+the no-companion Veilid/egui/Datastar/Vulkan matrix for G26/G32 and preregisters
+`poche-2p-v1`, `round-score-v1`, PPO/GAE baselines, hyperparameters, and score-led
+evaluation. Published exact dependency candidates and licenses were verified;
+notably `figue = 5.0.0-rc.5` targets the existing Facet 0.50 release line while
+stable Figue 4 targets Facet 0.46. The Veilid `AGENTS.md` restriction is recorded
+and no reference repository was modified. `git diff --check` and the phase-2
+guidance audit pass.
 
 ### [ ] 1.3 Extract stable session and authorization rules
 
