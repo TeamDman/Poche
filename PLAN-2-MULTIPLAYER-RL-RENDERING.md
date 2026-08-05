@@ -2,7 +2,7 @@
 
 **Plan ID:** `poche-phase-2`
 
-**Plan status:** Execution in progress
+**Plan status:** Execution complete
 
 **Primary implementation root:** `D:\Repos\Games\poche-3` on branch `model-checking`
 
@@ -1958,7 +1958,7 @@ and baseline hash
 `7ab24388ab33c34e4763e065e493b2529c6562c8d70b59e909f70920442fc5a9`
 passed; an unselected seed failed closed.
 
-### [~] 9.4 Complete guidance audit, documentation, commits, and push
+### [x] 9.4 Complete guidance audit, documentation, commits, and push
 
 Update README and contributor docs with architecture, threat model, CLI, room
 codes, reconnect, chat, spectator grants, native/direct/hosted client modes and
@@ -1981,61 +1981,88 @@ are decided/deferred/blocked with exact conditions; all overall criteria below
 are checked; the local branch is clean and synchronized with the verified
 remote commit.
 
-**Completion notes (in progress, 2026-08-05):** All implementation/acceptance
-tasks through 9.3 are complete. The final documentation coverage, gate/U-row
-audit, triple intent audit, overall criteria, full workspace regression,
-commit/push, Pages status, clean-branch, and remote-SHA checks remain in
-progress; plan status stays `Execution in progress` until they all pass.
+**Completion notes (complete, 2026-08-05):** README and contributor guidance now
+record the two-reducer architecture, host/application/transport threat model,
+typed CLI and exact replay commands, one-time room codes and stable-key
+reconnect, bounded chat, future-only spectator revocation, proven client modes,
+RL manifests, raw-score reward, and the formal-versus-empirical boundary. The
+88-row coverage matrix contains only checked, abstracted, reasoned-N/A, or
+explicitly deferred production-client dispositions; all 18 gates are decided.
+The final literal three-pass audit maps every U30-U50 row and found no omitted
+or weakened instruction. `PLAN.md` has no diff and both plan guidance audits
+pass.
+
+The final development-tree regression passed formatting, `git diff --check`,
+strict workspace Clippy, and all workspace tests/doc-tests in 187.8 seconds.
+Commit `8ea4fed0835ea8127b7276b320891930aae1bdbc` was pushed and cloned back from
+GitHub at that exact SHA. The clone passed locked/offline workspace tests in
+272.6 seconds and strict Clippy in 51.2 seconds. Its first aggregate run found
+the intended fail-closed acceptance-hash gate stale after source changes; the
+four exact source identities were recomputed, reviewed, and committed as
+`ac131ab`. A clean remote-tracking checkout of that commit then passed the full
+game aggregate (nine verified hash groups and zero unclassified differences),
+the 800-state/38,400-edge four-track session aggregate, canonical protocol
+replay, the 178-input/13-deal in-process lifecycle, the isolated-local Veilid
+semantic suite with its expected 0.5.7 topology limitation, the exact RL spec
+and 256-game baseline evaluation, egui/WASM packaging, native egui and hostable
+web release builds, and both guidance audits. It remained Git-clean.
+
+GitHub Actions run `31038068938` built and deployed the latest path-matching
+`model-checking` publication commit successfully, including pinned Typst/fonts
+and the egui/WASM replay. Repository Pages uses workflow deployment from
+`model-checking` at `https://teamdman.github.io/Poche/`. The final closeout
+commit changes only this recorded plan state; its local/remote SHA equality is
+verified during handoff because a commit cannot embed its own identity.
 
 ## Overall completion criteria
 
-- [ ] The predecessor plan remains unchanged as truthful completed history, and
+- [x] The predecessor plan remains unchanged as truthful completed history, and
   both plans pass generalized guidance audits.
-- [ ] Every U30-U50 requirement maps to completed evidence; the final triple
+- [x] Every U30-U50 requirement maps to completed evidence; the final triple
   intent audit finds no silent omission or weakened qualifier.
-- [ ] `SessionState` and `GameEnvironment` remain separate, deterministic,
+- [x] `SessionState` and `GameEnvironment` remain separate, deterministic,
   strongly typed reducers with an explicitly tested composition boundary.
-- [ ] Versioned typed commands/events and canonical NDJSON drive CLI, network,
+- [x] Versioned typed commands/events and canonical NDJSON drive CLI, network,
   renderer, fixtures, and replay; RL uses the same semantics without parsing or
   networking in its hot path.
-- [ ] Host/create, code/join, membership, ready, abortable countdown, start,
+- [x] Host/create, code/join, membership, ready, abortable countdown, start,
   any-player pause and any-player unpause, post-game, reconnect, leave/close,
   and bounded chat work in loopback and native Veilid scenarios.
-- [ ] Application keys and capabilities, not room codes or transport IDs alone,
+- [x] Application keys and capabilities, not room codes or transport IDs alone,
   authorize commands; duplicate/stale/cross-room/revoked attempts fail closed
   with auditable policy reasons.
-- [ ] Spectator request/grant/revoke works per recipient; unauthorized clients
+- [x] Spectator request/grant/revoke works per recipient; unauthorized clients
   never receive private hands; revocation is accurately described as preventing
   future disclosure.
-- [ ] Independent Alloy, NuSMV, Prolog, and Rust session models cover every
+- [x] Independent Alloy, NuSMV, Prolog, and Rust session models cover every
   applicable session rule, agree or classify differences, and label bounded/
   conditional liveness precisely.
-- [ ] The existing game's termination evidence remains valid and separate;
+- [x] The existing game's termination evidence remains valid and separate;
   session pause/network liveness claims state fairness assumptions and show the
   expected unconditional counterexamples.
-- [ ] The CLI provides inspectable human text, NDJSON automation, structured
+- [x] The CLI provides inspectable human text, NDJSON automation, structured
   diagnostics, replay, and safe identity/room operations based on the clean
   template patterns.
-- [ ] A minimal egui-first client renders viewer-correct rooms and games. The
+- [x] A minimal egui-first client renders viewer-correct rooms and games. The
   browser-only Veilid/native-client/Datastar choice follows Task 6.1 evidence;
   README and Pages advertise only proven modes and their actual trust boundary.
-- [ ] `poche-2p-v1` fixes observation/history/action/mask/reward semantics and
+- [x] `poche-2p-v1` fixes observation/history/action/mask/reward semantics and
   semantic hashes; scalar and vectorized rollouts are deterministic and agree.
-- [ ] Legal-random and heuristic baselines, fixed evaluation seeds, selected
+- [x] Legal-random and heuristic baselines, fixed evaluation seeds, selected
   episode replay, and performance/allocation measurements exist before training
   conclusions.
-- [ ] Burn performs policy/value tensor inference and learning on CPU and one
+- [x] Burn performs policy/value tensor inference and learning on CPU and one
   available GPU backend; PPO/self-play/checkpoint code passes controlled tests.
-- [ ] The first full-rule policy has a reproducible training/evaluation manifest
+- [x] The first full-rule policy has a reproducible training/evaluation manifest
   and is reported primarily by Poche score without optimality/proof overclaim.
-- [ ] Large generated PDFs, web bundles, traces, logs, and model weights remain
+- [x] Large generated PDFs, web bundles, traces, logs, and model weights remain
   out of Git; committed summaries identify artifact digests and semantic/code
   revisions.
-- [ ] The full workspace, native formal tools, local Veilid harness, renderer
+- [x] The full workspace, native formal tools, local Veilid harness, renderer
   tests, RL parity, and documentation acceptance pass from a clean clone.
-- [ ] All first-party work is MPL-2.0, third-party provenance is recorded, and
+- [x] All first-party work is MPL-2.0, third-party provenance is recorded, and
   no Veilid upstream contribution was generated or implied.
-- [ ] The completed work is committed, pushed to `model-checking`, and the
+- [x] The completed work is committed, pushed to `model-checking`, and the
   remote commit is verified.
 
 ## Deferred follow-ups
