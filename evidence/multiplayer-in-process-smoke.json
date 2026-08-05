@@ -1,0 +1,31 @@
+{
+  "report": {
+    "schema_version": 1,
+    "transport": "in-process-canonical-ndjson",
+    "seed": 24301,
+    "inputs": 178,
+    "applied": 176,
+    "denied": 1,
+    "final_revision": 177,
+    "deals": 13,
+    "rounds": 13,
+    "final_scores": [
+      40,
+      20
+    ],
+    "chat_messages": 5,
+    "verified": [
+      "spectator-grant",
+      "spectator-revocation",
+      "reconnect",
+      "transcript-replay"
+    ],
+    "transcript_hash": "ab90ff79acb755d72defaef22a37369a71a9125df64c91a8645260254934a075",
+    "final_public_hash": "be439108bb7ddb5695232faa074cb9180d1b34df6a1748598ad6e19c6f9759dd"
+  },
+  "gates": [
+    "protocol-replay",
+    "session-coverage",
+    "formal-agreement"
+  ]
+}

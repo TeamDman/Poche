@@ -17,12 +17,14 @@ use poche_session::PureSessionMachine;
 mod chat;
 mod in_process;
 mod oracle_session;
+mod smoke;
 mod text;
 mod transcript;
 
 pub use chat::*;
 pub use in_process::*;
 pub use oracle_session::{OracleSessionGame, OracleSessionGameError};
+pub use smoke::*;
 pub use text::*;
 pub use transcript::*;
 

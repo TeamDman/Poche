@@ -1002,7 +1002,7 @@ live native-room attachment remains in the transport/client phases. Focused
 runtime/CLI tests and denied-warning clippy pass, and the coverage matrix now
 tracks bounded permission/count metadata rather than unbounded formal content.
 
-### [ ] 4.5 Run the loopback acceptance scenario
+### [x] 4.5 Run the loopback acceptance scenario
 
 Add `cargo run -p poche-xtask -- multiplayer smoke --transport in-process` and
 commit its small normalized evidence summary.
@@ -1011,7 +1011,21 @@ commit its small normalized evidence summary.
 feature in U35/U39/U41, completes a real Poche game, reproduces from its seed and
 transcript, and passes protocol/session/formal coverage gates.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed in the local Task 4.5 slice.
+Added the exact `multiplayer smoke --transport in-process` xtask command and a
+checked normalized evidence summary. Its secret-free symbolic transcript drives
+the canonical-NDJSON transport through create/join/seat, ready/unready, aborted
+and completed countdowns, chat in all five open phases, player pause and a
+different player's unpause, paused-action denial, spectator request/grant/exact
+card projection/revoke, disconnect/new-route reconnect, post-game reset, and
+close. Between those lifecycle operations it completes the real two-player
+Poche oracle's 13-deal schedule from seed `0x5eed`, recording scores `[40, 20]`.
+A fresh authority replays all 178 inputs and must match every disposition,
+revision, event count, phase, and viewer-projection hash; invite secrets never
+enter the serialized transcript. The command then passes the canonical protocol
+replay, 88-rule session coverage audit, and zero-disagreement Rust, Alloy,
+NuSMV, and Scryer Prolog comparison. The pinned transcript hash is
+`ab90ff79acb755d72defaef22a37369a71a9125df64c91a8645260254934a075`.
 
 ## Phase 5 - Native Veilid rooms and durable identity
 

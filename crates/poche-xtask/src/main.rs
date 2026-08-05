@@ -24,6 +24,7 @@ use poche_native_tools::{
     run_nusmv_suite, run_prolog_model_fixture,
 };
 use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
+use serde::{Deserialize, Serialize};
 
 const COVERAGE_TRACKS: [(&str, usize); 4] =
     [("rust", 3), ("alloy", 4), ("nusmv", 5), ("prolog", 6)];
@@ -97,6 +98,7 @@ fn main() -> ExitCode {
         Some(command) if command == OsStr::new("guidance") => guidance(args),
         Some(command) if command == OsStr::new("protocol") => protocol(args),
         Some(command) if command == OsStr::new("session") => session(args),
+        Some(command) if command == OsStr::new("multiplayer") => multiplayer(args),
         Some(command) if command == OsStr::new("coverage") => coverage(args),
         Some(command) if command == OsStr::new("oracle") => oracle(args),
         Some(command) if command == OsStr::new("compare") => compare(args),
@@ -123,6 +125,7 @@ fn usage() {
          cargo run -p poche-xtask -- session oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- session coverage audit --all\n  \
          cargo run -p poche-xtask -- session compare all --scope lobby-micro\n  \
+         cargo run -p poche-xtask -- multiplayer smoke --transport in-process\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- oracle report\n  \
@@ -135,6 +138,100 @@ fn usage() {
          cargo run -p poche-xtask -- check rust-explicit --scope micro\n  \
          cargo run -p poche-xtask -- check rust-explicit --property game-terminates"
     );
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MultiplayerSmokeEvidence {
+    report: poche_runtime::InProcessSmokeReport,
+    gates: Vec<String>,
+}
+
+fn multiplayer(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("smoke"))
+        || args.next().as_deref() != Some(OsStr::new("--transport"))
+        || args.next().as_deref() != Some(OsStr::new("in-process"))
+        || args.next().is_some()
+    {
+        usage();
+        return ExitCode::from(2);
+    }
+    let report = match poche_runtime::run_in_process_smoke(0x5eed) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("multiplayer in-process smoke failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let gates = [
+        (
+            "protocol-replay",
+            protocol([OsString::from("replay"), OsString::from("--all")].into_iter()),
+        ),
+        (
+            "session-coverage",
+            session_coverage([OsString::from("audit"), OsString::from("--all")].into_iter()),
+        ),
+        (
+            "formal-agreement",
+            session_compare(
+                [
+                    OsString::from("all"),
+                    OsString::from("--scope"),
+                    OsString::from("lobby-micro"),
+                ]
+                .into_iter(),
+            ),
+        ),
+    ];
+    if gates.iter().any(|(_, result)| *result != ExitCode::SUCCESS) {
+        eprintln!("multiplayer smoke stopped because an evidence gate failed");
+        return ExitCode::FAILURE;
+    }
+    let evidence = MultiplayerSmokeEvidence {
+        report,
+        gates: gates.into_iter().map(|(name, _)| name.to_owned()).collect(),
+    };
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let path = root.join("evidence/multiplayer-in-process-smoke.json");
+    let checked = match fs::read_to_string(&path) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!(
+                "multiplayer smoke could not read {}: {error}",
+                path.display()
+            );
+            if let Ok(value) = serde_json::to_string_pretty(&evidence) {
+                eprintln!("normalized evidence candidate:\n{value}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+    let expected: MultiplayerSmokeEvidence = match serde_json::from_str(&checked) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("multiplayer smoke evidence is malformed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if evidence != expected {
+        eprintln!("multiplayer smoke evidence drifted from {}", path.display());
+        if let Ok(value) = serde_json::to_string_pretty(&evidence) {
+            eprintln!("normalized evidence candidate:\n{value}");
+        }
+        return ExitCode::FAILURE;
+    }
+    println!(
+        "multiplayer smoke: passed; transport={} seed={} inputs={} revisions={} deals={} transcript={} public={}",
+        evidence.report.transport,
+        evidence.report.seed,
+        evidence.report.inputs,
+        evidence.report.final_revision,
+        evidence.report.deals,
+        evidence.report.transcript_hash,
+        evidence.report.final_public_hash
+    );
+    ExitCode::SUCCESS
 }
 
 fn session(mut args: impl Iterator<Item = OsString>) -> ExitCode {

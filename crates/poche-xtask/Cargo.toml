@@ -16,6 +16,8 @@ poche-interchange = { path = "../poche-interchange" }
 poche-native-tools = { path = "../poche-native-tools" }
 poche-oracle-rust = { path = "../poche-oracle-rust" }
 poche-runtime = { path = "../poche-runtime" }
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
