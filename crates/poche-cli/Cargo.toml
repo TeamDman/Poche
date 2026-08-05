@@ -1,0 +1,25 @@
+[package]
+name = "poche-cli"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+build = "build.rs"
+
+[[bin]]
+name = "poche"
+path = "src/main.rs"
+
+[dependencies]
+eyre = "=0.6.12"
+serde.workspace = true
+serde_json.workspace = true
+teamy-cancellation = { git = "https://github.com/TeamDman/teamy-cancellation.git", tag = "v0.3.1", default-features = false, features = ["ctrlc", "tracing"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

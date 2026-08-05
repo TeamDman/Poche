@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/poche-check", "crates/poche-conformance", "crates/poche-domain", "crates/poche-environment", "crates/poche-formal", "crates/poche-interchange", "crates/poche-model", "crates/poche-native-tools", "crates/poche-oracle-rust", "crates/poche-protocol", "crates/poche-runtime", "crates/poche-session", "crates/poche-xtask"]
+members = ["crates/poche-check", "crates/poche-cli", "crates/poche-conformance", "crates/poche-domain", "crates/poche-environment", "crates/poche-formal", "crates/poche-interchange", "crates/poche-model", "crates/poche-native-tools", "crates/poche-oracle-rust", "crates/poche-protocol", "crates/poche-runtime", "crates/poche-session", "crates/poche-xtask"]
 resolver = "3"
 
 [workspace.package]
@@ -16,6 +16,8 @@ facet = "=0.50.0-rc.5"
 phon = "=0.2.0-rc.5"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
 weavy = "=0.2.2"
 
 [workspace.lints.rust]

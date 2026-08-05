@@ -878,7 +878,7 @@ commands pass, and `PLAN.md` remains unchanged.
 
 ## Phase 4 - Loopback multiplayer CLI vertical slice
 
-### [ ] 4.1 Add a Poche CLI by selectively porting the clean template
+### [x] 4.1 Add a Poche CLI by selectively porting the clean template
 
 Create `crates/poche-cli` as a workspace binary. Port useful patterns from
 `teamy-rust-cli` commit `7e62d72` rather than running a whole-repository
@@ -901,7 +901,20 @@ poche identity show|create
 inputs are tested; stdout is protocol/machine output and diagnostics stay on
 stderr; no secret is printed by default or under debug logging.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed in the local Task 4.1 slice.
+Added the `poche-cli` workspace binary and selectively ported the pinned
+`teamy-rust-cli` patterns for directory-shaped command dispatch, embedded
+repository/build metadata, Ctrl+C/deadline cancellation, stderr tracing,
+optional NDJSON file logs, and top-level text/JSON rendering. All 24 declared
+commands parse into typed variants; until Task 4.2 supplies a runtime they emit
+an explicit `parsed` receipt rather than pretending to execute semantics.
+Parsing is strict, value-free errors cannot reflect an invite secret, and the
+parsed CLI is never debug-logged. Four unit tests cover the full command table,
+output selection, redaction, and 10,000 deterministic arbitrary token streams;
+five process tests cover root/nested help, version metadata, text/JSON stdout,
+stderr-only diagnostics, NDJSON validity/redaction, invalid input, and
+deterministic cancellation. `cargo test -p poche-cli` and denied-warning clippy
+pass.
 
 ### [ ] 4.2 Implement in-process multi-client transport and authoritative runtime
 
