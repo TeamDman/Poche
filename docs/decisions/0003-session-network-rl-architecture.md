@@ -249,6 +249,12 @@ Poche will consume the released public API and may read local source/docs for
 architecture. No Veilid source, issue, merge request, or upstream branch will be
 modified by this work.
 
+Implementation note (Task 5.1): the crates.io 0.5.7 protected-store API is
+synchronous through `VeilidAPI::protected_store()`. The local `main` checkout,
+while retaining a 0.5.7 package version, contains newer async convenience
+methods directly on `VeilidAPI`. Poche targets the released API and records this
+skew so reference-checkout code is never mistaken for published capability.
+
 ## Sources checked
 
 - [Veilid 0.5.7 API](https://docs.rs/veilid-core/0.5.7/veilid_core/)

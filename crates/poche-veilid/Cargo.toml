@@ -1,0 +1,29 @@
+[package]
+name = "poche-veilid"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+veilid = ["dep:veilid-core"]
+insecure-development = []
+
+[dependencies]
+blake3.workspace = true
+curve25519-dalek.workspace = true
+ed25519-dalek.workspace = true
+getrandom.workspace = true
+poche-protocol = { path = "../poche-protocol" }
+serde.workspace = true
+veilid-core = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

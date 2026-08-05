@@ -1029,7 +1029,7 @@ NuSMV, and Scryer Prolog comparison. The pinned transcript hash is
 
 ## Phase 5 - Native Veilid rooms and durable identity
 
-### [ ] 5.1 Implement application identity and secret storage
+### [x] 5.1 Implement application identity and secret storage
 
 Add `crates/poche-veilid` behind a non-default `veilid` feature. Pin a released
 Veilid version. Define stable player signing/encryption keys separately from
@@ -1045,7 +1045,26 @@ network/DHT operations.
 missing storage credentials fail safely; logs/state snapshots contain no secret
 material; signature/replay tests include controlled wrong-key attacks.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-05):** Completed in the local Task 5.1 slice.
+Added `poche-veilid` with empty default features, an explicit
+`insecure-development` mode, and a non-default `veilid` feature pinned to the
+released MPL-2.0 `veilid-core = 0.5.7`. Each stable application identity owns
+independent Ed25519 signing and X25519 recipient secrets; its 64-character
+signing-public-key hex is the protocol `PrincipalId`, while Veilid node IDs,
+DHT owner keys, and routes remain absent from the type. Only the public identity
+is serializable/debuggable. Compile-fail tests keep the secret identity from
+`Debug`/`Clone`; its versioned integrity-checked blob has no diagnostic or
+serialization traits and zeroes on drop. The production adapter uses Veilid's
+platform protected store, with config validation that requires credentials and
+rejects insecure fallback, forced insecure storage, and delete-on-start. The
+memory-only development adapter requires conspicuous opt-in at construction and
+use. Restart, missing/wrong credential, corrupt/error nonreplacement, public
+snapshot secret scan, strict command signature, wrong-key, and signed-revision
+replay tests pass. Canonical command/event signer/verifiers remain outside pure
+reducers. Default and `--features veilid` tests plus denied-warning clippy pass
+offline. Implementation also recorded that released 0.5.7 exposes synchronous
+protected-store methods while the newer local checkout retains the same version
+label but adds async `VeilidAPI` conveniences; Poche targets the release.
 
 ### [ ] 5.2 Implement DHT rendezvous, private routes, and invite codes
 

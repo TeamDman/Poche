@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/poche-check", "crates/poche-cli", "crates/poche-conformance", "crates/poche-domain", "crates/poche-environment", "crates/poche-formal", "crates/poche-interchange", "crates/poche-model", "crates/poche-native-tools", "crates/poche-oracle-rust", "crates/poche-protocol", "crates/poche-runtime", "crates/poche-session", "crates/poche-xtask"]
+members = ["crates/poche-check", "crates/poche-cli", "crates/poche-conformance", "crates/poche-domain", "crates/poche-environment", "crates/poche-formal", "crates/poche-interchange", "crates/poche-model", "crates/poche-native-tools", "crates/poche-oracle-rust", "crates/poche-protocol", "crates/poche-runtime", "crates/poche-session", "crates/poche-veilid", "crates/poche-xtask"]
 resolver = "3"
 
 [workspace.package]
@@ -12,13 +12,17 @@ repository = "https://github.com/TeamDman/Poche"
 
 [workspace.dependencies]
 blake3 = "=1.8.5"
+curve25519-dalek = { version = "=5.0.0", default-features = false, features = ["precomputed-tables", "zeroize"] }
+ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["fast", "zeroize"] }
 facet = "=0.50.0-rc.5"
+getrandom = "=0.3.4"
 phon = "=0.2.0-rc.5"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
 weavy = "=0.2.2"
+veilid-core = { version = "=0.5.7", default-features = false, features = ["rt-tokio", "enable-crypto-vld0"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -10,6 +10,15 @@ version = "0.2.0-rc.5"
 [weavy]
 version = "0.2.2"
 
+[ed25519-dalek]
+version = "3.0.0"
+
+[curve25519-dalek]
+version = "5.0.0"
+
+[veilid-core]
+version = "0.5.7"
+
 [alloy]
 version = "6.2.0"
 

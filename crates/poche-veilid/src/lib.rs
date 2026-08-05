@@ -1,0 +1,21 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+//! Veilid-facing application identity and transport adapters.
+//!
+//! Application signing and recipient-encryption identities are stable across
+//! replaceable Veilid node IDs and private routes. The `veilid` feature is
+//! deliberately non-default; pure game, session, CLI, and RL paths never load
+//! the network stack.
+
+mod identity;
+mod store;
+
+pub use identity::*;
+pub use store::*;
+
+#[cfg(feature = "veilid")]
+mod veilid_store;
+#[cfg(feature = "veilid")]
+pub use veilid_store::*;
