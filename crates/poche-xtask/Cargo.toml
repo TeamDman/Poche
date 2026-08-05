@@ -12,6 +12,7 @@ publish = false
 blake3 = "=1.8.5"
 poche-check = { path = "../poche-check" }
 poche-conformance = { path = "../poche-conformance" }
+poche-interchange = { path = "../poche-interchange" }
 poche-native-tools = { path = "../poche-native-tools" }
 poche-oracle-rust = { path = "../poche-oracle-rust" }
 poche-runtime = { path = "../poche-runtime" }

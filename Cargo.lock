@@ -535,6 +535,7 @@ dependencies = [
  "blake3",
  "poche-check",
  "poche-conformance",
+ "poche-interchange",
  "poche-native-tools",
  "poche-oracle-rust",
  "poche-runtime",

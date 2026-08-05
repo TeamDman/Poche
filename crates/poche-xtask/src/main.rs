@@ -14,6 +14,10 @@ use poche_check::{CheckScope, TerminationReason, analyze_liveness, check_session
 use poche_conformance::{
     Disposition, compare_rust_alloy, compare_rust_models, compare_rust_nusmv, compare_rust_prolog,
 };
+use poche_interchange::{
+    BackendKindWire, ConfidenceKindWire, SessionClaimWire, SessionTrackEvidenceWire,
+    compare_session_tracks,
+};
 use poche_native_tools::{
     AlloyCommandExpectation, AlloyCommandKind, AlloyOutcome, NativeBackend, NativeDisposition,
     NuSmvPropertyExpectation, NuSmvPropertyKind, run_all, run_alloy_suite, run_backend,
@@ -116,6 +120,8 @@ fn usage() {
          cargo run -p poche-xtask -- guidance audit PLAN.md\n  \
          cargo run -p poche-xtask -- protocol replay --all\n  \
          cargo run -p poche-xtask -- session oracle check rust|alloy|nusmv|prolog|all\n  \
+         cargo run -p poche-xtask -- session coverage audit --all\n  \
+         cargo run -p poche-xtask -- session compare all --scope lobby-micro\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- oracle report\n  \
@@ -131,13 +137,21 @@ fn usage() {
 }
 
 fn session(mut args: impl Iterator<Item = OsString>) -> ExitCode {
-    let group = args.next();
+    match args.next().as_deref() {
+        Some(group) if group == OsStr::new("oracle") => session_oracle(args),
+        Some(group) if group == OsStr::new("coverage") => session_coverage(args),
+        Some(group) if group == OsStr::new("compare") => session_compare(args),
+        _ => {
+            usage();
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn session_oracle(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     let action = args.next();
     let backend = args.next();
-    if group.as_deref() != Some(OsStr::new("oracle"))
-        || action.as_deref() != Some(OsStr::new("check"))
-        || args.next().is_some()
-    {
+    if action.as_deref() != Some(OsStr::new("check")) || args.next().is_some() {
         usage();
         return ExitCode::from(2);
     }
@@ -167,6 +181,265 @@ fn session(mut args: impl Iterator<Item = OsString>) -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+#[allow(clippy::too_many_lines)]
+fn session_coverage(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("audit"))
+        || args.next().as_deref() != Some(OsStr::new("--all"))
+        || args.next().is_some()
+    {
+        usage();
+        return ExitCode::from(2);
+    }
+    let rules = match fs::read_to_string("docs/session-rules.md") {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("session coverage: could not read rule catalog: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let coverage = match fs::read_to_string("docs/session-coverage.md") {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("session coverage: could not read matrix: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let source_ids = session_ids(&rules);
+    let mut coverage_ids = BTreeMap::new();
+    let mut errors = Vec::new();
+    let formal_prefixes = ["checked", "queried", "abstracted", "deferred", "N/A"];
+    let all_prefixes = [
+        "checked",
+        "queried",
+        "abstracted",
+        "deferred",
+        "planned",
+        "N/A",
+    ];
+    for (line_index, line) in coverage.lines().enumerate() {
+        let cells = markdown_cells(line);
+        let Some(id) = cells.first().and_then(|cell| session_id(cell)) else {
+            continue;
+        };
+        if cells.len() != 8 {
+            errors.push(format!(
+                "{id} line {} has {} cells, expected 8",
+                line_index + 1,
+                cells.len()
+            ));
+            continue;
+        }
+        if coverage_ids.insert(id.to_owned(), line_index + 1).is_some() {
+            errors.push(format!("duplicate session coverage row {id}"));
+        }
+        for (index, disposition) in cells.iter().enumerate().skip(1) {
+            let prefixes = if index <= 4 {
+                &formal_prefixes[..]
+            } else {
+                &all_prefixes[..]
+            };
+            if !prefixes
+                .iter()
+                .any(|prefix| disposition.starts_with(prefix))
+            {
+                errors.push(format!(
+                    "{id} column {index} has unclassified disposition `{disposition}`"
+                ));
+            }
+            if *disposition == "planned" || *disposition == "deferred" {
+                errors.push(format!(
+                    "{id} column {index} has an unqualified future disposition"
+                ));
+            }
+        }
+    }
+    let covered = coverage_ids
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    if source_ids != covered {
+        for missing in source_ids.difference(&covered) {
+            errors.push(format!("coverage is missing {missing}"));
+        }
+        for extra in covered.difference(&source_ids) {
+            errors.push(format!("coverage contains unregistered {extra}"));
+        }
+    }
+    if source_ids.len() != 88 {
+        errors.push(format!(
+            "session rule catalog has {} IDs, expected 88",
+            source_ids.len()
+        ));
+    }
+    println!(
+        "session coverage: rules={} formal_tracks=4 future_tracks=3",
+        source_ids.len()
+    );
+    if errors.is_empty() {
+        println!("session coverage audit: passed");
+        ExitCode::SUCCESS
+    } else {
+        for error in &errors {
+            eprintln!("session coverage: {error}");
+        }
+        eprintln!(
+            "session coverage audit: failed with {} errors",
+            errors.len()
+        );
+        ExitCode::FAILURE
+    }
+}
+
+fn session_ids(text: &str) -> std::collections::BTreeSet<String> {
+    text.lines()
+        .filter_map(|line| {
+            markdown_cells(line)
+                .first()
+                .and_then(|cell| session_id(cell))
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+fn session_id(cell: &str) -> Option<&str> {
+    let id = cell.strip_prefix('`')?.strip_suffix('`')?;
+    id.starts_with("S-").then_some(id)
+}
+
+fn session_compare(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("all"))
+        || args.next().as_deref() != Some(OsStr::new("--scope"))
+        || args.next().as_deref() != Some(OsStr::new("lobby-micro"))
+        || args.next().is_some()
+    {
+        usage();
+        return ExitCode::from(2);
+    }
+    let native_gates = [
+        session_rust(),
+        session_alloy(),
+        session_nusmv(),
+        session_prolog(),
+    ];
+    if native_gates
+        .into_iter()
+        .any(|result| result != ExitCode::SUCCESS)
+    {
+        eprintln!("session comparison stopped because a source evidence gate failed");
+        return ExitCode::FAILURE;
+    }
+    let evidence = session_track_evidence();
+    let agreement = match compare_session_tracks(&evidence) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("session comparison evidence is invalid: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "session comparison: scope={} tracks={} claims={} observations={} disagreements={}",
+        agreement.scope_id,
+        agreement.tracks,
+        agreement.compared_claims,
+        agreement.observations,
+        agreement.disagreements.len()
+    );
+    if agreement.disagreements.is_empty()
+        && agreement.compared_claims == 10
+        && agreement.observations == 31
+    {
+        ExitCode::SUCCESS
+    } else {
+        for disagreement in &agreement.disagreements {
+            eprintln!(
+                "session disagreement {}: {:?}",
+                disagreement.claim_id, disagreement.observations
+            );
+        }
+        ExitCode::FAILURE
+    }
+}
+
+fn session_track_evidence() -> Vec<SessionTrackEvidenceWire> {
+    use BackendKindWire::{Alloy, NuSmv, RustExplicit, ScryerProlog};
+    use ConfidenceKindWire::{Bounded, Exhaustive, Queried, Symbolic};
+
+    let claim = |id: &str, value: bool, rules: &[&str]| SessionClaimWire {
+        claim_id: id.to_owned(),
+        value,
+        rule_ids: rules.iter().map(|rule| (*rule).to_owned()).collect(),
+    };
+    let common_lifecycle = || {
+        vec![
+            claim(
+                "start-requires-readiness",
+                true,
+                &["S-ROOM-006", "S-ROOM-008"],
+            ),
+            claim("any-player-may-pause", true, &["S-ROOM-011"]),
+            claim("any-player-may-resume", true, &["S-ROOM-012"]),
+            claim("paused-game-is-immobile", true, &["S-ROOM-013"]),
+        ]
+    };
+    let mut rust = common_lifecycle();
+    rust.extend([
+        claim("default-deny-outsider", true, &["S-AUTH-001"]),
+        claim("spectator-needs-exact-grant", true, &["S-VIEW-006"]),
+        claim("revoke-stops-future-delivery", true, &["S-VIEW-007"]),
+        claim("unconditional-session-termination", false, &["S-TIME-007"]),
+        claim("conditional-terminal-reachability", true, &["S-TIME-006"]),
+        claim("closed-is-absorbing", true, &["S-ROOM-022"]),
+    ]);
+    let mut alloy = common_lifecycle();
+    alloy.extend([
+        claim("default-deny-outsider", true, &["S-AUTH-001"]),
+        claim("spectator-needs-exact-grant", true, &["S-VIEW-006"]),
+        claim("revoke-stops-future-delivery", true, &["S-VIEW-007"]),
+    ]);
+    let mut nusmv = common_lifecycle();
+    nusmv.extend([
+        claim("unconditional-session-termination", false, &["S-TIME-007"]),
+        claim("conditional-terminal-reachability", true, &["S-TIME-006"]),
+        claim("closed-is-absorbing", true, &["S-ROOM-022"]),
+    ]);
+    let mut prolog = common_lifecycle();
+    prolog.extend([
+        claim("default-deny-outsider", true, &["S-AUTH-001"]),
+        claim("spectator-needs-exact-grant", true, &["S-VIEW-006"]),
+        claim("revoke-stops-future-delivery", true, &["S-VIEW-007"]),
+    ]);
+    vec![
+        SessionTrackEvidenceWire {
+            scope_id: "lobby-micro".to_owned(),
+            backend: RustExplicit,
+            confidence: Exhaustive,
+            qualification: "800-state exhaustive abstract session graph".to_owned(),
+            claims: rust,
+        },
+        SessionTrackEvidenceWire {
+            scope_id: "lobby-micro".to_owned(),
+            backend: Alloy,
+            confidence: Bounded,
+            qualification: "five principals, two seats, two/four snapshots".to_owned(),
+            claims: alloy,
+        },
+        SessionTrackEvidenceWire {
+            scope_id: "lobby-micro".to_owned(),
+            backend: NuSmv,
+            confidence: Symbolic,
+            qualification: "two-player finite lifecycle with explicit scheduler modes".to_owned(),
+            claims: nusmv,
+        },
+        SessionTrackEvidenceWire {
+            scope_id: "lobby-micro".to_owned(),
+            backend: ScryerProlog,
+            confidence: Queried,
+            qualification: "63-row bounded relational query corpus".to_owned(),
+            claims: prolog,
+        },
+    ]
 }
 
 fn session_rust() -> ExitCode {

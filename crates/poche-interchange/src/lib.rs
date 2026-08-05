@@ -7,8 +7,10 @@
 //! Wire shapes are intentionally distinct from the strongly refined in-memory
 //! Poche model. Decode is followed by semantic validation before data is trusted.
 
+mod session;
 mod validate;
 mod wire;
 
+pub use session::*;
 pub use validate::{ValidatedEvidence, ValidationError};
 pub use wire::*;

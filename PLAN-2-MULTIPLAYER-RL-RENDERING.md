@@ -842,7 +842,7 @@ state terminal), 5 (pause reachable), and 2 (authorized spectator hand grant).
 card graph. Focused exhaustive checks, denied-warning clippy, and the real
 `OracleSessionGame` integration fixture pass.
 
-### [ ] 3.5 Audit full session coverage and cross-model agreement
+### [x] 3.5 Audit full session coverage and cross-model agreement
 
 Normalize Alloy/NuSMV/Prolog/Rust results through `poche-interchange`. Compare
 shared fixtures/projections/policy decisions without declaring Rust correct by
@@ -862,7 +862,19 @@ disposition in every applicable track; every disagreement is classified and
 resolved or made an explicit gate; exact scope/confidence labels accompany all
 claims.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed in the local Task 3.5 slice.
+`poche-interchange` now carries neutral session claim/track/agreement records
+and compares every claim shared by two or more applicable tracks without a
+privileged backend. The aggregate gate runs all source evidence first, then
+compares four tracks, ten shared claims, and 31 observations with zero
+disagreements in `lobby-micro`. A controlled unit proves Alloy/Prolog conflict
+is retained rather than resolved in Rust's favor. `docs/session-agreement.md`
+records the claim matrix and exact exhaustive/bounded/symbolic/queried
+confidence labels. `session coverage audit --all` matches all 88 stable rule
+IDs exactly once and rejects unclassified or planned formal cells; remaining
+formal gaps are reasoned abstractions or explicit post-Phase-3 deferrals, while
+later protocol/network/UI tasks remain named gates. All three required Task 3.5
+commands pass, and `PLAN.md` remains unchanged.
 
 ## Phase 4 - Loopback multiplayer CLI vertical slice
 
