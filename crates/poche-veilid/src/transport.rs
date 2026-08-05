@@ -8,6 +8,8 @@ use poche_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::EncryptedProjectionPacket;
+
 const TRANSPORT_SCHEMA_VERSION: u16 = 1;
 const MAX_TRANSPORT_CALL_BYTES: usize = 30_000;
 
@@ -125,8 +127,8 @@ pub enum TransportDisposition {
     RecoveryRequired,
 }
 
-/// One authority reply. Events retain authority revision order; projections
-/// and errors are already viewer-scoped protocol frames.
+/// One authority reply. Events retain authority revision order, public errors
+/// remain protocol frames, and viewer-private state is opaque HPKE ciphertext.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TransportCommandReply {
@@ -137,6 +139,7 @@ pub struct TransportCommandReply {
     pub base_revision: u64,
     pub current_revision: u64,
     pub frames: Vec<ProtocolFrame>,
+    pub encrypted_projection: Option<EncryptedProjectionPacket>,
 }
 
 impl TransportCommandReply {
@@ -153,6 +156,7 @@ impl TransportCommandReply {
         base_revision: u64,
         current_revision: u64,
         frames: Vec<ProtocolFrame>,
+        encrypted_projection: Option<EncryptedProjectionPacket>,
     ) -> Result<Self, TransportWireError> {
         let value = Self {
             schema_version: TRANSPORT_SCHEMA_VERSION,
@@ -162,6 +166,7 @@ impl TransportCommandReply {
             base_revision,
             current_revision,
             frames,
+            encrypted_projection,
         };
         value.validate()?;
         Ok(value)
@@ -223,12 +228,6 @@ impl TransportCommandReply {
                         return Err(TransportWireError::InvalidReply);
                     }
                 }
-                ProtocolFrame::Projection(projection) => {
-                    saw_non_event = true;
-                    if projection.current_revision != self.current_revision {
-                        return Err(TransportWireError::InvalidReply);
-                    }
-                }
                 ProtocolFrame::Error(error) => {
                     saw_non_event = true;
                     if error.current_revision != self.current_revision {
@@ -248,12 +247,21 @@ impl TransportCommandReply {
         }
         if matches!(self.disposition, TransportDisposition::Denied)
             && (self.current_revision != self.base_revision
+                || self.encrypted_projection.is_some()
                 || self
                     .frames
                     .iter()
                     .any(|frame| !matches!(frame, ProtocolFrame::Error(_))))
         {
             return Err(TransportWireError::InvalidReply);
+        }
+        if let Some(projection) = &self.encrypted_projection {
+            projection
+                .validate()
+                .map_err(|_| TransportWireError::InvalidReply)?;
+            if projection.current_revision != self.current_revision {
+                return Err(TransportWireError::InvalidReply);
+            }
         }
         Ok(())
     }
@@ -487,6 +495,7 @@ mod tests {
                 7,
                 8,
                 Vec::new(),
+                None,
             ),
             Err(TransportWireError::InvalidReply)
         );
@@ -497,6 +506,7 @@ mod tests {
             7,
             7,
             Vec::new(),
+            None,
         )
         .unwrap();
         let encoded = denied.encode().unwrap();

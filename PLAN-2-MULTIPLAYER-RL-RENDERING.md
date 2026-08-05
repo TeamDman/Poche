@@ -1192,7 +1192,7 @@ nodes. Private routes still require the Task 5.6 public/topology gate described
 under Task 5.2; ordinary loopback/LAN and the incomplete released virtual
 network cannot supply that evidence.
 
-### [ ] 5.5 Encrypt and deliver viewer-specific private projections
+### [x] 5.5 Encrypt and deliver viewer-specific private projections
 
 Encrypt private projection payloads to each stable recipient key (or document
 and test an equivalent Veilid-supported end-to-end construction). Public room
@@ -1205,7 +1205,33 @@ decryptable hand data; granted spectator receives only the selected player's
 current/future authorized projection; revoke stops subsequent delivery; other
 spectators and players gain nothing.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-05):** Complete. Added strict/canonical/bounded
+`EncryptedProjectionPacket` delivery and the released Veilid 0.5.7 VLD0 HPKE
+base-mode adapter over the stable application's separate X25519 recipient key.
+All visible room/session/host/recipient/projection-epoch/revision metadata is
+authenticated as HPKE associated data. Because base mode does not authenticate
+the sender, the stable host additionally signs the complete metadata and
+ciphertext. Opening verifies that signature first, requires the exact recipient
+and caller-supplied current projection epoch, then revalidates one canonical
+`ProjectionEnvelope` against every duplicated field.
+
+The transport reply schema now rejects plaintext projection frames and carries
+at most one opaque exact-recipient encrypted projection. Existing session
+events rotate projection/capability epochs on grant, revoke, and relevant
+membership/seat/round expiry; old packets cannot overwrite a newer-epoch view,
+while the honest limitation that past knowledge cannot be erased remains.
+
+The released-crypto capture acceptance starts a temporary Veilid API instance
+and proves ungranted empty output; opaque serialized packet/reply capture;
+current and future selected-hand delivery; absence of another seated player's
+hand; other-spectator/player rejection; cryptographic wrong-key failure;
+post-revoke omission; old-epoch replay rejection; and host-signature/metadata
+tamper rejection. `docs/veilid-projection-privacy.md` documents the construction
+and threat boundary. `cargo test -p poche-veilid --features veilid --offline`
+passes 26 units plus 2 compile-fail docs, both default-workspace and Veilid-
+feature clippy pass with warnings denied, and the updated 88-rule session
+coverage audit passes. Separate-node byte delivery remains honestly assigned
+to Task 5.6 rather than weakening this cryptographic acceptance.
 
 ### [ ] 5.6 Run native Veilid security and lifecycle acceptance
 

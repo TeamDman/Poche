@@ -11,6 +11,7 @@
 
 mod identity;
 mod membership;
+mod projection_packet;
 mod rendezvous;
 mod room_code;
 mod store;
@@ -18,6 +19,7 @@ mod transport;
 
 pub use identity::*;
 pub use membership::*;
+pub use projection_packet::*;
 pub use rendezvous::*;
 pub use room_code::*;
 pub use store::*;
@@ -26,11 +28,15 @@ pub use transport::*;
 #[cfg(feature = "veilid")]
 mod veilid_membership_store;
 #[cfg(feature = "veilid")]
+mod veilid_projection_crypto;
+#[cfg(feature = "veilid")]
 mod veilid_rendezvous;
 #[cfg(feature = "veilid")]
 mod veilid_store;
 #[cfg(feature = "veilid")]
 pub use veilid_membership_store::*;
+#[cfg(feature = "veilid")]
+pub use veilid_projection_crypto::*;
 #[cfg(feature = "veilid")]
 pub use veilid_rendezvous::*;
 #[cfg(feature = "veilid")]

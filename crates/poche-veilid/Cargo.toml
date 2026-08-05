@@ -27,6 +27,8 @@ veilid-core = { workspace = true, optional = true }
 [dev-dependencies]
 poche-runtime = { path = "../poche-runtime" }
 poche-session = { path = "../poche-session" }
+tempfile.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

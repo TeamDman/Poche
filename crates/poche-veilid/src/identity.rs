@@ -34,6 +34,12 @@ impl ApplicationPublicIdentity {
     pub fn validate(&self) -> Result<(), IdentityCryptoError> {
         validate_public_identity(self).map(|_| ())
     }
+
+    #[cfg(feature = "veilid")]
+    pub(crate) fn encryption_key_bytes(&self) -> Result<[u8; 32], IdentityCryptoError> {
+        self.validate()?;
+        decode_hex::<32>(&self.encryption_public_key)
+    }
 }
 
 /// Secret application identity.
@@ -216,6 +222,11 @@ impl ApplicationIdentity {
     ) -> Result<SignatureBytes, IdentityCryptoError> {
         SignatureBytes::new(hex(&self.signing.sign(bytes).to_bytes()))
             .map_err(|_| IdentityCryptoError::InvalidSignature)
+    }
+
+    #[cfg(feature = "veilid")]
+    pub(crate) fn with_encryption_secret<R>(&self, operation: impl FnOnce(&[u8; 32]) -> R) -> R {
+        operation(&self.encryption.0)
     }
 
     fn from_blob(blob: &crate::SecretIdentityBlob) -> Result<Self, IdentityStoreError> {

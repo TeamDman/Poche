@@ -10,14 +10,15 @@ revision, and host-signed result remain the semantic boundary.
 `TransportCommandCall` carries one complete stable-key-signed
 `CommandEnvelope`. `TransportCommandReply` binds the command ID, disposition,
 base/current revisions, optional denial, and authority-ordered event frames.
-Viewer projections and public errors may follow the events, but commands,
-snapshots, and arbitrary frame mixtures are rejected in a command reply.
+Public errors may follow the events. Viewer state may appear only as one
+host-signed exact-recipient `EncryptedProjectionPacket`; plaintext projection
+frames, commands, snapshots, and arbitrary frame mixtures are rejected.
 
 Both objects use strict `deny_unknown_fields` JSON, canonical re-encoding, the
 30,000-byte Poche safe ceiling below Veilid's 32,768-byte operation limit, and
 registered protocol envelope validation. A reply cannot claim a revision
 advance without a contiguous event sequence. Denial cannot advance revision or
-smuggle non-error frames.
+smuggle non-error frames or encrypted viewer state.
 
 The released Veilid 0.5.7 adapter provides:
 
