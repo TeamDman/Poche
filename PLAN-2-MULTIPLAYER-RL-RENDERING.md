@@ -725,7 +725,7 @@ recorded in protocol/replay docs and coverage.
 
 ## Phase 3 - Independent formal session models
 
-### [ ] 3.1 Build the Alloy room/authorization oracle
+### [x] 3.1 Build the Alloy room/authorization oracle
 
 Add `models/alloy/session.als` independently from Rust. Model principals,
 membership, seats, roles/capabilities, grants/revocations, room phases,
@@ -739,7 +739,17 @@ edge. Include controlled defective predicates with expected witnesses.
 session rule IDs have coverage; scopes and information-flow abstraction are
 stated; controlled defects yield expected instances/counterexamples.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed in the local Task 3.1 slice.
+`models/alloy/session.als` is independent of Rust and models five principals,
+two distinct seats, membership/readiness, six room phases, start cardinality,
+player-gated pause/resume, command authorization, exact spectator grants, and
+derived viewer knowledge. The native Alloy 6.2 receipt recognizes every one of
+13 registered commands: two valid witnesses SAT, eight safe assertions UNSAT,
+and three controlled defective predicates SAT. Commands use exact 2-seat,
+2-or-4-snapshot, 5-bit-Int scopes. `docs/session-formal-models.md` states the
+current/future knowledge abstraction, omissions, exact covered rule IDs, and
+bounded nature of the results; applicable cells in `docs/session-coverage.md`
+carry Task 3.1 evidence. Formatting and the native Alloy command pass.
 
 ### [ ] 3.2 Build the NuSMV lifecycle/liveness oracle
 

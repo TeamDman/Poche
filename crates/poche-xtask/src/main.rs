@@ -14,7 +14,10 @@ use poche_check::{CheckScope, TerminationReason, analyze_liveness, explore};
 use poche_conformance::{
     Disposition, compare_rust_alloy, compare_rust_models, compare_rust_nusmv, compare_rust_prolog,
 };
-use poche_native_tools::{NativeBackend, NativeDisposition, run_all, run_backend};
+use poche_native_tools::{
+    AlloyCommandExpectation, AlloyCommandKind, AlloyOutcome, NativeBackend, NativeDisposition,
+    run_all, run_alloy_suite, run_backend,
+};
 use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
 
 const COVERAGE_TRACKS: [(&str, usize); 4] =
@@ -88,6 +91,7 @@ fn main() -> ExitCode {
         Some(command) if command == OsStr::new("doctor") => doctor(),
         Some(command) if command == OsStr::new("guidance") => guidance(args),
         Some(command) if command == OsStr::new("protocol") => protocol(args),
+        Some(command) if command == OsStr::new("session") => session(args),
         Some(command) if command == OsStr::new("coverage") => coverage(args),
         Some(command) if command == OsStr::new("oracle") => oracle(args),
         Some(command) if command == OsStr::new("compare") => compare(args),
@@ -110,6 +114,7 @@ fn usage() {
         "usage:\n  cargo run -p poche-xtask -- doctor\n  \
          cargo run -p poche-xtask -- guidance audit PLAN.md\n  \
          cargo run -p poche-xtask -- protocol replay --all\n  \
+         cargo run -p poche-xtask -- session oracle check alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- oracle report\n  \
@@ -122,6 +127,101 @@ fn usage() {
          cargo run -p poche-xtask -- check rust-explicit --scope micro\n  \
          cargo run -p poche-xtask -- check rust-explicit --property game-terminates"
     );
+}
+
+fn session(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    let group = args.next();
+    let action = args.next();
+    let backend = args.next();
+    if group.as_deref() != Some(OsStr::new("oracle"))
+        || action.as_deref() != Some(OsStr::new("check"))
+        || args.next().is_some()
+    {
+        usage();
+        return ExitCode::from(2);
+    }
+    match backend.as_deref() {
+        Some(value) if value == OsStr::new("alloy") => session_alloy(),
+        Some(value) if value == OsStr::new("nusmv") => {
+            eprintln!("session NuSMV oracle is not implemented yet");
+            ExitCode::FAILURE
+        }
+        Some(value) if value == OsStr::new("prolog") => {
+            eprintln!("session Prolog oracle is not implemented yet");
+            ExitCode::FAILURE
+        }
+        Some(value) if value == OsStr::new("all") => {
+            let alloy = session_alloy();
+            if alloy == ExitCode::SUCCESS {
+                eprintln!("remaining session native oracles are not implemented yet");
+            }
+            ExitCode::FAILURE
+        }
+        _ => {
+            usage();
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn session_alloy() -> ExitCode {
+    use AlloyCommandKind::{Assertion, Witness};
+    use AlloyOutcome::{Sat, Unsat};
+
+    let assertions = [
+        "DefaultDeny",
+        "SingleSeatOwnership",
+        "NoStartWithoutReadiness",
+        "AtMostOnceStart",
+        "ScopedSpectatorGrant",
+        "RevocationStopsFutureKnowledge",
+        "NoUnauthorizedKnowledge",
+        "PauseResumePreserveRoom",
+    ];
+    let witnesses = [
+        "ValidRoomWitness",
+        "PauseResumeWitness",
+        "DefectiveDuplicateSeatWitness",
+        "DefectiveStartUnreadyWitness",
+        "DefectiveRoomWideHandWitness",
+    ];
+    let mut expectations: Vec<_> = assertions
+        .into_iter()
+        .map(|name| AlloyCommandExpectation {
+            name: name.to_owned(),
+            kind: Assertion,
+            outcome: Unsat,
+        })
+        .collect();
+    expectations.extend(witnesses.into_iter().map(|name| AlloyCommandExpectation {
+        name: name.to_owned(),
+        kind: Witness,
+        outcome: Sat,
+    }));
+    let report = run_alloy_suite(
+        Path::new("."),
+        "session-alloy",
+        Path::new("models/alloy/session.als"),
+        &expectations,
+    );
+    println!(
+        "session Alloy: {:?}; {}",
+        report.disposition, report.diagnostic
+    );
+    for result in &report.results {
+        println!(
+            "  {} {:?} {:?} scope={}",
+            result.name,
+            result.kind,
+            result.outcome,
+            result.command_source.as_deref().unwrap_or("<missing>")
+        );
+    }
+    if report.succeeded() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 fn protocol(mut args: impl Iterator<Item = OsString>) -> ExitCode {

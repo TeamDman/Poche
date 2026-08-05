@@ -18,19 +18,19 @@ fixture; `query` = forward/reverse Prolog query; `safety` = Alloy/NuSMV safety;
 
 | Rule | Rust | Alloy | NuSMV | Prolog | Protocol | Network | UI |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `S-ROOM-001` | checked Task 2.2 create/apply unit | planned structure | planned lifecycle | planned successor/predecessor | checked Task 2.4 create transcript | planned loopback/Veilid | planned host screen |
+| `S-ROOM-001` | checked Task 2.2 create/apply unit | checked Task 3.1 fixed-host/member structure | planned lifecycle | planned successor/predecessor | checked Task 2.4 create transcript | planned loopback/Veilid | planned host screen |
 | `S-ROOM-002` | checked Task 2.2 invite units | planned membership safety | planned lifecycle | planned invite query | checked Task 2.4 secret-ref join transcript | planned Veilid e2e | planned join/error |
-| `S-ROOM-003` | checked Task 2.2 seat/invariant units | planned unique-seat assertion | planned seat state | planned seat query | checked Task 2.4 seat transcript | planned parity | planned seat control |
-| `S-ROOM-004` | checked Task 2.2 readiness units | planned readiness assertion | planned lifecycle | planned ready query | checked Task 2.4 ready transcript | planned parity | planned ready control |
+| `S-ROOM-003` | checked Task 2.2 seat/invariant units | checked Task 3.1 `SingleSeatOwnership` | planned seat state | planned seat query | checked Task 2.4 seat transcript | planned parity | planned seat control |
+| `S-ROOM-004` | checked Task 2.2 readiness units | checked Task 3.1 ready-subset invariant | planned lifecycle | planned ready query | checked Task 2.4 ready transcript | planned parity | planned ready control |
 | `S-ROOM-005` | checked Task 2.2 unready/cancel units | planned cancel assertion | planned abort race | planned predecessor | planned unready fixture | planned parity | planned unready/countdown |
-| `S-ROOM-006` | checked Task 2.2 ready-gate units | planned all-ready assertion | planned countdown | planned permission query | checked Task 2.4 arm transcript | planned authority clock | planned host control |
+| `S-ROOM-006` | checked Task 2.2 ready-gate units | checked Task 3.1 `NoStartWithoutReadiness` | planned countdown | planned permission query | checked Task 2.4 arm transcript | planned authority clock | planned host control |
 | `S-ROOM-007` | checked Task 2.2 any-player abort | planned abort assertion | planned abort race | planned predecessor | checked Task 2.4 abort transcript | planned multi-client | planned every-player control |
-| `S-ROOM-008` | checked Task 2.2 expiry/idempotence | planned at-most-once | planned expiry/live | planned predecessor | checked Task 2.4 expiry transcript | planned authority clock | planned phase display |
-| `S-ROOM-009` | checked Task 2.1 registered-tag decoder | planned absence assertion | planned safety | planned impossible query | planned unknown-command fixture | N/A: no valid wire action | N/A: no control |
+| `S-ROOM-008` | checked Task 2.2 expiry/idempotence | checked Task 3.1 `AtMostOnceStart` | planned expiry/live | planned predecessor | checked Task 2.4 expiry transcript | planned authority clock | planned phase display |
+| `S-ROOM-009` | checked Task 2.1 registered-tag decoder | checked Task 3.1 start is environment predicate, not allowed command | planned safety | planned impossible query | planned unknown-command fixture | N/A: no valid wire action | N/A: no control |
 | `S-ROOM-010` | checked Task 2.2 actor/game gate | planned abstract game port | planned actor gate | planned legal successor | checked Task 2.4 game-action transcript | planned parity | planned legal actions |
-| `S-ROOM-011` | checked Task 2.2 any-player pause | planned actor assertion | planned pause state | planned pause query | checked Task 2.4 pause transcript | planned multi-client | planned every-player control |
-| `S-ROOM-012` | checked Task 2.2 any-player unpause | planned actor assertion | planned resume/live | planned resume query | checked Task 2.4 unpause transcript | planned multi-client | planned every-player control |
-| `S-ROOM-013` | checked Task 2.2 controlled pause defect | planned no-advance assertion | planned paused safety | planned denied-action query | checked Task 2.4 paused-denial transcript | planned parity | planned disabled game controls |
+| `S-ROOM-011` | checked Task 2.2 any-player pause | checked Task 3.1 player-gated pause | planned pause state | planned pause query | checked Task 2.4 pause transcript | planned multi-client | planned every-player control |
+| `S-ROOM-012` | checked Task 2.2 any-player unpause | checked Task 3.1 player-gated resume | planned resume/live | planned resume query | checked Task 2.4 unpause transcript | planned multi-client | planned every-player control |
+| `S-ROOM-013` | checked Task 2.2 controlled pause defect | checked Task 3.1 `PauseResumePreserveRoom` | planned paused safety | planned denied-action query | checked Task 2.4 paused-denial transcript | planned parity | planned disabled game controls |
 | `S-ROOM-014` | checked Task 2.2 settle/score adapter | N/A: existing game semantics abstracted | planned abstract settle gate | N/A: existing game oracle owns score | checked Task 2.4 score transcript | planned parity | planned score display |
 | `S-ROOM-015` | checked Task 2.2 explicit chance adapter | N/A: chance abstracted | planned abstract chance gate | N/A: existing game oracle owns chance | checked Task 2.4 explicit chance transcript | planned parity | N/A: no player control |
 | `S-ROOM-016` | checked Task 2.2 terminal transition | planned phase assertion | planned terminal transition | planned predecessor | checked Task 2.4 postgame transcript | planned parity | planned results screen |
@@ -41,13 +41,13 @@ fixture; `query` = forward/reverse Prolog query; `safety` = Alloy/NuSMV safety;
 | `S-ROOM-021` | checked Task 2.2 removal unit | planned revocation cleanup | planned revoked state | planned permission/predecessor | planned removal fixture | planned revoke e2e | planned host moderation |
 | `S-ROOM-022` | checked Task 2.2 absorbing close | planned absorbing-close | planned closed state | planned close query | checked Task 2.4 close transcript | planned shutdown e2e | planned closed screen |
 | `S-ROOM-023` | checked Task 2.2 host-loss/no-migration | planned single-host invariant | planned host-loss counterexample | planned impossible migration query | planned unavailable event | planned host-loss e2e | planned unavailable message |
-| `S-ROOM-024` | checked Task 2.2 bounded member/seat invariants | planned membership/seat assertions | planned bounded roles | planned role query | planned snapshot fixture | planned parity | planned member/seat list |
+| `S-ROOM-024` | checked Task 2.2 bounded member/seat invariants | checked Task 3.1 member/seat separation and unique seat | planned bounded roles | planned role query | planned snapshot fixture | planned parity | planned member/seat list |
 
 ## Authorization and integrity
 
 | Rule | Rust | Alloy | NuSMV | Prolog | Protocol | Network | UI |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `S-AUTH-001` | checked Tasks 2.1-2.2 default-deny defect | planned default-deny | planned denied transition | planned unknown-role/action queries | planned unknown fixture | planned attack e2e | planned reason display |
+| `S-AUTH-001` | checked Tasks 2.1-2.2 default-deny defect | checked Task 3.1 `DefaultDeny` | planned denied transition | planned unknown-role/action queries | planned unknown fixture | planned attack e2e | planned reason display |
 | `S-AUTH-002` | checked Task 2.1 envelope schema | planned field abstraction | planned binding flags | planned validation query | planned golden/malformed | planned signed e2e | N/A: envelope internal |
 | `S-AUTH-003` | planned crypto vectors | N/A: unforgeability assumed | planned valid-signature flag | planned valid-signature assumption query | planned bad-signature fixture | planned attack e2e | planned safe error |
 | `S-AUTH-004` | checked Tasks 2.1/2.5 canonical parity/fuzz | N/A: byte encoding outside relational scope | N/A: byte encoding outside temporal scope | planned canonical relation only | checked Task 2.5 typed/NDJSON transcript | planned cross-codec e2e | N/A: diagnostic only |
@@ -74,19 +74,19 @@ fixture; `query` = forward/reverse Prolog query; `safety` = Alloy/NuSMV safety;
 
 | Rule | Rust | Alloy | NuSMV | Prolog | Protocol | Network | UI |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `S-VIEW-001` | checked Task 2.3 player projection/noninterference | planned knowledge assertion | planned visibility flag | planned can-see query | checked Task 2.3 typed own-hand field | planned private delivery | planned own-hand screen |
-| `S-VIEW-002` | checked Task 2.3 public spectator projection | planned no-knowledge assertion | planned spectator flag | planned can-see query | checked Task 2.3 absent private fields | planned spectator capture | planned public-only screen |
+| `S-VIEW-001` | checked Task 2.3 player projection/noninterference | checked Task 3.1 self-knowledge relation | planned visibility flag | planned can-see query | checked Task 2.3 typed own-hand field | planned private delivery | planned own-hand screen |
+| `S-VIEW-002` | checked Task 2.3 public spectator projection | checked Task 3.1 no-grant/no-edge assertion | planned spectator flag | planned can-see query | checked Task 2.3 absent private fields | planned spectator capture | planned public-only screen |
 | `S-VIEW-003` | checked Task 2.3 exact request unit | planned request relation | planned request state | planned request query | checked Task 2.1 request schema | planned spectator e2e | planned request control |
-| `S-VIEW-004` | checked Task 2.3 owner grant/deny/request/epoch gate | planned owner/scope assertion | planned grant state | planned grant explanation | checked Task 2.3 exact grant/deny schema | planned private e2e | planned owner grant control |
-| `S-VIEW-005` | checked Task 2.3 exact revoke unit | planned future-revoke assertion | planned revoke state | planned revoke explanation | checked Task 2.1 exact revoke schema | planned revoke e2e | planned owner revoke control |
-| `S-VIEW-006` | checked Task 2.3 pairwise viewer test | planned exact-recipient | planned grant flag | planned can-see query | checked Task 2.3 scoped hand shape | planned recipient capture | planned granted hand |
-| `S-VIEW-007` | checked Task 2.3 revoke/expiry future test | planned future-no-edge | planned post-revoke state | planned can-see false query | checked Task 2.3 projection epoch | planned capture after revoke | planned future removal |
+| `S-VIEW-004` | checked Task 2.3 owner grant/deny/request/epoch gate | checked Task 3.1 owner/spectator grant relation | planned grant state | planned grant explanation | checked Task 2.3 exact grant/deny schema | planned private e2e | planned owner grant control |
+| `S-VIEW-005` | checked Task 2.3 exact revoke unit | checked Task 3.1 `RevocationStopsFutureKnowledge` | planned revoke state | planned revoke explanation | checked Task 2.1 exact revoke schema | planned revoke e2e | planned owner revoke control |
+| `S-VIEW-006` | checked Task 2.3 pairwise viewer test | checked Task 3.1 `ScopedSpectatorGrant` | planned grant flag | planned can-see query | checked Task 2.3 scoped hand shape | planned recipient capture | planned granted hand |
+| `S-VIEW-007` | checked Task 2.3 revoke/expiry future test | checked Task 3.1 future-edge absence | planned post-revoke state | planned can-see false query | checked Task 2.3 projection epoch | planned capture after revoke | planned future removal |
 | `S-VIEW-008` | checked Task 2.3 public-history/schema test | planned no-public-hand | planned broadcast flag | planned public visibility query | checked Task 2.3 event hash/public types | planned packet scan | planned client-state scan |
 | `S-VIEW-009` | planned crypto adapter vectors | N/A: crypto assumed | planned recipient flag | planned recipient relation | planned encrypted metadata | planned wrong-key e2e | planned decrypt failure |
-| `S-VIEW-010` | checked Tasks 2.3/2.4 reconnect/snapshot hashes | planned entitlement assertion | planned reconnect state | planned reconstruction query | checked Task 2.4 scoped snapshot projections | planned reconnect e2e | planned restored view |
+| `S-VIEW-010` | checked Tasks 2.3/2.4 reconnect/snapshot hashes | checked Task 3.1 current-entitlement derivation | planned reconnect state | planned reconstruction query | checked Task 2.4 scoped snapshot projections | planned reconnect e2e | planned restored view |
 | `S-VIEW-011` | checked Task 2.3 observation/history audit | N/A: existing game knowledge compared | N/A: schema shape outside lifecycle | planned public-history query | checked Task 2.3 ordered prefix schema | N/A: transport carries projection | planned history rendering |
 | `S-VIEW-012` | checked Task 2.3 immutable/future projection test | N/A: past knowledge cannot be erased | N/A: client memory outside session | planned future-only query | checked Task 2.3 epoch/expiry event | planned stop-delivery e2e | planned cache removal |
-| `S-VIEW-013` | checked Task 2.3 four-viewer controlled defect | planned noninterference | planned visibility safety | planned can-see matrix | checked Task 2.3 typed projection equality | planned multi-view capture | planned DOM/widget scan |
+| `S-VIEW-013` | checked Task 2.3 four-viewer controlled defect | checked Task 3.1 scoped-grant noninterference | planned visibility safety | planned can-see matrix | checked Task 2.3 typed projection equality | planned multi-view capture | planned DOM/widget scan |
 | `S-VIEW-014` | checked Task 2.3 local diagnostics separation | N/A: host owns state by model | planned host-full-state flag | planned host can-see query | N/A: host-local full state | planned disclosure only | planned host-trust notice |
 
 ## Chat
@@ -110,10 +110,10 @@ fixture; `query` = forward/reverse Prolog query; `safety` = Alloy/NuSMV safety;
 | `S-TIME-001` | checked Task 2.2 pure logical reducer | planned logical ordering | planned logical clock | planned event query | planned logical fields | planned runtime boundary | N/A: no wall clock authority |
 | `S-TIME-002` | planned clock-adapter unit | N/A: external time abstracted | planned fair expiry | planned authority query | planned expiry fixture | planned timed harness | planned estimate only |
 | `S-TIME-003` | checked Task 2.2 same-deadline race unit | planned abort-wins assertion | planned race safety | planned predecessor query | planned race transcript | planned simultaneous harness | planned no false start |
-| `S-TIME-004` | checked Task 2.2 duplicate-start defect | planned at-most-once | planned duplicate expiry | planned start explanation | planned duplicate expiry | planned retry e2e | planned single transition |
+| `S-TIME-004` | checked Task 2.2 duplicate-start defect | checked Task 3.1 `AtMostOnceStart` | planned duplicate expiry | planned start explanation | planned duplicate expiry | planned retry e2e | planned single transition |
 | `S-TIME-005` | planned presentation-model unit | N/A: UI estimate | N/A: UI estimate | N/A: UI estimate | planned projected deadline | planned skew harness | planned browser/native test |
-| `S-TIME-006` | planned checker assumptions | planned bounded safety only | planned live/counterexamples | planned fairness explanation | planned evidence metadata | planned fault evidence | planned limitation text |
-| `S-TIME-007` | checked Task 2.2 paused persistence/gate | planned persistent paused instance | planned unconditional counterexample | planned paused successor loop | N/A: claim metadata only | planned partition/pause harness | planned persistent paused state |
+| `S-TIME-006` | planned checker assumptions | checked Task 3.1 bounded safety only; exact scopes documented | planned live/counterexamples | planned fairness explanation | planned evidence metadata | planned fault evidence | planned limitation text |
+| `S-TIME-007` | checked Task 2.2 paused persistence/gate | checked Task 3.1 SAT pause/resume witness | planned unconditional counterexample | planned paused successor loop | N/A: claim metadata only | planned partition/pause harness | planned persistent paused state |
 | `S-TIME-008` | checked Task 2.4 deterministic replay | planned logical steps | planned deterministic trace | planned event sequence query | checked Task 2.4 transcript hashes | planned in-process only | planned replay parity |
 
 ## Fault and recovery
@@ -126,7 +126,7 @@ fixture; `query` = forward/reverse Prolog query; `safety` = Alloy/NuSMV safety;
 | `S-FAULT-004` | checked Task 2.2 route-neutral reconnect state | planned stable-key abstraction | planned route rotation | planned reconnect query | planned route metadata | planned rotation e2e | planned reconnect status |
 | `S-FAULT-005` | checked Task 2.4 genesis/snapshot-tail parity | planned snapshot contract | planned gap/recovery | planned recovery query | checked Task 2.4 snapshot+tail corpus | planned gap e2e | planned syncing/conflict |
 | `S-FAULT-006` | planned boundary unit/fuzz | N/A: byte size outside model | planned oversize flag only | N/A: bytes outside query | planned max-size vectors | planned Veilid limit e2e | planned safe error |
-| `S-FAULT-007` | checked Task 2.2 host-loss/no-election unit | planned no-migration | planned liveness counterexample | planned impossible-host query | planned unavailable event | planned host shutdown | planned host-unavailable screen |
+| `S-FAULT-007` | checked Task 2.2 host-loss/no-election unit | checked Task 3.1 fixed singleton host/no election transition | planned liveness counterexample | planned impossible-host query | planned unavailable event | planned host shutdown | planned host-unavailable screen |
 | `S-FAULT-008` | planned evidence classification | N/A: network fact outside relational result | planned partition counterexample | planned availability query | planned disposition metadata | planned unavailable harness | planned honest limitation |
 | `S-FAULT-009` | planned no-network assertion/benchmark | N/A: RL path outside session model | N/A: rollout path outside lifecycle | N/A: rollout path outside query model | planned direct-call parity only | planned network-spy zero calls | N/A: renderer optional |
 | `S-FAULT-010` | checked Task 2.1 fuzz/no semantic entry | N/A: parser outside model | N/A: parser outside model | N/A: parser outside model | checked Tasks 2.1/2.5 malformed corpus/parity | planned malformed e2e | planned safe error |
