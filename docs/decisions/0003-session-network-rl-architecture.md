@@ -124,9 +124,16 @@ is evidence about a connection, not application authorization.
   content is not game state and formal models retain only permission/count
   abstractions. Parsing cannot let chat inject protocol frames.
 - Spectator hand access is recipient-, player-, capability-, and epoch-scoped.
-  A player may grant or revoke a spectator's future projection. Hidden hands are
-  never room-broadcast and filtered only in the UI. Revocation stops later
-  delivery but cannot erase information already observed.
+  A player may grant, explicitly deny a pending request, or revoke a spectator's
+  future projection. Hidden hands are never room-broadcast and filtered only in
+  the UI. Revocation stops later delivery but cannot erase information already
+  observed.
+- Task 2.3 selected ordered public event-prefix projection v1 because the
+  existing current-trick observation cannot reconstruct previously played
+  public cards. A grant expires at a round-score boundary, any relevant
+  seat-role change, or membership loss of either endpoint. Disconnect alone is
+  not membership loss. Full-hand host diagnostics require a separately named
+  local-only capability and never use the ordinary network projection type.
 
 Unconditional game termination remains the existing game-only claim under its
 named scope. Session termination is conditional on eventual countdown ticks,
@@ -272,4 +279,3 @@ modified by this work.
 | G29 | Confirmed as Burn-backed PPO/GAE with the preregistered controlled experiment. |
 | G30-G31 | Confirmed: conditional session liveness and decomposed bounded models. |
 | G32 | Provisional egui/eframe default; Task 6.1 evidence closes renderer/topology selection. |
-

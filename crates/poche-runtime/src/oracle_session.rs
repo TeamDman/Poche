@@ -2,8 +2,11 @@ use poche_environment::{
     EnvironmentAction, GameEnvironment, OracleChanceAction, OracleEnvironment, OraclePlayerAction,
     TurnOwner,
 };
-use poche_oracle_rust::{Card, DeckOrder, Game, RuleViolation, Seat};
-use poche_protocol::{ChanceWire, GameActionWire, PrincipalId};
+use poche_oracle_rust::{Card, DeckOrder, Game, PhaseTag, RuleViolation, Seat, Turn};
+use poche_protocol::{
+    ChanceWire, GameActionWire, GamePublicStateWire, PlayedCardWire, PrincipalId, PublicGamePhase,
+    PublicTurnWire,
+};
 use poche_session::{GameTransition, GameTurn, SessionGame};
 
 /// Existing full-rule Poche game adapted to the pure multiplayer session gate.
@@ -19,6 +22,7 @@ pub enum OracleSessionGameError {
     InvalidSeatComposition,
     InvalidCardCode,
     ChanceProvenanceMismatch,
+    InvalidProjection,
     Rule(RuleViolation),
 }
 
@@ -49,6 +53,65 @@ impl<const PLAYERS: usize> SessionGame for OracleSessionGame<PLAYERS> {
             TurnOwner::Environment => GameTurn::Environment,
             TurnOwner::Finished => GameTurn::Finished,
         }
+    }
+
+    fn public_projection(&self) -> Result<GamePublicStateWire, Self::Error> {
+        let viewer = Seat::new(0).map_err(OracleSessionGameError::Rule)?;
+        let observation = self.game.observe(viewer);
+        Ok(GamePublicStateWire {
+            schema_version: 1,
+            phase: match observation.phase {
+                PhaseTag::AwaitingDeal => PublicGamePhase::AwaitingDeal,
+                PhaseTag::Bidding => PublicGamePhase::Bidding,
+                PhaseTag::Playing => PublicGamePhase::Playing,
+                PhaseTag::Scoring => PublicGamePhase::Scoring,
+                PhaseTag::Finished => PublicGamePhase::Finished,
+            },
+            dealer: observation
+                .dealer
+                .map(|seat| u8::try_from(seat.index()))
+                .transpose()
+                .map_err(|_| OracleSessionGameError::InvalidProjection)?,
+            actor: match observation.actor {
+                Turn::Chance => PublicTurnWire::Chance,
+                Turn::Player(seat) => PublicTurnWire::Player(
+                    u8::try_from(seat.index())
+                        .map_err(|_| OracleSessionGameError::InvalidProjection)?,
+                ),
+                Turn::Environment => PublicTurnWire::Environment,
+                Turn::Finished => PublicTurnWire::Finished,
+            },
+            round_index: u16::try_from(observation.round_index)
+                .map_err(|_| OracleSessionGameError::InvalidProjection)?,
+            hand_size: observation.hand_size,
+            hand_counts: observation.hand_counts.to_vec(),
+            trump: observation.trump.map(card_code).transpose()?,
+            current_trick: observation
+                .current_trick
+                .iter()
+                .map(|played| {
+                    Ok(PlayedCardWire {
+                        seat: u8::try_from(played.player.index())
+                            .map_err(|_| OracleSessionGameError::InvalidProjection)?,
+                        card: card_code(played.card)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, OracleSessionGameError>>()?,
+            bids: observation.bids.to_vec(),
+            tricks_won: observation.tricks_won.to_vec(),
+            scores: observation.scores.to_vec(),
+            pot_cents: observation.pot_cents,
+        })
+    }
+
+    fn private_hand(&self, seat: u8) -> Result<Vec<u8>, Self::Error> {
+        let seat = Seat::new(usize::from(seat)).map_err(OracleSessionGameError::Rule)?;
+        self.game
+            .observe(seat)
+            .private_hand
+            .iter()
+            .map(card_code)
+            .collect()
     }
 
     fn player_transition(
@@ -129,6 +192,14 @@ fn card_from_code(code: u8) -> Result<Card, OracleSessionGameError> {
         .get(usize::from(code))
         .copied()
         .ok_or(OracleSessionGameError::InvalidCardCode)
+}
+
+fn card_code(card: Card) -> Result<u8, OracleSessionGameError> {
+    Card::standard_deck()
+        .iter()
+        .position(|candidate| *candidate == card)
+        .and_then(|index| u8::try_from(index).ok())
+        .ok_or(OracleSessionGameError::InvalidProjection)
 }
 
 #[cfg(test)]

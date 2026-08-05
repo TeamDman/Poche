@@ -12,9 +12,11 @@ use facet::Facet;
 use poche_protocol::{CommandEnvelope, DenyReason, PolicyId};
 
 mod machine;
+mod projection;
 mod state;
 
 pub use machine::{SessionMachine, apply, authorize, decide, decide_transport_disconnect};
+pub use projection::*;
 pub use state::*;
 
 /// One enforce or audit-only policy result.

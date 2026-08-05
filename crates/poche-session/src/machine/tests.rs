@@ -1,19 +1,22 @@
 use poche_protocol::{
     ChanceWire, CommandId, CommandPayload, CorrelationId, CountdownToken, GameActionWire,
-    InviteProof, PROTOCOL_VERSION_V1, PrincipalId, RoomId, SIGNATURE_DOMAIN_V1, SignatureAlgorithm,
-    SignatureBytes, SignatureIntent, UnsignedCommandEnvelope,
+    GamePublicStateWire, InviteProof, PROTOCOL_VERSION_V1, PrincipalId, PublicGamePhase,
+    PublicTurnWire, RoomId, SIGNATURE_DOMAIN_V1, SignatureAlgorithm, SignatureBytes,
+    SignatureIntent, UnsignedCommandEnvelope,
 };
 
 use super::*;
 use crate::{
-    ConnectionState, InviteRecord, PolicyRule, PrincipalKind, PrincipalSelector, SessionGame,
-    SessionInvariantError,
+    ConnectionState, InviteRecord, PolicyRule, PrincipalKind, PrincipalSelector, ProjectionError,
+    SessionGame, SessionInvariantError, local_host_diagnostic_capability,
+    project_local_host_diagnostics, project_viewer,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TestGame {
     turn: GameTurn,
     steps: u8,
+    hands: [Vec<u8>; 2],
 }
 
 impl SessionGame for TestGame {
@@ -26,11 +29,50 @@ impl SessionGame for TestGame {
         Ok(Self {
             turn: GameTurn::Chance,
             steps: 0,
+            hands: [vec![0, 1], vec![2, 3]],
         })
     }
 
     fn turn(&self) -> GameTurn {
         self.turn
+    }
+
+    fn public_projection(&self) -> Result<GamePublicStateWire, Self::Error> {
+        Ok(GamePublicStateWire {
+            schema_version: 1,
+            phase: if self.turn == GameTurn::Finished {
+                PublicGamePhase::Finished
+            } else {
+                PublicGamePhase::Playing
+            },
+            dealer: Some(0),
+            actor: match self.turn {
+                GameTurn::Chance => PublicTurnWire::Chance,
+                GameTurn::Player(seat) => PublicTurnWire::Player(seat),
+                GameTurn::Environment => PublicTurnWire::Environment,
+                GameTurn::Finished => PublicTurnWire::Finished,
+            },
+            round_index: 0,
+            hand_size: 2,
+            hand_counts: self
+                .hands
+                .iter()
+                .map(|hand| u8::try_from(hand.len()).unwrap())
+                .collect(),
+            trump: Some(51),
+            current_trick: Vec::new(),
+            bids: vec![Some(0), Some(0)],
+            tricks_won: vec![0, 0],
+            scores: vec![0, 0],
+            pot_cents: 50,
+        })
+    }
+
+    fn private_hand(&self, seat: u8) -> Result<Vec<u8>, Self::Error> {
+        self.hands
+            .get(usize::from(seat))
+            .cloned()
+            .ok_or("invalid seat")
     }
 
     fn player_transition(
@@ -50,6 +92,7 @@ impl SessionGame for TestGame {
             game: Self {
                 turn,
                 steps: self.steps + 1,
+                hands: self.hands.clone(),
             },
             round_scores: None,
             terminal: false,
@@ -64,6 +107,7 @@ impl SessionGame for TestGame {
             game: Self {
                 turn: GameTurn::Player(0),
                 steps: self.steps + 1,
+                hands: self.hands.clone(),
             },
             round_scores: None,
             terminal: false,
@@ -78,6 +122,7 @@ impl SessionGame for TestGame {
             game: Self {
                 turn: GameTurn::Finished,
                 steps: self.steps + 1,
+                hands: self.hands.clone(),
             },
             round_scores: Some(vec![7, -7]),
             terminal: true,
@@ -922,6 +967,7 @@ fn controlled_readiness_start_pause_and_unknown_role_defects_fail_closed() {
             game: TestGame {
                 turn: GameTurn::Chance,
                 steps: 0,
+                hands: [vec![0, 1], vec![2, 3]],
             },
         },
     );
@@ -944,9 +990,11 @@ fn controlled_readiness_start_pause_and_unknown_role_defects_fail_closed() {
             game: TestGame {
                 turn: GameTurn::Player(0),
                 steps: 1,
+                hands: [vec![0, 1], vec![2, 3]],
             },
             round_scores: None,
             terminal: false,
+            public_change: None,
         },
     );
     assert_eq!(
@@ -974,6 +1022,234 @@ fn controlled_readiness_start_pause_and_unknown_role_defects_fail_closed() {
         deny_reason(&authorize(&unknown_allow, &stranger)),
         DenyReason::UnknownPrincipal
     );
+}
+
+#[test]
+fn projections_enforce_pairwise_noninterference_for_every_viewer_kind() {
+    let mut state = running_with_spectators();
+    state = grant_host_hand_to(&state, "bob", "pairwise");
+    let epoch = state.projection_epoch;
+    let viewers = ["host", "alice", "bob", "carol"];
+    let before: Vec<_> = viewers
+        .iter()
+        .map(|viewer| project_viewer(&state, &principal(viewer), epoch).unwrap())
+        .collect();
+
+    let mut changed = state.clone();
+    let SessionPhase::Running { game } = &mut changed.phase else {
+        panic!("fixture must be running");
+    };
+    game.hands[0] = vec![48, 49];
+    let after: Vec<_> = viewers
+        .iter()
+        .map(|viewer| project_viewer(&changed, &principal(viewer), epoch).unwrap())
+        .collect();
+
+    assert_ne!(before[0], after[0], "player zero sees their own change");
+    assert_eq!(before[1], after[1], "other player is noninterfering");
+    assert_ne!(before[2], after[2], "exact granted spectator sees it");
+    assert_eq!(before[3], after[3], "other spectator is noninterfering");
+    assert!(before[0].granted_hands.is_empty());
+    assert_eq!(
+        before[0].own_hand.as_ref().unwrap().player,
+        principal("host")
+    );
+    assert!(before[3].own_hand.is_none());
+    assert!(before[3].granted_hands.is_empty());
+
+    let capability = local_host_diagnostic_capability(&state, &principal("host")).unwrap();
+    let diagnostics = project_local_host_diagnostics(&state, &capability).unwrap();
+    assert_eq!(diagnostics.hands.len(), 2);
+
+    let carol_json = serde_json::to_string(&after[3]).unwrap();
+    assert!(!carol_json.contains("48"));
+    assert!(!carol_json.contains("49"));
+}
+
+#[test]
+fn grant_revoke_and_round_boundary_change_only_future_projection() {
+    let mut state = running_with_spectators();
+    let initial = project_viewer(&state, &principal("bob"), 0).unwrap();
+    assert!(initial.granted_hands.is_empty());
+
+    state = grant_host_hand_to(&state, "bob", "lifetime");
+    assert_eq!(state.projection_epoch, 1);
+    assert_eq!(
+        project_viewer(&state, &principal("bob"), 0),
+        Err(ProjectionError::StaleProjectionEpoch)
+    );
+    let granted = project_viewer(&state, &principal("bob"), 1).unwrap();
+    assert_eq!(granted.granted_hands.len(), 1);
+    assert!(initial.granted_hands.is_empty(), "past value is immutable");
+
+    let revoke = signed(
+        &state,
+        principal("host"),
+        "lifetime-revoke",
+        CommandPayload::RevokeHand {
+            player: principal("host"),
+            recipient: principal("bob"),
+            grant_epoch: 1,
+        },
+    );
+    state = execute(&state, &revoke).0;
+    assert_eq!(state.projection_epoch, 2);
+    assert!(
+        project_viewer(&state, &principal("bob"), 2)
+            .unwrap()
+            .granted_hands
+            .is_empty()
+    );
+    assert_eq!(granted.granted_hands.len(), 1, "revocation is future-only");
+
+    state = grant_host_hand_to(&state, "bob", "round");
+    let chance_command = signed(
+        &state,
+        principal("system-game"),
+        "round-chance",
+        CommandPayload::ApplyChance { chance: chance() },
+    );
+    state = execute(&state, &chance_command).0;
+    for (who, name) in [
+        ("host", "round-action-host"),
+        ("alice", "round-action-alice"),
+    ] {
+        let action = signed(
+            &state,
+            principal(who),
+            name,
+            CommandPayload::GameAction {
+                action: GameActionWire::Bid { tricks: 0 },
+            },
+        );
+        state = execute(&state, &action).0;
+    }
+    let settle = signed(
+        &state,
+        principal("system-game"),
+        "round-settle",
+        CommandPayload::Settle,
+    );
+    let (settled, events) = execute(&state, &settle);
+    assert!(matches!(
+        events.first().map(|event| &event.kind),
+        Some(SessionEventKind::HandCapabilitiesExpired {
+            reason: HandCapabilityExpiry::RoundBoundary
+        })
+    ));
+    assert!(settled.hand_grants.is_empty());
+    assert_eq!(settled.public_history.len(), 4);
+    assert!(matches!(
+        settled.public_history.last(),
+        Some(poche_protocol::PublicGameEventWire::RoundScored { .. })
+    ));
+}
+
+#[test]
+fn hand_owner_can_explicitly_deny_only_the_exact_pending_request() {
+    let state = running_with_spectators();
+    let request = signed(
+        &state,
+        principal("bob"),
+        "deny-request-bob",
+        CommandPayload::RequestHand {
+            player: principal("host"),
+        },
+    );
+    let requested = execute(&state, &request).0;
+    let wrong_owner = signed(
+        &requested,
+        principal("alice"),
+        "deny-by-wrong-owner",
+        CommandPayload::DenyHand {
+            request_id: command_id("deny-request-bob"),
+            player: principal("host"),
+            recipient: principal("bob"),
+        },
+    );
+    let decision = authorize(&requested, &wrong_owner);
+    let authorized = AuthorizedCommand::from_decision(wrong_owner, decision).unwrap();
+    assert_eq!(
+        decide(&requested, &authorized),
+        Err(SessionError::Denied(DenyReason::GrantScope))
+    );
+
+    let deny = signed(
+        &requested,
+        principal("host"),
+        "deny-by-owner",
+        CommandPayload::DenyHand {
+            request_id: command_id("deny-request-bob"),
+            player: principal("host"),
+            recipient: principal("bob"),
+        },
+    );
+    let (denied_state, events) = execute(&requested, &deny);
+    assert!(denied_state.hand_requests.is_empty());
+    assert_eq!(denied_state.projection_epoch, requested.projection_epoch);
+    assert!(matches!(
+        events.as_slice(),
+        [SessionEvent {
+            kind: SessionEventKind::HandViewDenied { .. },
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn reconnect_restores_public_prefix_and_only_the_players_own_private_state() {
+    let mut state = running_with_spectators();
+    let chance_command = signed(
+        &state,
+        principal("system-game"),
+        "reconnect-chance",
+        CommandPayload::ApplyChance { chance: chance() },
+    );
+    state = execute(&state, &chance_command).0;
+    let action = signed(
+        &state,
+        principal("host"),
+        "reconnect-action",
+        CommandPayload::GameAction {
+            action: GameActionWire::Bid { tricks: 0 },
+        },
+    );
+    state = execute(&state, &action).0;
+    let before = project_viewer(&state, &principal("alice"), state.projection_epoch).unwrap();
+
+    let disconnect = decide_transport_disconnect(
+        &state,
+        &principal("alice"),
+        &command_id("transport-loss-alice"),
+        SemanticHash([0x44; 32]),
+        &correlation("cor-transport-loss-alice"),
+    )
+    .unwrap();
+    for event in disconnect {
+        state = apply(&state, &event).unwrap();
+    }
+    assert_eq!(
+        project_viewer(&state, &principal("alice"), state.projection_epoch),
+        Err(ProjectionError::NotConnected)
+    );
+    let reconnect = signed(
+        &state,
+        principal("alice"),
+        "reconnect-alice-projection",
+        CommandPayload::Reconnect,
+    );
+    state = execute(&state, &reconnect).0;
+    let after = project_viewer(&state, &principal("alice"), state.projection_epoch).unwrap();
+    assert_eq!(after.public_game_state, before.public_game_state);
+    assert_eq!(after.public_history, before.public_history);
+    assert_eq!(after.own_hand, before.own_hand);
+    assert!(after.granted_hands.is_empty());
+
+    let spectator = project_viewer(&state, &principal("carol"), state.projection_epoch).unwrap();
+    assert_eq!(spectator.public_game_state, after.public_game_state);
+    assert_eq!(spectator.public_history, after.public_history);
+    assert!(spectator.own_hand.is_none());
+    assert!(spectator.granted_hands.is_empty());
 }
 
 fn assert_semantic_denial(
@@ -1014,6 +1290,55 @@ fn running_via_expiry() -> SessionState<TestGame> {
         },
     );
     execute(&state, &expiry).0
+}
+
+fn running_with_spectators() -> SessionState<TestGame> {
+    let mut state = running_via_expiry();
+    for spectator in ["bob", "carol"] {
+        let invite_text = format!("invite-{spectator}");
+        state
+            .invites
+            .push(InviteRecord::new(invite_text.clone(), u64::MAX).unwrap());
+        let join = signed(
+            &state,
+            principal(spectator),
+            &format!("join-{spectator}-running"),
+            CommandPayload::RedeemInvite {
+                invite: InviteProof::new(invite_text).unwrap(),
+            },
+        );
+        state = execute(&state, &join).0;
+    }
+    state
+}
+
+fn grant_host_hand_to(
+    state: &SessionState<TestGame>,
+    spectator: &str,
+    suffix: &str,
+) -> SessionState<TestGame> {
+    let request_name = format!("{suffix}-request-{spectator}");
+    let request = signed(
+        state,
+        principal(spectator),
+        &request_name,
+        CommandPayload::RequestHand {
+            player: principal("host"),
+        },
+    );
+    let requested = execute(state, &request).0;
+    let grant = signed(
+        &requested,
+        principal("host"),
+        &format!("{suffix}-grant-{spectator}"),
+        CommandPayload::GrantHand {
+            request_id: command_id(&request_name),
+            player: principal("host"),
+            recipient: principal(spectator),
+            grant_epoch: requested.projection_epoch + 1,
+        },
+    );
+    execute(&requested, &grant).0
 }
 
 fn synthetic_event(

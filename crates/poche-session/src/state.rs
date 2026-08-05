@@ -3,7 +3,8 @@ use core::fmt;
 use facet::Facet;
 use poche_protocol::{
     ChanceWire, CommandId, CommandKind, CommandPayload, CorrelationId, CountdownToken, DenyReason,
-    GameActionWire, PolicyId, PrincipalId, RoomId, SemanticHash,
+    GameActionWire, GamePublicStateWire, PolicyId, PrincipalId, PublicGameEventWire, RoomId,
+    SemanticHash,
 };
 
 use crate::PolicyDecision;
@@ -14,6 +15,10 @@ pub const MAX_MEMBERS: usize = 8;
 pub const CHAT_MESSAGES_PER_WINDOW: u16 = 5;
 /// Logical revision width of one chat-rate window.
 pub const CHAT_WINDOW_REVISIONS: u64 = 20;
+/// Maximum simultaneously retained spectator hand requests.
+pub const MAX_HAND_REQUESTS: usize = 64;
+/// Maximum simultaneously active spectator hand grants.
+pub const MAX_HAND_GRANTS: usize = 64;
 
 /// Authority-derived principal classification. Commands never supply this tag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet)]
@@ -167,6 +172,37 @@ pub struct GameTransition<G> {
     pub terminal: bool,
 }
 
+/// Public meaning attached to one game transition without exposing chance data.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PublicGameChange {
+    PlayerAction { seat: u8, action: GameActionWire },
+    RoundScored { scores: Vec<i32>, terminal: bool },
+}
+
+/// A pending spectator request addressed to one seated player.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HandViewRequest {
+    pub request_id: CommandId,
+    pub player: PrincipalId,
+    pub recipient: PrincipalId,
+}
+
+/// An active, exact spectator capability. No card data is stored here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HandViewGrant {
+    pub player: PrincipalId,
+    pub recipient: PrincipalId,
+    pub grant_epoch: u64,
+}
+
+/// Why pending/granted hand capabilities stop applying.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HandCapabilityExpiry {
+    RoundBoundary,
+    SeatRoleChanged { principal: PrincipalId },
+    MembershipLost { principal: PrincipalId },
+}
+
 /// Pure game port used by the session reducer only after lifecycle gating.
 pub trait SessionGame: Clone + Eq {
     type Error;
@@ -180,6 +216,20 @@ pub trait SessionGame: Clone + Eq {
 
     /// Return the current owner of action selection.
     fn turn(&self) -> GameTurn;
+
+    /// Produce public game knowledge with every private hand absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns a game-specific projection/conversion error.
+    fn public_projection(&self) -> Result<GamePublicStateWire, Self::Error>;
+
+    /// Produce exactly one seat's private hand as canonical card codes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a game-specific seat/projection error.
+    fn private_hand(&self, seat: u8) -> Result<Vec<u8>, Self::Error>;
 
     /// Apply one player-owned action.
     ///
@@ -276,6 +326,7 @@ pub enum SessionEventKind<G> {
         game: G,
         round_scores: Option<Vec<i32>>,
         terminal: bool,
+        public_change: Option<PublicGameChange>,
     },
     Paused,
     Unpaused,
@@ -295,6 +346,30 @@ pub enum SessionEventKind<G> {
     ChatPosted {
         principal: PrincipalId,
         text: String,
+    },
+    HandViewRequested {
+        request_id: CommandId,
+        player: PrincipalId,
+        recipient: PrincipalId,
+    },
+    HandViewGranted {
+        request_id: CommandId,
+        player: PrincipalId,
+        recipient: PrincipalId,
+        grant_epoch: u64,
+    },
+    HandViewDenied {
+        request_id: CommandId,
+        player: PrincipalId,
+        recipient: PrincipalId,
+    },
+    HandViewRevoked {
+        player: PrincipalId,
+        recipient: PrincipalId,
+        grant_epoch: u64,
+    },
+    HandCapabilitiesExpired {
+        reason: HandCapabilityExpiry,
     },
     RoomClosed,
 }
@@ -330,6 +405,10 @@ pub struct SessionState<G> {
     pub policies: Vec<PolicyRule>,
     pub processed_commands: Vec<ProcessedCommand<G>>,
     pub chat_count: u64,
+    pub projection_epoch: u64,
+    pub hand_requests: Vec<HandViewRequest>,
+    pub hand_grants: Vec<HandViewGrant>,
+    pub public_history: Vec<PublicGameEventWire>,
 }
 
 impl<G> SessionState<G> {
@@ -353,6 +432,10 @@ impl<G> SessionState<G> {
             policies: Vec::new(),
             processed_commands: Vec::new(),
             chat_count: 0,
+            projection_epoch: 0,
+            hand_requests: Vec::new(),
+            hand_grants: Vec::new(),
+            public_history: Vec::new(),
         }
     }
 
@@ -405,9 +488,14 @@ impl<G> SessionState<G> {
     /// # Errors
     ///
     /// Returns the first stable invariant category found.
+    #[allow(clippy::too_many_lines)]
     pub fn validate(&self) -> Result<(), SessionInvariantError> {
         if self.members.len() > MAX_MEMBERS {
             return Err(SessionInvariantError::TooManyMembers);
+        }
+        if self.hand_requests.len() > MAX_HAND_REQUESTS || self.hand_grants.len() > MAX_HAND_GRANTS
+        {
+            return Err(SessionInvariantError::TooManyHandCapabilities);
         }
         for (index, member) in self.members.iter().enumerate() {
             if member
@@ -458,6 +546,42 @@ impl<G> SessionState<G> {
                 return Err(SessionInvariantError::MissingHost);
             }
         }
+        for (index, request) in self.hand_requests.iter().enumerate() {
+            let valid_player = self
+                .member(&request.player)
+                .is_some_and(|member| member.seat.is_some());
+            let valid_recipient = self
+                .member(&request.recipient)
+                .is_some_and(|member| member.seat.is_none());
+            if !valid_player
+                || !valid_recipient
+                || request.player == request.recipient
+                || self.hand_requests[index + 1..].iter().any(|other| {
+                    other.request_id == request.request_id || other.recipient == request.recipient
+                })
+            {
+                return Err(SessionInvariantError::InvalidHandCapability);
+            }
+        }
+        for (index, grant) in self.hand_grants.iter().enumerate() {
+            let valid_player = self
+                .member(&grant.player)
+                .is_some_and(|member| member.seat.is_some());
+            let valid_recipient = self
+                .member(&grant.recipient)
+                .is_some_and(|member| member.seat.is_none());
+            if !valid_player
+                || !valid_recipient
+                || grant.player == grant.recipient
+                || grant.grant_epoch == 0
+                || grant.grant_epoch > self.projection_epoch
+                || self.hand_grants[index + 1..]
+                    .iter()
+                    .any(|other| other.recipient == grant.recipient)
+            {
+                return Err(SessionInvariantError::InvalidHandCapability);
+            }
+        }
         for (index, record) in self.processed_commands.iter().enumerate() {
             if record
                 .events
@@ -490,6 +614,8 @@ pub enum SessionInvariantError {
     MissingHost,
     InvalidCommandRecord,
     InvalidInvite,
+    TooManyHandCapabilities,
+    InvalidHandCapability,
 }
 
 /// Stable semantic reducer error.

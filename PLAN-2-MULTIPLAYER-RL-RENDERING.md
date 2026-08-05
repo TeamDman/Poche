@@ -545,7 +545,7 @@ identity, epoch, revision, correlation/causation, payload, and public signature
 metadata. Commands and events have distinct unsigned shapes and domain-
 separated length-framed canonical signing bytes; diagnostic JSON is never the
 unframed signing input. Protocol v1 pins schema hash
-`a3c01a792a99303adabef2ca3c8c49fb6288c0ca1ea876162c1655360a82ca0c`, an
+`1489b2887acc117dd1a9e98d2891b8640fa4d901621b734d1f7654940c4e11ad`, an
 exact signed-byte vector, and `fixtures/protocol/command-chat-v1.ndjson`.
 Strict decode rejects unknown versions/tags/fields, invalid UTF-8/JSON/IDs/
 signatures/payloads, CRLF/interior control delimiters, multiple/missing frames,
@@ -607,7 +607,7 @@ audit, all non-native-conformance workspace tests, and the task-specific suites
 pass; the unchanged native conformance suite passed in the preceding Task 2.1
 slice.
 
-### [ ] 2.3 Implement viewer projections and spectator capabilities
+### [x] 2.3 Implement viewer projections and spectator capabilities
 
 Centralize projection as a pure function of session state, recipient principal,
 active capability set, and projection epoch. Add request, grant, deny, revoke,
@@ -630,7 +630,28 @@ grant/revoke tests prove future projection changes; no room-wide event contains
 a private hand; a reconnecting authorized player can reconstruct all public
 knowledge and only their own current private state.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed. Added the pure centralized
+`project_viewer` boundary, typed public Poche state, and the versioned ordered
+public action/score prefix needed beyond the oracle's current-trick-only
+observation. Players receive only their own hand; an unseated spectator may
+hold at most one exact player/recipient/epoch grant; ordinary host projection
+has no extra privilege. Request, owner grant, explicit deny, owner revoke, and
+audited round/seat-role/membership expiry are reducer events. Grant/revoke/
+effective-expiry advance a stale-checked projection epoch; disconnect blocks
+delivery without becoming membership loss. A separate non-serializable
+`LocalHostDiagnosticCapability` is the only API returning all hands.
+`EventPayload::GameTransitioned` remains hash-only and the public prefix never
+contains a private hand. Four-viewer controlled-hidden-state tests establish
+pairwise noninterference; grant/revoke proves future-only changes; round expiry
+ordering and reconnect public-prefix/own-hand reconstruction pass. Protocol
+validation pins schema hash
+`1489b2887acc117dd1a9e98d2891b8640fa4d901621b734d1f7654940c4e11ad`.
+ADR 0003, `docs/viewer-projections.md`, session-engine/protocol docs, and all
+Rust/protocol coverage cells record the boundary and remaining crypto/network
+work. Focused suites, decoder fuzz/compile-fail tests, full workspace tests
+(including native Alloy/NuSMV/Prolog conformance), workspace clippy with denied
+warnings, formatting, the phase-2 guidance audit, and the unchanged `PLAN.md`
+check all pass.
 
 ### [ ] 2.4 Add deterministic transcripts, snapshots, and replay
 

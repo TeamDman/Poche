@@ -24,11 +24,15 @@ pub const PROTOCOL_SCHEMA_DESCRIPTOR: &str = concat!(
     "command=protocol_version,room_id,session_epoch,command_id,principal_id,expected_revision,correlation_id,causation_id,payload,signature\n",
     "event=protocol_version,room_id,session_epoch,event_id,principal_id,current_revision,correlation_id,causation_id,payload,signature\n",
     "snapshot=protocol_version,room_id,session_epoch,snapshot_id,principal_id,current_revision,correlation_id,causation_id,payload,signature\n",
-    "projection=protocol_version,room_id,session_epoch,projection_id,principal_id,current_revision,correlation_id,causation_id,payload,signature\n",
+    "projection=protocol_version,room_id,session_epoch,projection_id,principal_id,current_revision,projection_epoch,correlation_id,causation_id,payload,signature\n",
     "error=protocol_version,room_id,session_epoch,event_id,principal_id,current_revision,correlation_id,causation_id,payload,signature\n",
-    "command-tags=create_room|redeem_invite|take_seat|release_seat|ready|unready|arm_countdown|abort_countdown|countdown_expired|pause|unpause|game_action|apply_chance|settle|chat|request_hand|grant_hand|revoke_hand|reconnect|leave|remove_member|reset_lobby|close_room\n",
-    "event-tags=room_created|member_joined|member_disconnected|member_reconnected|member_left|seat_taken|seat_released|ready_changed|countdown_armed|countdown_aborted|phase_changed|game_transitioned|round_scored|chat_posted|hand_requested|hand_granted|hand_revoked|room_closed\n",
+    "command-tags=create_room|redeem_invite|take_seat|release_seat|ready|unready|arm_countdown|abort_countdown|countdown_expired|pause|unpause|game_action|apply_chance|settle|chat|request_hand|grant_hand|deny_hand|revoke_hand|reconnect|leave|remove_member|reset_lobby|close_room\n",
+    "event-tags=room_created|member_joined|member_disconnected|member_reconnected|member_left|seat_taken|seat_released|ready_changed|countdown_armed|countdown_aborted|phase_changed|game_transitioned|round_scored|chat_posted|hand_requested|hand_granted|hand_denied|hand_revoked|hand_capabilities_expired|room_closed\n",
     "signature=domain_version,algorithm,key_id,signature\n",
+    "projection-payload=phase,members,public_game_state,own_hand,granted_hands,public_history\n",
+    "public-game-state=schema_version,phase,dealer,actor,round_index,hand_size,hand_counts,trump,current_trick,bids,tricks_won,scores,pot_cents\n",
+    "public-game-event-tags=game_started|player_action|round_scored\n",
+    "played-card=seat,card\n",
     "refinements=identifier:1..64-canonical-ascii;invite-proof:1..256-utf8-redacted;signature:128-lower-hex;chat:1..2048-utf8;card-code:0..52\n",
     "signature-domain-v1=length-framed-binary;diagnostic-json-is-not-signed-as-is\n",
 );
@@ -438,9 +442,9 @@ mod tests {
         assert_eq!(
             protocol_schema_hash(),
             SemanticHash([
-                0xa3, 0xc0, 0x1a, 0x79, 0x2a, 0x99, 0x30, 0x3a, 0xda, 0xbe, 0xf2, 0xca, 0x3c, 0x8c,
-                0x49, 0xfb, 0x62, 0x88, 0xc0, 0xca, 0x1e, 0xa8, 0x76, 0x16, 0x2c, 0x16, 0x55, 0x36,
-                0x0a, 0x82, 0xca, 0x0c,
+                0x14, 0x89, 0xb2, 0x88, 0x7a, 0xcc, 0x11, 0x7d, 0xd1, 0xa9, 0xe9, 0x8d, 0x28, 0x91,
+                0xb8, 0x64, 0x0f, 0xa4, 0xd9, 0x01, 0x62, 0x1b, 0x73, 0x4d, 0x1f, 0x76, 0x54, 0x94,
+                0x0c, 0x4e, 0x11, 0xad,
             ])
         );
         assert_eq!(protocol_schema_hash(), protocol_schema_hash());

@@ -15,6 +15,8 @@ pub const SIGNATURE_DOMAIN_V1: u16 = 1;
 pub const MAX_CHAT_BYTES: usize = 2_048;
 /// Maximum cards accepted by the Poche chance wire shape.
 pub const MAX_DECK_CARDS: usize = 52;
+/// Maximum players represented by the session wire format.
+pub const MAX_PROTOCOL_PLAYERS: usize = 8;
 const MAX_CARD_CODE_EXCLUSIVE: u8 = 52;
 
 /// Stable 256-bit semantic identity.
@@ -159,6 +161,103 @@ pub enum RoomPhase {
     Closed,
 }
 
+/// Public phase of the composed Poche game.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[repr(u8)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicGamePhase {
+    AwaitingDeal,
+    Bidding,
+    Playing,
+    Scoring,
+    Finished,
+}
+
+/// Public owner of the next game transition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[repr(u8)]
+#[serde(
+    tag = "kind",
+    content = "seat",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum PublicTurnWire {
+    Chance,
+    Player(u8),
+    Environment,
+    Finished,
+}
+
+/// One publicly played card in the current trick/history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlayedCardWire {
+    pub seat: u8,
+    pub card: u8,
+}
+
+/// Complete public game knowledge independent of any private hand.
+#[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GamePublicStateWire {
+    pub schema_version: u16,
+    pub phase: PublicGamePhase,
+    pub dealer: Option<u8>,
+    pub actor: PublicTurnWire,
+    pub round_index: u16,
+    pub hand_size: u8,
+    pub hand_counts: Vec<u8>,
+    pub trump: Option<u8>,
+    pub current_trick: Vec<PlayedCardWire>,
+    pub bids: Vec<Option<u8>>,
+    pub tricks_won: Vec<u8>,
+    pub scores: Vec<u16>,
+    pub pot_cents: u32,
+}
+
+/// Ordered public event prefix required for reconnect and memoryless policies.
+#[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[repr(u8)]
+#[serde(
+    tag = "kind",
+    content = "data",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum PublicGameEventWire {
+    GameStarted {
+        command_id: CommandId,
+    },
+    PlayerAction {
+        command_id: CommandId,
+        event_index: u16,
+        seat: u8,
+        action: GameActionWire,
+    },
+    RoundScored {
+        command_id: CommandId,
+        event_index: u16,
+        scores: Vec<i32>,
+        terminal: bool,
+    },
+}
+
+/// Public audit reason for removing pending/active hand capabilities.
+#[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[repr(u8)]
+#[serde(
+    tag = "kind",
+    content = "principal",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum HandCapabilityExpiryWire {
+    RoundBoundary,
+    SeatRoleChanged(PrincipalId),
+    MembershipLost(PrincipalId),
+}
+
 /// Poche player action carried by the inspectable protocol.
 #[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
 #[repr(u8)]
@@ -245,6 +344,12 @@ pub enum CommandPayload {
         recipient: PrincipalId,
         grant_epoch: u64,
     },
+    /// Deny and close the exact pending viewer request.
+    DenyHand {
+        request_id: CommandId,
+        player: PrincipalId,
+        recipient: PrincipalId,
+    },
     /// Revoke an exact viewer grant.
     RevokeHand {
         player: PrincipalId,
@@ -285,6 +390,7 @@ pub enum CommandKind {
     Chat,
     RequestHand,
     GrantHand,
+    DenyHand,
     RevokeHand,
     Reconnect,
     Leave,
@@ -315,6 +421,7 @@ impl CommandPayload {
             Self::Chat { .. } => CommandKind::Chat,
             Self::RequestHand { .. } => CommandKind::RequestHand,
             Self::GrantHand { .. } => CommandKind::GrantHand,
+            Self::DenyHand { .. } => CommandKind::DenyHand,
             Self::RevokeHand { .. } => CommandKind::RevokeHand,
             Self::Reconnect => CommandKind::Reconnect,
             Self::Leave => CommandKind::Leave,
@@ -462,10 +569,18 @@ pub enum EventPayload {
         recipient: PrincipalId,
         grant_epoch: u64,
     },
+    HandDenied {
+        request_id: CommandId,
+        player: PrincipalId,
+        recipient: PrincipalId,
+    },
     HandRevoked {
         player: PrincipalId,
         recipient: PrincipalId,
         grant_epoch: u64,
+    },
+    HandCapabilitiesExpired {
+        reason: HandCapabilityExpiryWire,
     },
     RoomClosed,
 }
@@ -564,10 +679,10 @@ pub struct HandProjection {
 pub struct ProjectionPayload {
     pub phase: RoomPhase,
     pub members: Vec<MemberProjection>,
-    pub public_game_state: Vec<u8>,
+    pub public_game_state: Option<GamePublicStateWire>,
     pub own_hand: Option<HandProjection>,
     pub granted_hands: Vec<HandProjection>,
-    pub public_history: Vec<EventId>,
+    pub public_history: Vec<PublicGameEventWire>,
 }
 
 /// One exact viewer projection.
@@ -580,6 +695,7 @@ pub struct ProjectionEnvelope {
     pub projection_id: ProjectionId,
     pub principal_id: PrincipalId,
     pub current_revision: u64,
+    pub projection_epoch: u64,
     pub correlation_id: CorrelationId,
     pub causation_id: EventId,
     pub payload: ProjectionPayload,
@@ -825,7 +941,7 @@ impl ProtocolFrame {
                     &envelope.signature,
                 )?;
                 require_ids(envelope.projection_id.validate() && envelope.causation_id.validate())?;
-                validate_projection(&envelope.payload)
+                validate_projection(&envelope.payload, &envelope.principal_id)
             }
             Self::Error(envelope) => {
                 validate_common(
@@ -942,6 +1058,13 @@ fn validate_command_payload(payload: &CommandPayload) -> Result<(), EnvelopeVali
         } if !request_id.validate() || !player.validate() || !recipient.validate() => {
             Err(EnvelopeValidationError::InvalidIdentifier)
         }
+        CommandPayload::DenyHand {
+            request_id,
+            player,
+            recipient,
+        } if !request_id.validate() || !player.validate() || !recipient.validate() => {
+            Err(EnvelopeValidationError::InvalidIdentifier)
+        }
         CommandPayload::RevokeHand {
             player, recipient, ..
         } if !player.validate() || !recipient.validate() => {
@@ -976,6 +1099,11 @@ fn validate_event_payload(payload: &EventPayload) -> Result<(), EnvelopeValidati
             request_id,
             player,
             recipient,
+        }
+        | EventPayload::HandDenied {
+            request_id,
+            player,
+            recipient,
         } => request_id.validate() && player.validate() && recipient.validate(),
         EventPayload::HandGranted {
             player, recipient, ..
@@ -983,6 +1111,11 @@ fn validate_event_payload(payload: &EventPayload) -> Result<(), EnvelopeValidati
         | EventPayload::HandRevoked {
             player, recipient, ..
         } => player.validate() && recipient.validate(),
+        EventPayload::HandCapabilitiesExpired { reason } => match reason {
+            HandCapabilityExpiryWire::RoundBoundary => true,
+            HandCapabilityExpiryWire::SeatRoleChanged(principal)
+            | HandCapabilityExpiryWire::MembershipLost(principal) => principal.validate(),
+        },
         EventPayload::CountdownArmed {
             countdown_token, ..
         }
@@ -1004,21 +1137,83 @@ fn validate_event_payload(payload: &EventPayload) -> Result<(), EnvelopeValidati
 }
 
 fn validate_members(members: &[MemberProjection]) -> Result<(), EnvelopeValidationError> {
-    if members.iter().any(|member| !member.principal_id.validate()) {
+    if members.len() > MAX_PROTOCOL_PLAYERS
+        || members.iter().enumerate().any(|(index, member)| {
+            !member.principal_id.validate()
+                || members[index + 1..]
+                    .iter()
+                    .any(|other| other.principal_id == member.principal_id)
+        })
+    {
         Err(EnvelopeValidationError::InvalidIdentifier)
     } else {
         Ok(())
     }
 }
 
-fn validate_projection(payload: &ProjectionPayload) -> Result<(), EnvelopeValidationError> {
+fn validate_projection(
+    payload: &ProjectionPayload,
+    recipient: &PrincipalId,
+) -> Result<(), EnvelopeValidationError> {
     validate_members(&payload.members)?;
-    if payload
-        .public_history
+    let recipient_seat = payload
+        .members
         .iter()
-        .any(|event_id| !event_id.validate())
-    {
+        .find(|member| member.principal_id == *recipient)
+        .map(|member| member.seat)
+        .ok_or(EnvelopeValidationError::InvalidIdentifier)?;
+    if payload.public_history.iter().any(|event| match event {
+        PublicGameEventWire::GameStarted { command_id }
+        | PublicGameEventWire::PlayerAction { command_id, .. }
+        | PublicGameEventWire::RoundScored { command_id, .. } => !command_id.validate(),
+    }) {
         return Err(EnvelopeValidationError::InvalidIdentifier);
+    }
+    if payload.public_history.iter().any(|event| match event {
+        PublicGameEventWire::GameStarted { .. } => false,
+        PublicGameEventWire::PlayerAction {
+            seat,
+            action,
+            ..
+        } => {
+            usize::from(*seat) >= MAX_PROTOCOL_PLAYERS
+                || matches!(action, GameActionWire::Play { card } if *card >= MAX_CARD_CODE_EXCLUSIVE)
+        }
+        PublicGameEventWire::RoundScored {
+            scores,
+            ..
+        } => scores.is_empty() || scores.len() > MAX_PROTOCOL_PLAYERS,
+    }) {
+        return Err(EnvelopeValidationError::InvalidPayload);
+    }
+    if payload
+        .public_game_state
+        .as_ref()
+        .is_some_and(invalid_public_game_state)
+    {
+        return Err(EnvelopeValidationError::InvalidPayload);
+    }
+    if payload
+        .own_hand
+        .as_ref()
+        .is_some_and(|hand| hand.player != *recipient || recipient_seat.is_none())
+        || (!payload.granted_hands.is_empty() && recipient_seat.is_some())
+        || payload
+            .granted_hands
+            .iter()
+            .enumerate()
+            .any(|(index, hand)| {
+                hand.player == *recipient
+                    || !payload
+                        .members
+                        .iter()
+                        .any(|member| member.principal_id == hand.player && member.seat.is_some())
+                    || payload.granted_hands[index + 1..]
+                        .iter()
+                        .any(|other| other.player == hand.player)
+            })
+    {
+        return Err(EnvelopeValidationError::PrivateProjectionOverlap);
     }
     if payload
         .own_hand
@@ -1044,6 +1239,24 @@ fn validate_projection(payload: &ProjectionPayload) -> Result<(), EnvelopeValida
         return Err(EnvelopeValidationError::PrivateProjectionOverlap);
     }
     Ok(())
+}
+
+fn invalid_public_game_state(game: &GamePublicStateWire) -> bool {
+    let players = game.hand_counts.len();
+    game.schema_version != 1
+        || !(2..=MAX_PROTOCOL_PLAYERS).contains(&players)
+        || game.bids.len() != players
+        || game.tricks_won.len() != players
+        || game.scores.len() != players
+        || game.dealer.is_some_and(|seat| usize::from(seat) >= players)
+        || matches!(game.actor, PublicTurnWire::Player(seat) if usize::from(seat) >= players)
+        || game
+            .trump
+            .is_some_and(|card| card >= MAX_CARD_CODE_EXCLUSIVE)
+        || game.current_trick.len() > players
+        || game.current_trick.iter().any(|played| {
+            usize::from(played.seat) >= players || played.card >= MAX_CARD_CODE_EXCLUSIVE
+        })
 }
 
 #[cfg(test)]
@@ -1092,6 +1305,54 @@ mod tests {
         assert_eq!(
             actual,
             expected.map(|reason| format!("\"{reason}\"")).to_vec()
+        );
+    }
+
+    #[test]
+    fn public_projection_validation_rejects_hidden_shape_smuggling() {
+        let viewer = PrincipalId::new("viewer").unwrap();
+        let command_id = CommandId::new("public-start").unwrap();
+        let mut payload = ProjectionPayload {
+            phase: RoomPhase::Running,
+            members: vec![MemberProjection {
+                principal_id: viewer,
+                connected: true,
+                seat: None,
+                ready: false,
+                host: false,
+            }],
+            public_game_state: Some(GamePublicStateWire {
+                schema_version: 1,
+                phase: PublicGamePhase::Playing,
+                dealer: Some(0),
+                actor: PublicTurnWire::Player(0),
+                round_index: 0,
+                hand_size: 2,
+                hand_counts: vec![2, 2],
+                trump: Some(51),
+                current_trick: vec![PlayedCardWire { seat: 0, card: 3 }],
+                bids: vec![Some(0), Some(1)],
+                tricks_won: vec![0, 0],
+                scores: vec![0, 0],
+                pot_cents: 50,
+            }),
+            own_hand: None,
+            granted_hands: Vec::new(),
+            public_history: vec![PublicGameEventWire::GameStarted { command_id }],
+        };
+        let recipient = payload.members[0].principal_id.clone();
+        assert_eq!(validate_projection(&payload, &recipient), Ok(()));
+
+        payload.public_game_state.as_mut().unwrap().hand_counts = vec![2, 2, 2];
+        assert_eq!(
+            validate_projection(&payload, &recipient),
+            Err(EnvelopeValidationError::InvalidPayload)
+        );
+        payload.public_game_state.as_mut().unwrap().hand_counts = vec![2, 2];
+        payload.public_game_state.as_mut().unwrap().current_trick[0].card = 52;
+        assert_eq!(
+            validate_projection(&payload, &recipient),
+            Err(EnvelopeValidationError::InvalidPayload)
         );
     }
 

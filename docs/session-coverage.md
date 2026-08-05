@@ -74,20 +74,20 @@ fixture; `query` = forward/reverse Prolog query; `safety` = Alloy/NuSMV safety;
 
 | Rule | Rust | Alloy | NuSMV | Prolog | Protocol | Network | UI |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `S-VIEW-001` | planned projection unit/prop | planned knowledge assertion | planned visibility flag | planned can-see query | planned player projection | planned private delivery | planned own-hand screen |
-| `S-VIEW-002` | planned projection unit/prop | planned no-knowledge assertion | planned spectator flag | planned can-see query | planned public projection | planned spectator capture | planned public-only screen |
-| `S-VIEW-003` | planned unit/exh | planned request relation | planned request state | planned request query | planned request fixture | planned spectator e2e | planned request control |
-| `S-VIEW-004` | planned unit/exh | planned owner/scope assertion | planned grant state | planned grant explanation | planned grant fixture | planned private e2e | planned owner grant control |
-| `S-VIEW-005` | planned unit/exh | planned future-revoke assertion | planned revoke state | planned revoke explanation | planned revoke fixture | planned revoke e2e | planned owner revoke control |
-| `S-VIEW-006` | planned pairwise prop | planned exact-recipient | planned grant flag | planned can-see query | planned scoped projection | planned recipient capture | planned granted hand |
-| `S-VIEW-007` | planned future-delivery prop | planned future-no-edge | planned post-revoke state | planned can-see false query | planned post-revoke fixture | planned capture after revoke | planned future removal |
-| `S-VIEW-008` | planned public-wire scan | planned no-public-hand | planned broadcast flag | planned public visibility query | planned event corpus scan | planned packet scan | planned client-state scan |
+| `S-VIEW-001` | checked Task 2.3 player projection/noninterference | planned knowledge assertion | planned visibility flag | planned can-see query | checked Task 2.3 typed own-hand field | planned private delivery | planned own-hand screen |
+| `S-VIEW-002` | checked Task 2.3 public spectator projection | planned no-knowledge assertion | planned spectator flag | planned can-see query | checked Task 2.3 absent private fields | planned spectator capture | planned public-only screen |
+| `S-VIEW-003` | checked Task 2.3 exact request unit | planned request relation | planned request state | planned request query | checked Task 2.1 request schema | planned spectator e2e | planned request control |
+| `S-VIEW-004` | checked Task 2.3 owner grant/deny/request/epoch gate | planned owner/scope assertion | planned grant state | planned grant explanation | checked Task 2.3 exact grant/deny schema | planned private e2e | planned owner grant control |
+| `S-VIEW-005` | checked Task 2.3 exact revoke unit | planned future-revoke assertion | planned revoke state | planned revoke explanation | checked Task 2.1 exact revoke schema | planned revoke e2e | planned owner revoke control |
+| `S-VIEW-006` | checked Task 2.3 pairwise viewer test | planned exact-recipient | planned grant flag | planned can-see query | checked Task 2.3 scoped hand shape | planned recipient capture | planned granted hand |
+| `S-VIEW-007` | checked Task 2.3 revoke/expiry future test | planned future-no-edge | planned post-revoke state | planned can-see false query | checked Task 2.3 projection epoch | planned capture after revoke | planned future removal |
+| `S-VIEW-008` | checked Task 2.3 public-history/schema test | planned no-public-hand | planned broadcast flag | planned public visibility query | checked Task 2.3 event hash/public types | planned packet scan | planned client-state scan |
 | `S-VIEW-009` | planned crypto adapter vectors | N/A: crypto assumed | planned recipient flag | planned recipient relation | planned encrypted metadata | planned wrong-key e2e | planned decrypt failure |
-| `S-VIEW-010` | planned reconnect projection | planned entitlement assertion | planned reconnect state | planned reconstruction query | planned snapshot fixture | planned reconnect e2e | planned restored view |
-| `S-VIEW-011` | planned observation audit | N/A: existing game knowledge compared | N/A: schema shape outside lifecycle | planned public-history query | planned observation manifest | N/A: transport carries projection | planned history rendering |
-| `S-VIEW-012` | planned client-model unit | N/A: past knowledge cannot be erased | N/A: client memory outside session | planned future-only query | planned epoch event | planned stop-delivery e2e | planned cache removal |
-| `S-VIEW-013` | planned pairwise prop/control defect | planned noninterference | planned visibility safety | planned can-see matrix | planned projection hashes | planned multi-view capture | planned DOM/widget scan |
-| `S-VIEW-014` | planned threat assertion | N/A: host owns state by model | planned host-full-state flag | planned host can-see query | N/A: host-local full state | planned disclosure only | planned host-trust notice |
+| `S-VIEW-010` | checked Task 2.3 reconnect knowledge test | planned entitlement assertion | planned reconnect state | planned reconstruction query | planned snapshot fixture | planned reconnect e2e | planned restored view |
+| `S-VIEW-011` | checked Task 2.3 observation/history audit | N/A: existing game knowledge compared | N/A: schema shape outside lifecycle | planned public-history query | checked Task 2.3 ordered prefix schema | N/A: transport carries projection | planned history rendering |
+| `S-VIEW-012` | checked Task 2.3 immutable/future projection test | N/A: past knowledge cannot be erased | N/A: client memory outside session | planned future-only query | checked Task 2.3 epoch/expiry event | planned stop-delivery e2e | planned cache removal |
+| `S-VIEW-013` | checked Task 2.3 four-viewer controlled defect | planned noninterference | planned visibility safety | planned can-see matrix | checked Task 2.3 typed projection equality | planned multi-view capture | planned DOM/widget scan |
+| `S-VIEW-014` | checked Task 2.3 local diagnostics separation | N/A: host owns state by model | planned host-full-state flag | planned host can-see query | N/A: host-local full state | planned disclosure only | planned host-trust notice |
 
 ## Chat
 

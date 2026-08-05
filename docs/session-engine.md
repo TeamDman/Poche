@@ -87,10 +87,21 @@ only from `Running` and only for the current action owner.
 This keeps the protocol/session engine generic without replacing the already
 checked Poche rules with a second gameplay implementation.
 
+## Viewer boundary
+
+Task 2.3 extends `SessionGame` with public-state and exact-seat private-hand
+ports, then centralizes ordinary views in pure `project_viewer`. The session
+stores an ordered public action/score prefix because the oracle's current-trick
+observation alone cannot reconstruct cards from earlier completed tricks.
+Exact spectator requests and grants are reducer state; grant/revoke/expiry
+changes advance a projection epoch. See `viewer-projections.md` for the
+knowledge schema, expiry decision, noninterference evidence, and local-only
+host diagnostics boundary.
+
 ## Deliberate next boundaries
 
-Task 2.3 adds viewer grants and projections; until then those three typed
-commands remain default-denied. Task 2.4 owns bounded transcripts, snapshots,
-recovery tails, and replay. Task 5 supplies real Ed25519 verification and invite
-issuance/storage around the canonical bytes; Task 2.2 tests authorization
-semantics but does not claim cryptographic authenticity or trustless hosting.
+Task 2.4 owns bounded transcripts, snapshots, recovery tails, and replay. Task 5
+supplies real Ed25519 verification, recipient encryption, and invite
+issuance/storage around the canonical bytes; Tasks 2.2-2.3 test authorization
+and projection semantics but do not claim cryptographic authenticity,
+confidential transport, or trustless hosting.

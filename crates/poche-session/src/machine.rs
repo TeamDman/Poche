@@ -7,9 +7,11 @@ use poche_protocol::{
 
 use crate::{
     AuthorizedCommand, CHAT_MESSAGES_PER_WINDOW, CHAT_WINDOW_REVISIONS, ConnectionState,
-    EventProvenance, GameTransition, GameTurn, MAX_MEMBERS, MemberState, PolicyDecision,
-    PolicyEffect, PolicyResult, ProcessedCommand, PureSessionMachine, SessionError, SessionEvent,
-    SessionEventKind, SessionGame, SessionInvariantError, SessionPhase, SessionState, command_kind,
+    EventProvenance, GameTransition, GameTurn, HandCapabilityExpiry, HandViewGrant,
+    HandViewRequest, MAX_HAND_GRANTS, MAX_HAND_REQUESTS, MAX_MEMBERS, MemberState, PolicyDecision,
+    PolicyEffect, PolicyResult, ProcessedCommand, PublicGameChange, PureSessionMachine,
+    SessionError, SessionEvent, SessionEventKind, SessionGame, SessionInvariantError, SessionPhase,
+    SessionState, command_kind,
 };
 
 const MIN_PLAYERS: usize = 2;
@@ -220,7 +222,12 @@ fn baseline_allows<G>(state: &SessionState<G>, command: &CommandEnvelope) -> boo
             kind == crate::PrincipalKind::GameEnvironment
         }
         CommandKind::Reconnect => kind == crate::PrincipalKind::DisconnectedMember,
-        CommandKind::RequestHand | CommandKind::GrantHand | CommandKind::RevokeHand => false,
+        CommandKind::RequestHand => kind == crate::PrincipalKind::Spectator,
+        CommandKind::GrantHand | CommandKind::DenyHand | CommandKind::RevokeHand => {
+            state.member(&command.principal_id).is_some_and(|member| {
+                member.connection == ConnectionState::Connected && member.seat.is_some()
+            })
+        }
     }
 }
 
@@ -281,11 +288,23 @@ pub fn decide<G: SessionGame>(
         CommandPayload::RemoveMember { target } => decide_remove(state, command, target)?,
         CommandPayload::ResetLobby => decide_reset(state)?,
         CommandPayload::CloseRoom => decide_close(state)?,
-        CommandPayload::RequestHand { .. }
-        | CommandPayload::GrantHand { .. }
-        | CommandPayload::RevokeHand { .. } => {
-            return Err(SessionError::UnsupportedInThisTask);
-        }
+        CommandPayload::RequestHand { player } => decide_request_hand(state, command, player)?,
+        CommandPayload::GrantHand {
+            request_id,
+            player,
+            recipient,
+            grant_epoch,
+        } => decide_grant_hand(state, command, request_id, player, recipient, *grant_epoch)?,
+        CommandPayload::DenyHand {
+            request_id,
+            player,
+            recipient,
+        } => decide_deny_hand(state, command, request_id, player, recipient)?,
+        CommandPayload::RevokeHand {
+            player,
+            recipient,
+            grant_epoch,
+        } => decide_revoke_hand(state, command, player, recipient, *grant_epoch)?,
     };
 
     let mut events = Vec::with_capacity(kinds.len());
@@ -432,10 +451,17 @@ fn decide_take_seat<G: SessionGame>(
     if state.seat_owner(seat).is_some() {
         return denied(DenyReason::SeatOccupied);
     }
-    Ok(vec![SessionEventKind::SeatTaken {
+    let mut events = expire_capabilities_for(
+        state,
+        HandCapabilityExpiry::SeatRoleChanged {
+            principal: command.principal_id.clone(),
+        },
+    );
+    events.push(SessionEventKind::SeatTaken {
         principal: command.principal_id.clone(),
         seat,
-    }])
+    });
+    Ok(events)
 }
 
 fn decide_release_seat<G: SessionGame>(
@@ -453,6 +479,12 @@ fn decide_release_seat<G: SessionGame>(
         return denied(DenyReason::NotSeated);
     };
     let mut events = cancel_countdown_first(state);
+    events.extend(expire_capabilities_for(
+        state,
+        HandCapabilityExpiry::SeatRoleChanged {
+            principal: command.principal_id.clone(),
+        },
+    ));
     events.push(SessionEventKind::SeatReleased {
         principal: command.principal_id.clone(),
         seat,
@@ -592,8 +624,13 @@ fn decide_game_action<G: SessionGame>(
         return denied(DenyReason::NotActor);
     }
     Ok(transition_event(
+        state,
         game.player_transition(seat, action)
             .map_err(SessionError::Game)?,
+        Some(PublicGameChange::PlayerAction {
+            seat,
+            action: action.clone(),
+        }),
     ))
 }
 
@@ -606,7 +643,9 @@ fn decide_chance<G: SessionGame>(
         return denied(DenyReason::EnvironmentOnly);
     }
     Ok(transition_event(
+        state,
         game.chance_transition(chance).map_err(SessionError::Game)?,
+        None,
     ))
 }
 
@@ -617,15 +656,35 @@ fn decide_settle<G: SessionGame>(
     if game.turn() != GameTurn::Environment {
         return denied(DenyReason::EnvironmentOnly);
     }
-    Ok(transition_event(game.settle().map_err(SessionError::Game)?))
+    let transition = game.settle().map_err(SessionError::Game)?;
+    let public_change =
+        transition
+            .round_scores
+            .as_ref()
+            .map(|scores| PublicGameChange::RoundScored {
+                scores: scores.clone(),
+                terminal: transition.terminal,
+            });
+    Ok(transition_event(state, transition, public_change))
 }
 
-fn transition_event<G>(transition: GameTransition<G>) -> Vec<SessionEventKind<G>> {
-    vec![SessionEventKind::GameAdvanced {
+fn transition_event<G>(
+    state: &SessionState<G>,
+    transition: GameTransition<G>,
+    public_change: Option<PublicGameChange>,
+) -> Vec<SessionEventKind<G>> {
+    let mut events = if transition.round_scores.is_some() {
+        expire_capabilities_for(state, HandCapabilityExpiry::RoundBoundary)
+    } else {
+        Vec::new()
+    };
+    events.push(SessionEventKind::GameAdvanced {
         game: transition.game,
         round_scores: transition.round_scores,
         terminal: transition.terminal,
-    }]
+        public_change,
+    });
+    events
 }
 
 fn decide_chat<G: SessionGame>(
@@ -650,6 +709,127 @@ fn decide_chat<G: SessionGame>(
     Ok(vec![SessionEventKind::ChatPosted {
         principal: command.principal_id.clone(),
         text: text.to_owned(),
+    }])
+}
+
+fn decide_request_hand<G: SessionGame>(
+    state: &SessionState<G>,
+    command: &CommandEnvelope,
+    player: &PrincipalId,
+) -> Result<Vec<SessionEventKind<G>>, SessionError<G::Error>> {
+    if !matches!(
+        state.phase,
+        SessionPhase::Running { .. } | SessionPhase::Paused { .. }
+    ) {
+        return denied(DenyReason::WrongPhase);
+    }
+    let recipient = require_member(state, &command.principal_id)?;
+    if recipient.host || recipient.seat.is_some() {
+        return denied(DenyReason::GrantScope);
+    }
+    let target = require_member(state, player)?;
+    if target.connection != ConnectionState::Connected || target.seat.is_none() {
+        return denied(DenyReason::GrantScope);
+    }
+    if state.hand_requests.len() >= MAX_HAND_REQUESTS
+        || state
+            .hand_requests
+            .iter()
+            .any(|request| request.recipient == command.principal_id)
+        || state
+            .hand_grants
+            .iter()
+            .any(|grant| grant.recipient == command.principal_id)
+    {
+        return denied(DenyReason::GrantScope);
+    }
+    Ok(vec![SessionEventKind::HandViewRequested {
+        request_id: command.command_id.clone(),
+        player: player.clone(),
+        recipient: command.principal_id.clone(),
+    }])
+}
+
+fn decide_grant_hand<G: SessionGame>(
+    state: &SessionState<G>,
+    command: &CommandEnvelope,
+    request_id: &CommandId,
+    player: &PrincipalId,
+    recipient: &PrincipalId,
+    grant_epoch: u64,
+) -> Result<Vec<SessionEventKind<G>>, SessionError<G::Error>> {
+    if command.principal_id != *player
+        || state.hand_grants.len() >= MAX_HAND_GRANTS
+        || grant_epoch != state.projection_epoch.saturating_add(1)
+        || !state.hand_requests.iter().any(|request| {
+            request.request_id == *request_id
+                && request.player == *player
+                && request.recipient == *recipient
+        })
+    {
+        return denied(DenyReason::GrantScope);
+    }
+    let owner = require_member(state, player)?;
+    let viewer = require_member(state, recipient)?;
+    if owner.connection != ConnectionState::Connected
+        || owner.seat.is_none()
+        || viewer.connection != ConnectionState::Connected
+        || viewer.seat.is_some()
+        || viewer.host
+    {
+        return denied(DenyReason::GrantScope);
+    }
+    Ok(vec![SessionEventKind::HandViewGranted {
+        request_id: request_id.clone(),
+        player: player.clone(),
+        recipient: recipient.clone(),
+        grant_epoch,
+    }])
+}
+
+fn decide_revoke_hand<G: SessionGame>(
+    state: &SessionState<G>,
+    command: &CommandEnvelope,
+    player: &PrincipalId,
+    recipient: &PrincipalId,
+    grant_epoch: u64,
+) -> Result<Vec<SessionEventKind<G>>, SessionError<G::Error>> {
+    if command.principal_id != *player
+        || !state.hand_grants.iter().any(|grant| {
+            grant.player == *player
+                && grant.recipient == *recipient
+                && grant.grant_epoch == grant_epoch
+        })
+    {
+        return denied(DenyReason::GrantScope);
+    }
+    Ok(vec![SessionEventKind::HandViewRevoked {
+        player: player.clone(),
+        recipient: recipient.clone(),
+        grant_epoch,
+    }])
+}
+
+fn decide_deny_hand<G: SessionGame>(
+    state: &SessionState<G>,
+    command: &CommandEnvelope,
+    request_id: &CommandId,
+    player: &PrincipalId,
+    recipient: &PrincipalId,
+) -> Result<Vec<SessionEventKind<G>>, SessionError<G::Error>> {
+    if command.principal_id != *player
+        || !state.hand_requests.iter().any(|request| {
+            request.request_id == *request_id
+                && request.player == *player
+                && request.recipient == *recipient
+        })
+    {
+        return denied(DenyReason::GrantScope);
+    }
+    Ok(vec![SessionEventKind::HandViewDenied {
+        request_id: request_id.clone(),
+        player: player.clone(),
+        recipient: recipient.clone(),
     }])
 }
 
@@ -679,6 +859,12 @@ fn decide_leave<G: SessionGame>(
     } else {
         Vec::new()
     };
+    events.extend(expire_capabilities_for(
+        state,
+        HandCapabilityExpiry::MembershipLost {
+            principal: command.principal_id.clone(),
+        },
+    ));
     events.push(SessionEventKind::MemberLeft {
         principal: command.principal_id.clone(),
     });
@@ -699,6 +885,12 @@ fn decide_remove<G: SessionGame>(
     } else {
         Vec::new()
     };
+    events.extend(expire_capabilities_for(
+        state,
+        HandCapabilityExpiry::MembershipLost {
+            principal: target.clone(),
+        },
+    ));
     events.push(SessionEventKind::MemberRemoved {
         principal: target.clone(),
     });
@@ -773,6 +965,32 @@ fn cancel_countdown_first<G>(state: &SessionState<G>) -> Vec<SessionEventKind<G>
     }
 }
 
+fn expire_capabilities_for<G>(
+    state: &SessionState<G>,
+    reason: HandCapabilityExpiry,
+) -> Vec<SessionEventKind<G>> {
+    let affects_pair = |player: &PrincipalId, recipient: &PrincipalId| match &reason {
+        HandCapabilityExpiry::RoundBoundary => true,
+        HandCapabilityExpiry::SeatRoleChanged { principal }
+        | HandCapabilityExpiry::MembershipLost { principal } => {
+            player == principal || recipient == principal
+        }
+    };
+    if state
+        .hand_requests
+        .iter()
+        .any(|request| affects_pair(&request.player, &request.recipient))
+        || state
+            .hand_grants
+            .iter()
+            .any(|grant| affects_pair(&grant.player, &grant.recipient))
+    {
+        vec![SessionEventKind::HandCapabilitiesExpired { reason }]
+    } else {
+        Vec::new()
+    }
+}
+
 fn require_member<'a, G: SessionGame>(
     state: &'a SessionState<G>,
     principal: &PrincipalId,
@@ -833,7 +1051,7 @@ pub fn apply<G: SessionGame>(
     }
 
     let mut next = state.clone();
-    apply_kind(&mut next, &event.kind)?;
+    apply_kind(&mut next, &event.kind, &event.provenance)?;
     next.revision = next
         .revision
         .checked_add(1)
@@ -856,6 +1074,7 @@ pub fn apply<G: SessionGame>(
 fn apply_kind<G: SessionGame>(
     state: &mut SessionState<G>,
     kind: &SessionEventKind<G>,
+    provenance: &EventProvenance,
 ) -> Result<(), SessionError<G::Error>> {
     match kind {
         SessionEventKind::RoomCreated { host } => {
@@ -949,12 +1168,19 @@ fn apply_kind<G: SessionGame>(
             for member in &mut state.members {
                 member.ready = false;
             }
+            state.public_history.clear();
+            state
+                .public_history
+                .push(poche_protocol::PublicGameEventWire::GameStarted {
+                    command_id: provenance.command_id.clone(),
+                });
             state.phase = SessionPhase::Running { game: game.clone() };
         }
         SessionEventKind::GameAdvanced {
             game,
             round_scores: _,
             terminal,
+            public_change,
         } => {
             if !matches!(state.phase, SessionPhase::Running { .. }) {
                 return denied(if matches!(state.phase, SessionPhase::Paused { .. }) {
@@ -968,6 +1194,27 @@ fn apply_kind<G: SessionGame>(
             } else {
                 SessionPhase::Running { game: game.clone() }
             };
+            if let Some(change) = public_change {
+                let public_event = match change {
+                    PublicGameChange::PlayerAction { seat, action } => {
+                        poche_protocol::PublicGameEventWire::PlayerAction {
+                            command_id: provenance.command_id.clone(),
+                            event_index: provenance.event_index,
+                            seat: *seat,
+                            action: action.clone(),
+                        }
+                    }
+                    PublicGameChange::RoundScored { scores, terminal } => {
+                        poche_protocol::PublicGameEventWire::RoundScored {
+                            command_id: provenance.command_id.clone(),
+                            event_index: provenance.event_index,
+                            scores: scores.clone(),
+                            terminal: *terminal,
+                        }
+                    }
+                };
+                state.public_history.push(public_event);
+            }
         }
         SessionEventKind::Paused => {
             let previous = core::mem::replace(&mut state.phase, SessionPhase::Closed);
@@ -1038,6 +1285,108 @@ fn apply_kind<G: SessionGame>(
                 .chat_count
                 .checked_add(1)
                 .ok_or(SessionError::EventOrder)?;
+        }
+        SessionEventKind::HandViewRequested {
+            request_id,
+            player,
+            recipient,
+        } => {
+            if state.hand_requests.len() >= MAX_HAND_REQUESTS {
+                return Err(SessionError::Invariant(
+                    SessionInvariantError::TooManyHandCapabilities,
+                ));
+            }
+            state.hand_requests.push(HandViewRequest {
+                request_id: request_id.clone(),
+                player: player.clone(),
+                recipient: recipient.clone(),
+            });
+        }
+        SessionEventKind::HandViewGranted {
+            request_id,
+            player,
+            recipient,
+            grant_epoch,
+        } => {
+            if *grant_epoch != state.projection_epoch.saturating_add(1)
+                || state.hand_grants.len() >= MAX_HAND_GRANTS
+            {
+                return denied(DenyReason::GrantScope);
+            }
+            let request_index = state
+                .hand_requests
+                .iter()
+                .position(|request| {
+                    request.request_id == *request_id
+                        && request.player == *player
+                        && request.recipient == *recipient
+                })
+                .ok_or(SessionError::Denied(DenyReason::GrantScope))?;
+            state.hand_requests.remove(request_index);
+            state.hand_grants.push(HandViewGrant {
+                player: player.clone(),
+                recipient: recipient.clone(),
+                grant_epoch: *grant_epoch,
+            });
+            state.projection_epoch = *grant_epoch;
+        }
+        SessionEventKind::HandViewDenied {
+            request_id,
+            player,
+            recipient,
+        } => {
+            let request_index = state
+                .hand_requests
+                .iter()
+                .position(|request| {
+                    request.request_id == *request_id
+                        && request.player == *player
+                        && request.recipient == *recipient
+                })
+                .ok_or(SessionError::Denied(DenyReason::GrantScope))?;
+            state.hand_requests.remove(request_index);
+        }
+        SessionEventKind::HandViewRevoked {
+            player,
+            recipient,
+            grant_epoch,
+        } => {
+            let grant_index = state
+                .hand_grants
+                .iter()
+                .position(|grant| {
+                    grant.player == *player
+                        && grant.recipient == *recipient
+                        && grant.grant_epoch == *grant_epoch
+                })
+                .ok_or(SessionError::Denied(DenyReason::GrantScope))?;
+            state.hand_grants.remove(grant_index);
+            state.projection_epoch = state
+                .projection_epoch
+                .checked_add(1)
+                .ok_or(SessionError::EventOrder)?;
+        }
+        SessionEventKind::HandCapabilitiesExpired { reason } => {
+            let affects_pair = |player: &PrincipalId, recipient: &PrincipalId| match reason {
+                HandCapabilityExpiry::RoundBoundary => true,
+                HandCapabilityExpiry::SeatRoleChanged { principal }
+                | HandCapabilityExpiry::MembershipLost { principal } => {
+                    player == principal || recipient == principal
+                }
+            };
+            state
+                .hand_requests
+                .retain(|request| !affects_pair(&request.player, &request.recipient));
+            let before = state.hand_grants.len();
+            state
+                .hand_grants
+                .retain(|grant| !affects_pair(&grant.player, &grant.recipient));
+            if before != state.hand_grants.len() {
+                state.projection_epoch = state
+                    .projection_epoch
+                    .checked_add(1)
+                    .ok_or(SessionError::EventOrder)?;
+            }
         }
         SessionEventKind::RoomClosed => {
             state.phase = SessionPhase::Closed;

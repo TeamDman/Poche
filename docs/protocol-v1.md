@@ -10,7 +10,7 @@ the interoperability constraints rather than duplicating its Rust types.
 - Signature-domain version: `1`
 - Schema descriptor: `poche.protocol.v1`
 - Schema BLAKE3:
-  `a3c01a792a99303adabef2ca3c8c49fb6288c0ca1ea876162c1655360a82ca0c`
+  `1489b2887acc117dd1a9e98d2891b8640fa4d901621b734d1f7654940c4e11ad`
 - Canonical command fixture: `fixtures/protocol/command-chat-v1.ndjson`
 - Maximum complete frame including LF: 30,000 bytes
 - Maximum chat payload: 2,048 UTF-8 bytes
@@ -18,6 +18,10 @@ the interoperability constraints rather than duplicating its Rust types.
 Every command, event, snapshot, projection, and error root derives Facet. The
 checked-in schema descriptor fixes root fields and payload tags; its pinned hash
 and reflected root type-name tests make accidental schema drift visible.
+Projection v1 includes a typed public game state, an ordered public game-event
+prefix, an exact own-hand field, and exact granted-hand fields. Private hands
+do not occur in public event payloads; `game_transitioned` carries only a
+semantic state hash.
 
 ## Canonical NDJSON
 
