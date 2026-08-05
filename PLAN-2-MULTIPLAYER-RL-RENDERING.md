@@ -545,7 +545,7 @@ identity, epoch, revision, correlation/causation, payload, and public signature
 metadata. Commands and events have distinct unsigned shapes and domain-
 separated length-framed canonical signing bytes; diagnostic JSON is never the
 unframed signing input. Protocol v1 pins schema hash
-`3ddae49c42a09098814ea49e88a55be382c8b5d5e9d2293bfc6150a1e9a788d1`, an
+`a3c01a792a99303adabef2ca3c8c49fb6288c0ca1ea876162c1655360a82ca0c`, an
 exact signed-byte vector, and `fixtures/protocol/command-chat-v1.ndjson`.
 Strict decode rejects unknown versions/tags/fields, invalid UTF-8/JSON/IDs/
 signatures/payloads, CRLF/interior control delimiters, multiple/missing frames,
@@ -557,7 +557,7 @@ an immutable allow decision before `decide`, and runtime clock/transport ports
 remain outside reduction. Workspace clippy passed; all workspace tests passed
 when the 75-second native conformance suite was given its own process window.
 
-### [ ] 2.2 Implement room lifecycle, policy decisions, and game gating
+### [x] 2.2 Implement room lifecycle, policy decisions, and game gating
 
 Use strong enums/refinements rather than boolean bags. The room phase must make
 invalid combinations unrepresentable where practical, for example:
@@ -585,7 +585,27 @@ controlled defects make readiness, duplicate-start, pause, and default-deny
 tests fail; duplicate commands are idempotent and stale revisions cannot mutate
 state.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-04):** Completed. `SessionState<G>` uses distinct
+uninitialized/lobby/countdown/running/paused/post-game/closed variants and
+validates bounded unique memberships/seats, readiness, host, and command-record
+invariants after every event. Pure authorization checks duplicate identity,
+room/epoch/revision, authority-derived principal/capability, default deny,
+enforce-deny override, and audit-only evidence. Pure decide/apply covers create,
+invite join/replay/expiry/revocation, seat/ready/countdown, same-deadline player-
+first cancellation, any-player pause/unpause, game/chance/settle gating,
+terminal/reset/close, release/leave/remove, transport loss, stable-key reconnect,
+and attributed logical-window chat. Exact event replay is idempotent; conflicts,
+gaps, and stale revisions cannot mutate state. `OracleSessionGame` composes this
+gate with the existing full-rule `OracleEnvironment`, including dense seats,
+typed actions, complete deck validation, seeded chance provenance, raw scores,
+and terminal status. All 31 deny codes have exact wire and immutable-policy
+tests. Controlled readiness, duplicate-start, paused-advance, event-order,
+duplicate-seat, and unknown-principal-allow defects fail closed. Invite proof
+and stored verifier diagnostics are redacted. `docs/session-engine.md` and Rust
+coverage cells record the evidence. Workspace formatting/clippy, phase-2 plan
+audit, all non-native-conformance workspace tests, and the task-specific suites
+pass; the unchanged native conformance suite passed in the preceding Task 2.1
+slice.
 
 ### [ ] 2.3 Implement viewer projections and spectator capabilities
 

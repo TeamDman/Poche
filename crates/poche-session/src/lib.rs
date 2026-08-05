@@ -11,6 +11,12 @@
 use facet::Facet;
 use poche_protocol::{CommandEnvelope, DenyReason, PolicyId};
 
+mod machine;
+mod state;
+
+pub use machine::{SessionMachine, apply, authorize, decide, decide_transport_disconnect};
+pub use state::*;
+
 /// One enforce or audit-only policy result.
 #[derive(Clone, Debug, PartialEq, Eq, Facet)]
 pub struct PolicyResult {

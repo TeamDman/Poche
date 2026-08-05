@@ -10,7 +10,7 @@ the interoperability constraints rather than duplicating its Rust types.
 - Signature-domain version: `1`
 - Schema descriptor: `poche.protocol.v1`
 - Schema BLAKE3:
-  `3ddae49c42a09098814ea49e88a55be382c8b5d5e9d2293bfc6150a1e9a788d1`
+  `a3c01a792a99303adabef2ca3c8c49fb6288c0ca1ea876162c1655360a82ca0c`
 - Canonical command fixture: `fixtures/protocol/command-chat-v1.ndjson`
 - Maximum complete frame including LF: 30,000 bytes
 - Maximum chat payload: 2,048 UTF-8 bytes

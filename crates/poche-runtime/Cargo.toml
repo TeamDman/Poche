@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 poche-environment = { path = "../poche-environment" }
+poche-oracle-rust = { path = "../poche-oracle-rust" }
 poche-protocol = { path = "../poche-protocol" }
 poche-session = { path = "../poche-session" }
 

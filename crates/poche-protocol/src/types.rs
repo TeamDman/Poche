@@ -1,3 +1,4 @@
+use core::fmt;
 use facet::Facet;
 use serde::{Deserialize, Serialize};
 
@@ -65,6 +66,39 @@ impl SignatureBytes {
         } else {
             Err(EnvelopeValidationError::InvalidSignature)
         }
+    }
+}
+
+/// Invite verifier carried only to the room authority.
+#[derive(Clone, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct InviteProof(String);
+
+impl InviteProof {
+    /// Construct a bounded nonempty invite proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EnvelopeValidationError::InvalidPayload`] for an invalid bound.
+    pub fn new(value: impl Into<String>) -> Result<Self, EnvelopeValidationError> {
+        let value = value.into();
+        if value.is_empty() || value.len() > 256 {
+            Err(EnvelopeValidationError::InvalidPayload)
+        } else {
+            Ok(Self(value))
+        }
+    }
+
+    /// Explicitly expose the verifier only to the authority's invite checker.
+    #[must_use]
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for InviteProof {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("InviteProof(<redacted>)")
     }
 }
 
@@ -172,7 +206,7 @@ pub enum CommandPayload {
     /// Create a new host-authoritative room.
     CreateRoom,
     /// Redeem a one-time/expiring room invite.
-    RedeemInvite { invite: String },
+    RedeemInvite { invite: InviteProof },
     /// Occupy one lobby seat.
     TakeSeat { seat: u8 },
     /// Release the caller's current seat.
@@ -227,6 +261,68 @@ pub enum CommandPayload {
     ResetLobby,
     /// Close the room permanently.
     CloseRoom,
+}
+
+/// Stable semantic command classification used by authorization policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Facet, Serialize, Deserialize)]
+#[repr(u8)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandKind {
+    CreateRoom,
+    RedeemInvite,
+    TakeSeat,
+    ReleaseSeat,
+    Ready,
+    Unready,
+    ArmCountdown,
+    AbortCountdown,
+    CountdownExpired,
+    Pause,
+    Unpause,
+    GameAction,
+    ApplyChance,
+    Settle,
+    Chat,
+    RequestHand,
+    GrantHand,
+    RevokeHand,
+    Reconnect,
+    Leave,
+    RemoveMember,
+    ResetLobby,
+    CloseRoom,
+}
+
+impl CommandPayload {
+    /// Return the stable authorization-policy classification.
+    #[must_use]
+    pub const fn kind(&self) -> CommandKind {
+        match self {
+            Self::CreateRoom => CommandKind::CreateRoom,
+            Self::RedeemInvite { .. } => CommandKind::RedeemInvite,
+            Self::TakeSeat { .. } => CommandKind::TakeSeat,
+            Self::ReleaseSeat => CommandKind::ReleaseSeat,
+            Self::Ready => CommandKind::Ready,
+            Self::Unready => CommandKind::Unready,
+            Self::ArmCountdown { .. } => CommandKind::ArmCountdown,
+            Self::AbortCountdown => CommandKind::AbortCountdown,
+            Self::CountdownExpired { .. } => CommandKind::CountdownExpired,
+            Self::Pause => CommandKind::Pause,
+            Self::Unpause => CommandKind::Unpause,
+            Self::GameAction { .. } => CommandKind::GameAction,
+            Self::ApplyChance { .. } => CommandKind::ApplyChance,
+            Self::Settle => CommandKind::Settle,
+            Self::Chat { .. } => CommandKind::Chat,
+            Self::RequestHand { .. } => CommandKind::RequestHand,
+            Self::GrantHand { .. } => CommandKind::GrantHand,
+            Self::RevokeHand { .. } => CommandKind::RevokeHand,
+            Self::Reconnect => CommandKind::Reconnect,
+            Self::Leave => CommandKind::Leave,
+            Self::RemoveMember { .. } => CommandKind::RemoveMember,
+            Self::ResetLobby => CommandKind::ResetLobby,
+            Self::CloseRoom => CommandKind::CloseRoom,
+        }
+    }
 }
 
 /// Command fields that exist before a signature is attached.
@@ -586,6 +682,43 @@ pub enum DenyReason {
     EnvironmentOnly,
 }
 
+impl DenyReason {
+    /// Every registered stable denial code in protocol-v1 order.
+    pub const ALL: [Self; 31] = [
+        Self::Malformed,
+        Self::Oversize,
+        Self::UnknownVersion,
+        Self::UnknownCommand,
+        Self::UnknownRole,
+        Self::UnknownPrincipal,
+        Self::BadSignature,
+        Self::WrongRoom,
+        Self::StaleEpoch,
+        Self::StaleRevision,
+        Self::Revoked,
+        Self::MissingCapability,
+        Self::DenyPolicy,
+        Self::WrongPhase,
+        Self::Closed,
+        Self::NotSeated,
+        Self::SeatOccupied,
+        Self::AlreadySeated,
+        Self::NotConnected,
+        Self::NotReady,
+        Self::CountdownInactive,
+        Self::NotActor,
+        Self::Paused,
+        Self::NotPaused,
+        Self::AlreadyPaused,
+        Self::InviteInvalid,
+        Self::InviteExpired,
+        Self::GrantScope,
+        Self::ChatSize,
+        Self::ChatRate,
+        Self::EnvironmentOnly,
+    ];
+}
+
 /// Structured redacted error payload.
 #[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -780,6 +913,11 @@ fn validate_command_payload(payload: &CommandPayload) -> Result<(), EnvelopeVali
         CommandPayload::Chat { text } if text.is_empty() || text.len() > MAX_CHAT_BYTES => {
             Err(EnvelopeValidationError::InvalidPayload)
         }
+        CommandPayload::RedeemInvite { invite }
+            if invite.expose().is_empty() || invite.expose().len() > 256 =>
+        {
+            Err(EnvelopeValidationError::InvalidPayload)
+        }
         CommandPayload::ApplyChance { chance }
             if chance.cards.len() != MAX_DECK_CARDS
                 || chance
@@ -906,4 +1044,62 @@ fn validate_projection(payload: &ProjectionPayload) -> Result<(), EnvelopeValida
         return Err(EnvelopeValidationError::PrivateProjectionOverlap);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deny_reason_registry_uses_exact_stable_codes() {
+        let expected = [
+            "D-MALFORMED",
+            "D-OVERSIZE",
+            "D-UNKNOWN-VERSION",
+            "D-UNKNOWN-COMMAND",
+            "D-UNKNOWN-ROLE",
+            "D-UNKNOWN-PRINCIPAL",
+            "D-BAD-SIGNATURE",
+            "D-WRONG-ROOM",
+            "D-STALE-EPOCH",
+            "D-STALE-REVISION",
+            "D-REVOKED",
+            "D-MISSING-CAPABILITY",
+            "D-DENY-POLICY",
+            "D-WRONG-PHASE",
+            "D-CLOSED",
+            "D-NOT-SEATED",
+            "D-SEAT-OCCUPIED",
+            "D-ALREADY-SEATED",
+            "D-NOT-CONNECTED",
+            "D-NOT-READY",
+            "D-COUNTDOWN-INACTIVE",
+            "D-NOT-ACTOR",
+            "D-PAUSED",
+            "D-NOT-PAUSED",
+            "D-ALREADY-PAUSED",
+            "D-INVITE-INVALID",
+            "D-INVITE-EXPIRED",
+            "D-GRANT-SCOPE",
+            "D-CHAT-SIZE",
+            "D-CHAT-RATE",
+            "D-ENVIRONMENT-ONLY",
+        ];
+        let actual: Vec<_> = DenyReason::ALL
+            .iter()
+            .map(|reason| serde_json::to_string(reason).unwrap())
+            .collect();
+        assert_eq!(
+            actual,
+            expected.map(|reason| format!("\"{reason}\"")).to_vec()
+        );
+    }
+
+    #[test]
+    fn invite_debug_output_is_redacted() {
+        let invite = InviteProof::new("secret-room-verifier").unwrap();
+        let diagnostic = format!("{invite:?}");
+        assert!(diagnostic.contains("<redacted>"));
+        assert!(!diagnostic.contains("secret-room-verifier"));
+    }
 }

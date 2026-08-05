@@ -29,6 +29,7 @@ pub const PROTOCOL_SCHEMA_DESCRIPTOR: &str = concat!(
     "command-tags=create_room|redeem_invite|take_seat|release_seat|ready|unready|arm_countdown|abort_countdown|countdown_expired|pause|unpause|game_action|apply_chance|settle|chat|request_hand|grant_hand|revoke_hand|reconnect|leave|remove_member|reset_lobby|close_room\n",
     "event-tags=room_created|member_joined|member_disconnected|member_reconnected|member_left|seat_taken|seat_released|ready_changed|countdown_armed|countdown_aborted|phase_changed|game_transitioned|round_scored|chat_posted|hand_requested|hand_granted|hand_revoked|room_closed\n",
     "signature=domain_version,algorithm,key_id,signature\n",
+    "refinements=identifier:1..64-canonical-ascii;invite-proof:1..256-utf8-redacted;signature:128-lower-hex;chat:1..2048-utf8;card-code:0..52\n",
     "signature-domain-v1=length-framed-binary;diagnostic-json-is-not-signed-as-is\n",
 );
 
@@ -245,6 +246,22 @@ pub fn command_semantic_hash(
     ))
 }
 
+/// Semantic identity reconstructed from one validated signed command.
+///
+/// Signature bytes themselves are excluded; their intent and every semantic
+/// command field remain bound.
+///
+/// # Errors
+///
+/// Returns an error when canonical verification bytes cannot be produced.
+pub fn verified_command_semantic_hash(
+    command: &CommandEnvelope,
+) -> Result<SemanticHash, CodecError> {
+    Ok(SemanticHash(
+        *blake3::hash(&canonical_command_verification_bytes(command)?).as_bytes(),
+    ))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn signing_bytes<T: Serialize>(
     domain: &[u8],
@@ -421,9 +438,9 @@ mod tests {
         assert_eq!(
             protocol_schema_hash(),
             SemanticHash([
-                0x3d, 0xda, 0xe4, 0x9c, 0x42, 0xa0, 0x90, 0x98, 0x81, 0x4e, 0xa4, 0x9e, 0x88, 0xa5,
-                0x5b, 0xe3, 0x82, 0xc8, 0xb5, 0xd5, 0xe9, 0xd2, 0x29, 0x3b, 0xfc, 0x61, 0x50, 0xa1,
-                0xe9, 0xa7, 0x88, 0xd1,
+                0xa3, 0xc0, 0x1a, 0x79, 0x2a, 0x99, 0x30, 0x3a, 0xda, 0xbe, 0xf2, 0xca, 0x3c, 0x8c,
+                0x49, 0xfb, 0x62, 0x88, 0xc0, 0xca, 0x1e, 0xa8, 0x76, 0x16, 0x2c, 0x16, 0x55, 0x36,
+                0x0a, 0x82, 0xca, 0x0c,
             ])
         );
         assert_eq!(protocol_schema_hash(), protocol_schema_hash());

@@ -510,6 +510,7 @@ name = "poche-runtime"
 version = "0.1.0"
 dependencies = [
  "poche-environment",
+ "poche-oracle-rust",
  "poche-protocol",
  "poche-session",
 ]
