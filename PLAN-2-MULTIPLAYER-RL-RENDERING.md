@@ -1422,7 +1422,7 @@ claim is made.
 
 ## Phase 7 - Vectorized RL environment and baselines
 
-### [ ] 7.1 Define versioned observation, action, history, and reward specs
+### [x] 7.1 Define versioned observation, action, history, and reward specs
 
 Add `crates/poche-rl` with an `RlSpec` manifest. For `poche-2p-v1`, define exact
 feature order, normalization, categorical encoding, seat-relative symmetry,
@@ -1440,9 +1440,22 @@ match expected tensors/masks/rewards; hidden-state mutations invisible to a
 viewer cannot change that viewer's encoding; every schema/reward change forces a
 new ID/hash.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-05):** Complete. Added the network-free
+`poche-rl` crate and checked `poche-2p-v1`/`round-score-v1` manifest. Its 307
+seat-relative features have exact contiguous spans for phase, dealer/actor,
+private hand, relative public fields, ordered trick, and an episode-owned
+52-card public history; its 60 actions are bids `0..=7` plus dense card
+identities. Chance and settlement never enter the policy vocabulary. Masked
+actions fail rather than remap, with an explicit optional rejection counter.
+Raw rulebook points appear only at settlement and terminal score/money metrics
+remain separate. The canonical spec hash is
+`8852f8568ead1e40aad7bb4ca5b7725340cc01422e077ffddcd5d4f5665bf0bf`.
+Handwritten tensor/mask/reward fixtures, exhaustive legal-slot execution,
+manifest-drift tests, and an opponent/stock-only hidden mutation prove the
+viewer encoding boundary. See `rl/specs/poche-2p-v1.json` and
+`docs/rl-environment.md`.
 
-### [ ] 7.2 Implement deterministic batched CPU rollouts
+### [x] 7.2 Implement deterministic batched CPU rollouts
 
 Implement a batch that owns many independent typed game environments and
 preallocates observation, action-mask, action, reward, terminal, seat, episode,
@@ -1459,9 +1472,21 @@ fixed seeds; buffer bounds/masks are checked; one million-step benchmark (or a
 recorded smaller diagnostic when game length makes that impractical) reports
 steps/s and allocation profile.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-05):** Complete. `PocheBatch` owns independent
+strongly typed games with stable per-slot/per-episode seed derivation and
+preallocated observation, legal-mask, action, reward, terminal, seat, episode,
+and seed buffers. It auto-advances only deterministic chance/settlement and
+resets terminal slots without NDJSON, sockets, protocol allocation, or Veilid.
+`TurnBasedBatchRollout` adds fixed pending slots per environment/seat and a
+fixed-capacity structure-of-arrays transition buffer: each action is paired
+with that same seat's next observation or terminal, while intervening round
+reward and decision-time distance accumulate. A checked first-legal full game
+yields 124 completed transitions and two terminal rows. Scalar and batch state,
+mask, observation, reward, terminal, and per-seed parallel signatures agree.
+The release one-million-decision gate completed 1,000,192 preallocated batch
+decisions at 69,594.485 decisions/s with zero hot-buffer reallocations.
 
-### [ ] 7.3 Add random, legal-random, and heuristic baselines
+### [x] 7.3 Add random, legal-random, and heuristic baselines
 
 Implement framework-independent policies through a small policy trait. Include
 uniform legal random and at least one explainable Poche heuristic. Log raw
@@ -1473,9 +1498,22 @@ not replace score as the primary objective.
 masked actions, produce replayable transcripts on demand, and establish a fixed
 evaluation corpus before learning.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-05):** Complete. Added framework-independent
+`Policy` implementations for full-vocabulary rejection-sampled random,
+compact legal-random, and the explainable viewer-only high-card/low-play Poche
+heuristic. All are deterministic by seed and return only enabled mask slots.
+The preregistered `poche-baselines-v1` corpus fixes 64 seeds, both
+legal-random/heuristic seat assignments, and two random controls before
+learning. Its hash is
+`1ab1c865758b33fda0ab90870b8f2fb74bd76c554ac577db4e3de85770d3aea4`.
+All 256 games replayed at exactly 124 decisions with zero illegal actions;
+score means/differentials and empirical 95% intervals are recorded in
+`evidence/rl-baselines-v1.json`, summary hash
+`1cc6637dbeae0066eac0b27bff758cf4fc7a519ea674c41246c3afb78006ea3d`.
+Raw round and final scores remain primary; the observed seat effect is retained
+rather than averaged away or reframed as proof.
 
-### [ ] 7.4 Apply Puffer-inspired performance work only after measurement
+### [x] 7.4 Apply Puffer-inspired performance work only after measurement
 
 Profile direct typed scalar, naive batch, preallocated batch, and parallel batch
 paths. Evaluate structure-of-arrays, fixed buffers, thread partitioning, and
@@ -1487,9 +1525,19 @@ semantic parity.
 encoding, inference, and synchronization costs; optimized paths retain scalar
 parity; no external network traffic occurs.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-05):** Complete. A Rust 1.96.0 Windows release
+profile measured at least one million full-rule decisions per path: direct
+typed scalar 57,904.667/s; naive batch 64,423.005/s with 3,907 deliberate hot
+allocations; preallocated batch 69,594.485/s with zero; four independent
+thread partitions 201,006.447/s with zero. Measurement therefore justified
+preallocated structure-of-arrays buffers and bounded thread partitioning, but
+not an unsafe duplicate environment or speculative double buffering. Exact
+sequential/parallel signatures retain semantic parity and every path reports
+`network=none`. Environment, encoding/buffer, allocation, and synchronization
+limits and the honest non-process-wide allocation caveat are recorded in
+`docs/rl-performance.md`; inference/device costs remain assigned to Burn.
 
-### [ ] 7.5 Connect text/web replay to selected RL episodes
+### [x] 7.5 Connect text/web replay to selected RL episodes
 
 Allow evaluation to retain a small chosen episode as the same protocol-style
 public/viewer transcript used by CLI/web without putting transcript generation
@@ -1500,7 +1548,19 @@ pay serialization cost.
 web with identical game/observation/reward hashes; training throughput with
 recording disabled is unaffected within the recorded benchmark tolerance.
 
-**Completion notes:** Not started.
+**Completion notes (2026-08-05):** Complete. Evaluation serializes only the
+preregistered worst/lower-median/best selections; normal rollout buffers never
+construct transcript or protocol strings. A selected best seat-zero
+legal-random-versus-heuristic episode at seed `3025338370` is reproducible as
+inspectable NDJSON through `rl replay`, in the native/static-WASM egui replay,
+and in the semantic hostable web route. All three pin episode hash
+`7ab24388ab33c34e4763e065e493b2529c6562c8d70b59e909f70920442fc5a9`,
+scores `[99, 12]`, differential 87, 13 round rewards, 124 decisions, and zero
+illegal actions. Browser DOM evidence displayed that exact hash and a terminal
+transition while containing neither `private_hand` nor `deck`; the NDJSON
+contains only viewer observation/action/reward hashes and public score metrics.
+The WASM build passes, and benchmark recording remains disabled in every
+throughput path by construction.
 
 ## Phase 8 - Burn learner, self-play, and empirical evaluation
 

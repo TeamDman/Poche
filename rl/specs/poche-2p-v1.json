@@ -1,0 +1,39 @@
+{
+  "spec_id": "poche-2p-v1",
+  "players": 2,
+  "observation_size": 307,
+  "action_count": 60,
+  "feature_spans": [
+    { "name": "phase", "start": 0, "len": 5, "encoding": "one_hot(awaiting_deal,bidding,playing,scoring,finished)" },
+    { "name": "dealer_relative", "start": 5, "len": 3, "encoding": "one_hot(none,self,opponent)" },
+    { "name": "actor_relative", "start": 8, "len": 5, "encoding": "one_hot(chance,environment,finished,self,opponent)" },
+    { "name": "round_index", "start": 13, "len": 1, "encoding": "scalar / 13" },
+    { "name": "hand_size", "start": 14, "len": 1, "encoding": "scalar / 7" },
+    { "name": "private_hand", "start": 15, "len": 52, "encoding": "card_identity_bits(clubs_2..spades_ace)" },
+    { "name": "hand_counts_relative", "start": 67, "len": 2, "encoding": "self,opponent each / 7" },
+    { "name": "trump", "start": 69, "len": 53, "encoding": "one_hot(none,clubs_2..spades_ace)" },
+    { "name": "current_trick", "start": 122, "len": 110, "encoding": "two ordered slots: occupied + relative_player[2] + card[52]" },
+    { "name": "bids_relative", "start": 232, "len": 18, "encoding": "self,opponent one_hot(none,0..7)" },
+    { "name": "tricks_won_relative", "start": 250, "len": 2, "encoding": "self,opponent each / 7" },
+    { "name": "scores_relative", "start": 252, "len": 2, "encoding": "self,opponent raw cumulative points / 351" },
+    { "name": "pot_cents", "start": 254, "len": 1, "encoding": "raw cents / 512" },
+    { "name": "public_played_history", "start": 255, "len": 52, "encoding": "card_identity bits for prior/current public plays" }
+  ],
+  "action_vocabulary": [
+    "bid:0", "bid:1", "bid:2", "bid:3", "bid:4", "bid:5", "bid:6", "bid:7",
+    "play:clubs:2", "play:clubs:3", "play:clubs:4", "play:clubs:5", "play:clubs:6", "play:clubs:7", "play:clubs:8", "play:clubs:9", "play:clubs:10", "play:clubs:jack", "play:clubs:queen", "play:clubs:king", "play:clubs:ace",
+    "play:diamonds:2", "play:diamonds:3", "play:diamonds:4", "play:diamonds:5", "play:diamonds:6", "play:diamonds:7", "play:diamonds:8", "play:diamonds:9", "play:diamonds:10", "play:diamonds:jack", "play:diamonds:queen", "play:diamonds:king", "play:diamonds:ace",
+    "play:hearts:2", "play:hearts:3", "play:hearts:4", "play:hearts:5", "play:hearts:6", "play:hearts:7", "play:hearts:8", "play:hearts:9", "play:hearts:10", "play:hearts:jack", "play:hearts:queen", "play:hearts:king", "play:hearts:ace",
+    "play:spades:2", "play:spades:3", "play:spades:4", "play:spades:5", "play:spades:6", "play:spades:7", "play:spades:8", "play:spades:9", "play:spades:10", "play:spades:jack", "play:spades:queen", "play:spades:king", "play:spades:ace"
+  ],
+  "history_semantics": "episode-owned public bitset includes every publicly played card; private opponent/stock identities never enter it",
+  "chance_semantics": "chance and settlement auto-advance deterministically; policy vocabulary contains neither",
+  "reset_semantics": "seed selects first dealer and every deal via stable splitmix-derived OracleChanceAction; terminal reset creates a fresh episode",
+  "illegal_action_semantics": "tests return IllegalAction; production callers must explicitly choose reject-or-count and never remap",
+  "reward_id": "round-score-v1",
+  "reward_semantics": "zero except at settlement; each seat receives its raw nonnegative rulebook round points; no clipping or shaping",
+  "terminal_metrics": [
+    "raw_cumulative_score", "score_differential", "round_scores", "exact_bid_count",
+    "game_length_decisions", "illegal_action_count", "pot_cents", "winner_flags"
+  ]
+}

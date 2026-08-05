@@ -1,5 +1,5 @@
 [package]
-name = "poche-xtask"
+name = "poche-rl"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -9,14 +9,9 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-blake3 = "=1.8.5"
-poche-check = { path = "../poche-check" }
-poche-conformance = { path = "../poche-conformance" }
-poche-interchange = { path = "../poche-interchange" }
-poche-native-tools = { path = "../poche-native-tools" }
+blake3.workspace = true
+poche-environment = { path = "../poche-environment" }
 poche-oracle-rust = { path = "../poche-oracle-rust" }
-poche-rl = { path = "../poche-rl" }
-poche-runtime = { path = "../poche-runtime" }
 serde.workspace = true
 serde_json.workspace = true
 

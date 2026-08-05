@@ -99,6 +99,7 @@ fn main() -> ExitCode {
         Some(command) if command == OsStr::new("protocol") => protocol(args),
         Some(command) if command == OsStr::new("session") => session(args),
         Some(command) if command == OsStr::new("multiplayer") => multiplayer(args),
+        Some(command) if command == OsStr::new("rl") => rl(args),
         Some(command) if command == OsStr::new("coverage") => coverage(args),
         Some(command) if command == OsStr::new("oracle") => oracle(args),
         Some(command) if command == OsStr::new("compare") => compare(args),
@@ -126,6 +127,12 @@ fn usage() {
          cargo run -p poche-xtask -- session coverage audit --all\n  \
          cargo run -p poche-xtask -- session compare all --scope lobby-micro\n  \
          cargo run -p poche-xtask -- multiplayer smoke --transport in-process\n  \
+         cargo run -p poche-xtask -- rl spec\n  \
+         cargo run -p poche-xtask -- rl episode --policy legal-random|heuristic --seed SEED\n  \
+         cargo run -p poche-xtask -- rl benchmark --steps N --batch N\n  \
+         cargo run -p poche-xtask -- rl baseline-manifest\n  \
+         cargo run -p poche-xtask -- rl evaluate --manifest PATH\n  \
+         cargo run -p poche-xtask -- rl replay --manifest PATH --matchup NAME --seed SEED\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- oracle report\n  \
@@ -138,6 +145,283 @@ fn usage() {
          cargo run -p poche-xtask -- check rust-explicit --scope micro\n  \
          cargo run -p poche-xtask -- check rust-explicit --property game-terminates"
     );
+}
+
+fn rl(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    match args.next().as_deref() {
+        Some(command) if command == OsStr::new("spec") => rl_spec(args),
+        Some(command) if command == OsStr::new("episode") => rl_episode(args),
+        Some(command) if command == OsStr::new("benchmark") => rl_benchmark(args),
+        Some(command) if command == OsStr::new("baseline-manifest") => rl_baseline_manifest(args),
+        Some(command) if command == OsStr::new("evaluate") => rl_evaluate(args),
+        Some(command) if command == OsStr::new("replay") => rl_replay(args),
+        _ => {
+            usage();
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn rl_replay(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("--manifest")) {
+        usage();
+        return ExitCode::from(2);
+    }
+    let Some(path) = args.next() else {
+        usage();
+        return ExitCode::from(2);
+    };
+    if args.next().as_deref() != Some(OsStr::new("--matchup")) {
+        usage();
+        return ExitCode::from(2);
+    }
+    let Some(matchup) = args.next() else {
+        usage();
+        return ExitCode::from(2);
+    };
+    if args.next().as_deref() != Some(OsStr::new("--seed")) {
+        usage();
+        return ExitCode::from(2);
+    }
+    let Some(seed) = args
+        .next()
+        .and_then(|value| value.to_string_lossy().parse::<u64>().ok())
+    else {
+        eprintln!("RL replay seed must be an unsigned integer");
+        return ExitCode::from(2);
+    };
+    if args.next().is_some() {
+        usage();
+        return ExitCode::from(2);
+    }
+    let text = match fs::read_to_string(Path::new(&path)) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("RL replay manifest read failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let manifest: poche_rl::BaselineCorpusManifest = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("RL replay manifest decode failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let episode =
+        match poche_rl::replay_baseline_matchup(&manifest, &matchup.to_string_lossy(), seed) {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("RL replay failed: {error:?}");
+                return ExitCode::FAILURE;
+            }
+        };
+    let Ok(hash) = episode.semantic_hash() else {
+        eprintln!("RL replay hash failed");
+        return ExitCode::FAILURE;
+    };
+    let Ok(ndjson) = episode.ndjson() else {
+        eprintln!("RL replay serialization failed");
+        return ExitCode::FAILURE;
+    };
+    print!("{ndjson}");
+    eprintln!("episode_semantic_hash={hash}");
+    ExitCode::SUCCESS
+}
+
+fn rl_baseline_manifest(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().is_some() {
+        usage();
+        return ExitCode::from(2);
+    }
+    let Ok(manifest) = poche_rl::BaselineCorpusManifest::baseline_v1() else {
+        eprintln!("baseline manifest construction failed");
+        return ExitCode::FAILURE;
+    };
+    let Ok(json) = serde_json::to_string_pretty(&manifest) else {
+        eprintln!("baseline manifest serialization failed");
+        return ExitCode::FAILURE;
+    };
+    let Ok(hash) = manifest.semantic_hash() else {
+        eprintln!("baseline manifest hashing failed");
+        return ExitCode::FAILURE;
+    };
+    println!("{json}\nsemantic_hash={hash}");
+    ExitCode::SUCCESS
+}
+
+fn rl_evaluate(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("--manifest")) {
+        usage();
+        return ExitCode::from(2);
+    }
+    let Some(path) = args.next() else {
+        usage();
+        return ExitCode::from(2);
+    };
+    if args.next().is_some() {
+        usage();
+        return ExitCode::from(2);
+    }
+    let path = Path::new(&path);
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("RL manifest read failed for {}: {error}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let manifest: poche_rl::BaselineCorpusManifest = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("RL manifest decode failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let summary = match poche_rl::evaluate_baselines(&manifest) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("RL evaluation failed: {error:?}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let Ok(json) = serde_json::to_string_pretty(&summary) else {
+        eprintln!("RL evaluation summary serialization failed");
+        return ExitCode::FAILURE;
+    };
+    let Ok(hash) = summary.semantic_hash() else {
+        eprintln!("RL evaluation summary hashing failed");
+        return ExitCode::FAILURE;
+    };
+    println!("{json}\nsemantic_hash={hash}");
+    ExitCode::SUCCESS
+}
+
+fn rl_spec(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().is_some() {
+        usage();
+        return ExitCode::from(2);
+    }
+    let spec = poche_rl::RlSpec::poche_2p_v1();
+    if let Err(error) = spec.validate() {
+        eprintln!("RL spec is invalid: {error:?}");
+        return ExitCode::FAILURE;
+    }
+    let Ok(hash) = spec.semantic_hash() else {
+        eprintln!("RL spec hash serialization failed");
+        return ExitCode::FAILURE;
+    };
+    let Ok(json) = serde_json::to_string_pretty(&spec) else {
+        eprintln!("RL spec display serialization failed");
+        return ExitCode::FAILURE;
+    };
+    println!("{json}\nsemantic_hash={hash}");
+    ExitCode::SUCCESS
+}
+
+fn rl_episode(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("--policy")) {
+        usage();
+        return ExitCode::from(2);
+    }
+    let Some(policy) = args.next() else {
+        usage();
+        return ExitCode::from(2);
+    };
+    if args.next().as_deref() != Some(OsStr::new("--seed")) {
+        usage();
+        return ExitCode::from(2);
+    }
+    let Some(seed) = args
+        .next()
+        .and_then(|value| value.to_string_lossy().parse::<u64>().ok())
+    else {
+        eprintln!("RL episode seed must be an unsigned integer");
+        return ExitCode::from(2);
+    };
+    if args.next().is_some() {
+        usage();
+        return ExitCode::from(2);
+    }
+    let transcript = if policy == OsStr::new("legal-random") {
+        poche_rl::run_episode(
+            seed,
+            &mut poche_rl::LegalRandomPolicy::new(seed ^ 0xa11c_e5ed),
+        )
+    } else if policy == OsStr::new("heuristic") {
+        poche_rl::run_episode(seed, &mut poche_rl::HighCardHeuristicPolicy)
+    } else if policy == OsStr::new("random") {
+        poche_rl::run_episode(seed, &mut poche_rl::UniformRandomPolicy::new(seed ^ 0x5eed))
+    } else {
+        eprintln!("unknown RL policy `{}`", policy.to_string_lossy());
+        return ExitCode::from(2);
+    };
+    let Ok(transcript) = transcript else {
+        eprintln!("RL episode failed");
+        return ExitCode::FAILURE;
+    };
+    let Ok(ndjson) = transcript.ndjson() else {
+        eprintln!("RL episode serialization failed");
+        return ExitCode::FAILURE;
+    };
+    print!("{ndjson}");
+    ExitCode::SUCCESS
+}
+
+fn rl_benchmark(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("--steps")) {
+        usage();
+        return ExitCode::from(2);
+    }
+    let Some(steps) = args
+        .next()
+        .and_then(|value| value.to_string_lossy().parse::<u64>().ok())
+    else {
+        eprintln!("RL benchmark steps must be an unsigned integer");
+        return ExitCode::from(2);
+    };
+    if args.next().as_deref() != Some(OsStr::new("--batch")) {
+        usage();
+        return ExitCode::from(2);
+    }
+    let Some(batch) = args
+        .next()
+        .and_then(|value| value.to_string_lossy().parse::<usize>().ok())
+    else {
+        eprintln!("RL benchmark batch must be a positive integer");
+        return ExitCode::from(2);
+    };
+    if args.next().is_some() || batch == 0 || steps == 0 {
+        usage();
+        return ExitCode::from(2);
+    }
+    let Ok(profile) = poche_rl::benchmark_rollout_paths(batch, steps, 0x5eed) else {
+        eprintln!("RL benchmark failed");
+        return ExitCode::FAILURE;
+    };
+    for (name, report) in [
+        ("direct-typed-scalar", &profile.scalar),
+        ("naive-allocating-batch", &profile.naive_batch),
+        ("preallocated-batch", &profile.preallocated_batch),
+        ("thread-partitioned-batch", &profile.parallel_batch),
+    ] {
+        println!(
+            "rl benchmark: path={name} spec={} batch={} decisions={} elapsed_ms={} decisions_per_second={:.3} hot_reallocations={} observation_bytes={} mask_bytes={} network=none",
+            poche_rl::SPEC_ID,
+            report.batch_size,
+            report.decisions,
+            report.elapsed.as_millis(),
+            report.decisions_per_second,
+            report.hot_buffer_reallocations,
+            report.observation_buffer_bytes,
+            report.mask_buffer_bytes,
+        );
+    }
+    println!(
+        "rl benchmark: parallel_workers={}",
+        profile.parallel_workers
+    );
+    ExitCode::SUCCESS
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]

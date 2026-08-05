@@ -23,6 +23,7 @@ egui = ["dep:eframe"]
 [dependencies]
 eframe = { workspace = true, optional = true }
 poche-protocol = { path = "../poche-protocol" }
+poche-rl = { path = "../poche-rl" }
 poche-runtime = { path = "../poche-runtime" }
 serde_json.workspace = true
 

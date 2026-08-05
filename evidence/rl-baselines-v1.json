@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "corpus_hash": "1ab1c865758b33fda0ab90870b8f2fb74bd76c554ac577db4e3de85770d3aea4",
+  "summary_hash": "1cc6637dbeae0066eac0b27bff758cf4fc7a519ea674c41246c3afb78006ea3d",
+  "spec_hash": "8852f8568ead1e40aad7bb4ca5b7725340cc01422e077ffddcd5d4f5665bf0bf",
+  "reward_id": "round-score-v1",
+  "empirical_only": true,
+  "episodes": 256,
+  "illegal_actions": 0,
+  "game_length_decisions": 124,
+  "matchups": [
+    {
+      "name": "legal-random-vs-heuristic",
+      "mean_scores": [43.8125, 56.453125],
+      "mean_differential_seat0": -12.640625,
+      "differential_ci95": [-21.75853470968447, -3.5227152903155314],
+      "selected_seeds_worst_median_best": [3025338430, 3025338402, 3025338370]
+    },
+    {
+      "name": "heuristic-vs-legal-random",
+      "mean_scores": [53.1875, 49.109375],
+      "mean_differential_seat0": 4.078125,
+      "differential_ci95": [-1.9852456741623232, 10.141495674162323],
+      "selected_seeds_worst_median_best": [3025338377, 3025338413, 3025338391]
+    },
+    {
+      "name": "legal-random-mirror",
+      "mean_scores": [44.453125, 49.125],
+      "mean_differential_seat0": -4.671875,
+      "differential_ci95": [-14.661858249294294, 5.318108249294294],
+      "selected_seeds_worst_median_best": [3025338381, 3025338422, 3025338370]
+    },
+    {
+      "name": "rejection-random-mirror",
+      "mean_scores": [48.078125, 46.765625],
+      "mean_differential_seat0": 1.3125,
+      "differential_ci95": [-6.422141457250764, 9.047141457250763],
+      "selected_seeds_worst_median_best": [3025338398, 3025338415, 3025338426]
+    }
+  ]
+}

@@ -13,6 +13,7 @@ axum.workspace = true
 datastar.workspace = true
 futures-util.workspace = true
 poche-protocol = { path = "../poche-protocol" }
+poche-rl = { path = "../poche-rl" }
 poche-runtime = { path = "../poche-runtime" }
 poche-session = { path = "../poche-session" }
 poche-ui = { path = "../poche-ui", default-features = false }

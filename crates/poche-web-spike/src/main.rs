@@ -4,6 +4,7 @@
 
 use std::{
     convert::Infallible,
+    fmt::Write as _,
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
@@ -37,6 +38,7 @@ const INDEX: &str = include_str!("../web/index.html");
 #[derive(Clone)]
 struct AppState {
     replay: Arc<ReplayDeck>,
+    rl_episode: Arc<poche_rl::EpisodeTranscript>,
     authority: Arc<Mutex<AuthorityHost>>,
     live: Arc<Mutex<LiveDemo>>,
 }
@@ -132,6 +134,8 @@ fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/view/{viewer}/{ordinal}", get(view_checkpoint))
+        .route("/rl/replay", get(rl_replay))
+        .route("/rl/replay.ndjson", get(rl_replay_ndjson))
         .route("/authority/create", post(authority_create))
         .route("/authority/reset", post(authority_reset))
         .route("/live/{viewer}", get(live_view))
@@ -142,6 +146,72 @@ fn router(state: AppState) -> Router {
         .route("/live/{viewer}/transcript.ndjson", get(live_transcript))
         .route("/live/{viewer}/replay", get(live_replay))
         .with_state(state)
+}
+
+async fn rl_replay(State(state): State<AppState>) -> Response {
+    match rl_replay_html(&state.rl_episode) {
+        Ok(html) => Html(html).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+    }
+}
+
+async fn rl_replay_ndjson(State(state): State<AppState>) -> Response {
+    match state.rl_episode.ndjson() {
+        Ok(transcript) => (
+            [
+                ("content-type", "application/x-ndjson; charset=utf-8"),
+                (
+                    "content-disposition",
+                    "attachment; filename=poche-rl-selected-episode.ndjson",
+                ),
+            ],
+            transcript,
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("RL replay serialization failed: {error}"),
+        )
+            .into_response(),
+    }
+}
+
+fn rl_replay_html(episode: &poche_rl::EpisodeTranscript) -> Result<String, String> {
+    let hash = episode
+        .semantic_hash()
+        .map_err(|error| format!("RL replay hash failed: {error}"))?;
+    let mut transitions = String::new();
+    for transition in &episode.transitions {
+        write!(
+                transitions,
+                "<li><strong>seat {}</strong> {} · reward {} · distance {} · terminal {}<br><code>{}</code> → <code>{}</code></li>",
+                transition.seat,
+                transition.action_label,
+                transition.reward_at_next_observation,
+                transition.decision_time_distance,
+                transition.terminal,
+                transition.observation_hash,
+                transition.next_observation_hash,
+            )
+            .map_err(|_| "RL replay HTML formatting failed".to_owned())?;
+    }
+    Ok(format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Poche RL episode replay</title></head><body><main><h1>Poche RL episode replay</h1><p><strong>Empirical replay only; not a proof of policy quality.</strong></p><dl><dt>Spec</dt><dd>{}</dd><dt>Reward</dt><dd>{}</dd><dt>Seed</dt><dd>{}</dd><dt>Seat policies</dt><dd>{:?}</dd><dt>Final scores</dt><dd>{:?}</dd><dt>Score differential (seat 0)</dt><dd>{}</dd><dt>Illegal actions</dt><dd>{}</dd><dt>Episode semantic hash</dt><dd><code>{hash}</code></dd></dl><p><a href=\"/rl/replay.ndjson\">Download inspectable NDJSON</a></p><ol>{transitions}</ol></main></body></html>",
+        episode.spec_id,
+        episode.reward_id,
+        episode.seed,
+        episode.seat_policies,
+        episode.final_scores,
+        episode.score_differential_seat0,
+        episode.illegal_action_count,
+    ))
+}
+
+fn selected_rl_episode() -> Result<poche_rl::EpisodeTranscript, String> {
+    let mut random = poche_rl::LegalRandomPolicy::new(0xb453_0002 ^ 0x5000);
+    let mut heuristic = poche_rl::HighCardHeuristicPolicy;
+    poche_rl::run_episode_with_seat_policies(0xb453_0002, &mut random, &mut heuristic)
+        .map_err(|error| format!("selected RL replay failed: {error:?}"))
 }
 
 async fn index(State(state): State<AppState>) -> Response {
@@ -318,6 +388,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse::<SocketAddr>()?;
     let state = AppState {
         replay: Arc::new(ReplayDeck::from_json(EMBEDDED_REPLAY)?),
+        rl_episode: Arc::new(selected_rl_episode()?),
         authority: Arc::new(Mutex::new(AuthorityHost::new()?)),
         live: Arc::new(Mutex::new(LiveDemo::new()?)),
     };
@@ -332,9 +403,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthorityHost, EMBEDDED_REPLAY, INDEX, LiveDemo, ReplayDeck, live_html};
+    use super::{
+        AuthorityHost, EMBEDDED_REPLAY, INDEX, LiveDemo, ReplayDeck, live_html, rl_replay_html,
+        selected_rl_episode,
+    };
     use poche_protocol::RoomPhase;
     use poche_ui::render_semantic_html;
+
+    #[test]
+    fn selected_rl_replay_is_hash_identical_and_contains_no_hidden_state() {
+        let episode = selected_rl_episode().expect("selected episode");
+        assert_eq!(
+            episode.semantic_hash().unwrap(),
+            "7ab24388ab33c34e4763e065e493b2529c6562c8d70b59e909f70920442fc5a9"
+        );
+        let html = rl_replay_html(&episode).expect("semantic replay");
+        assert!(html.contains("Poche RL episode replay"));
+        assert!(html.contains("Final scores</dt><dd>[99, 12]"));
+        assert!(!html.contains("private_hand"));
+        assert!(!html.contains("deck"));
+    }
 
     #[test]
     fn semantic_bob_fixture_adds_then_removes_only_the_granted_hand() {

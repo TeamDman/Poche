@@ -14,9 +14,11 @@ on:
       - crates/poche-model/**
       - crates/poche-oracle-rust/**
       - crates/poche-protocol/**
+      - crates/poche-rl/**
       - crates/poche-runtime/**
       - crates/poche-session/**
       - crates/poche-ui/**
+      - rl/**
       - docs/main.typ
       - pages/**
       - tools/versions.toml

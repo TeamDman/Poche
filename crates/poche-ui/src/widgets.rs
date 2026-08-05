@@ -14,6 +14,17 @@ use crate::{
 pub struct PocheReplayApp {
     deck: ReplayDeck,
     selected: usize,
+    mode: ReplayMode,
+    rl_episode: poche_rl::EpisodeTranscript,
+    rl_hash: String,
+    rl_selected: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ReplayMode {
+    #[default]
+    Room,
+    RlEpisode,
 }
 
 impl PocheReplayApp {
@@ -23,9 +34,21 @@ impl PocheReplayApp {
     ///
     /// Returns [`ReplayDeck::from_json`] failures.
     pub fn from_json(json: &str) -> Result<Self, String> {
+        let mut random = poche_rl::LegalRandomPolicy::new(0xb453_0002 ^ 0x5000);
+        let mut heuristic = poche_rl::HighCardHeuristicPolicy;
+        let rl_episode =
+            poche_rl::run_episode_with_seat_policies(0xb453_0002, &mut random, &mut heuristic)
+                .map_err(|error| format!("checked RL replay failed: {error:?}"))?;
+        let rl_hash = rl_episode
+            .semantic_hash()
+            .map_err(|error| format!("checked RL replay hash failed: {error}"))?;
         Ok(Self {
             deck: ReplayDeck::from_json(json)?,
             selected: 0,
+            mode: ReplayMode::Room,
+            rl_episode,
+            rl_hash,
+            rl_selected: 0,
         })
     }
 
@@ -40,10 +63,20 @@ impl PocheReplayApp {
     }
 
     fn step(&mut self, offset: isize) {
-        self.selected = self
-            .selected
-            .saturating_add_signed(offset)
-            .min(self.deck.checkpoints.len().saturating_sub(1));
+        match self.mode {
+            ReplayMode::Room => {
+                self.selected = self
+                    .selected
+                    .saturating_add_signed(offset)
+                    .min(self.deck.checkpoints.len().saturating_sub(1));
+            }
+            ReplayMode::RlEpisode => {
+                self.rl_selected = self
+                    .rl_selected
+                    .saturating_add_signed(offset)
+                    .min(self.rl_episode.transitions.len().saturating_sub(1));
+            }
+        }
     }
 }
 
@@ -52,33 +85,57 @@ impl eframe::App for PocheReplayApp {
         egui::TopBottomPanel::top("replay-navigation").show(context, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.heading("Poche projection replay");
+                if ui.button("Room replay").clicked() {
+                    self.mode = ReplayMode::Room;
+                }
+                if ui.button("RL episode replay").clicked() {
+                    self.mode = ReplayMode::RlEpisode;
+                }
                 if ui.button("Previous").clicked() {
                     self.step(-1);
                 }
                 if ui.button("Next").clicked() {
                     self.step(1);
                 }
-                let checkpoint = &self.deck.checkpoints[self.selected];
-                ui.label(format!(
-                    "checkpoint {}/{} · source step {} · viewer {}",
-                    self.selected + 1,
-                    self.deck.checkpoints.len(),
-                    checkpoint.step_index,
-                    checkpoint.viewer
-                ));
-            });
-            ui.horizontal_wrapped(|ui| {
-                for viewer in ["host", "alice", "bob"] {
-                    if ui.button(format!("First {viewer} view")).clicked()
-                        && let Some(index) = self.deck.first_for_viewer(viewer)
-                    {
-                        self.selected = index;
+                match self.mode {
+                    ReplayMode::Room => {
+                        let checkpoint = &self.deck.checkpoints[self.selected];
+                        ui.label(format!(
+                            "checkpoint {}/{} · source step {} · viewer {}",
+                            self.selected + 1,
+                            self.deck.checkpoints.len(),
+                            checkpoint.step_index,
+                            checkpoint.viewer
+                        ));
+                    }
+                    ReplayMode::RlEpisode => {
+                        ui.label(format!(
+                            "decision {}/{} · seed {}",
+                            self.rl_selected + 1,
+                            self.rl_episode.transitions.len(),
+                            self.rl_episode.seed
+                        ));
                     }
                 }
             });
+            if self.mode == ReplayMode::Room {
+                ui.horizontal_wrapped(|ui| {
+                    for viewer in ["host", "alice", "bob"] {
+                        if ui.button(format!("First {viewer} view")).clicked()
+                            && let Some(index) = self.deck.first_for_viewer(viewer)
+                        {
+                            self.selected = index;
+                        }
+                    }
+                });
+            }
         });
 
         egui::CentralPanel::default().show(context, |ui| {
+            if self.mode == ReplayMode::RlEpisode {
+                render_rl_episode(ui, &self.rl_episode, &self.rl_hash, self.rl_selected);
+                return;
+            }
             let checkpoint = &self.deck.checkpoints[self.selected];
             ui.label(format!("fixture: {}", self.deck.fixture_id));
             ui.label(format!("authorization: {}", checkpoint.authorization));
@@ -90,6 +147,49 @@ impl eframe::App for PocheReplayApp {
             render_projection(ui, &checkpoint.presentation);
         });
     }
+}
+
+fn render_rl_episode(
+    ui: &mut egui::Ui,
+    episode: &poche_rl::EpisodeTranscript,
+    episode_hash: &str,
+    selected: usize,
+) {
+    ui.heading("Selected reinforcement-learning episode");
+    ui.label(format!(
+        "spec {} · reward {} · policies {:?}",
+        episode.spec_id, episode.reward_id, episode.seat_policies
+    ));
+    ui.label(format!(
+        "final score {:?} · seat-0 differential {} · exact bids {:?} · illegal actions {}",
+        episode.final_scores,
+        episode.score_differential_seat0,
+        episode.exact_bid_count,
+        episode.illegal_action_count
+    ));
+    ui.label(format!("episode semantic hash: {episode_hash}"));
+    ui.label("Empirical replay only; it is not a proof of policy quality.");
+    ui.separator();
+    let transition = &episode.transitions[selected];
+    ui.heading(format!(
+        "seat {} chose {}",
+        transition.seat, transition.action_label
+    ));
+    ui.label(format!(
+        "observation {} → {}",
+        transition.observation_hash, transition.next_observation_hash
+    ));
+    ui.label(format!(
+        "reward at next seat observation: {} · decision-time distance {} · terminal {}",
+        transition.reward_at_next_observation,
+        transition.decision_time_distance,
+        transition.terminal
+    ));
+    ui.collapsing("Round scores", |ui| {
+        for (round, points) in episode.round_points.iter().enumerate() {
+            ui.label(format!("round {}: {:?}", round + 1, points));
+        }
+    });
 }
 
 fn render_projection(ui: &mut egui::Ui, model: &PresentationModel) {
@@ -296,6 +396,11 @@ mod tests {
 
     #[test]
     fn checked_fixture_constructs_the_egui_app() {
-        let _app = PocheReplayApp::embedded();
+        let app = PocheReplayApp::embedded();
+        assert_eq!(
+            app.rl_hash,
+            "7ab24388ab33c34e4763e065e493b2529c6562c8d70b59e909f70920442fc5a9"
+        );
+        assert_eq!(app.rl_episode.final_scores, [99, 12]);
     }
 }

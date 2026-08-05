@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "corpus_id": "poche-baselines-v1",
+  "spec_id": "poche-2p-v1",
+  "spec_hash": "8852f8568ead1e40aad7bb4ca5b7725340cc01422e077ffddcd5d4f5665bf0bf",
+  "reward_id": "round-score-v1",
+  "seeds": [
+    3025338368, 3025338369, 3025338370, 3025338371, 3025338372, 3025338373,
+    3025338374, 3025338375, 3025338376, 3025338377, 3025338378, 3025338379,
+    3025338380, 3025338381, 3025338382, 3025338383, 3025338384, 3025338385,
+    3025338386, 3025338387, 3025338388, 3025338389, 3025338390, 3025338391,
+    3025338392, 3025338393, 3025338394, 3025338395, 3025338396, 3025338397,
+    3025338398, 3025338399, 3025338400, 3025338401, 3025338402, 3025338403,
+    3025338404, 3025338405, 3025338406, 3025338407, 3025338408, 3025338409,
+    3025338410, 3025338411, 3025338412, 3025338413, 3025338414, 3025338415,
+    3025338416, 3025338417, 3025338418, 3025338419, 3025338420, 3025338421,
+    3025338422, 3025338423, 3025338424, 3025338425, 3025338426, 3025338427,
+    3025338428, 3025338429, 3025338430, 3025338431
+  ],
+  "matchups": [
+    { "name": "legal-random-vs-heuristic", "seat0": "legal-random", "seat1": "heuristic" },
+    { "name": "heuristic-vs-legal-random", "seat0": "heuristic", "seat1": "legal-random" },
+    { "name": "legal-random-mirror", "seat0": "legal-random", "seat1": "legal-random" },
+    { "name": "rejection-random-mirror", "seat0": "random", "seat1": "random" }
+  ],
+  "selection_rule": "per matchup select minimum, lower median, maximum score differential for seat0; retain first illegal/failure episode if one exists"
+}

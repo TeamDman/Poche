@@ -4078,6 +4078,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "poche-rl"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "poche-environment",
+ "poche-oracle-rust",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "poche-runtime"
 version = "0.1.0"
 dependencies = [
@@ -4106,6 +4117,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "poche-protocol",
+ "poche-rl",
  "poche-runtime",
  "serde_json",
  "wasm-bindgen",
@@ -4140,6 +4152,7 @@ dependencies = [
  "datastar",
  "futures-util",
  "poche-protocol",
+ "poche-rl",
  "poche-runtime",
  "poche-session",
  "poche-ui",
@@ -4156,6 +4169,7 @@ dependencies = [
  "poche-interchange",
  "poche-native-tools",
  "poche-oracle-rust",
+ "poche-rl",
  "poche-runtime",
  "serde",
  "serde_json",
