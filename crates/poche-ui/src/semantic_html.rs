@@ -233,7 +233,7 @@ fn render_hand(html: &mut String, heading: &str, hand: &HandPresentation) {
     html.push_str("</p></section>");
 }
 
-fn escape_html(value: &str) -> String {
+pub(crate) fn escape_html(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for character in value.chars() {
         match character {

@@ -58,6 +58,10 @@ The 2026-08-05 release-window run produced the raw checked receipt in
 [`evidence/native-spatial-acceptance.json`](evidence/native-spatial-acceptance.json)
 and screenshot SHA-256
 `ab9e2c4c0e02bb609e4411531a000b90a191c89e7c80e920a795b6386ddcad7d`.
+The receipt also carries renderer-independent scene fingerprint
+`0a6de46fd21791260bb57c8516ce9ef5e1666e03e17d29cf6f8cda746c07baee`.
+The accessible HTML adapter consumes the same fixture and reports the same
+fingerprint; see [semantic-html-tabletop.md](semantic-html-tabletop.md).
 
 | Observation | Result |
 | --- | ---: |
@@ -85,5 +89,6 @@ instrument was used, so this is deliberately not an input-to-photon claim.
 This is a faithful projection of a checked replay checkpoint, not a packaged
 live Veilid player client. It has no physics authority and cannot create cards,
 change scores through glyph placement, or make a loose transform into a legal
-Poche transition. Visual polish, analytic GPU Slug fill, browser parity, and the
-complete multiplayer/governance vertical slice remain later plan work.
+Poche transition. Visual polish, analytic GPU Slug fill, and the complete
+published multiplayer/governance replay remain later plan work. Browser parity
+for the checked scene semantics is now covered by the linked phase-8.2 evidence.

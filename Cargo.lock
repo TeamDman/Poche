@@ -8705,6 +8705,9 @@ dependencies = [
 [[package]]
 name = "poche-spatial"
 version = "0.1.0"
+dependencies = [
+ "blake3",
+]
 
 [[package]]
 name = "poche-ui"
@@ -8755,6 +8758,7 @@ dependencies = [
  "poche-rl",
  "poche-runtime",
  "poche-session",
+ "poche-spatial",
  "poche-ui",
  "serde",
  "serde_json",

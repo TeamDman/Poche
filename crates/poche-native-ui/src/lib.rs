@@ -30,12 +30,12 @@ use poche_slug::{
     build_gpu_glyph_metadata,
 };
 use poche_spatial::{
-    AabbMm, AnimationEndpoint, CardFace, CardLocation, CardObjectId, HalfExtentsMm, LayoutId,
-    ObjectId, Point3Mm, PoseMm, ResolvedCardPlay, SeatId, SpatialLayout, SpatialScene, TableId,
-    TextBinding, YawMilliDegrees, ZoneId, reconstruct_animation_endpoint, registered_layout,
-    resolve_card_play, resolve_drag_play,
+    AabbMm, AnimationEndpoint, CardFace, CardLocation, CardObjectId, HalfExtentsMm, ObjectId,
+    Point3Mm, PoseMm, ResolvedCardPlay, SeatId, SpatialLayout, SpatialScene, TextBinding,
+    YawMilliDegrees, ZoneId, reconstruct_animation_endpoint, resolve_card_play, resolve_drag_play,
+    spatial_scene_hash_hex,
 };
-use poche_ui::{EMBEDDED_REPLAY, ReplayDeck, realize_presentation_spatial};
+use poche_ui::embedded_spatial_fixture;
 use serde::Serialize;
 
 /// Explicit OFL-licensed font consumed by Slug and native UI text.
@@ -274,49 +274,8 @@ impl NativeController {
 ///
 /// Returns fixture, projection, layout, or seat-map failures.
 pub fn replay_fixture_controller() -> Result<NativeController, String> {
-    let deck = ReplayDeck::from_json(EMBEDDED_REPLAY)?;
-    let checkpoint = deck
-        .checkpoints
-        .iter()
-        .find(|checkpoint| {
-            checkpoint.presentation.table.is_some()
-                && checkpoint
-                    .presentation
-                    .own_hand
-                    .as_ref()
-                    .is_some_and(|hand| !hand.card_codes.is_empty())
-        })
-        .ok_or_else(|| "embedded replay has no running exact-recipient hand".to_owned())?;
-    let table = checkpoint
-        .presentation
-        .table
-        .as_ref()
-        .ok_or_else(|| "selected checkpoint has no table".to_owned())?;
-    let players = u8::try_from(table.hand_counts.len())
-        .map_err(|_| "player count does not fit layout".to_owned())?;
-    let layout_id =
-        LayoutId::new(players, 1).ok_or_else(|| "unsupported replay player count".to_owned())?;
-    let layout = registered_layout(TableId::new(0x504f_4348_4533), layout_id)
-        .map_err(|error| format!("registered layout failed: {error:?}"))?;
-    let scene = realize_presentation_spatial(&layout, 1, &checkpoint.presentation)
-        .map_err(|error| format!("spatial projection failed: {error:?}"))?;
-    let owner = checkpoint
-        .presentation
-        .own_hand
-        .as_ref()
-        .ok_or_else(|| "selected checkpoint lost own hand".to_owned())?
-        .player
-        .as_str();
-    let ordinal = checkpoint
-        .presentation
-        .members
-        .iter()
-        .find(|member| member.principal == owner)
-        .and_then(|member| member.seat)
-        .ok_or_else(|| "own hand principal has no seat".to_owned())?;
-    let issuing_seat =
-        SeatId::new(ordinal, layout_id).ok_or_else(|| "issuing seat outside layout".to_owned())?;
-    NativeController::try_new(layout, scene, issuing_seat)
+    let fixture = embedded_spatial_fixture()?;
+    NativeController::try_new(fixture.layout, fixture.scene, fixture.issuing_seat)
 }
 
 /// Parse a dense, compact Unicode, or CLI-word card spelling.
@@ -422,6 +381,7 @@ struct AcceptanceOptions {
 
 #[derive(Serialize)]
 struct AcceptanceReport {
+    scene_semantic_hash: String,
     startup_to_first_update_microseconds: u128,
     semantic_commit_microseconds: Option<u128>,
     semantic_commit_nanoseconds: Option<u128>,
@@ -944,6 +904,8 @@ fn acceptance_driver(
             .filter(|card| card.face.is_none())
             .count();
         let report = AcceptanceReport {
+            scene_semantic_hash: spatial_scene_hash_hex(&controller.scene)
+                .unwrap_or_else(|error| format!("invalid-scene-{error:?}")),
             startup_to_first_update_microseconds: clock
                 .first_update
                 .unwrap_or_default()
@@ -1143,5 +1105,9 @@ mod tests {
         assert!(before.cards.iter().all(|card| {
             card.face.is_some() == face_text_objects.contains(&ObjectId::Card(card.id))
         }));
+        assert_eq!(
+            poche_spatial::spatial_scene_hash_hex(&before).expect("canonical scene hash"),
+            "0a6de46fd21791260bb57c8516ce9ef5e1666e03e17d29cf6f8cda746c07baee"
+        );
     }
 }

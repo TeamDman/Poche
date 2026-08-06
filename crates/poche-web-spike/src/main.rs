@@ -15,7 +15,7 @@ use axum::{
     extract::{DefaultBodyLimit, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{
-        Html, IntoResponse, Response, Sse,
+        Html, IntoResponse, Redirect, Response, Sse,
         sse::{Event, KeepAlive},
     },
     routing::{get, post},
@@ -33,18 +33,21 @@ use poche_runtime::{
 use poche_session::SessionState;
 use poche_ui::{
     ConnectionPresentation, EMBEDDED_REPLAY, PresentationInput, PresentationModel, ReplayDeck,
-    render_live_semantic_html, render_semantic_html, render_semantic_html_with_root_id,
+    embedded_spatial_fixture, render_live_semantic_html, render_semantic_html,
+    render_semantic_html_with_root_id, render_tabletop_semantic_html,
 };
 use serde::Deserialize;
 
 mod demo;
 mod gateway;
+mod tabletop;
 
 use demo::LiveDemo;
 use gateway::{
     CommandDecision, GatewayAction, GatewayDeviceRegistration, GatewayLab, GatewayProjectionEvent,
     SignedGatewayCommand,
 };
+use tabletop::TabletopLab;
 
 const INDEX: &str = include_str!("../web/index.html");
 const GATEWAY_INDEX: &str = include_str!("../web/gateway.html");
@@ -57,6 +60,7 @@ struct AppState {
     live: Arc<Mutex<LiveDemo>>,
     gateway: GatewayLab,
     gateway_live: Arc<Mutex<LiveDemo>>,
+    tabletop: Arc<Mutex<TabletopLab>>,
 }
 
 struct AuthorityHost {
@@ -168,6 +172,9 @@ fn router(state: AppState) -> Router {
         .route("/gateway/native/revoke/{device}", post(gateway_revoke))
         .route("/gateway/devices", get(gateway_devices))
         .route("/gateway/metrics", get(gateway_metrics))
+        .route("/tabletop/{viewer}", get(tabletop_view))
+        .route("/tabletop/{viewer}/action/{control}", post(tabletop_action))
+        .route("/tabletop/{viewer}/disconnect", post(tabletop_disconnect))
         .layer(DefaultBodyLimit::max(8 * 1024))
         .with_state(state)
 }
@@ -560,6 +567,69 @@ async fn live_replay(State(state): State<AppState>, Path(viewer): Path<String>) 
     }
 }
 
+async fn tabletop_view(State(state): State<AppState>, Path(viewer): Path<String>) -> Response {
+    match tabletop_page(&state, &viewer) {
+        Ok(page) => Html(page).into_response(),
+        Err(error) => (StatusCode::NOT_FOUND, error).into_response(),
+    }
+}
+
+async fn tabletop_action(
+    State(state): State<AppState>,
+    Path((viewer, control)): Path<(String, String)>,
+) -> Response {
+    let result = state
+        .tabletop
+        .lock()
+        .map_err(|_| "tabletop authority lock poisoned".to_owned())
+        .and_then(|mut lab| lab.action(&viewer, &control));
+    match result {
+        Ok(_) => Redirect::to(&format!("/tabletop/{viewer}")).into_response(),
+        Err(error) => (StatusCode::CONFLICT, error).into_response(),
+    }
+}
+
+async fn tabletop_disconnect(
+    State(state): State<AppState>,
+    Path(viewer): Path<String>,
+) -> Response {
+    let result = state
+        .tabletop
+        .lock()
+        .map_err(|_| "tabletop authority lock poisoned".to_owned())
+        .and_then(|mut lab| lab.disconnect(&viewer));
+    match result {
+        Ok(_) => Redirect::to(&format!("/tabletop/{viewer}")).into_response(),
+        Err(error) => (StatusCode::CONFLICT, error).into_response(),
+    }
+}
+
+fn tabletop_page(state: &AppState, viewer: &str) -> Result<String, String> {
+    let (live, scene, supplement) = state
+        .tabletop
+        .lock()
+        .map_err(|_| "tabletop authority lock poisoned".to_owned())?
+        .projection(viewer)?;
+    let projection = render_tabletop_semantic_html(
+        &live,
+        &scene,
+        "semantic-tabletop",
+        &format!("/tabletop/{viewer}/action"),
+        &supplement,
+    )
+    .map_err(|error| format!("semantic tabletop scene failed: {error:?}"))?;
+    let fixture = embedded_spatial_fixture()?;
+    let fixture_hash = poche_spatial::spatial_scene_hash_hex(&fixture.scene)
+        .map_err(|error| format!("shared fixture hash failed: {error:?}"))?;
+    Ok(format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Poche semantic tabletop</title><style>
+body{{font-family:system-ui,sans-serif;max-width:76rem;margin:auto;padding:1rem;background:#f5f1e8;color:#211b16}}nav,.actions,.hand{{display:flex;gap:.6rem;flex-wrap:wrap}}section{{background:#fff;padding:1rem;margin:1rem 0;border-radius:.5rem}}table{{border-collapse:collapse;width:100%}}th,td{{text-align:left;border-bottom:1px solid #ccc;padding:.35rem}}button{{font:inherit;padding:.55rem .8rem}}#play-target{{border:2px dashed #735f3d;padding:2rem;text-align:center;margin-top:1rem}}code{{overflow-wrap:anywhere}}
+</style></head><body><nav aria-label="Viewer projections"><a href="/tabletop/alice">Alice</a><a href="/tabletop/bob">Bob</a><a href="/tabletop/spectator">Spectator</a><a href="/">Web experiments</a></nav><aside><p>Native/HTML shared acceptance fixture: <code data-role="native-fixture-hash">{fixture_hash}</code>. This live page has its own exact-recipient fingerprint below.</p></aside>{projection}<form method="post" action="/tabletop/{viewer}/disconnect"><button type="submit">Simulate transport loss</button></form><script>
+let dragged=null;document.addEventListener('dragstart',event=>{{dragged=event.target.closest('[data-command-id]')?.dataset.commandId||null}});let target=document.querySelector('#play-target');if(target){{target.addEventListener('dragover',event=>event.preventDefault());target.addEventListener('drop',async event=>{{event.preventDefault();if(!dragged)return;await fetch('/tabletop/{viewer}/action/'+encodeURIComponent(dragged),{{method:'POST'}});location.reload()}})}}
+</script></body></html>"#
+    ))
+}
+
 fn with_live(
     state: &AppState,
     operation: impl FnOnce(&mut LiveDemo) -> Result<String, String>,
@@ -601,6 +671,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         live: Arc::new(Mutex::new(LiveDemo::new()?)),
         gateway: GatewayLab::new()?,
         gateway_live: Arc::new(Mutex::new(gateway_demo()?)),
+        tabletop: Arc::new(Mutex::new(TabletopLab::new()?)),
     };
     let listener = tokio::net::TcpListener::bind(address).await?;
     println!(

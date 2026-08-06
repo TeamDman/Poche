@@ -11,6 +11,7 @@
 //! dependency.
 
 mod abstraction;
+mod hash;
 mod identity;
 mod interaction;
 mod layout;
@@ -19,6 +20,7 @@ mod scene;
 mod units;
 
 pub use abstraction::{AbstractionError, abstract_viewer_scene};
+pub use hash::{spatial_scene_hash, spatial_scene_hash_hex};
 pub use identity::{
     CardObjectId, LayoutId, ObjectId, SeatId, SurfaceId, SurfaceKind, TableId, TextRunId, ZoneId,
 };

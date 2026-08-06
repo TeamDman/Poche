@@ -27,6 +27,7 @@ was exhaustive, bounded, symbolic, queried, sampled, or merely empirical.
 - [Relational spatial Scryer Prolog oracle](docs/spatial-prolog.md)
 - [Neutral spatial conformance and coverage](docs/spatial-coverage.md)
 - [Native canonical spatial mirror and Slug evidence](docs/native-spatial-ui.md)
+- [Accessible semantic HTML tabletop and browser acceptance](docs/semantic-html-tabletop.md)
 - [Typed command and legality-policy decision](docs/decisions/0006-typed-commands-and-legality-policy.md)
 - [Retrospective action audit](docs/retrospective-audit.md)
 - [Replicated player/device authority decision](docs/decisions/0007-player-device-and-replicated-log.md)
@@ -141,6 +142,7 @@ do not hide IP/timing/DHT metadata from the relevant transport participants.
 | Self-hosted Datastar demo | Host-colocated Axum authority and accessible semantic HTML work on loopback | Development invite/viewer routes are not production authentication; the operator sees connection metadata and, as host, all state |
 | Signed browser-device gateway lab | Browser-local WebCrypto key, signed bounded typed HTTP, idempotent receipts, reconnectable exact-recipient SSE, and independent device revocation work on loopback | Still host-authoritative and plaintext to the gateway; lab enrollment is not the replicated root-certificate path |
 | Native spatial mirror | Bevy 0.19 renders the checked exact-recipient scene, Slug card/score outlines, typed/drag parity, deterministic tween, and audit bounds in a real release window | Checked replay checkpoint only; not yet a live Veilid player client, physics authority, polished renderer, or input-to-photon measurement |
+| Semantic HTML tabletop | Ordinary landmarks, tables, lists, POST forms, keyboard controls, optional drag/drop, exact-recipient privacy, audit, governance, and reconnect run over the same spatial semantics | Loopback development identities are not production authentication; live authority remains host-colocated and trusted |
 
 Do not expose the Datastar demo beyond loopback without adding TLS,
 authentication, durable state, abuse controls, and a deployment-specific threat
@@ -150,7 +152,9 @@ review. Its current development command is:
 cargo run --locked --release -p poche-web-spike
 ```
 
-The ordinary host demo is at `/`; the signed device lab is at `/gateway`.
+The ordinary host demo is at `/`; the signed device lab is at `/gateway`; the
+accessible semantic tabletop is at `/tabletop/alice` (with Bob and spectator
+viewer links on the page).
 
 ## Reinforcement learning
 

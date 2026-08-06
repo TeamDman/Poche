@@ -5,11 +5,78 @@
 use std::collections::HashMap;
 
 use poche_spatial::{
-    CardFace, PlayedCardProjection, PlayerSpatialProjection, RealizationError, SeatId,
-    SpatialLayout, SpatialScene, ViewerSpatialProjection, realize_viewer_scene,
+    CardFace, LayoutId, PlayedCardProjection, PlayerSpatialProjection, RealizationError, SeatId,
+    SpatialLayout, SpatialScene, TableId, ViewerSpatialProjection, realize_viewer_scene,
+    registered_layout,
 };
 
-use crate::{HandPresentation, PresentationModel};
+use crate::{EMBEDDED_REPLAY, HandPresentation, PresentationModel, ReplayDeck};
+
+/// Canonical exact-recipient fixture consumed by both native and HTML
+/// projection acceptance tests.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmbeddedSpatialFixture {
+    pub presentation: PresentationModel,
+    pub layout: SpatialLayout,
+    pub scene: SpatialScene,
+    pub issuing_seat: SeatId,
+}
+
+/// Build the shared spatial fixture from the checked exact-recipient replay.
+///
+/// # Errors
+///
+/// Returns replay, projection, layout, or seat-map failures.
+pub fn embedded_spatial_fixture() -> Result<EmbeddedSpatialFixture, String> {
+    let deck = ReplayDeck::from_json(EMBEDDED_REPLAY)?;
+    let checkpoint = deck
+        .checkpoints
+        .iter()
+        .find(|checkpoint| {
+            checkpoint.presentation.table.is_some()
+                && checkpoint
+                    .presentation
+                    .own_hand
+                    .as_ref()
+                    .is_some_and(|hand| !hand.card_codes.is_empty())
+        })
+        .ok_or_else(|| "embedded replay has no running exact-recipient hand".to_owned())?;
+    let table = checkpoint
+        .presentation
+        .table
+        .as_ref()
+        .ok_or_else(|| "selected checkpoint has no table".to_owned())?;
+    let players = u8::try_from(table.hand_counts.len())
+        .map_err(|_| "player count does not fit layout".to_owned())?;
+    let layout_id =
+        LayoutId::new(players, 1).ok_or_else(|| "unsupported replay player count".to_owned())?;
+    let layout = registered_layout(TableId::new(0x504f_4348_4533), layout_id)
+        .map_err(|error| format!("registered layout failed: {error:?}"))?;
+    let scene = realize_presentation_spatial(&layout, 1, &checkpoint.presentation)
+        .map_err(|error| format!("spatial projection failed: {error:?}"))?;
+    let owner = checkpoint
+        .presentation
+        .own_hand
+        .as_ref()
+        .ok_or_else(|| "selected checkpoint lost own hand".to_owned())?
+        .player
+        .as_str();
+    let ordinal = checkpoint
+        .presentation
+        .members
+        .iter()
+        .find(|member| member.principal == owner)
+        .and_then(|member| member.seat)
+        .ok_or_else(|| "own hand principal has no seat".to_owned())?;
+    let issuing_seat =
+        SeatId::new(ordinal, layout_id).ok_or_else(|| "issuing seat outside layout".to_owned())?;
+    Ok(EmbeddedSpatialFixture {
+        presentation: checkpoint.presentation.clone(),
+        layout,
+        scene,
+        issuing_seat,
+    })
+}
 
 /// Stable adapter failure while turning a UI-safe presentation into a spatial
 /// viewer scene.

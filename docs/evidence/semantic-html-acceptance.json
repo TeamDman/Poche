@@ -1,0 +1,44 @@
+{
+  "date": "2026-08-06",
+  "server": "poche-web-spike debug build on 127.0.0.1",
+  "browser": "Microsoft Edge through the Codex browser extension",
+  "shared_native_html_fixture_hash": "0a6de46fd21791260bb57c8516ce9ef5e1666e03e17d29cf6f8cda746c07baee",
+  "accepted_flows": [
+    "play 2C through an ordinary POST form and observe the exact public trick/history change",
+    "pause as Bob and unpause as Alice",
+    "send escaped room chat through the typed session command",
+    "request, grant, observe, revoke, and remove an exact spectator hand projection",
+    "confirm a retrospective follow-suit accusation through the audit reducer",
+    "start a typed redeal proposal and record Alice's visible counted approval",
+    "disconnect Alice, expose only reconnect plus the local disconnect test control, then reconnect and restore authorized controls",
+    "activate pause with the keyboard Enter key"
+  ],
+  "accessibility_observations": {
+    "top_level_main": 1,
+    "named_regions": [
+      "Score sheet and seats",
+      "Deck",
+      "Trump and current trick",
+      "Your hand",
+      "Typed commands",
+      "Public history",
+      "Room chat",
+      "Rule findings",
+      "Proposals and votes"
+    ],
+    "score_table_has_column_and_row_headers": true,
+    "commands_are_native_buttons_in_post_forms": true,
+    "drag_drop_is_progressive_enhancement": true,
+    "play_target_is_keyboard_focusable_and_named": true,
+    "status_is_live_announced": true,
+    "native_camera_coordinates_exposed": false
+  },
+  "privacy_observations": {
+    "spectator_before_grant_had_private_hand": false,
+    "spectator_during_grant_saw": ["alice:3C"],
+    "spectator_after_revoke_had_private_hand": false,
+    "viewer_specific_scene_hashes_differ_when_face_knowledge_differs": true
+  },
+  "authorization_regression_found_and_fixed": "The first real-browser pass showed accusation and vote controls while disconnected. The renderer now hides governable mutations from disconnected/spectator viewers, and TabletopLab synchronizes connection state into GovernanceState. Focused tests and a second browser pass verified that only Reconnect remained available.",
+  "qualification": "Real DOM, accessibility-tree, mouse, and keyboard acceptance against a local Axum process. This is UI/semantic acceptance, not a network latency benchmark or formal proof."
+}

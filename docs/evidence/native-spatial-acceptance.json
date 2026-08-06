@@ -1,4 +1,5 @@
 {
+  "scene_semantic_hash": "0a6de46fd21791260bb57c8516ce9ef5e1666e03e17d29cf6f8cda746c07baee",
   "startup_to_first_update_microseconds": 716681,
   "semantic_commit_microseconds": 0,
   "semantic_commit_nanoseconds": 500,

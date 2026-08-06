@@ -2,9 +2,9 @@
 
 **Plan status:** Active
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
-**Last updated:** 2026-08-05 (America/Toronto)
+**Last updated:** 2026-08-06 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 8.2, project the same scene semantics into accessible HTML
+**Current implementation focus:** 8.3, publish the complete inspectable vertical slice and replay
 
 ## How to update this plan
 
@@ -1564,7 +1564,52 @@ automation latency input-to-photon latency.
 the same committed transition/tween, inspect score glyphs, and toggle spatial
 audit overlays in a real desktop window.
 
-### [~] 8.2 Project the same scene semantics into accessible HTML
+### [x] 8.2 Project the same scene semantics into accessible HTML
+
+**Completion notes:** Completed 2026-08-06. Added a canonical, versioned
+`poche-spatial-scene-hash-v1` BLAKE3 field encoding over validated exact-
+recipient scene semantics. It does not hash Rust `Debug` output, renderer
+entities, HTML, pixels, camera values, or animation frames. Moved the checked
+replay selection into `poche_ui::embedded_spatial_fixture`, so the Bevy leaf
+and HTML adapter consume one presentation/layout/scene/issuing-seat fixture.
+Both report exact fingerprint
+`0a6de46fd21791260bb57c8516ce9ef5e1666e03e17d29cf6f8cda746c07baee`;
+the native acceptance receipt and a hard regression assertion retain it.
+
+Added `render_tabletop_semantic_html`, which maps score sheet/seats to a table
+with row/column headers; deck, trump/trick, exact-recipient hands, history,
+chat, findings, and proposals to named landmarks/lists/articles; and commands
+to native buttons in ordinary `POST` forms. Legal owned cards use the exact
+retained `CommandPayload::GameAction::Play` control, while optional drag/drop
+submits that opaque control ID to the same endpoint. HTML never receives
+native camera coordinates or uses CSS position as state. JavaScript is
+progressive enhancement: form click and keyboard activation remain complete.
+
+Added a `/tabletop/{alice|bob|spectator}` Axum lab backed by the real
+`LiveDemo` session/game authority plus the existing `RetrospectiveAudit` and
+`GovernanceState` reducers. A bounded setup reaches the first playable trick;
+the UI then supports play, any-player pause/unpause, chat, exact spectator hand
+request/grant/revoke, confirmed accusation, typed redeal proposal/vote, and
+disconnect/reconnect. Development viewer URLs remain explicitly non-production
+authentication, and the host-colocated process remains a trusted authority.
+
+Real Edge browser acceptance inspected the accessibility tree and exercised
+all required flows. It caught one integration defect: disconnected players
+still saw audit/vote controls and the governance overlay retained their
+connected bit. The implementation now synchronizes transport loss/reconnect
+into `GovernanceState`, denies special commands while disconnected, and shows
+only `Reconnect` (plus the explicit local disconnect test control). The second
+browser pass verified the repair, keyboard `Enter`, semantic landmarks/table,
+absence of camera layout data, and exact hand removal after revocation. The
+machine-readable qualified receipt is
+`docs/evidence/semantic-html-acceptance.json`; architecture and scope are in
+`docs/semantic-html-tabletop.md`.
+
+Focused offline tests pass: 27 `poche-spatial`, 13 `poche-ui`, 16
+`poche-web-spike`, and five `poche-native-ui` tests, plus bin/doc targets.
+Strict Clippy across all four crates, formatting, and the optimized native
+build pass. Browser observations remain runtime UI evidence, not a formal
+proof or network-latency benchmark.
 
 **Work:**
 
@@ -1589,7 +1634,7 @@ grant/revoke, accusation, vote, and reconnect.
 fixture/history and reach identical hashes while using target-appropriate
 layouts and interactions.
 
-### [ ] 8.3 Publish the complete inspectable vertical slice and replay
+### [~] 8.3 Publish the complete inspectable vertical slice and replay
 
 **Work:**
 

@@ -241,11 +241,52 @@ impl LiveDemo {
         if stage == "countdown" {
             return Ok("prepared countdown".to_owned());
         }
-        if stage != "running" {
+        if stage != "running" && stage != "playing" {
             return Err("unknown demo setup stage".to_owned());
         }
         self.advance_clock()?;
+        if stage == "playing" {
+            self.advance_to_first_play()?;
+            return Ok("prepared first playable trick".to_owned());
+        }
         Ok("prepared running game".to_owned())
+    }
+
+    fn advance_to_first_play(&mut self) -> Result<(), String> {
+        for _ in 0..16 {
+            self.drive_environment()?;
+            let (actor, action) = match &self.authority.state.phase {
+                SessionPhase::Running { game } => match game.turn() {
+                    GameTurn::Player(seat) => {
+                        let actions = game.legal_player_actions();
+                        if actions.iter().any(|action| {
+                            matches!(action, poche_protocol::GameActionWire::Play { .. })
+                        }) {
+                            return Ok(());
+                        }
+                        let actor = match seat {
+                            0 => ALICE,
+                            1 => BOB,
+                            _ => {
+                                return Err("demo actor is outside the two-seat fixture".to_owned());
+                            }
+                        };
+                        let action = actions
+                            .first()
+                            .cloned()
+                            .ok_or_else(|| "demo bidding actor has no legal action".to_owned())?;
+                        (actor, action)
+                    }
+                    GameTurn::Chance | GameTurn::Environment => continue,
+                    GameTurn::Finished => {
+                        return Err("demo finished before the first play".to_owned());
+                    }
+                },
+                _ => return Err("demo left running phase before the first play".to_owned()),
+            };
+            self.submit_payload(actor, CommandPayload::GameAction { action }, false)?;
+        }
+        Err("demo did not reach a playable trick within the bounded setup".to_owned())
     }
 
     /// Advance the authority clock far enough to expire the current countdown.
