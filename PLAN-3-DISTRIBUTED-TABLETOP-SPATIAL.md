@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 3.4, compare spatial claims without treating Rust as oracle
+**Current implementation focus:** 4.1, freeze typed command and legality-policy contracts
 
 ## How to update this plan
 
@@ -760,7 +760,32 @@ cargo run -p poche-xtask --offline -- spatial prolog --scope query-micro
 **Completion criteria:** Query answer sets are normalized with counts/digests
 and include explanations for both valid resolution and an ambiguous placement.
 
-### [ ] 3.4 Compare spatial claims without treating Rust as oracle
+### [x] 3.4 Compare spatial claims without treating Rust as oracle
+
+**Completion notes:** Completed 2026-08-05. Added 15 stable `P3-S-*`
+obligation IDs and Facet-reflected neutral evidence shapes in
+`poche-interchange`; the agreement function rejects mixed comparison scopes,
+duplicate backends/claims, missing native qualifications/exclusions, and claim
+sets with no shared abstraction. It never assigns backend priority and retains
+contradictory observations as successful report data. The conformance command
+runs all four native source gates before comparing the common `spatial-micro`
+projection. Its receipt records four sources/tracks, nine genuinely shared
+claims, 24 participating observations, five single-track claims, and zero
+current disagreements. Exact native scope IDs remain attached: Rust contributes
+10 sampled claims, Alloy six bounded claims, NuSMV seven symbolic claims, and
+Scryer Prolog six queried claims. Prolog's named pause/recovery/one-card facts
+are explicitly excluded because they are explanatory rows rather than
+structural theorems; no stronger backend silently fills that gap.
+
+Added `docs/spatial-coverage.md` with all 15 obligations across all four tracks.
+The machine audit checks every one of 60 cells, accepts only the backend's
+native evidence prefix or a reasoned `N/A`, and cross-checks its 29 applicable
+cells against the exact emitted claim inventory. The renderer/continuous
+obligation is explicitly `N/A` for all four sources. The prescribed commands
+pass offline: comparison reports `source_gates=4 tracks=4 shared_claims=9
+observations=24 unshared_claims=5 disagreements=0`; coverage reports
+`obligations=15 tracks=4 classified_cells=60 applicable_cells=29`. Five focused
+spatial conformance tests, formatting, and strict Clippy also pass.
 
 **Work:**
 
@@ -782,7 +807,7 @@ every applicable result and disagreement, and never widens a track's scope.
 
 ## Phase 4 — Generalize commands, auditing, and governance
 
-### [ ] 4.1 Freeze typed command and legality-policy contracts
+### [~] 4.1 Freeze typed command and legality-policy contracts
 
 **Work:**
 

@@ -6394,6 +6394,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "poche-check",
+ "poche-interchange",
  "poche-model",
  "poche-native-tools",
  "poche-oracle-rust",

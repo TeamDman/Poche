@@ -12,9 +12,9 @@ use std::process::{Command, ExitCode, Output};
 
 use poche_check::{CheckScope, TerminationReason, analyze_liveness, check_session, explore};
 use poche_conformance::{
-    Disposition, check_spatial_alloy_layout_micro, check_spatial_nusmv_transition_micro,
-    check_spatial_prolog_query_micro, compare_rust_alloy, compare_rust_models, compare_rust_nusmv,
-    compare_rust_prolog,
+    Disposition, audit_spatial_coverage, check_spatial_alloy_layout_micro,
+    check_spatial_nusmv_transition_micro, check_spatial_prolog_query_micro, compare_rust_alloy,
+    compare_rust_models, compare_rust_nusmv, compare_rust_prolog, compare_spatial_models,
 };
 use poche_interchange::{
     BackendKindWire, ConfidenceKindWire, SessionClaimWire, SessionTrackEvidenceWire,
@@ -143,6 +143,8 @@ fn usage() {
          cargo run -p poche-xtask -- spatial alloy --scope layout-micro\n  \
          cargo run -p poche-xtask -- spatial nusmv --scope transition-micro\n  \
          cargo run -p poche-xtask -- spatial prolog --scope query-micro\n  \
+         cargo run -p poche-xtask -- spatial compare all --scope micro\n  \
+         cargo run -p poche-xtask -- spatial coverage audit --all\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- oracle report\n  \
@@ -157,37 +159,83 @@ fn usage() {
     );
 }
 
-fn spatial(mut args: impl Iterator<Item = OsString>) -> ExitCode {
-    let backend = args.next();
-    if args.next().as_deref() != Some(OsStr::new("--scope")) {
-        usage();
-        return ExitCode::from(2);
-    }
-    let scope = args.next();
-    if args.next().is_some() {
-        usage();
-        return ExitCode::from(2);
-    }
+fn spatial(args: impl Iterator<Item = OsString>) -> ExitCode {
+    let args = args.collect::<Vec<_>>();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    match (backend.as_deref(), scope.as_deref()) {
-        (Some(backend), Some(scope))
-            if backend == OsStr::new("alloy") && scope == OsStr::new("layout-micro") =>
-        {
-            spatial_alloy(&root)
+    let matches = |expected: &[&str]| {
+        args.len() == expected.len()
+            && args
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| actual == OsStr::new(expected))
+    };
+    if matches(&["alloy", "--scope", "layout-micro"]) {
+        spatial_alloy(&root)
+    } else if matches(&["nusmv", "--scope", "transition-micro"]) {
+        spatial_nusmv(&root)
+    } else if matches(&["prolog", "--scope", "query-micro"]) {
+        spatial_prolog(&root)
+    } else if matches(&["compare", "all", "--scope", "micro"]) {
+        spatial_compare(&root)
+    } else if matches(&["coverage", "audit", "--all"]) {
+        spatial_coverage(&root)
+    } else {
+        usage();
+        ExitCode::from(2)
+    }
+}
+
+fn spatial_compare(root: &Path) -> ExitCode {
+    match compare_spatial_models(root) {
+        Ok(report) => {
+            println!(
+                "spatial comparison: scope={} source_gates={} tracks={} shared_claims={} observations={} unshared_claims={} disagreements={}",
+                report.agreement.comparison_scope_id,
+                report.source_gates,
+                report.agreement.tracks,
+                report.agreement.compared_claims,
+                report.agreement.observations,
+                report.agreement.unshared_claims.len(),
+                report.agreement.disagreements.len()
+            );
+            for track in report.tracks {
+                println!(
+                    "  {:?}: confidence={:?} native_scope={} claims={} qualification={} exclusions={}",
+                    track.backend,
+                    track.confidence,
+                    track.native_scope_id,
+                    track.claims.len(),
+                    track.qualification,
+                    track.exclusions.join("; ")
+                );
+            }
+            for disagreement in report.agreement.disagreements {
+                println!(
+                    "  disagreement {}: {:?}",
+                    disagreement.claim_id, disagreement.observations
+                );
+            }
+            ExitCode::SUCCESS
         }
-        (Some(backend), Some(scope))
-            if backend == OsStr::new("nusmv") && scope == OsStr::new("transition-micro") =>
-        {
-            spatial_nusmv(&root)
+        Err(error) => {
+            eprintln!("spatial comparison failed: {error}");
+            ExitCode::FAILURE
         }
-        (Some(backend), Some(scope))
-            if backend == OsStr::new("prolog") && scope == OsStr::new("query-micro") =>
-        {
-            spatial_prolog(&root)
+    }
+}
+
+fn spatial_coverage(root: &Path) -> ExitCode {
+    match audit_spatial_coverage(root) {
+        Ok(report) => {
+            println!(
+                "spatial coverage audit: obligations={} tracks={} classified_cells={} applicable_cells={}",
+                report.obligations, report.tracks, report.classified_cells, report.applicable_cells
+            );
+            ExitCode::SUCCESS
         }
-        _ => {
-            usage();
-            ExitCode::from(2)
+        Err(error) => {
+            eprintln!("spatial coverage audit failed: {error}");
+            ExitCode::FAILURE
         }
     }
 }

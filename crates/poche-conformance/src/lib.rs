@@ -13,6 +13,8 @@ mod alloy;
 mod nusmv;
 mod prolog;
 mod spatial_alloy;
+mod spatial_compare;
+mod spatial_coverage;
 mod spatial_nusmv;
 mod spatial_prolog;
 
@@ -24,6 +26,10 @@ pub use prolog::{
     compare_rust_prolog,
 };
 pub use spatial_alloy::{SpatialAlloyError, SpatialAlloyReport, check_spatial_alloy_layout_micro};
+pub use spatial_compare::{
+    SpatialComparisonError, SpatialComparisonReport, compare_spatial_models,
+};
+pub use spatial_coverage::{SpatialCoverageError, SpatialCoverageReport, audit_spatial_coverage};
 pub use spatial_nusmv::{
     SpatialNuSmvError, SpatialNuSmvReport, check_spatial_nusmv_transition_micro,
 };

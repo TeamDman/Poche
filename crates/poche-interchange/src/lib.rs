@@ -8,9 +8,11 @@
 //! Poche model. Decode is followed by semantic validation before data is trusted.
 
 mod session;
+mod spatial;
 mod validate;
 mod wire;
 
 pub use session::*;
+pub use spatial::*;
 pub use validate::{ValidatedEvidence, ValidationError};
 pub use wire::*;

@@ -25,6 +25,7 @@ was exhaustive, bounded, symbolic, queried, sampled, or merely empirical.
 - [Bounded spatial Alloy oracle](docs/spatial-alloy.md)
 - [Symbolic spatial NuSMV oracle](docs/spatial-nusmv.md)
 - [Relational spatial Scryer Prolog oracle](docs/spatial-prolog.md)
+- [Neutral spatial conformance and coverage](docs/spatial-coverage.md)
 
 Automatic target-language generation, trustless dealing, host migration,
 production account/matchmaking infrastructure, polished rendering, and RL
@@ -76,6 +77,8 @@ cargo run -p poche-xtask -- session compare all --scope lobby-micro
 cargo run -p poche-xtask --offline -- spatial alloy --scope layout-micro
 cargo run -p poche-xtask --offline -- spatial nusmv --scope transition-micro
 cargo run -p poche-xtask --offline -- spatial prolog --scope query-micro
+cargo run -p poche-xtask --offline -- spatial compare all --scope micro
+cargo run -p poche-xtask --offline -- spatial coverage audit --all
 cargo run -p poche-xtask -- multiplayer smoke --transport in-process
 cargo run -p poche-cli -- --output text transcript replay tests/fixtures/protocol/session-micro-v1.script.ndjson
 ```
