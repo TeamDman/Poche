@@ -84,6 +84,13 @@
     "published_source_pages": 3,
     "published_safe_evidence_files": 3,
     "typst_pdf_bytes": 192974,
+    "wasm_replay": {
+      "locked_wasm32_build": true,
+      "wasm_bindgen": "0.2.126",
+      "javascript_bytes": 73769,
+      "wasm_bytes": 3639904,
+      "authority": "static exact-projection replay only"
+    },
     "native_renderer": {
       "bounded_real_window": true,
       "startup_to_first_update_microseconds": 817288,
@@ -118,7 +125,7 @@
     "qualification": "one current-source diagnostic sample; policy evaluation remains empirical rather than proof"
   },
   "supply_chain_and_secret_gates": {
-    "cargo_lock_sha256": "495a9a127840f17c09ecc0d336532fc88749f5e4a13fc9ccc2b3c092e28dc944",
+    "cargo_lock_sha256": "f9aab186b8192829e1e054c524ad7db069fdecbdfc6627f4dc2011a4c6a876b9",
     "resolved_packages": 1001,
     "workspace_packages": 23,
     "packages_missing_license": 0,

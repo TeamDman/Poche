@@ -95,7 +95,7 @@ source families without hashing generated output or machine paths.
 | nusmv | `blake3:d63cdb5928d4b785dcd6549f4b501b8f3d36477a6d8165bab258e39ca20aabc4` | base and conformance NuSMV sources |
 | prolog | `blake3:df858eeaa772923fd41a4044d0290b79b05de4777077593c4631e5a6507b558c` | Scryer Prolog source |
 | conformance | `blake3:cd6ed0e05782ebfd9a5c3e1cc0bb54a9c28f6f2a5c7174b891986de684f996d2` | native adapters/runners and pairwise comparison implementations |
-| toolchain | `blake3:bf6601dedc983f1ad681d20c3648a42ee93854b0621f88fce47b2a32d8b8032c` | Cargo lock, Rust toolchain, native version pins |
+| toolchain | `blake3:9bffed69237fdd09499bcaf327225d9316e7b2522b8e8c5eb76dc6f9feb76e0f` | Cargo lock, Rust toolchain, native version pins |
 
 Recompute and audit revisions with:
 

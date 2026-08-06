@@ -8714,6 +8714,7 @@ name = "poche-ui"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "getrandom 0.2.17",
  "poche-protocol",
  "poche-rl",
  "poche-runtime",

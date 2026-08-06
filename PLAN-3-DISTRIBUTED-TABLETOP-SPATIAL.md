@@ -1829,7 +1829,8 @@ three evidence files, no unresolved publication tokens, a 37,684-byte status
 page, and a 6,203-byte release receipt. All 14 focused xtask tests, strict
 all-target xtask Clippy, formatting, aggregate native-oracle acceptance, seven-
 document relative-link audit, JSON parse/secret check, and `git diff --check`
-pass.
+pass. The receipt grew from the original 6,203 bytes to 6,418 bytes when the
+locked WASM repair evidence was appended during final remote verification.
 
 **Work:**
 
@@ -1856,7 +1857,11 @@ proof claim than the registered receipts.
 
 **Completion notes:** In progress. The first executable release audit detected
 that Phase 3's P3-U1-P3-U38 ledger had no registered declarative audit profile;
-this task is repairing that omission before any completion claim.
+the repaired profile now passes with 38 individual mappings and regression
+tests. Remote verification then exposed the pre-existing Pages failure at
+`getrandom` 0.2's missing WASM JavaScript backend. A target-only feature
+unification fixes the exact locked Pages library build locally; remote proof is
+still pending before completion.
 
 **Work:**
 
