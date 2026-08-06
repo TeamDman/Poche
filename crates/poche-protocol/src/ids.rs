@@ -70,6 +70,14 @@ text_identifier!(
     PrincipalId
 );
 text_identifier!(
+    /// Stable application device-key identifier, distinct from transport IDs.
+    DeviceId
+);
+text_identifier!(
+    /// Stable player-root-issued device certificate identifier.
+    CertificateId
+);
+text_identifier!(
     /// Idempotency identifier for one command.
     CommandId
 );

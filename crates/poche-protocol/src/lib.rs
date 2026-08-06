@@ -16,11 +16,13 @@
 mod codec;
 mod governance;
 mod ids;
+mod replication;
 mod secret;
 mod types;
 
 pub use codec::*;
 pub use governance::*;
 pub use ids::*;
+pub use replication::*;
 pub use secret::SecretKeyMaterial;
 pub use types::*;

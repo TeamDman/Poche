@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 5.1, freeze player/device identity and replicated-log semantics
+**Current implementation focus:** 5.2, deterministic convergence, partition, reconnect, and kick recovery
 
 ## How to update this plan
 
@@ -260,8 +260,8 @@ inferred merely from using Veilid.
 | G2 | Which player counts get concrete spatial layouts now, independently of current two-player game/RL specs? | Layout matrix and formal scopes name every supported/unsupported count. | Closed by ADR 0005: spatial layouts 2-8; game/RL/formal scopes remain independent |
 | G3 | Does native 3D use Bevy, which exact published version/features, and how is Slug reused without a dirty path dependency? | ADR, license audit, compile probe, and renderer boundary precede 8.1. | Closed by ADR 0005: Bevy 0.19 `3d` leaf adapter; provenance-pinned MPL-2.0 `poche-slug` extraction |
 | G4 | Which geometry is encoded directly in Alloy/NuSMV/Prolog versus precomputed by Rust? | Formal claims state finite grid/zone abstraction and never imply mesh/real proof. | Closed by tasks 3.1-3.4: finite cells, endpoints, and ground relations only; continuous renderer excluded |
-| G5 | What replicated-log algorithm, membership epoch, fork rule, quorum, leaderlessness/temporary coordinator, and liveness assumptions define experimental consensus? | Model/check convergence, safety, partitions, stale devices, and recovery before network advertising. | Open in 5.1 |
-| G6 | How do player roots authorize multiple device keys, and how do add/revoke/loss/browser export work? | Exact signing vectors, projection scope, simultaneous-device and revocation tests. | Open in 5.1 |
+| G5 | What replicated-log algorithm, membership epoch, fork rule, quorum, leaderlessness/temporary coordinator, and liveness assumptions define experimental consensus? | Model/check convergence, safety, partitions, stale devices, and recovery before network advertising. | Closed by ADR 0007: accountable crash-fault strict-player-majority prevote/precommit log; deterministic rotating proposer; joint epochs; fork halt/evidence; partial-synchrony liveness |
+| G6 | How do player roots authorize multiple device keys, and how do add/revoke/loss/browser export work? | Exact signing vectors, projection scope, simultaneous-device and revocation tests. | Closed by ADR 0007: existing principal bytes are root identity; root-signed per-device keys; one vote/player; local default; gateway custody disclosed and export-and-rotate |
 | G7 | Which published mental-poker construction and threat assumptions cover fair shuffle/deal/reveal, collusion, active cheating, and dropout? | No implementation or fairness claim before primary-source review and vectors. | Open in 6.1 |
 | G8 | What proposal/vote quorum, eligibility snapshot, timeout, tie, accused-member tally, and kick/redeal/end semantics apply? | Rust/formal fixtures cover out-of-turn recovery and visible non-counting votes. | Closed by task 4.3: strict majority of a proposal-time active eligibility snapshot; visible excluded votes; logical deadline rejection; exact capability alternative |
 | G9 | What exactly does a gateway know/do; which keys stay in-browser; and when are HTTP+SSE, WSS, WebTransport, or direct Veilid used? | Threat/topology matrix, reconnect evidence, and no false anonymity/directness claim. | Open in 7.1 |
@@ -981,7 +981,54 @@ score grant/removal, and attempts to amend the finite card universe.
 
 ## Phase 5 — Add player/device identity and replicated event authority
 
-### [~] 5.1 Freeze player/device identity and replicated-log semantics
+### [x] 5.1 Freeze player/device identity and replicated-log semantics
+
+**Completion notes:** Completed 2026-08-05. ADR 0007 closes G5/G6 and
+separates unchanged host-authoritative protocol v1 from experimental
+`poche-replicated-v1`. The latter is explicitly an accountable crash-fault
+protocol, not an unconditional Byzantine-consensus claim. Any device may
+gossip a semantic command proposal, while a deterministic rotating proposer
+packages one canonical batch per height/round. Players prevote/precommit and
+lock values; voting power is one per active player regardless of device count.
+A strict player majority (`floor(N/2)+1`) certifies an event. Membership changes
+require old/new joint majority, and logical round changes—not reducer clocks—
+drive liveness under eventual delivery, a connected majority, and an
+eventually responsive proposer.
+
+Two conflicting certificates for one parent/height are signed fork evidence;
+replicas halt at the last common head instead of selecting an arrival-order or
+smallest-hash winner after users were told an effect committed. An explicit
+new-session fork may preserve player agency but does not rewrite old-room
+finality. The ADR states the unavoidable two-player partition boundary: quorum
+is two, so one survivor cannot safely distinguish a disconnect from a 1-1
+partition. Three players tolerate one crash only under non-equivocation; no
+less-than-one-third Byzantine guarantee is advertised. Tendermint/HotStuff and
+RFC 8032 are retained as primary design references, not used to launder a
+security claim for the smaller implementation.
+
+Added versioned player-root, device-certificate/revocation, custody,
+capability, candidate, vote, commit-certificate, membership-transition,
+replicated-event, and certified-snapshot shapes. `PrincipalId` bytes remain the
+player root; network identities migrate through a domain-separated legacy self
+device certificate. Native/browser-local custody is the default.
+Gateway-custodied keys are visibly degraded, grant no extra player vote, and
+move to another device only through export-and-rotate plus revocation. Root
+loss has no invented recovery scheme in v1. Veilid node IDs/routes remain
+transport metadata.
+
+The protocol suite pins actual Ed25519 certificate/candidate/vote signatures
+and BLAKE3 candidate, commit, and snapshot vectors, verifies signatures with
+fixed keys, rejects domain/key changes, enforces sorted bounded capabilities
+and commands, and proves two devices cannot form two player votes. The pure
+session boundary requires an explicit cryptographic verifier port, validates
+root/device capabilities, deterministic proposer, strict/joint quorum,
+next-epoch revocation, idempotent commit, snapshot/head binding, and retained
+fork evidence. Four replicated session fixtures cover multi-device counting,
+majority/weak certificates, joint kick/revocation, snapshot mismatch boundary,
+conflict halt, and the two-player quorum limit. The prescribed three protocol
+device tests and four session replicated tests pass offline; strict Clippy
+passes. Phase 5.2 remains responsible for the full delivery/reorder/partition
+runtime and persistent historical roster/lock machinery.
 
 **Work:**
 
@@ -1004,7 +1051,7 @@ cargo test -p poche-session replicated
 **Completion criteria:** Exact signing/certificate/event vectors and migration
 fixtures close G5/G6 before network or hidden-card code depends on them.
 
-### [ ] 5.2 Implement deterministic convergence, partition, reconnect, and kick recovery
+### [~] 5.2 Implement deterministic convergence, partition, reconnect, and kick recovery
 
 **Work:**
 
