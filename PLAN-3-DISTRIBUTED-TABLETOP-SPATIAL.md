@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 6.2, implement the bounded hidden-card transcript prototype
+**Current implementation focus:** 6.3, compose cryptographic aborts with governance recovery
 
 ## How to update this plan
 
@@ -1222,7 +1222,36 @@ names every assumption and unsupported case, and provides a bounded prototype
 plan. If no construction satisfies dropout requirements, trustless mode remains
 research-only and the plan says so plainly.
 
-### [~] 6.2 Implement shuffle/deal/hold/play/reveal verification
+### [x] 6.2 Implement shuffle/deal/hold/play/reveal verification
+
+**Completion notes:** Completed 2026-08-05. Added the MPL-2.0
+`poche-crypto-prototype` crate with exact `ziffle = "=0.1.0"` and
+`ark-serialize = "=0.5.0"` dependencies. `RoundContext` length-frames
+`POCHE\0MENTAL-POKER\0V0`, bounded room/session/epoch/round, the strictly sorted
+2-to-51-player roster, and the canonical standard-deck schema hash. Exact-size
+canonical decoders cover key/ownership proofs, 3,432-byte encrypted decks,
+5,547-byte shuffle proofs, and card-specific reveal tokens/proofs. Remote-style
+byte round-trips are followed by ownership, sequential shuffle, DLEQ reveal,
+hash-chain, roster-order, and context verification rather than trusting the
+producer's Rust values.
+
+The honest three-player deterministic corpus performs three full-deck
+Bayer-Groth contributions, privately deals an opaque position, emits a public
+receipt containing neither card nor shares, publishes verifiable play evidence,
+and reveals/audits all 52 positions as exactly card codes `0..52`. Its stable
+context/key/shuffle/reveal corpus digest is
+`blake3:64a237dfcec61a71ec16bab96a7219b4a5079ab123395887d08a4affc6ab17a6`.
+Negative controls reject tampered shuffle proof bytes, rehashed tampering,
+wrong-position metadata, cryptographically wrong-position proofs, wrong-round
+key replay, duplicate position assignment, forged duplicate plaintext claims,
+unbounded context fields, and the `n-1` incomplete-share case. The incomplete
+case proves the wrapper gate only, not cryptographic secrecy. `PlayerSecret`
+debug output is redacted and ziffle zeroizes its underlying secret on drop;
+seeded ChaCha appears only in labelled vectors, while real peers must supply a
+production CSPRNG. `docs/hidden-card-prototype.md` records that private-share
+recipient encryption remains a transport responsibility and the upstream
+security review is still mandatory. All three focused tests (including the
+complete audit), doctests, formatting, and strict Clippy pass offline.
 
 **Work:**
 
@@ -1246,7 +1275,7 @@ cargo clippy -p poche-crypto-prototype --all-targets --offline -- -D warnings
 wrong-card reveal, duplicate-card, and privacy-redaction vectors behave exactly
 as ADR 0008 claims.
 
-### [ ] 6.3 Implement dropout and governance recovery around cryptographic rounds
+### [~] 6.3 Implement dropout and governance recovery around cryptographic rounds
 
 **Work:**
 

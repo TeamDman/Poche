@@ -1,0 +1,22 @@
+[package]
+name = "poche-crypto-prototype"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+ark-serialize.workspace = true
+blake3.workspace = true
+poche-domain = { path = "../poche-domain" }
+rand.workspace = true
+ziffle.workspace = true
+
+[dev-dependencies]
+rand_chacha.workspace = true
+
+[lints]
+workspace = true
