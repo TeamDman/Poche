@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 4.2, implement retrospective rule findings and accusation evidence
+**Current implementation focus:** 4.3, implement proposals, votes, recovery, and permitted amendments
 
 ## How to update this plan
 
@@ -865,7 +865,40 @@ cargo test -p poche-cli command
 `/play-card ...`, accusation, and rights commands have one stable typed meaning,
 help/codec/parser fixtures, and explicit authorization consequences.
 
-### [~] 4.2 Implement retrospective rule findings and accusation evidence
+### [x] 4.2 Implement retrospective rule findings and accusation evidence
+
+**Completion notes:** Completed 2026-08-05. Added the append-only
+`RetrospectiveAudit` evidence subsystem without weakening or replacing strict
+`Game`. Every recorded action has a stable event ID, global logical sequence,
+round ID, actor, typed bid/play, led suit, exact action-time knowledge, and
+either `Accepted` or `AttemptedStructurallyValid` disposition. The latter means
+hard card identity/ownership/conservation already passed even though Poche
+legality did not commit a game successor. Invalid/duplicate cards, event IDs,
+identifiers, suits, and non-increasing history fail closed. Complete round-end
+remaining-hand disclosures are separately identified evidence events.
+
+The first declarative retrospective rule is `R-TRICK-005`. It confirms an
+off-suit play only by exhibiting a held card of the led suit from immediate
+action-time knowledge, a later same-player public play in the same round, or a
+complete round-end disclosure. Findings link stable rule/finding IDs, offending
+action and disposition, revealing action/disclosure, concrete card, detector,
+and `ImmediateHeldCard`, `DelayedPublicPlay`, or `RoundEndDisclosure`
+confidence. The finding ID derives from rule plus offending action (not
+detector/publication mode), and repeated audits emit nothing twice. The delayed
+inference is explicitly qualified by no intra-round card acquisition plus a
+structurally verified ownership boundary.
+
+Manual accusations contain only accusation/detector/offending-action IDs; the
+caller cannot supply a rule, evidence, confidence, or confirmed bit. The same
+engine returns confirmed or stable unknown-action/not-violation/insufficient-
+evidence outcomes. Exact duplicate accusations replay immutably, conflicting
+ID reuse fails, and an early unfounded accusation cannot be rewritten after
+later evidence. `poche-runtime::process_accusation` is a thin delegation seam,
+not a second rules engine. `docs/retrospective-audit.md` records the proof and
+cryptographic/authority boundaries. The prescribed two session corpus tests
+and one runtime test pass, covering immediate, delayed, round-end, accepted,
+attempted, unfounded, duplicate, manual, and reconstructed deterministic replay;
+full session/runtime regression and strict Clippy also pass.
 
 **Work:**
 
@@ -887,7 +920,7 @@ cargo test -p poche-runtime accusation
 **Completion criteria:** A corpus proves immediate, delayed, round-end,
 unfounded, duplicate, and manually accused cases with deterministic replay.
 
-### [ ] 4.3 Implement proposals, votes, recovery, and arbitrary permitted amendments
+### [~] 4.3 Implement proposals, votes, recovery, and arbitrary permitted amendments
 
 **Work:**
 

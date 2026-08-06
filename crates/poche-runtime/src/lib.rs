@@ -14,6 +14,7 @@ use poche_environment::GameEnvironment;
 use poche_protocol::{CountdownToken, ProtocolFrame, RoomId};
 use poche_session::PureSessionMachine;
 
+mod accusation;
 mod chat;
 mod in_process;
 mod oracle_session;
@@ -22,6 +23,7 @@ mod spatial;
 mod text;
 mod transcript;
 
+pub use accusation::*;
 pub use chat::*;
 pub use in_process::*;
 pub use oracle_session::{OracleSessionGame, OracleSessionGameError};

@@ -13,10 +13,12 @@ use poche_protocol::{CommandEnvelope, DenyReason, PolicyId};
 
 mod machine;
 mod projection;
+mod retrospective;
 mod state;
 
 pub use machine::{SessionMachine, apply, authorize, decide, decide_transport_disconnect};
 pub use projection::*;
+pub use retrospective::*;
 pub use state::*;
 
 /// One enforce or audit-only policy result.

@@ -51,7 +51,10 @@ macro_rules! text_identifier {
                 &self.0
             }
 
-            pub(crate) fn validate(&self) -> bool {
+            /// Return whether this value satisfies the canonical identifier
+            /// refinement after reflection or decoding.
+            #[must_use]
+            pub fn validate(&self) -> bool {
                 is_valid_identifier(&self.0)
             }
         }
@@ -97,6 +100,14 @@ text_identifier!(
 text_identifier!(
     /// Stable governance proposal identifier.
     ProposalId
+);
+text_identifier!(
+    /// Stable retrospective rule-finding identifier.
+    FindingId
+);
+text_identifier!(
+    /// Stable manual-accusation attempt identifier.
+    AccusationId
 );
 
 #[cfg(test)]

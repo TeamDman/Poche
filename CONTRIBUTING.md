@@ -122,6 +122,9 @@ does not parse text or open a socket. See
 Slash text, GUI controls, and future votes must first become the same validated
 `poche-governance-command-v1` AST; see
 [`ADR 0006`](docs/decisions/0006-typed-commands-and-legality-policy.md).
+Accepted and structurally verified attempted actions share the evidence model
+described in [`retrospective-audit.md`](docs/retrospective-audit.md); callers
+cannot supply their own finding outcome.
 
 ## Native tools and reproducible commands
 

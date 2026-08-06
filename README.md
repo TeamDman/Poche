@@ -27,6 +27,7 @@ was exhaustive, bounded, symbolic, queried, sampled, or merely empirical.
 - [Relational spatial Scryer Prolog oracle](docs/spatial-prolog.md)
 - [Neutral spatial conformance and coverage](docs/spatial-coverage.md)
 - [Typed command and legality-policy decision](docs/decisions/0006-typed-commands-and-legality-policy.md)
+- [Retrospective action audit](docs/retrospective-audit.md)
 
 Automatic target-language generation, trustless dealing, host migration,
 production account/matchmaking infrastructure, polished rendering, and RL
