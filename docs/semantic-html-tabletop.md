@@ -21,6 +21,14 @@ The adapter resolves that ID to `CommandPayload`, and the ordinary session,
 game, audit, or governance reducer decides whether it applies. Neither HTML nor
 CSS position is game authority.
 
+At the bottom of each page, a server-derived SVG highlights the independent
+room, viewer-transport, and game-phase states. A read-only copy-safe diagnostic
+summary carries the authority incarnation/revision, public state, available
+commands, public history, and viewer-local events while omitting join codes,
+chat contents, and private card faces. See
+[runtime diagnostics and formal workers](runtime-diagnostics-and-formal-workers.md)
+for the evidence-strength and capable-peer boundary.
+
 ## Shared scene evidence
 
 `poche_ui::embedded_spatial_fixture` selects the checked exact-recipient replay

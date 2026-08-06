@@ -234,6 +234,8 @@ pub fn build_vertical_slice(root: &Path) -> Result<VerticalSliceBuildReport, Sli
         fixture.presentation.clone(),
         LiveClientInput {
             room_id: "checked-spatial-replay".to_owned(),
+            authority_instance: "static-vertical-slice/0".to_owned(),
+            authority_revision: 0,
             room_code: None,
             join_proof: None,
             seat_count: fixture.layout.id().players(),

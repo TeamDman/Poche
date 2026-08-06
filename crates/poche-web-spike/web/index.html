@@ -48,6 +48,48 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
         border: 1px solid currentColor;
         border-radius: 0.2rem;
       }
+
+      .diagnostic-context {
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 22rem;
+        padding: 0.75rem;
+        font: 0.85rem/1.4 ui-monospace, monospace;
+      }
+
+      .state-machine-diagram {
+        width: 100%;
+        min-width: 44rem;
+        color: currentColor;
+      }
+
+      .state-machine-diagram .state-node rect {
+        fill: Canvas;
+        stroke: currentColor;
+      }
+
+      .state-machine-diagram .state-node.current rect {
+        fill: #b8efc2;
+        stroke-width: 3;
+      }
+
+      .state-machine-diagram text {
+        fill: currentColor;
+        font: 14px system-ui, sans-serif;
+      }
+
+      .state-machine-diagram .lane-label {
+        font-weight: 700;
+      }
+
+      .state-machine-diagram .state-edge {
+        fill: none;
+        stroke: currentColor;
+      }
+
+      .diagnostics {
+        overflow-x: auto;
+      }
     </style>
   </head>
   <body>
@@ -122,5 +164,28 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
       <p>Select an exact viewer checkpoint above.</p>
     </main>
     </details>
+    <script>
+      async function copyPocheDiagnostic(button) {
+        const target = document.getElementById(button.dataset.copyContext);
+        const status = document.getElementById(button.dataset.copyStatus);
+        if (!target) return;
+        try {
+          await navigator.clipboard.writeText(target.value);
+          if (status) status.textContent = "Copied safe diagnostic context to the clipboard.";
+        } catch (_) {
+          target.focus();
+          target.select();
+          const copied = document.execCommand("copy");
+          if (status) status.textContent = copied
+            ? "Copied safe diagnostic context to the clipboard."
+            : "Clipboard access was unavailable; the diagnostic text is selected for manual copying.";
+        }
+      }
+
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-copy-context]");
+        if (button) void copyPocheDiagnostic(button);
+      });
+    </script>
   </body>
 </html>

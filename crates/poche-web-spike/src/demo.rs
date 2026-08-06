@@ -36,6 +36,8 @@ const UI_VIEWERS: [&str; 4] = [HOST, ALICE, BOB, SPECTATOR];
 /// Stateful local authority used to exercise every live-client surface.
 pub struct LiveDemo {
     authority: InProcessAuthority<OracleSessionGame<2>>,
+    authority_surface: String,
+    authority_incarnation: u64,
     clients: BTreeMap<String, ScriptedClient>,
     latest: BTreeMap<String, ProjectionPayload>,
     projection_history: BTreeMap<String, Vec<ProjectionPayload>>,
@@ -45,8 +47,12 @@ pub struct LiveDemo {
 }
 
 impl LiveDemo {
-    /// Construct an uninitialized room with four browser identities connected.
-    pub fn new() -> Result<Self, String> {
+    /// Construct an independently named authority surface for diagnostics.
+    pub fn named(surface: &str) -> Result<Self, String> {
+        Self::named_at(surface, 0)
+    }
+
+    fn named_at(surface: &str, incarnation: u64) -> Result<Self, String> {
         let mut state = SessionState::pending(room(ROOM)?, principal(CLOCK)?, principal(GAME)?);
         for code in [ALICE_CODE, BOB_CODE, SPECTATOR_CODE] {
             state
@@ -61,6 +67,8 @@ impl LiveDemo {
         }
         Ok(Self {
             authority: InProcessAuthority::new(state, transport),
+            authority_surface: surface.to_owned(),
+            authority_incarnation: incarnation,
             clients,
             latest: BTreeMap::new(),
             projection_history: BTreeMap::new(),
@@ -129,6 +137,8 @@ impl LiveDemo {
             presentation,
             LiveClientInput {
                 room_id: ROOM.to_owned(),
+                authority_instance: self.authority_instance(),
+                authority_revision: self.authority.state.revision,
                 room_code,
                 join_proof,
                 seat_count: 2,
@@ -203,7 +213,12 @@ impl LiveDemo {
 
     /// Reset and prepare a deterministic lobby, countdown, or running game.
     pub fn setup(&mut self, stage: &str) -> Result<String, String> {
-        *self = Self::new()?;
+        let next_incarnation = self.authority_incarnation.saturating_add(1);
+        *self = Self::named_at(&self.authority_surface.clone(), next_incarnation)?;
+        println!(
+            "poche-web-spike event=scenario-reset authority={} stage={stage} revision=0",
+            self.authority_instance()
+        );
         if stage == "pending" {
             return Ok("reset to pending".to_owned());
         }
@@ -328,6 +343,11 @@ impl LiveDemo {
             "TRANSPORT",
             "transport lost; reconnect is available",
         );
+        println!(
+            "poche-web-spike event=transport-lost authority={} viewer={viewer} revision={}",
+            self.authority_instance(),
+            self.authority.state.revision
+        );
         Ok(format!("disconnected {viewer}"))
     }
 
@@ -411,6 +431,10 @@ impl LiveDemo {
                 format!("disconnected; revision {}", outcome.revision)
             }
         };
+        println!(
+            "poche-web-spike event=authority-decision authority={} viewer={viewer} command={command_id} outcome=\"{status}\"",
+            self.authority_instance()
+        );
         self.push_notice(viewer, "COMMAND", &status);
         if drive_environment {
             self.drive_environment()?;
@@ -535,6 +559,13 @@ impl LiveDemo {
             notices.remove(0);
         }
     }
+
+    fn authority_instance(&self) -> String {
+        format!(
+            "{}@{}#{}",
+            ROOM, self.authority_surface, self.authority_incarnation
+        )
+    }
 }
 
 fn session_room_phase(phase: &SessionPhase<OracleSessionGame<2>>) -> RoomPhase {
@@ -634,12 +665,16 @@ mod tests {
 
     #[test]
     fn full_live_demo_uses_typed_controls_and_exact_projection_histories() {
-        let mut demo = LiveDemo::new().expect("demo");
-        assert_eq!(demo.view(HOST).unwrap().projection.members.len(), 0);
+        let mut demo = LiveDemo::named("test-live").expect("demo");
+        let pending = demo.view(HOST).expect("pending view");
+        assert_eq!(pending.projection.members.len(), 0);
+        assert_eq!(pending.authority_revision, 0);
         assert!(demo.view(HOST).unwrap().command("create-room").is_some());
         demo.setup("running").expect("running setup");
         let alice = demo.view(ALICE).expect("alice view");
         let spectator = demo.view(SPECTATOR).expect("spectator view");
+        assert_ne!(alice.authority_instance, pending.authority_instance);
+        assert!(alice.authority_revision > pending.authority_revision);
         assert_eq!(alice.projection.room_phase, RoomPhase::Running);
         assert!(alice.projection.own_hand.is_some());
         assert!(spectator.projection.own_hand.is_none());
@@ -650,7 +685,7 @@ mod tests {
 
     #[test]
     fn pause_chat_grant_revoke_and_reconnect_cross_real_authority() {
-        let mut demo = LiveDemo::new().expect("demo");
+        let mut demo = LiveDemo::named("test-live").expect("demo");
         demo.setup("running").expect("running setup");
         demo.control(ALICE, "pause").expect("pause");
         assert_eq!(
@@ -680,7 +715,7 @@ mod tests {
 
     #[test]
     fn countdown_abort_and_authority_policy_are_independent_of_control_visibility() {
-        let mut demo = LiveDemo::new().expect("demo");
+        let mut demo = LiveDemo::named("test-live").expect("demo");
         demo.setup("countdown").expect("countdown setup");
         demo.control(ALICE, "abort-countdown").expect("abort");
         assert_eq!(
@@ -702,7 +737,7 @@ mod tests {
 
     #[test]
     fn spectator_network_history_is_exact_before_during_and_after_a_grant() {
-        let mut demo = LiveDemo::new().expect("demo");
+        let mut demo = LiveDemo::named("test-live").expect("demo");
         demo.setup("running").expect("running setup");
         assert_all_projection_frames_hide_hands(&demo, SPECTATOR);
         let ungranted = demo.view(SPECTATOR).expect("ungranted view");

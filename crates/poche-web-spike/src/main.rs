@@ -623,9 +623,9 @@ fn tabletop_page(state: &AppState, viewer: &str) -> Result<String, String> {
         .map_err(|error| format!("shared fixture hash failed: {error:?}"))?;
     Ok(format!(
         r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Poche semantic tabletop</title><style>
-body{{font-family:system-ui,sans-serif;max-width:76rem;margin:auto;padding:1rem;background:#f5f1e8;color:#211b16}}nav,.actions,.hand{{display:flex;gap:.6rem;flex-wrap:wrap}}section{{background:#fff;padding:1rem;margin:1rem 0;border-radius:.5rem}}table{{border-collapse:collapse;width:100%}}th,td{{text-align:left;border-bottom:1px solid #ccc;padding:.35rem}}button{{font:inherit;padding:.55rem .8rem}}#play-target{{border:2px dashed #735f3d;padding:2rem;text-align:center;margin-top:1rem}}code{{overflow-wrap:anywhere}}
-</style></head><body><nav aria-label="Viewer projections"><a href="/tabletop/alice">Alice</a><a href="/tabletop/bob">Bob</a><a href="/tabletop/spectator">Spectator</a><a href="/">Web experiments</a></nav><aside><p>Native/HTML shared acceptance fixture: <code data-role="native-fixture-hash">{fixture_hash}</code>. This live page has its own exact-recipient fingerprint below.</p></aside>{projection}<form method="post" action="/tabletop/{viewer}/disconnect"><button type="submit">Simulate transport loss</button></form><script>
-let dragged=null;document.addEventListener('dragstart',event=>{{dragged=event.target.closest('[data-command-id]')?.dataset.commandId||null}});let target=document.querySelector('#play-target');if(target){{target.addEventListener('dragover',event=>event.preventDefault());target.addEventListener('drop',async event=>{{event.preventDefault();if(!dragged)return;await fetch('/tabletop/{viewer}/action/'+encodeURIComponent(dragged),{{method:'POST'}});location.reload()}})}}
+body{{font-family:system-ui,sans-serif;max-width:76rem;margin:auto;padding:1rem;background:#f5f1e8;color:#211b16}}nav,.actions,.hand{{display:flex;gap:.6rem;flex-wrap:wrap}}section{{background:#fff;padding:1rem;margin:1rem 0;border-radius:.5rem}}table{{border-collapse:collapse;width:100%}}th,td{{text-align:left;border-bottom:1px solid #ccc;padding:.35rem}}button{{font:inherit;padding:.55rem .8rem}}#play-target{{border:2px dashed #735f3d;padding:2rem;text-align:center;margin-top:1rem}}code{{overflow-wrap:anywhere}}.diagnostic-context{{box-sizing:border-box;width:100%;min-height:22rem;padding:.75rem;font:.85rem/1.4 ui-monospace,monospace}}.state-machine-diagram{{width:100%;min-width:44rem;color:currentColor}}.state-machine-diagram .state-node rect{{fill:#fff;stroke:currentColor}}.state-machine-diagram .state-node.current rect{{fill:#b8efc2;stroke-width:3}}.state-machine-diagram text{{fill:currentColor;font:14px system-ui,sans-serif}}.state-machine-diagram .lane-label{{font-weight:700}}.state-machine-diagram .state-edge{{fill:none;stroke:currentColor}}.diagnostics{{overflow-x:auto}}
+</style></head><body><nav aria-label="Viewer projections"><a href="/tabletop/alice">Alice</a><a href="/tabletop/bob">Bob</a><a href="/tabletop/spectator">Spectator</a><a href="/">Web experiments</a><a href="/tabletop/{viewer}">Refresh this viewer</a></nav><aside><p>Native/HTML shared acceptance fixture: <code data-role="native-fixture-hash">{fixture_hash}</code>. This live page has its own exact-recipient fingerprint below.</p></aside>{projection}<form method="post" action="/tabletop/{viewer}/disconnect"><button type="submit">Simulate transport loss</button></form><script>
+async function copyPocheDiagnostic(button){{const target=document.getElementById(button.dataset.copyContext);const status=document.getElementById(button.dataset.copyStatus);if(!target)return;try{{await navigator.clipboard.writeText(target.value);if(status)status.textContent='Copied safe diagnostic context to the clipboard.'}}catch(_){{target.focus();target.select();const copied=document.execCommand('copy');if(status)status.textContent=copied?'Copied safe diagnostic context to the clipboard.':'Clipboard access was unavailable; the diagnostic text is selected for manual copying.'}}}}document.addEventListener('click',event=>{{const button=event.target.closest('[data-copy-context]');if(button)void copyPocheDiagnostic(button)}});let dragged=null;document.addEventListener('dragstart',event=>{{dragged=event.target.closest('[data-command-id]')?.dataset.commandId||null}});let target=document.querySelector('#play-target');if(target){{target.addEventListener('dragover',event=>event.preventDefault());target.addEventListener('drop',async event=>{{event.preventDefault();if(!dragged)return;await fetch('/tabletop/{viewer}/action/'+encodeURIComponent(dragged),{{method:'POST'}});location.reload()}})}}
 </script></body></html>"#
     ))
 }
@@ -668,7 +668,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         replay: Arc::new(ReplayDeck::from_json(EMBEDDED_REPLAY)?),
         rl_episode: Arc::new(selected_rl_episode()?),
         authority: Arc::new(Mutex::new(AuthorityHost::new()?)),
-        live: Arc::new(Mutex::new(LiveDemo::new()?)),
+        live: Arc::new(Mutex::new(LiveDemo::named("main-live")?)),
         gateway: GatewayLab::new()?,
         gateway_live: Arc::new(Mutex::new(gateway_demo()?)),
         tabletop: Arc::new(Mutex::new(TabletopLab::new()?)),
@@ -683,7 +683,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn gateway_demo() -> Result<LiveDemo, String> {
-    let mut demo = LiveDemo::new()?;
+    let mut demo = LiveDemo::named("browser-gateway")?;
     demo.setup("running")?;
     demo.control("spectator", "request-hand-0")?;
     Ok(demo)
@@ -787,7 +787,7 @@ mod tests {
 
     #[test]
     fn live_html_keeps_typed_payloads_and_invite_proofs_server_side() {
-        let demo = LiveDemo::new().expect("demo");
+        let demo = LiveDemo::named("test-live").expect("demo");
         let alice = live_html(&demo, "alice").expect("alice live view");
         assert!(alice.contains("POCHE-LAB-ALICE"));
         assert!(alice.contains("data-command-id=\"join-room\""));

@@ -41,6 +41,7 @@ symbolic, queried, sampled, experimental, or merely empirical.
 - [Bounded verifiable hidden-card prototype decision](docs/decisions/0008-hidden-card-prototype.md)
 - [Routed room codes and gateway trust decision](docs/decisions/0009-routed-room-codes-and-gateway-trust.md)
 - [Signed browser-device HTTP/SSE gateway evidence](docs/browser-device-gateway.md)
+- [Runtime diagnostics and formal-worker capability boundary](docs/runtime-diagnostics-and-formal-workers.md)
 - [Secure-browser Veilid feasibility re-evaluation](docs/veilid-browser-feasibility.md)
 - [Replicated runtime convergence scenario](docs/replicated-runtime.md)
 - [Replicated consensus formal evidence and coverage](docs/consensus-coverage.md)

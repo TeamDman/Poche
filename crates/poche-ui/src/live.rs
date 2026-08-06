@@ -40,6 +40,10 @@ pub struct TypedUiControl {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LiveClientInput {
     pub room_id: String,
+    /// Stable label for the concrete authority incarnation serving this view.
+    pub authority_instance: String,
+    /// Current committed authority revision for stale-tab diagnostics.
+    pub authority_revision: u64,
     pub room_code: Option<String>,
     pub join_proof: Option<InviteProof>,
     pub seat_count: u8,
@@ -57,6 +61,8 @@ pub struct LiveClientInput {
 pub struct LiveClientPresentation {
     pub projection: PresentationModel,
     pub room_id: String,
+    pub authority_instance: String,
+    pub authority_revision: u64,
     pub room_code: Option<String>,
     pub hand_requests: Vec<HandRequestPresentation>,
     pub hand_grants: Vec<HandGrantPresentation>,
@@ -73,6 +79,8 @@ impl LiveClientPresentation {
         Self {
             projection,
             room_id: input.room_id,
+            authority_instance: input.authority_instance,
+            authority_revision: input.authority_revision,
             room_code: input.room_code,
             hand_requests: input.hand_requests,
             hand_grants: input.hand_grants,
@@ -416,6 +424,8 @@ mod tests {
     fn live_input() -> LiveClientInput {
         LiveClientInput {
             room_id: "room".to_owned(),
+            authority_instance: "test-live/0".to_owned(),
+            authority_revision: 7,
             room_code: Some("CODE".to_owned()),
             join_proof: None,
             seat_count: 2,

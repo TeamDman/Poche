@@ -8,6 +8,7 @@
 //! It cannot inspect the authoritative session state and therefore cannot
 //! accidentally turn UI filtering into the private-hand security boundary.
 
+mod diagnostic;
 mod live;
 mod presentation;
 mod replay;
@@ -17,6 +18,7 @@ mod tabletop_html;
 #[cfg(feature = "egui")]
 mod widgets;
 
+pub use diagnostic::*;
 pub use live::*;
 pub use presentation::*;
 pub use replay::*;

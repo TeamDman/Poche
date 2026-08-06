@@ -4,7 +4,10 @@
 
 use std::fmt::Write;
 
-use crate::{HandPresentation, LiveClientPresentation, PresentationModel, action_label};
+use crate::{
+    HandPresentation, LiveClientPresentation, PresentationModel, action_label,
+    render_live_diagnostics,
+};
 
 /// Render a semantic HTML fragment from the same deterministic model as egui.
 ///
@@ -114,16 +117,27 @@ pub fn render_semantic_html_with_root_id(model: &PresentationModel, root_id: &st
         html.push_str("</ol></section>");
     }
 
+    render_client_events(&mut html, model);
+    html.push_str("</main>");
+    html
+}
+
+fn render_client_events(html: &mut String, model: &PresentationModel) {
+    if model.notices.is_empty() {
+        return;
+    }
+    html.push_str(
+        "<section aria-label=\"Client event history\"><h3>Client event history</h3><p>These events belong to this viewer and are separate from the shared public game history.</p><ol>",
+    );
     for notice in &model.notices {
         let _ = write!(
             html,
-            "<p role=\"alert\"><strong>{}</strong>: {}</p>",
+            "<li><strong>{}</strong>: {}</li>",
             escape_html(&notice.reason_code),
             escape_html(&notice.message)
         );
     }
-    html.push_str("</main>");
-    html
+    html.push_str("</ol></section>");
 }
 
 /// Render the complete live-client shell around an exact viewer projection.
@@ -140,9 +154,11 @@ pub fn render_live_semantic_html(
     let mut html = format!("<article id=\"{}\">", escape_html(root_id));
     let _ = write!(
         html,
-        "<header><h2>Live room client</h2><dl><dt>Identity</dt><dd>{}</dd><dt>Room</dt><dd>{}</dd></dl>",
+        "<header><h2>Live room client</h2><dl><dt>Identity</dt><dd>{}</dd><dt>Room label</dt><dd>{}</dd><dt>Authority instance</dt><dd><code>{}</code></dd><dt>Authority revision</dt><dd>{}</dd></dl>",
         escape_html(&live.projection.viewer),
-        escape_html(&live.room_id)
+        escape_html(&live.room_id),
+        escape_html(&live.authority_instance),
+        live.authority_revision,
     );
     if let Some(code) = &live.room_code {
         let _ = write!(html, "<p>Join code: <code>{}</code></p>", escape_html(code));
@@ -195,6 +211,13 @@ pub fn render_live_semantic_html(
         }
         html.push_str("</div></section>");
     }
+    if let Some(refresh_endpoint) = command_endpoint.strip_suffix("/command") {
+        let _ = write!(
+            html,
+            "<p><button type=\"button\" data-on:click=\"@get('{}')\">Refresh this viewer from the authority</button></p>",
+            escape_html(refresh_endpoint)
+        );
+    }
     if let Some(href) = &live.transcript_href {
         let _ = write!(
             html,
@@ -212,6 +235,10 @@ pub fn render_live_semantic_html(
     html.push_str(&render_semantic_html_with_root_id(
         &live.projection,
         &format!("{root_id}-projection"),
+    ));
+    html.push_str(&render_live_diagnostics(
+        live,
+        &format!("{root_id}-diagnostics"),
     ));
     html.push_str("</article>");
     html
@@ -293,6 +320,7 @@ mod tests {
         assert!(html.contains("alice&amp;bob"));
         assert!(html.contains("&lt;script&gt;alert(&#39;no&#39;)&lt;/script&gt;"));
         assert!(html.contains("&quot;quoted&quot;"));
+        assert!(html.contains("Client event history"));
         assert!(!html.contains("<script>"));
     }
 
@@ -318,6 +346,8 @@ mod tests {
             projection,
             LiveClientInput {
                 room_id: "room".to_owned(),
+                authority_instance: "semantic-html-test/0".to_owned(),
+                authority_revision: 0,
                 room_code: Some("DISPLAY-CODE".to_owned()),
                 join_proof: Some(InviteProof::new("runtime-only-secret").unwrap()),
                 seat_count: 2,
@@ -335,6 +365,9 @@ mod tests {
         assert!(html.contains("Join with room code"));
         assert!(html.contains("DISPLAY-CODE"));
         assert!(html.contains("data-command-id=\"join-room\""));
+        assert!(html.contains("What state am I in?"));
+        assert!(html.contains("POCHE DIAGNOSTIC CONTEXT v1"));
+        assert!(html.contains("Copy diagnostic context"));
         assert!(!html.contains("runtime-only-secret"));
     }
 }

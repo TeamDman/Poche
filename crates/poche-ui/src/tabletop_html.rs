@@ -9,7 +9,7 @@ use core::fmt::Write as _;
 use poche_protocol::{CommandPayload, GameActionWire};
 use poche_spatial::{CardLocation, SpatialScene, spatial_scene_hash_hex};
 
-use crate::{LiveClientPresentation, escape_html};
+use crate::{LiveClientPresentation, escape_html, render_live_diagnostics};
 
 /// One rule-audit result safe for the current exact recipient.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,6 +83,10 @@ pub fn render_tabletop_semantic_html(
     render_controls(&mut html, live, prefix);
     render_history_and_chat(&mut html, live);
     render_governance(&mut html, live, supplement, prefix);
+    html.push_str(&render_live_diagnostics(
+        live,
+        &format!("{root_id}-diagnostics"),
+    ));
     html.push_str("</main>");
     Ok(html)
 }
@@ -322,6 +326,8 @@ mod tests {
             fixture.presentation,
             LiveClientInput {
                 room_id: "fixture-room".to_owned(),
+                authority_instance: "tabletop-test/0".to_owned(),
+                authority_revision: 0,
                 room_code: None,
                 join_proof: None,
                 seat_count: fixture.layout.id().players(),
@@ -345,6 +351,8 @@ mod tests {
         let hash = spatial_scene_hash_hex(&fixture.scene).expect("hash");
         assert!(html.contains(&format!("data-scene-hash=\"{hash}\"")));
         assert!(html.contains("Score sheet and seats"));
+        assert!(html.contains("What state am I in?"));
+        assert!(html.contains("Copy diagnostic context"));
         assert!(html.contains("draggable=\"true\"") || html.contains("not currently legal"));
         let visible_faces = fixture
             .scene

@@ -32,7 +32,7 @@ pub struct TabletopLab {
 
 impl TabletopLab {
     pub fn new() -> Result<Self, String> {
-        let mut demo = LiveDemo::new()?;
+        let mut demo = LiveDemo::named("semantic-tabletop")?;
         demo.setup("playing")?;
         let mut audit = RetrospectiveAudit::default();
         audit
