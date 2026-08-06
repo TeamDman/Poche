@@ -2,7 +2,8 @@
 
 The public “pretty view” is <https://teamdman.github.io/Poche/>. GitHub Pages
 serves a small landing page, a PDF compiled from `docs/main.typ`, and the static
-exact-projection egui/WASM replay; no generated artifact is committed to Git.
+exact-projection egui/WASM replay, engineering status, and checked spatial/
+release evidence; no generated artifact is committed to Git.
 
 ## Format decision
 
@@ -11,6 +12,7 @@ exact-projection egui/WASM replay; no generated artifact is committed to Git.
 | PDF | Published; canonical pretty view | Typst 0.15.1 compiles the complete `charged-ieee` rulebook. CI installs TeX Gyre Termes and Cursor before compiling. |
 | Landing HTML | Published | Hand-authored, accessible navigation to the generated PDF, Typst source, and formal-evidence matrix. CI stamps it with the exact source commit and event time. |
 | Static egui/WASM replay | Published | Rust 1.96.0 and `wasm-bindgen` 0.2.126 build the checked exact-recipient fixture into `replay/`. It contains no authority, room transport, or live Veilid node. |
+| Static spatial evidence | Published | The Rust Pages builder injects the checked typed/drag endpoint and bounded Alloy overlap witness into accessible HTML, then copies only the registered safe JSON receipts. |
 | Live multiplayer | Not hosted by Pages | Direct HTTPS/WSS Veilid failed the G26 gate. The host-colocated Datastar authority is a separately run server; the current deterministic demo is not authenticated production multiplayer. |
 | Native Typst HTML | Evaluated and rejected for this milestone | `typst compile --features html --format html` warns that HTML is experimental and drops the template's page setup, two-column layout, title placement, vertical/horizontal spacing, and explicit alignment. Publishing it would not be a faithful pretty view. |
 
@@ -31,10 +33,11 @@ experimental and warns that templates may not render properly:
   deployment; the previously published page continues to identify the exact
   commit that produced it rather than silently presenting itself as a newer
   build.
-- The Pages artifact contains the landing page, `poche-rules.pdf`, MPL-2.0
-  license, and generated `replay/` HTML/JS/WASM. It contains no live backend,
-  Veilid bundle, invitation, room state, transcript, or private user data. The
-  `site/` build directory and `docs/main.pdf` are ignored.
+- The Pages artifact contains the landing/status/spatial pages,
+  `poche-rules.pdf`, MPL-2.0 license, three checked safe JSON evidence files,
+  and generated `replay/` HTML/JS/WASM. It contains no live backend, Veilid
+  bundle, invitation, room state, private hand transcript, or private user
+  data. The `site/` build directory and `docs/main.pdf` are ignored.
 
 ## Local reproduction
 
@@ -59,6 +62,11 @@ pwsh crates/poche-ui/web/build.ps1 -OutputDirectory site/replay
 
 The deployment and trust distinctions are kept in
 [`deployment-modes.md`](deployment-modes.md).
+
+The current status page links the machine-readable Phase 3 release receipt at
+<https://teamdman.github.io/Poche/evidence/phase-3-release.json>. That receipt
+records scoped formal/runtime/rendering/RL/license evidence and explicit
+non-claims; it is not a live health endpoint.
 
 ## Static replay publication evidence
 

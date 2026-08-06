@@ -1768,7 +1768,35 @@ cargo run -p poche-xtask --offline -- consensus compare all --scope micro
 external infrastructure and research-only claims are explicitly scoped rather
 than skipped silently.
 
-### [~] 9.2 Update public architecture, threat model, rules, and status
+### [x] 9.2 Update public architecture, threat model, rules, and status
+
+**Completion notes:** Completed 2026-08-06. README, the Pages engineering
+status, deployment matrix, protocol-v1 guide, publication guide, contributor
+evidence guide, and new ADR/release indexes now use one explicit strength
+ladder: canonical typed reducers; checked exact spatial refinement; renderer-
+only Bevy/HTML/Slug state; typed prevent/audit/governance modes; host-trusted
+deployment; gateway-facilitated routing; experimental majority/non-equivocation
+replication; research-only unanimously revealed hidden cards; and unsupported
+secure direct-browser Veilid. Stale statements that all trustless dealing and
+host migration were absent have been replaced with the exact bounded prototype
+results and their non-production boundaries.
+
+The public architecture explains that votes can amend scores/rights/recovery
+but cannot create cards, rewrite history, forge principals, or bypass hard
+validation. It distinguishes player roots from independently revocable device
+keys, room locators from membership/event authority, host plaintext from
+browser-local signing agency, cryptographic abort from retrospective rule
+cheating, and session recovery from impossible same-hand secret recovery. The
+release summary links every supporting document and machine receipt.
+
+`pages build` now parses and secret-checks the Phase 3 release receipt before
+publishing it alongside the spatial receipt and normalized Alloy witness;
+GitHub Actions requires all three files. Its fresh build produced three pages,
+three evidence files, no unresolved publication tokens, a 37,684-byte status
+page, and a 6,203-byte release receipt. All 14 focused xtask tests, strict
+all-target xtask Clippy, formatting, aggregate native-oracle acceptance, seven-
+document relative-link audit, JSON parse/secret check, and `git diff --check`
+pass.
 
 **Work:**
 
@@ -1791,7 +1819,7 @@ git diff --check
 contains no stronger anonymity, fairness, liveness, decentralization, or spatial
 proof claim than the registered receipts.
 
-### [ ] 9.3 Complete the guidance audit, commit, push, and remote verification
+### [~] 9.3 Complete the guidance audit, commit, push, and remote verification
 
 **Work:**
 

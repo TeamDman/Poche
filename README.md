@@ -3,13 +3,17 @@
 Poche is an evidence-first card-game system: the rulebook is implemented as
 independent Rust, Alloy, NuSMV, and Scryer Prolog oracles, then composed with a
 typed multiplayer session protocol, viewer-scoped rendering, native Veilid
-transport, and a network-free Burn PPO learning path. Each result records what
-was exhaustive, bounded, symbolic, queried, sampled, or merely empirical.
+transport, checked spatial refinement, typed governance, an experimental
+replicated log, a bounded hidden-card research prototype, and a network-free
+Burn PPO learning path. Each result records what was exhaustive, bounded,
+symbolic, queried, sampled, experimental, or merely empirical.
 
 - [Completed formal-modeling plan](PLAN.md)
 - [Completed multiplayer, rendering, and RL plan](PLAN-2-MULTIPLAYER-RL-RENDERING.md)
-- [Active spatial tabletop and distributed-agency plan](PLAN-3-DISTRIBUTED-TABLETOP-SPATIAL.md)
+- [Completed spatial tabletop and distributed-agency plan](PLAN-3-DISTRIBUTED-TABLETOP-SPATIAL.md)
 - [Contributor and evidence guide](CONTRIBUTING.md)
+- [Architecture decision index](docs/decisions/README.md)
+- [Phase 3 release summary and machine receipt](docs/phase-3-release.md)
 - [Typst rule source](docs/main.typ)
 - [Pretty rules](https://teamdman.github.io/Poche/) — generated from the
   `model-checking` branch by GitHub Pages
@@ -41,9 +45,12 @@ was exhaustive, bounded, symbolic, queried, sampled, or merely empirical.
 - [Replicated runtime convergence scenario](docs/replicated-runtime.md)
 - [Replicated consensus formal evidence and coverage](docs/consensus-coverage.md)
 
-Automatic target-language generation, trustless dealing, host migration,
-production account/matchmaking infrastructure, polished rendering, and RL
-specifications beyond fixed two-player `poche-2p-v1` remain separate work.
+Automatic target-language generation, a security-reviewed dropout-tolerant
+hidden-card protocol, a packaged replicated player client, production account/
+matchmaking infrastructure, polished rendering, and RL specifications beyond
+fixed two-player `poche-2p-v1` remain separate work. Phase 3 contains bounded
+prototypes for replication and mental poker; neither is advertised as a
+production deployment.
 
 ## Architecture
 
@@ -62,7 +69,11 @@ flowchart LR
   codec --> session["Default-deny SessionState reducer"]
   session --> game["Optional GameEnvironment"]
   game --> events["Ordered events + per-viewer projections"]
-  events --> clients["Text replay / egui / native spatial / semantic HTML / Veilid"]
+  events --> spatial["Exact-recipient spatial refinement"]
+  spatial --> clients["Text / egui / Bevy+Slug / semantic HTML / Veilid"]
+
+  command --> governance["Typed audit / proposal / recovery overlay"]
+  governance --> replicated["Experimental certified replicated log"]
 
   rust --> rl["poche-2p-v1 direct batched rollouts"]
   rl --> burn["Burn PPO on CPU or WGPU"]
@@ -77,6 +88,25 @@ the game environment directly, so rollouts do not parse NDJSON or open sockets.
 The exact session-rule matrix is in
 [session-coverage.md](docs/session-coverage.md); the rule/model distinction and
 accepted proof scopes are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Canonical state, spatial input, and rule strength
+
+Typed Poche/session state is the source of truth. A viewer-safe projection can
+be realized into exact integer objects, zones, poses, and semantically attached
+text. A named command or classified drag then resolves back to the same typed
+intent. Bevy entities, arbitrary ECS component combinations, floating-point
+transforms, HTML layout, and Slug glyph placement are presentation/input
+adapters; none can create a card, alter a score, or reveal a face.
+
+Legality is deliberately configurable without weakening structural integrity.
+A room can prevent an illegal move, retain a structurally valid attempt for
+later audit, automatically propose a remedy when new evidence confirms a
+violation, or let a player manually accuse a recorded action. Governance may
+adjust scores/rights or choose kick/redeal/end through typed authority and
+visible voting. It cannot vote new cards into existence, rewrite signed
+history, or forge device identity. See [governance](docs/governance.md),
+[retrospective audit](docs/retrospective-audit.md), and
+[ADR 0006](docs/decisions/0006-typed-commands-and-legality-policy.md).
 
 ## Inspect the system
 
@@ -133,11 +163,20 @@ See [chat](docs/ephemeral-chat.md),
 [viewer projections](docs/viewer-projections.md), and
 [Veilid projection privacy](docs/veilid-projection-privacy.md).
 
-The first multiplayer design is host-authoritative. The host process owns all
-hidden state and can inspect or manipulate it; this is not mental poker,
-consensus, or proof against a cheating host. Application signatures and
+The first deployable multiplayer design is host-authoritative. The host process
+owns all hidden state and can inspect or manipulate it; this is not mental
+poker, consensus, or proof against a cheating host. Application signatures and
 capabilities authorize commands independently of transport identity, but they
 do not hide IP/timing/DHT metadata from the relevant transport participants.
+
+Phase 3 also checks two deliberately narrower alternatives. The experimental
+`poche-replicated-v1` log gives one player several independently revocable
+device keys without additional voting weight and converges only under its named
+majority, delivery, and non-equivocation assumptions. The research-only
+`poche-mental-poker-bg12-v0` prototype verifies full-deck shuffle/deal/reveal,
+but unanimous reveal means one withheld share aborts the current hand; typed
+governance can kick/redeal/end, not recover the missing secret. Neither track
+is a packaged live client or a production security claim.
 
 | Mode | What is proven | Privacy and operational boundary |
 | --- | --- | --- |
@@ -149,6 +188,8 @@ do not hide IP/timing/DHT metadata from the relevant transport participants.
 | Native spatial mirror | Bevy 0.19 renders the checked exact-recipient scene, Slug card/score outlines, typed/drag parity, deterministic tween, and audit bounds in a real release window | Checked replay checkpoint only; not yet a live Veilid player client, physics authority, polished renderer, or input-to-photon measurement |
 | Semantic HTML tabletop | Ordinary landmarks, tables, lists, POST forms, keyboard controls, optional drag/drop, exact-recipient privacy, audit, governance, and reconnect run over the same spatial semantics | Loopback development identities are not production authentication; live authority remains host-colocated and trusted |
 | Published spatial evidence | One checked 185-record NDJSON stream, native/HTML scene fingerprint, Rust-rendered endpoint, and retained bounded Alloy overlap witness | Static composition of registered fixtures and reducers; not one atomic network execution, a live authority, or an unbounded spatial theorem |
+| Experimental replicated log | Multi-device certificates, player-deduplicated quorum, deterministic ordering, snapshot/tail replay, fork evidence, and four-model micro-scope agreement | In-process/formal experiment under majority and non-equivocation assumptions; not Byzantine fault tolerance or a deployed transport |
+| Hidden-card research prototype | Full 52-card verifiable shuffle, private deal receipt, public play reveal, complete audit, tamper vectors, and five governable abort points | Pins experimental unaudited cryptography, requires unanimous shares and external security review, and has no same-hand dropout recovery |
 
 Do not expose the Datastar demo beyond loopback without adding TLS,
 authentication, durable state, abuse controls, and a deployment-specific threat
@@ -196,6 +237,10 @@ cargo run -p poche-xtask --offline -- coverage audit --all
 cargo run -p poche-xtask --offline -- compare all --scope micro
 cargo run -p poche-xtask --offline -- session coverage audit --all
 cargo run -p poche-xtask --offline -- session compare all --scope lobby-micro
+cargo run -p poche-xtask --offline -- session compare all --scope governance-micro
+cargo run -p poche-xtask --offline -- spatial compare all --scope micro
+cargo run -p poche-xtask --offline -- consensus compare all --scope micro
+cargo run -p poche-xtask --offline -- trustless smoke --scenario dropout
 cargo run -p poche-xtask --offline -- multiplayer smoke --transport veilid-local
 ```
 
@@ -204,6 +249,11 @@ public DHT/private-route delivery. The public acceptance command is opt-in and
 requires the exact acknowledgement documented in
 [veilid-native-acceptance.md](docs/veilid-native-acceptance.md); never run it as
 an ordinary test or RL rollout.
+
+The checked Phase 3 release receipt is
+[`docs/evidence/phase-3-release.json`](docs/evidence/phase-3-release.json). It
+records tool versions, formal counts/hashes, renderer and RL diagnostics,
+resolved-license provenance, secret scans, and explicit non-claims.
 
 ## License
 

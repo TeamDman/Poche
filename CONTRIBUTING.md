@@ -126,6 +126,30 @@ Accepted and structurally verified attempted actions share the evidence model
 described in [`retrospective-audit.md`](docs/retrospective-audit.md); callers
 cannot supply their own finding outcome.
 
+Spatial state follows the same authority discipline. `poche-spatial-v1`
+realizes an exact-recipient typed projection into stable objects, integer
+poses, exclusive snap volumes, and explicit text-to-surface attachments. A
+classified drag may resolve to a typed command, but Bevy ECS components,
+floating transforms, DOM positions, pixels, proximity, and Slug glyphs cannot
+become card/score truth. Tests must establish realization/abstraction laws,
+typed/drag commutation, and viewer privacy before a renderer claim is accepted.
+
+There are now three distinct authority/security tracks; do not blend their
+claims:
+
+- host-authoritative protocol v1 is the current live transport design and the
+  host sees all hidden state;
+- experimental `poche-replicated-v1` verifies player-root/device certificates
+  and majority-certified convergence under named delivery/non-equivocation
+  assumptions, but is not Byzantine fault tolerant or a packaged client; and
+- research-only `poche-mental-poker-bg12-v0` verifies a bounded dealerless
+  shuffle/deal/reveal corpus but requires unanimous shares and independent
+  cryptographic review. Governance may abort/redeal/end after a missing share;
+  it cannot reconstruct that share or continue the same hand.
+
+The governing decisions and their exact status are indexed in
+[`docs/decisions/README.md`](docs/decisions/README.md).
+
 ## Native tools and reproducible commands
 
 Pinned versions live in [`tools/versions.toml`](tools/versions.toml). Put the
@@ -160,9 +184,14 @@ Use the smallest command that proves the claim you changed:
 | Session rule/track completeness | `cargo run -p poche-xtask -- session coverage audit --all` |
 | All native session oracles | `cargo run -p poche-xtask -- session oracle check all` |
 | Session cross-model agreement | `cargo run -p poche-xtask -- session compare all --scope lobby-micro` |
+| Governance cross-model agreement | `cargo run -p poche-xtask --offline -- session compare all --scope governance-micro` |
+| Spatial coverage/agreement | `cargo run -p poche-xtask --offline -- spatial coverage audit --all` then `spatial compare all --scope micro` |
+| Replicated consensus coverage/agreement | `cargo run -p poche-xtask --offline -- consensus coverage audit --all` then `consensus compare all --scope micro` |
 | Canonical protocol transcripts | `cargo run -p poche-xtask -- protocol replay --all` |
 | Full no-socket room/game scenario | `cargo run -p poche-xtask -- multiplayer smoke --transport in-process` |
 | Isolated-local Veilid behavior | `cargo run -p poche-xtask --offline -- multiplayer smoke --transport veilid-local` |
+| Hidden-card dropout/recovery matrix | `cargo run -p poche-xtask --offline -- trustless smoke --scenario dropout` |
+| Complete spatial/publication slice | `cargo run -p poche-xtask --offline -- spatial vertical-slice` then `pages build` |
 | RL semantic contract | `cargo run -p poche-xtask --offline -- rl spec` |
 | Baseline evaluation | `cargo run -p poche-xtask --offline -- rl evaluate --manifest rl/manifests/baseline-v1.json` |
 | PPO training/evaluation | `cargo run -p poche-xtask --offline -- rl train --manifest rl/manifests/poche-ppo-v1.json` then `rl evaluate` with the same manifest |
@@ -219,7 +248,13 @@ cargo run -p poche-xtask --offline -- coverage audit --all
 cargo run -p poche-xtask --offline -- compare all --scope micro
 cargo run -p poche-xtask --offline -- session coverage audit --all
 cargo run -p poche-xtask --offline -- session compare all --scope lobby-micro
+cargo run -p poche-xtask --offline -- session compare all --scope governance-micro
+cargo run -p poche-xtask --offline -- spatial compare all --scope micro
+cargo run -p poche-xtask --offline -- consensus compare all --scope micro
 cargo run -p poche-xtask --offline -- protocol replay --all
+cargo run -p poche-xtask --offline -- trustless smoke --scenario dropout
+cargo run -p poche-xtask --offline -- spatial vertical-slice
+cargo run -p poche-xtask --offline -- pages build
 cargo run -p poche-xtask --offline -- multiplayer smoke --transport veilid-local
 ```
 
@@ -239,6 +274,13 @@ membership; transport IDs do not. Revocation stops future spectator hand
 delivery and cannot erase prior knowledge. The host-authoritative process can
 inspect every hand, and a Datastar operator can additionally observe ordinary
 server metadata; do not describe either topology as trustless or anonymous.
+For replicated or gateway changes, also inspect
+[`ADR 0007`](docs/decisions/0007-player-device-and-replicated-log.md),
+[`ADR 0009`](docs/decisions/0009-routed-room-codes-and-gateway-trust.md), and
+the [deployment trust vocabulary](docs/deployment-modes.md). Several devices
+owned by one player never add quorum weight. A gateway locator never implies
+membership, key custody, or ordering authority unless the selected disclosure
+profile says so.
 
 RL changes must update the immutable spec/manifest ID when observation, action,
 history, mask, reward, or tensor semantics change. Keep large weights, replay
@@ -274,10 +316,12 @@ The pull-request template turns these obligations into a review checklist.
 ## Deferred boundaries
 
 Automatic target-language generation and comparison with legacy `v2` remain
-deferred design context. Multiplayer deliberately stops short of trustless
-dealing, host migration, production account/matchmaking/moderation services, a
-packaged end-user Veilid client, and production hardening of the hostable web
-demo. Rendering deliberately stops before card art, animation, sound, and
-polished/mobile accessibility work. RL currently fixes only two-player
+deferred design context. Phase 3 has bounded replicated-log and dealerless-card
+prototypes, but still stops short of a deployed Byzantine-tolerant room, a
+security-reviewed dropout-tolerant hidden-card protocol, production account/
+matchmaking/moderation services, a packaged end-user Veilid client, and
+production hardening of the hostable web demo. Rendering deliberately stops
+before card art, sound, polished/mobile accessibility, a complete live native
+client, and analytic GPU Slug fill. RL currently fixes only two-player
 `poche-2p-v1`; more player counts, recurrent/population policies, distributed
 training, and claims of optimal play require new versioned plans and evidence.

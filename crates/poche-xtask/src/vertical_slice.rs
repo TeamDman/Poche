@@ -39,6 +39,7 @@ const SMOKE_SEED: u64 = 0x5eed;
 const ARTIFACT_SUBDIRECTORY: &str = "spatial-vertical-slice";
 const CHECKED_RECEIPT: &str = "docs/evidence/spatial-vertical-slice.json";
 const CHECKED_WITNESS: &str = "tests/fixtures/spatial/alloy-overlap-negative-control-v1.json";
+const PHASE_THREE_RELEASE_RECEIPT: &str = "docs/evidence/phase-3-release.json";
 const ALLOY_RECEIPT: &str = "target/spatial-alloy-layout-micro/receipt.json";
 const ALLOY_COMMAND: &str = "OverlapNegativeControl";
 const WITNESS_TOKEN: &str = "<!--__POCHE_SPATIAL_WITNESS__-->";
@@ -482,8 +483,17 @@ pub fn build_pages(root: &Path, output: &Path) -> Result<PagesBuildReport, Slice
         evidence_directory.join("alloy-overlap-negative-control-v1.json"),
     )
     .map_err(io_error)?;
+    publish_release_receipt(&root, &evidence_directory)?;
 
-    for required in ["index.html", "status.html", "spatial.html", "LICENSE.txt"] {
+    for required in [
+        "index.html",
+        "status.html",
+        "spatial.html",
+        "LICENSE.txt",
+        "evidence/spatial-vertical-slice.json",
+        "evidence/alloy-overlap-negative-control-v1.json",
+        "evidence/phase-3-release.json",
+    ] {
         let metadata = fs::metadata(output.join(required)).map_err(io_error)?;
         if metadata.len() == 0 {
             return Err(problem(format!("Pages output {required} is empty")));
@@ -505,9 +515,20 @@ pub fn build_pages(root: &Path, output: &Path) -> Result<PagesBuildReport, Slice
 
     Ok(PagesBuildReport {
         pages: sources.len(),
-        evidence_files: 2,
+        evidence_files: 3,
         output_directory: output.to_path_buf(),
     })
+}
+
+fn publish_release_receipt(root: &Path, evidence_directory: &Path) -> Result<(), SliceError> {
+    let release_receipt =
+        fs::read_to_string(root.join(PHASE_THREE_RELEASE_RECEIPT)).map_err(io_error)?;
+    serde_json::from_str::<Value>(&release_receipt).map_err(json_error)?;
+    reject_secrets(&release_receipt)?;
+    write_file(
+        &evidence_directory.join("phase-3-release.json"),
+        &release_receipt,
+    )
 }
 
 fn delayed_audit() -> Result<(AuditReceipt, String), SliceError> {

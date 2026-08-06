@@ -69,3 +69,32 @@ errors return stable categories and never retain or echo rejected bytes.
 adapters deliver logical tokens; reducers do not read wall time. Transport
 adapters receive already viewer-scoped typed frames. Direct RL use may call the
 policy-neutral `GameEnvironment` without JSON or network traffic.
+
+## Phase 3 protocols remain separate and versioned
+
+Host-authoritative session protocol v1 is still supported byte-for-byte. Phase
+3 adds contracts around it rather than silently changing its schema:
+
+| Contract | Purpose | Authority boundary |
+| --- | --- | --- |
+| `poche.governance-command.v1` | One Facet-reflected AST for slash text, HTML/native controls, classified drags, votes, and replay | Parsing grants nothing. The typed command still requires direct capability or an approved proposal, and structural invariants are never voteable. |
+| `poche-replicated-v1` | Player-root/device certificates, semantic proposals, player-deduplicated vote certificates, hash-linked events, snapshots, and fork evidence | Separate experimental authority mode; a player with several devices still has one quorum vote. Host protocol v1 does not acquire consensus by using these bytes. |
+| `poche.gateway-command.v1` | A bounded browser-device HTTP command signed by a browser-local Ed25519 key | The signature prevents another client from impersonating the device; it does not hide command/projection plaintext from the disclosed host gateway. |
+| `poche-spatial-v1` | Exact integer scene realization, viewer-authorized semantic text, classified interaction, and deterministic animation endpoints | Spatial records propose/visualize typed meaning. Geometry, ECS state, DOM layout, and Slug glyphs are not game authority. |
+| `poche-mental-poker-bg12-v0` | Membership-bound key, shuffle, private-deal, play-reveal, and final-audit artifacts | Research-only proof context. Recipient encryption belongs to transport; unanimous reveal and independent security review remain requirements. |
+
+The canonical transport for inspectable fixtures remains NDJSON, but semantic
+commands are not text strings internally. The original spelling is discarded
+after strict parsing; signing, authorization, proposal identity, idempotency,
+and replay use the canonical typed representation. HTTP request/response plus
+SSE, direct typed loopback, and Veilid AppCall/event delivery are adapters for
+the same reducer boundaries. SSE is a server-to-browser projection stream, so
+browser commands still use bounded HTTP POST; no WebSocket/WebTransport path is
+claimed merely because another transport could carry the same records.
+
+Route credentials are also distinct from protocol authority. Legacy `p3-`
+retains its direct-Veilid meaning. `p3r-` may identify direct Veilid, an exact
+HTTPS gateway origin, or explicit loopback HTTP, while binding versions,
+expiry, expected host principal, and invitation secret. Redemption still must
+produce membership; membership still must certify devices; an accepted event
+still must satisfy the selected host or replicated authority mode.

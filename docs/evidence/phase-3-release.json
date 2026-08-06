@@ -82,7 +82,7 @@
     "scene_semantic_hash": "0a6de46fd21791260bb57c8516ce9ef5e1666e03e17d29cf6f8cda746c07baee",
     "vertical_slice_ndjson_hash": "eb3f32b9471b2a88d1cdb7f40d082af3bfdeb91d84243a1dc8a9299012138c30",
     "published_source_pages": 3,
-    "published_safe_evidence_files": 2,
+    "published_safe_evidence_files": 3,
     "typst_pdf_bytes": 192974,
     "native_renderer": {
       "bounded_real_window": true,

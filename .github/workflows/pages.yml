@@ -88,6 +88,7 @@ jobs:
           test -s site/spatial.html
           test -s site/evidence/spatial-vertical-slice.json
           test -s site/evidence/alloy-overlap-negative-control-v1.json
+          test -s site/evidence/phase-3-release.json
           test -s site/replay/index.html
           test -s site/replay/pkg/poche_ui.js
           test -s site/replay/pkg/poche_ui_bg.wasm

@@ -621,38 +621,39 @@
 
     <main class="shell">
       <section aria-labelledby="page-title">
-        <p class="eyebrow">Engineering status · Phase 2 complete</p>
+        <p class="eyebrow">Engineering status · Phase 3 complete</p>
         <h1 id="page-title">What we built. What we learned.</h1>
         <p class="lede">
           Poche is now more than a rules document: it is a typed game engine,
           four independent formal models, a multiplayer session protocol,
-          viewer-correct rendering, native-network experiments, and a first
-          reinforcement-learning pipeline. This page separates working pieces
-          from experiments, and experiments from claims.
+          typed governance, checked spatial refinement, native and browser
+          views, replicated/hidden-card experiments, and a first reinforcement-
+          learning pipeline. This page separates working pieces from
+          experiments, and experiments from claims.
         </p>
         <nav class="hero-actions" aria-label="Primary project links">
           <a class="button" href="poche-rules.pdf">Read the rules</a>
           <a class="button secondary" href="replay/">Open static replay</a>
           <a class="button secondary" href="spatial.html">Inspect spatial evidence</a>
-          <a class="button secondary" href="https://github.com/TeamDman/Poche/blob/model-checking/PLAN-2-MULTIPLAYER-RL-RENDERING.md">Read the completed plan</a>
+          <a class="button secondary" href="https://github.com/TeamDman/Poche/blob/model-checking/PLAN-3-DISTRIBUTED-TABLETOP-SPATIAL.md">Read the completed plan</a>
         </nav>
 
         <div class="status-line" aria-label="Current deployment status">
           <div>
             <strong>Published</strong>
-            <span>Rulebook and exact-projection egui/WASM replay on GitHub Pages.</span>
+            <span>Rulebook, egui/WASM replay, and checked spatial evidence on GitHub Pages.</span>
           </div>
           <div>
             <strong>Working locally</strong>
-            <span>Native egui replay and host-colocated Datastar room demo.</span>
+            <span>Native Bevy/Slug mirror, semantic HTML, and host-colocated Datastar room demo.</span>
           </div>
           <div>
-            <strong>Acceptance proven</strong>
-            <span>Native Veilid DHT/private-route protocol; no packaged player client.</span>
+            <strong>Experimental</strong>
+            <span>Replicated-device log and dealerless hidden-card prototype under named limits.</span>
           </div>
           <div>
-            <strong>Not hosted here</strong>
-            <span>Pages is static. It is not a live room server or Veilid companion.</span>
+            <strong>Unsupported here</strong>
+            <span>Pages is static; secure direct browser Veilid and a live room are not implied.</span>
           </div>
         </div>
       </section>
@@ -686,9 +687,10 @@
             <h2 id="architecture-title">One meaning, several consumers</h2>
           </div>
           <p>
-            Game rules, room rules, transport, presentation, and learning are
-            deliberately separate. Network or UI code cannot silently become a
-            second game engine, and training avoids text parsing and sockets.
+            Game rules, room rules, governance, transport, spatial refinement,
+            presentation, and learning are deliberately separate. Geometry,
+            network code, and UI code cannot silently become a second game
+            engine, and training avoids text parsing and sockets.
           </p>
         </div>
 
@@ -709,9 +711,9 @@
             <p><code>GameEnvironment</code> owns chance, legal actions, transition, settlement, and terminal meaning.</p>
           </article>
           <article>
-            <span class="step">04 · Consumers</span>
+            <span class="step">04 · Refine and consume</span>
             <h3>Scoped outputs</h3>
-            <p>Text, egui, HTML, Veilid, replay, and RL consume events or viewer-safe projections.</p>
+            <p>Exact-recipient scenes feed text, egui, Bevy/Slug, semantic HTML, Veilid, replay, and RL without granting renderers authority.</p>
           </article>
         </div>
       </section>
@@ -804,6 +806,42 @@
 
           <article class="card">
             <div class="card-head">
+              <h3>Signed browser devices</h3>
+              <span class="badge pass">Loopback pass</span>
+            </div>
+            <p>A browser-local non-extractable Ed25519 key signed bounded HTTP commands while reconnectable SSE delivered exact-recipient projections. A second device for the same player revoked only the browser device.</p>
+            <p class="result"><strong>Boundary:</strong> the lab gateway is still the plaintext host authority; browser-local keys prevent client impersonation, not host cheating.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Audit and game governance</h3>
+              <span class="badge pass">Checked overlay</span>
+            </div>
+            <p>Illegal attempts can be prevented or retained for later evidence. Typed proposals/votes can amend scores or rights and choose kick, redeal, or end without waiting for the blocked actor.</p>
+            <p class="result"><strong>Hard boundary:</strong> votes cannot create cards, rewrite signed history, forge principals, or bypass codec and conservation checks.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Replicated player/device log</h3>
+              <span class="badge bounded">Experimental</span>
+            </div>
+            <p>Certified multi-device events, deterministic ordering, snapshot/tail replay, partition recovery, device revocation, and four-model micro-scope agreement all pass.</p>
+            <p class="result"><strong>Limit:</strong> progress needs the named player majority and non-equivocation. A retained collusion witness shows this is accountable crash-fault evidence, not Byzantine consensus.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>Verifiable hidden cards</h3>
+              <span class="badge bounded">Research only</span>
+            </div>
+            <p>A bounded three-player corpus verifies a full 52-card shuffle, private deal receipt, played-card reveal, tamper rejection, and complete public audit without trusting one dealer.</p>
+            <p class="result"><strong>Limit:</strong> every reveal share is required, the cryptographic library is experimental and unaudited, and independent security review remains mandatory.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
               <h3>Burn PPO learner</h3>
               <span class="badge bounded">Empirical</span>
             </div>
@@ -860,12 +898,12 @@
         </div>
 
         <ol class="lifecycle">
-          <li><strong>Create and invite</strong><span>Host creates; a compact one-time/expiring code locates and redeems membership.</span></li>
-          <li><strong>Join and seat</strong><span>Membership and seat occupancy remain separate typed concepts.</span></li>
+          <li><strong>Create and locate</strong><span>A compact expiring code identifies direct Veilid or an explicit gateway; it does not itself grant membership.</span></li>
+          <li><strong>Join and certify devices</strong><span>Membership, player roots, independently revocable device keys, and seat occupancy remain separate typed concepts.</span></li>
           <li><strong>Ready and countdown</strong><span>All seated players ready; any seated player may abort before authority expiry.</span></li>
-          <li><strong>Play and pause</strong><span>Only legal game actions advance; any player may pause and any player may resume.</span></li>
+          <li><strong>Play and audit</strong><span>Policy may prevent or retain an illegal attempt; later evidence can confirm a stable finding without rewriting history.</span></li>
           <li><strong>Chat and spectate</strong><span>Bounded ephemeral chat; exact hand request, owner grant, and future-only revoke.</span></li>
-          <li><strong>Recover and finish</strong><span>Stable-key reconnect, snapshot + tail, post-game, leave, reset, and absorbing close.</span></li>
+          <li><strong>Pause, recover, and finish</strong><span>Any player pauses/resumes; out-of-turn votes may kick/redeal/end without awaiting an AFK actor.</span></li>
         </ol>
       </section>
 
@@ -902,10 +940,13 @@
         <div class="callout">
           <h2 id="limits-title">What this does not claim</h2>
           <ul>
-            <li>The host-authoritative process owns every hand. This is not mental poker, MPC, consensus, or protection from a cheating host.</li>
+            <li>The deployable host-authoritative process owns every hand. Its signatures do not protect players from a cheating host.</li>
+            <li>The replicated log is an experimental majority/non-equivocation model, not Byzantine fault tolerance or a deployed hostless network.</li>
+            <li>The hidden-card crate is a bounded, unanimously revealed, unaudited research prototype—not production MPC or same-hand dropout recovery.</li>
             <li>Room codes are temporary invitations, not permanent bearer credentials. Transport node IDs and routes are not application authorization.</li>
             <li>Spectator revocation stops future delivery; it cannot erase cards a person already saw.</li>
             <li>A paused, partitioned, abandoned, or permanently hostless session may persist. Session termination needs explicit fairness assumptions.</li>
+            <li>The 3D scene refines canonical typed state. Physics, Bevy transforms, HTML layout, and Slug glyph positions are not game truth.</li>
             <li>Alloy results are bounded, NuSMV results describe its declared abstraction, Prolog completeness is query-mode specific, and sampled Rust tests are not exhaustive full-deck proof.</li>
             <li>Training and evaluation measure policies on named finite corpora. They do not prove optimal play, rule consistency, or formal correctness.</li>
           </ul>
@@ -924,7 +965,11 @@
         <div class="commands">
           <div class="command"><span>Formal game acceptance</span><code>cargo run -p poche-xtask --offline -- compare all --scope micro</code></div>
           <div class="command"><span>Formal session acceptance</span><code>cargo run -p poche-xtask --offline -- session compare all --scope lobby-micro</code></div>
+          <div class="command"><span>Governance agreement</span><code>cargo run -p poche-xtask --offline -- session compare all --scope governance-micro</code></div>
+          <div class="command"><span>Spatial agreement</span><code>cargo run -p poche-xtask --offline -- spatial compare all --scope micro</code></div>
+          <div class="command"><span>Replicated consensus agreement</span><code>cargo run -p poche-xtask --offline -- consensus compare all --scope micro</code></div>
           <div class="command"><span>Inspectable protocol</span><code>cargo run -p poche-xtask --offline -- protocol replay --all</code></div>
+          <div class="command"><span>Hidden-card dropout recovery</span><code>cargo run -p poche-xtask --offline -- trustless smoke --scenario dropout</code></div>
           <div class="command"><span>Spatial vertical slice</span><code>cargo run -p poche-xtask --offline -- spatial vertical-slice</code></div>
           <div class="command"><span>No-socket full lifecycle</span><code>cargo run -p poche-xtask --offline -- multiplayer smoke --transport in-process</code></div>
           <div class="command"><span>Static native replay</span><code>cargo run --release -p poche-ui --bin poche-replay</code></div>
@@ -938,6 +983,8 @@
           <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/session-coverage.md">Session coverage matrix</a>
           <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/deployment-modes.md">Deployment modes</a>
           <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/veilid-native-acceptance.md">Native Veilid evidence</a>
+          <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/decisions/README.md">Architecture decisions</a>
+          <a href="evidence/phase-3-release.json">Phase 3 machine receipt</a>
         </div>
       </section>
     </main>
@@ -946,7 +993,7 @@
       <div class="shell">
         Published from
         <a href="https://github.com/TeamDman/Poche/commit/__POCHE_GIT_SHA__">__POCHE_GIT_SHA__</a><br>
-        Source event time: __POCHE_BUILD_TIME__ · Evidence labels and counts are scoped to the completed phase-two acceptance record · MPL-2.0
+        Source event time: __POCHE_BUILD_TIME__ · Evidence labels and counts are scoped to the completed phase-three acceptance record · MPL-2.0
       </div>
     </footer>
   </body>
