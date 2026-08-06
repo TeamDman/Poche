@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 blake3.workspace = true
 poche-environment = { path = "../poche-environment" }
+poche-crypto-prototype = { path = "../poche-crypto-prototype" }
 poche-oracle-rust = { path = "../poche-oracle-rust" }
 poche-protocol = { path = "../poche-protocol" }
 poche-session = { path = "../poche-session" }

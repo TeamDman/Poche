@@ -103,6 +103,7 @@ fn main() -> ExitCode {
         Some(command) if command == OsStr::new("protocol") => protocol(args),
         Some(command) if command == OsStr::new("session") => session(args),
         Some(command) if command == OsStr::new("consensus") => consensus(args),
+        Some(command) if command == OsStr::new("trustless") => trustless(args),
         Some(command) if command == OsStr::new("transport") => transport(args),
         Some(command) if command == OsStr::new("multiplayer") => multiplayer(args),
         Some(command) if command == OsStr::new("rl") => rl(args),
@@ -137,6 +138,7 @@ fn usage() {
          cargo run -p poche-xtask -- consensus check --scope micro\n  \
          cargo run -p poche-xtask -- consensus compare all --scope micro\n  \
          cargo run -p poche-xtask -- consensus coverage audit --all\n  \
+         cargo run -p poche-xtask -- trustless smoke --scenario dropout\n  \
          cargo run -p poche-xtask -- transport test veilid-local|veilid-public\n  \
          cargo run -p poche-xtask -- multiplayer smoke --transport in-process\n  \
          cargo run -p poche-xtask -- multiplayer smoke --transport veilid-local|veilid-public\n  \
@@ -164,6 +166,57 @@ fn usage() {
          cargo run -p poche-xtask -- check rust-explicit --scope micro\n  \
          cargo run -p poche-xtask -- check rust-explicit --property game-terminates"
     );
+}
+
+fn trustless(args: impl Iterator<Item = OsString>) -> ExitCode {
+    let args = args.collect::<Vec<_>>();
+    if args
+        == [
+            OsString::from("smoke"),
+            OsString::from("--scenario"),
+            OsString::from("dropout"),
+        ]
+    {
+        trustless_dropout_smoke()
+    } else {
+        usage();
+        ExitCode::from(2)
+    }
+}
+
+fn trustless_dropout_smoke() -> ExitCode {
+    let report = match poche_runtime::run_trustless_dropout_smoke() {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("trustless dropout smoke failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "trustless dropout: scope={} scenarios={} aborts={} kicks={} redeals={} ended_games={} no_hangs={} retrospective_cheat_separate={} corpus_digest={}",
+        report.scope,
+        report.scenarios,
+        report.aborts,
+        report.kicks,
+        report.redeals,
+        report.ended_games,
+        report.no_hangs,
+        report.retrospective_cheat_separate,
+        report.corpus_digest,
+    );
+    if report.scenarios == 5
+        && report.aborts == 5
+        && report.kicks == 2
+        && report.redeals == 4
+        && report.ended_games == 1
+        && report.no_hangs
+        && report.retrospective_cheat_separate
+    {
+        ExitCode::SUCCESS
+    } else {
+        eprintln!("trustless dropout smoke receipt drifted from its registered scope");
+        ExitCode::FAILURE
+    }
 }
 
 fn consensus(args: impl Iterator<Item = OsString>) -> ExitCode {

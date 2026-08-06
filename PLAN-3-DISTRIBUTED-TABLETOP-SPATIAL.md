@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 6.3, compose cryptographic aborts with governance recovery
+**Current implementation focus:** 7.1, define hybrid/direct route codes and gateway trust boundaries
 
 ## How to update this plan
 
@@ -342,7 +342,7 @@ cargo run -p poche-xtask --offline -- session compare all --scope lobby-micro
 | Static Pages replay | Supported and preserved | WASM/site build plus checked replay; no live authority claim | Pending 8.3/9.2 |
 | Direct browser Veilid HTTPS/WSS | Unsupported until new public topology evidence | Re-run ADR-0004 production-equivalent matrix before changing status | Deferred behind 7.3 |
 | Poche-owned hybrid gateway | Experimental then supported if matrix passes | Key custody, route hints, reconnect, simultaneous native/browser device, threat disclosure | Pending phase 7 |
-| Trustless hidden-card protocol | Research/prototype until G7 security and dropout matrix passes | Published construction mapping, vectors, active-cheat/collusion/dropout evidence | Pending phase 6 |
+| Trustless hidden-card protocol | Research-only bounded BG12/ziffle v0; unanimous reveal with explicit abort/redeal; not production or same-hand dropout-tolerant | Published construction mapping, exact dependency, 52-card/tamper/privacy vectors, and five-point governance recovery matrix | Phase 6 complete; independent security review remains mandatory |
 | Veilid upstream general patch | Not implemented by this AI-driven plan | Read-only feasibility note; user-owned upstream process only | Pending 7.3 |
 
 ## Execution order
@@ -1275,7 +1275,33 @@ cargo clippy -p poche-crypto-prototype --all-targets --offline -- -D warnings
 wrong-card reveal, duplicate-card, and privacy-redaction vectors behave exactly
 as ADR 0008 claims.
 
-### [~] 6.3 Implement dropout and governance recovery around cryptographic rounds
+### [x] 6.3 Implement dropout and governance recovery around cryptographic rounds
+
+**Completion notes:** Completed 2026-08-05. Added
+`poche-runtime::TrustlessRoundState`, which composes ADR 0008 context/transcript
+digests with the existing typed `GovernanceState`. It registers all five named
+points: before and after a shuffle contribution, during private deal, while
+holding cards, and before final disclosure. Every accepted disconnect,
+unavailable share, or invalid proof immediately records stable
+`CryptographicAbort` evidence and enters out-of-turn `RecoveryPending`.
+Identical reports are idempotent; wrong-stage/conflicting reports and ordinary
+progress after abort fail closed. Retrospective Poche-rule findings remain a
+separate evidence class in the existing audit rather than being conflated with
+cryptographic availability/proof failures.
+
+Recovery effects are real typed proposals/votes. Kick removes future authority
+but deliberately leaves the abandoned hand pending because no removed secret
+appears; a later redeal enters `RedealRequired` with an incremented governance
+epoch, while end enters `Ended`. The next deal must use a fresh context, roster,
+keys, shuffle, assignments, and handles. There is no current-actor dependency,
+wall-clock read, hidden cleanup tick, threshold claim, or same-hand recovery.
+The deterministic three-player `trustless smoke --scenario dropout` corpus
+exercises five aborts, two vote-kicks, four vote-redeals, one vote-end, and zero
+unresolved scenario phases with digest
+`blake3:1134633ac68490a908103d8e2751ec423e9970f1c813a4dbb15f6e31b52d8624`.
+`docs/trustless-recovery.md` records the state/evidence/remedy matrix. All three
+focused dropout tests, strict runtime/xtask Clippy, and the prescribed smoke
+command pass offline.
 
 **Work:**
 

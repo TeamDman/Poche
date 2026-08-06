@@ -23,6 +23,7 @@ mod smoke;
 mod spatial;
 mod text;
 mod transcript;
+mod trustless;
 
 pub use accusation::*;
 pub use chat::*;
@@ -33,6 +34,7 @@ pub use smoke::*;
 pub use spatial::*;
 pub use text::*;
 pub use transcript::*;
+pub use trustless::*;
 
 /// External logical-time scheduling port.
 pub trait ClockPort {

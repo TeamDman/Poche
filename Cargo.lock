@@ -6649,6 +6649,7 @@ name = "poche-runtime"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "poche-crypto-prototype",
  "poche-environment",
  "poche-oracle-rust",
  "poche-protocol",

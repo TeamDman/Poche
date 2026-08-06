@@ -47,3 +47,6 @@ The last item tests the wrapper's fail-closed boundary; it is not a proof of the
 underlying cryptography. The crate does not supply a same-hand dropout recovery
 threshold. A withheld share is handled as a typed, governable cryptographic
 abort in phase 6.3. The mandatory independent review in ADR 0008 remains open.
+
+The explicit unanimous-share abort and vote-authorized redeal/end behavior is
+documented in [Trustless-round abort and recovery](trustless-recovery.md).
