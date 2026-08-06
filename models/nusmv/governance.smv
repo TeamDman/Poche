@@ -1,0 +1,138 @@
+-- This Source Code Form is subject to the terms of the Mozilla Public
+-- License, v. 2.0. If a copy of the MPL was not distributed with this
+-- file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+-- Independent symbolic governance micro-oracle. Each scheduler mode is a
+-- deterministic finite scenario. Defect modes are isolated negative controls.
+
+MODULE main
+
+VAR
+  mode : {approved_vote, timeout, capability, afk_recovery,
+          counted_excluded_defect, structural_defect};
+  step : 0..4;
+  status : {none, pending, approved, rejected};
+  action : {none_action, score, redeal};
+  eligible : 1..2;
+  approvals : 0..2;
+  rejections : 0..2;
+  abstentions : 0..2;
+  subject_vote_visible : boolean;
+  subject_vote_counted : boolean;
+  capability_used : boolean;
+  effect : boolean;
+  actor_afk : boolean;
+  card_count : 52..53;
+
+DEFINE
+  strict_majority := approvals > eligible / 2;
+  all_eligible_voted := approvals + rejections + abstentions = eligible;
+  safe_mode := mode != counted_excluded_defect & mode != structural_defect;
+
+ASSIGN
+  init(mode) := {approved_vote, timeout, capability, afk_recovery,
+                 counted_excluded_defect, structural_defect};
+  next(mode) := mode;
+
+  init(step) := 0;
+  next(step) := case step < 4 : step + 1; TRUE : step; esac;
+
+  init(status) := none;
+  next(status) := case
+    mode = approved_vote & step = 0 : pending;
+    mode = approved_vote & step = 2 : approved;
+    mode = timeout & step = 0 : pending;
+    mode = timeout & step = 2 : rejected;
+    mode = afk_recovery & step = 0 : pending;
+    mode = afk_recovery & step = 1 : approved;
+    TRUE : status;
+  esac;
+
+  init(action) := none_action;
+  next(action) := case
+    mode = approved_vote & step = 0 : score;
+    mode = timeout & step = 0 : score;
+    mode = capability & step = 0 : score;
+    mode = afk_recovery & step = 0 : redeal;
+    TRUE : action;
+  esac;
+
+  init(eligible) := 2;
+  next(eligible) := case
+    mode = afk_recovery & step = 0 : 1;
+    TRUE : eligible;
+  esac;
+
+  init(approvals) := 0;
+  next(approvals) := case
+    mode = approved_vote & step = 1 : 1;
+    mode = approved_vote & step = 2 : 2;
+    mode = timeout & step = 1 : 1;
+    mode = afk_recovery & step = 1 : 1;
+    mode = counted_excluded_defect & step = 0 : 1;
+    TRUE : approvals;
+  esac;
+
+  init(rejections) := 0;
+  next(rejections) := rejections;
+  init(abstentions) := 0;
+  next(abstentions) := abstentions;
+
+  init(subject_vote_visible) := FALSE;
+  next(subject_vote_visible) := case
+    (mode = approved_vote | mode = counted_excluded_defect) & step = 0 : TRUE;
+    TRUE : subject_vote_visible;
+  esac;
+
+  init(subject_vote_counted) := FALSE;
+  next(subject_vote_counted) := case
+    mode = counted_excluded_defect & step = 0 : TRUE;
+    TRUE : subject_vote_counted;
+  esac;
+
+  init(capability_used) := FALSE;
+  next(capability_used) := case
+    mode = capability & step = 0 : TRUE;
+    TRUE : capability_used;
+  esac;
+
+  init(effect) := FALSE;
+  next(effect) := case
+    mode = approved_vote & step = 2 : TRUE;
+    mode = capability & step = 0 : TRUE;
+    mode = afk_recovery & step = 1 : TRUE;
+    TRUE : effect;
+  esac;
+
+  init(actor_afk) := FALSE;
+  next(actor_afk) := case
+    mode = afk_recovery & step = 0 : TRUE;
+    TRUE : actor_afk;
+  esac;
+
+  init(card_count) := 52;
+  next(card_count) := case
+    mode = structural_defect & step = 0 : 53;
+    TRUE : card_count;
+  esac;
+
+INVARSPEC NAME excluded_vote_visible_not_counted :=
+  !safe_mode | !subject_vote_visible | !subject_vote_counted;
+INVARSPEC NAME strict_majority_before_vote_effect :=
+  !safe_mode | !effect | capability_used | strict_majority;
+INVARSPEC NAME effect_has_capability_or_approval :=
+  !safe_mode | !effect | capability_used | status = approved;
+INVARSPEC NAME finite_card_universe_is_immutable :=
+  !safe_mode | card_count = 52;
+CTLSPEC NAME timeout_no_majority_rejects :=
+  AG (mode = timeout & status = pending & step = 2 -> AX status = rejected);
+CTLSPEC NAME afk_actor_cannot_block_recovery :=
+  mode != afk_recovery |
+    EF (actor_afk & action = redeal & effect);
+CTLSPEC NAME governance_transition_deadlock_free := AG EX TRUE;
+
+-- Expected-false controls with concrete counterexample traces.
+INVARSPEC NAME counted_excluded_vote_defect_witness :=
+  !(mode = counted_excluded_defect & subject_vote_counted);
+INVARSPEC NAME structural_mutation_defect_witness :=
+  !(mode = structural_defect & card_count = 53);

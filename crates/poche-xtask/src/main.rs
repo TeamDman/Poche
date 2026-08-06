@@ -13,8 +13,9 @@ use std::process::{Command, ExitCode, Output};
 use poche_check::{CheckScope, TerminationReason, analyze_liveness, check_session, explore};
 use poche_conformance::{
     Disposition, audit_spatial_coverage, check_spatial_alloy_layout_micro,
-    check_spatial_nusmv_transition_micro, check_spatial_prolog_query_micro, compare_rust_alloy,
-    compare_rust_models, compare_rust_nusmv, compare_rust_prolog, compare_spatial_models,
+    check_spatial_nusmv_transition_micro, check_spatial_prolog_query_micro,
+    compare_governance_models, compare_rust_alloy, compare_rust_models, compare_rust_nusmv,
+    compare_rust_prolog, compare_spatial_models,
 };
 use poche_interchange::{
     BackendKindWire, ConfidenceKindWire, SessionClaimWire, SessionTrackEvidenceWire,
@@ -130,6 +131,7 @@ fn usage() {
          cargo run -p poche-xtask -- session oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- session coverage audit --all\n  \
          cargo run -p poche-xtask -- session compare all --scope lobby-micro\n  \
+         cargo run -p poche-xtask -- session compare all --scope governance-micro\n  \
          cargo run -p poche-xtask -- transport test veilid-local|veilid-public\n  \
          cargo run -p poche-xtask -- multiplayer smoke --transport in-process\n  \
          cargo run -p poche-xtask -- multiplayer smoke --transport veilid-local|veilid-public\n  \
@@ -1067,11 +1069,20 @@ fn session_id(cell: &str) -> Option<&str> {
 }
 
 fn session_compare(mut args: impl Iterator<Item = OsString>) -> ExitCode {
-    if args.next().as_deref() != Some(OsStr::new("all"))
-        || args.next().as_deref() != Some(OsStr::new("--scope"))
-        || args.next().as_deref() != Some(OsStr::new("lobby-micro"))
+    let all = args.next();
+    let scope_flag = args.next();
+    let scope = args.next();
+    if all.as_deref() != Some(OsStr::new("all"))
+        || scope_flag.as_deref() != Some(OsStr::new("--scope"))
         || args.next().is_some()
     {
+        usage();
+        return ExitCode::from(2);
+    }
+    if scope.as_deref() == Some(OsStr::new("governance-micro")) {
+        return session_governance_compare();
+    }
+    if scope.as_deref() != Some(OsStr::new("lobby-micro")) {
         usage();
         return ExitCode::from(2);
     }
@@ -1117,6 +1128,31 @@ fn session_compare(mut args: impl Iterator<Item = OsString>) -> ExitCode {
             );
         }
         ExitCode::FAILURE
+    }
+}
+
+fn session_governance_compare() -> ExitCode {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    match compare_governance_models(&root) {
+        Ok(report) => {
+            println!(
+                "governance comparison: scope={} source_gates={} tracks={} claims={} observations={} disagreements={} alloy_commands={} nusmv_properties={} prolog_rows={}",
+                report.agreement.scope_id,
+                report.source_gates,
+                report.agreement.tracks,
+                report.agreement.compared_claims,
+                report.agreement.observations,
+                report.agreement.disagreements.len(),
+                report.alloy_commands,
+                report.nusmv_properties,
+                report.prolog_rows
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("governance comparison failed: {error}");
+            ExitCode::FAILURE
+        }
     }
 }
 

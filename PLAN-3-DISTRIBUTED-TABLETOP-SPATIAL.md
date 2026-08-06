@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 4.3, implement proposals, votes, recovery, and permitted amendments
+**Current implementation focus:** 5.1, freeze player/device identity and replicated-log semantics
 
 ## How to update this plan
 
@@ -263,7 +263,7 @@ inferred merely from using Veilid.
 | G5 | What replicated-log algorithm, membership epoch, fork rule, quorum, leaderlessness/temporary coordinator, and liveness assumptions define experimental consensus? | Model/check convergence, safety, partitions, stale devices, and recovery before network advertising. | Open in 5.1 |
 | G6 | How do player roots authorize multiple device keys, and how do add/revoke/loss/browser export work? | Exact signing vectors, projection scope, simultaneous-device and revocation tests. | Open in 5.1 |
 | G7 | Which published mental-poker construction and threat assumptions cover fair shuffle/deal/reveal, collusion, active cheating, and dropout? | No implementation or fairness claim before primary-source review and vectors. | Open in 6.1 |
-| G8 | What proposal/vote quorum, eligibility snapshot, timeout, tie, accused-member tally, and kick/redeal/end semantics apply? | Rust/formal fixtures cover out-of-turn recovery and visible non-counting votes. | Open in 4.3 |
+| G8 | What proposal/vote quorum, eligibility snapshot, timeout, tie, accused-member tally, and kick/redeal/end semantics apply? | Rust/formal fixtures cover out-of-turn recovery and visible non-counting votes. | Closed by task 4.3: strict majority of a proposal-time active eligibility snapshot; visible excluded votes; logical deadline rejection; exact capability alternative |
 | G9 | What exactly does a gateway know/do; which keys stay in-browser; and when are HTTP+SSE, WSS, WebTransport, or direct Veilid used? | Threat/topology matrix, reconnect evidence, and no false anonymity/directness claim. | Open in 7.1 |
 | G10 | What versioned command AST backs CLI, GUI, votes, and protocol; is pinned Figue compatible with the workspace Facet version? | Parser/help/completion/codec tests prove one typed meaning; raw strings are never authorized directly. | Closed by ADR 0006: `poche-governance-command-v1`; first-party parser/catalog because exact Figue pair fails offline resolution |
 | G11 | How do strict prevention, allow-attempt, auto-propose, manual accusation, retrospective findings, and recovery compose? | Policy matrix and history corpus demonstrate each mode without weakening C3. | Closed by ADR 0006: structural, authorization, legality, finding-publication, and governable-effect layers |
@@ -920,7 +920,42 @@ cargo test -p poche-runtime accusation
 **Completion criteria:** A corpus proves immediate, delayed, round-end,
 unfounded, duplicate, and manually accused cases with deterministic replay.
 
-### [~] 4.3 Implement proposals, votes, recovery, and arbitrary permitted amendments
+### [x] 4.3 Implement proposals, votes, recovery, and arbitrary permitted amendments
+
+**Completion notes:** Completed 2026-08-05. Closed G8 with a pure,
+transactional `GovernanceState` whose proposal, eligibility, visible-vote,
+tally, status, effect, authority, and idempotent receipt records are typed and
+stable. Eligibility is snapshotted at proposal creation: disconnected and
+kicked members are excluded; kick targets and confirmed accused subjects of
+rights changes are excluded. Their votes may still be appended and displayed,
+but carry `counted=false` plus an exact exclusion reason. Approval requires a
+strict majority of eligible voters. A rejection majority, all eligible votes
+without approval (including tie/abstention), or a logical deadline without
+majority produces an immutable rejection. Proposal and effect IDs derive
+deterministically from command/proposal identities, exact retries replay, ID
+conflicts fail, and every error rolls back without partial state.
+
+Approved proposals or exact unilateral capabilities can adjust scores, grant
+or revoke rights, redeal, kick, or end a game. Capabilities are separated into
+score, rights, and recovery grants rather than a single omnipotent role. Kick
+disconnects the member and removes its grants; redeal advances a deterministic
+epoch; none of these paths checks or waits for the current Poche actor. Accused
+status can only be derived from an existing confirmed retrospective finding.
+The command AST still cannot represent create/delete/change-card operations,
+and a controlled JSON attempt is rejected without state mutation.
+
+Added independently handwritten `models/alloy/governance.als`,
+`models/nusmv/governance.smv`, and `models/prolog/governance.pl`, plus a neutral
+four-source comparison gate and `docs/governance.md`. The registered
+`governance-micro` receipt contains four source gates, seven shared claims, 27
+observations, zero disagreements, nine Alloy commands, nine NuSMV properties,
+and 42 exact Prolog rows. Alloy retains counted-excluded-vote and card-universe
+mutation witnesses; NuSMV retains both defect counterexamples and reports a
+total/deadlock-free finite transition system; Prolog includes reverse
+effect-to-vote explanations. Focused Rust governance tests and strict Clippy
+pass. The scopes explicitly exclude unbounded rosters, real transport timing,
+network liveness, device certification, and replicated conflict ordering,
+which remain phase-5 work.
 
 **Work:**
 
@@ -946,7 +981,7 @@ score grant/removal, and attempts to amend the finite card universe.
 
 ## Phase 5 — Add player/device identity and replicated event authority
 
-### [ ] 5.1 Freeze player/device identity and replicated-log semantics
+### [~] 5.1 Freeze player/device identity and replicated-log semantics
 
 **Work:**
 
