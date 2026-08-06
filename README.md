@@ -8,6 +8,7 @@ was exhaustive, bounded, symbolic, queried, sampled, or merely empirical.
 
 - [Completed formal-modeling plan](PLAN.md)
 - [Completed multiplayer, rendering, and RL plan](PLAN-2-MULTIPLAYER-RL-RENDERING.md)
+- [Active spatial tabletop and distributed-agency plan](PLAN-3-DISTRIBUTED-TABLETOP-SPATIAL.md)
 - [Contributor and evidence guide](CONTRIBUTING.md)
 - [Typst rule source](docs/main.typ)
 - [Pretty rules](https://teamdman.github.io/Poche/) — generated from the

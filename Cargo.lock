@@ -6490,6 +6490,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "poche-spatial"
+version = "0.1.0"
+
+[[package]]
 name = "poche-ui"
 version = "0.1.0"
 dependencies = [
