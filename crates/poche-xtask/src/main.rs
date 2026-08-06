@@ -101,6 +101,7 @@ fn main() -> ExitCode {
         Some(command) if command == OsStr::new("guidance") => guidance(args),
         Some(command) if command == OsStr::new("protocol") => protocol(args),
         Some(command) if command == OsStr::new("session") => session(args),
+        Some(command) if command == OsStr::new("consensus") => consensus(args),
         Some(command) if command == OsStr::new("transport") => transport(args),
         Some(command) if command == OsStr::new("multiplayer") => multiplayer(args),
         Some(command) if command == OsStr::new("rl") => rl(args),
@@ -132,6 +133,7 @@ fn usage() {
          cargo run -p poche-xtask -- session coverage audit --all\n  \
          cargo run -p poche-xtask -- session compare all --scope lobby-micro\n  \
          cargo run -p poche-xtask -- session compare all --scope governance-micro\n  \
+         cargo run -p poche-xtask -- consensus check --scope micro\n  \
          cargo run -p poche-xtask -- transport test veilid-local|veilid-public\n  \
          cargo run -p poche-xtask -- multiplayer smoke --transport in-process\n  \
          cargo run -p poche-xtask -- multiplayer smoke --transport veilid-local|veilid-public\n  \
@@ -159,6 +161,71 @@ fn usage() {
          cargo run -p poche-xtask -- check rust-explicit --scope micro\n  \
          cargo run -p poche-xtask -- check rust-explicit --property game-terminates"
     );
+}
+
+fn consensus(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("check"))
+        || args.next().as_deref() != Some(OsStr::new("--scope"))
+        || args.next().as_deref() != Some(OsStr::new("micro"))
+        || args.next().is_some()
+    {
+        usage();
+        return ExitCode::from(2);
+    }
+    let report = match poche_runtime::run_replicated_micro_check() {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("consensus micro check failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "consensus check: scope={} replicas={} events={} proposal_attempts={} unique_proposals={} duplicates={} buffered_reorders={} stale_denials={} revoked_denials={} minority_no_quorum={} snapshots={} snapshot_tail={} quorum_before={} quorum_after={} epoch={} convergence={} final_state_hash={}",
+        report.scope,
+        report.replicas,
+        report.committed_events,
+        report.proposal_attempts,
+        report.unique_proposals,
+        report.duplicate_deliveries,
+        report.buffered_reorders,
+        report.stale_device_denials,
+        report.revoked_device_denials,
+        report.minority_no_quorum_denials,
+        report.snapshot_installs,
+        report.snapshot_tail_events,
+        report.quorum_before_kick,
+        report.quorum_after_kick,
+        report.final_membership_epoch,
+        report.convergence,
+        report.final_state_hash
+    );
+    for counterexample in &report.retained_counterexamples {
+        println!("  expected-false {counterexample}");
+    }
+    if report.replicas == 4
+        && report.committed_events == 4
+        && report.proposal_attempts == 9
+        && report.unique_proposals == 5
+        && report.duplicate_deliveries == 1
+        && report.buffered_reorders == 2
+        && report.stale_device_denials == 1
+        && report.revoked_device_denials == 1
+        && report.minority_no_quorum_denials == 1
+        && report.snapshot_installs == 1
+        && report.snapshot_tail_events == 1
+        && report.quorum_before_kick == 2
+        && report.quorum_after_kick == 2
+        && report.final_membership_epoch == 2
+        && report.convergence
+        && report.retained_counterexamples.len() == 1
+        && report.final_state_hash
+            == "1b51070836855771b6e51e8a0aae8cffe4784af2c478674e13f579ab5713c168"
+    {
+        ExitCode::SUCCESS
+    } else {
+        eprintln!("consensus micro receipt drifted from its registered scope");
+        ExitCode::FAILURE
+    }
 }
 
 fn spatial(args: impl Iterator<Item = OsString>) -> ExitCode {

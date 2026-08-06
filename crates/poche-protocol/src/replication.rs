@@ -657,6 +657,7 @@ impl ReplicatedEventWire {
             || self.certificate.room_id != self.candidate.body.room_id
             || self.certificate.membership_epoch != self.candidate.body.membership_epoch
             || self.certificate.height != self.candidate.body.height
+            || self.certificate.round != self.candidate.body.round
         {
             return Err(ReplicationWireError::InvalidReplicatedEvent);
         }
@@ -1149,6 +1150,15 @@ mod tests {
             successor_state_hash: SemanticHash([4; 32]),
         };
         event.validate().unwrap();
+        let mut wrong_round = event.clone();
+        wrong_round.certificate.round = 1;
+        for vote in &mut wrong_round.certificate.precommits {
+            vote.round = 1;
+        }
+        assert_eq!(
+            wrong_round.validate(),
+            Err(ReplicationWireError::InvalidReplicatedEvent)
+        );
         let certificate_hash = commit_certificate_hash(&certificate).unwrap();
         let snapshot = ReplicatedSnapshotWire {
             schema_version: REPLICATION_SCHEMA_VERSION_V1,

@@ -28,6 +28,8 @@ was exhaustive, bounded, symbolic, queried, sampled, or merely empirical.
 - [Neutral spatial conformance and coverage](docs/spatial-coverage.md)
 - [Typed command and legality-policy decision](docs/decisions/0006-typed-commands-and-legality-policy.md)
 - [Retrospective action audit](docs/retrospective-audit.md)
+- [Replicated player/device authority decision](docs/decisions/0007-player-device-and-replicated-log.md)
+- [Replicated runtime convergence scenario](docs/replicated-runtime.md)
 
 Automatic target-language generation, trustless dealing, host migration,
 production account/matchmaking infrastructure, polished rendering, and RL

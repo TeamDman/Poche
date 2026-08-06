@@ -63,6 +63,12 @@ pub struct ReplicatedForkProof {
     pub second_candidate_hash: SemanticHash,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReplicatedEpochRoster {
+    membership_epoch: u64,
+    active_players: Vec<PrincipalId>,
+}
+
 /// Result of applying one already signed/certificate-bearing event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReplicatedApplyResult {
@@ -81,6 +87,7 @@ pub struct ReplicatedSessionState {
     head_event_id: Option<poche_protocol::EventId>,
     head_event_hash: SemanticHash,
     players: Vec<ReplicatedPlayerState>,
+    epoch_rosters: Vec<ReplicatedEpochRoster>,
     staged_revocations: Vec<StagedDeviceRevocation>,
     last_event: Option<ReplicatedEventWire>,
     forks: Vec<ReplicatedForkProof>,
@@ -128,6 +135,13 @@ impl ReplicatedSessionState {
         }) {
             return Err(ReplicatedSessionError::MissingVotingDevice);
         }
+        let epoch_rosters = vec![ReplicatedEpochRoster {
+            membership_epoch: 1,
+            active_players: players
+                .iter()
+                .map(|player| player.root.player_id.clone())
+                .collect(),
+        }];
         let state = Self {
             room_id,
             membership_epoch: 1,
@@ -135,6 +149,7 @@ impl ReplicatedSessionState {
             head_event_id: None,
             head_event_hash: SemanticHash([0; 32]),
             players,
+            epoch_rosters,
             staged_revocations: Vec::new(),
             last_event: None,
             forks: Vec::new(),
@@ -232,6 +247,7 @@ impl ReplicatedSessionState {
             if event.candidate.body.parent_event_hash == last.candidate.body.parent_event_hash
                 && event.candidate.body.parent_event_id == last.candidate.body.parent_event_id
             {
+                self.validate_historical_conflict(&event, verifier)?;
                 let second_hash = consensus_candidate_hash(&event.candidate.body)
                     .map_err(|_| ReplicatedSessionError::InvalidEvent)?;
                 let first_hash = consensus_candidate_hash(&last.candidate.body)
@@ -263,6 +279,10 @@ impl ReplicatedSessionState {
                     .binary_search(&player.root.player_id)
                     .is_ok();
             }
+            self.epoch_rosters.push(ReplicatedEpochRoster {
+                membership_epoch: transition.next_membership_epoch,
+                active_players: transition.active_players.clone(),
+            });
             // Retain the signed revocation as permanent evidence. Mutating a
             // certificate's signed validity fields would invalidate its root
             // signature; `require_device` instead applies effective epochs.
@@ -350,17 +370,7 @@ impl ReplicatedSessionState {
         if active.is_empty() || height != self.height.saturating_add(1) {
             return Err(ReplicatedSessionError::InvalidHeight);
         }
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"POCHE\0REPLICATED-PROPOSER\0V1");
-        hasher.update(&self.head_event_hash.0);
-        hasher.update(&height.to_be_bytes());
-        hasher.update(&round.to_be_bytes());
-        let digest = hasher.finalize();
-        let index_bytes: [u8; 8] = digest.as_bytes()[..8]
-            .try_into()
-            .map_err(|_| ReplicatedSessionError::Invariant)?;
-        let index =
-            usize::try_from(u64::from_be_bytes(index_bytes)).unwrap_or(usize::MAX) % active.len();
+        let index = proposer_index(self.head_event_hash, height, round, active.len())?;
         Ok(active[index])
     }
 
@@ -391,9 +401,55 @@ impl ReplicatedSessionState {
         if !verifier.verify_candidate(proposer_device, &event.candidate) {
             return Err(ReplicatedSessionError::BadSignature);
         }
+        let roster = self
+            .roster(self.membership_epoch)
+            .ok_or(ReplicatedSessionError::InvalidRoster)?;
         self.validate_commit_certificate(
             &event.certificate,
             body.membership_transition.as_ref(),
+            roster,
+            verifier,
+        )
+    }
+
+    fn validate_historical_conflict(
+        &self,
+        event: &ReplicatedEventWire,
+        verifier: &impl ReplicationSignatureVerifier,
+    ) -> Result<(), ReplicatedSessionError> {
+        event
+            .validate()
+            .map_err(|_| ReplicatedSessionError::InvalidEvent)?;
+        let body = &event.candidate.body;
+        let roster = self
+            .roster(body.membership_epoch)
+            .ok_or(ReplicatedSessionError::InvalidRoster)?;
+        if body.room_id != self.room_id
+            || body.height == 0
+            || body.proposer_player_id
+                != roster.active_players[proposer_index(
+                    body.parent_event_hash,
+                    body.height,
+                    body.round,
+                    roster.active_players.len(),
+                )?]
+        {
+            return Err(ReplicatedSessionError::InvalidEvent);
+        }
+        let proposer_device = self.require_device_in_roster(
+            &body.proposer_player_id,
+            &body.proposer_device_id,
+            DeviceCapabilityWire::Propose,
+            body.membership_epoch,
+            roster,
+        )?;
+        if !verifier.verify_candidate(proposer_device, &event.candidate) {
+            return Err(ReplicatedSessionError::BadSignature);
+        }
+        self.validate_commit_certificate(
+            &event.certificate,
+            body.membership_transition.as_ref(),
+            roster,
             verifier,
         )
     }
@@ -402,6 +458,7 @@ impl ReplicatedSessionState {
         &self,
         certificate: &CommitCertificateWire,
         transition: Option<&poche_protocol::MembershipTransitionWire>,
+        roster: &ReplicatedEpochRoster,
         verifier: &impl ReplicationSignatureVerifier,
     ) -> Result<(), ReplicatedSessionError> {
         certificate
@@ -409,21 +466,30 @@ impl ReplicatedSessionState {
             .map_err(|_| ReplicatedSessionError::InvalidCertificate)?;
         let mut old_voters = BTreeSet::new();
         for vote in &certificate.precommits {
-            let device = self.require_device(
+            let device = self.require_device_in_roster(
                 &vote.voter_player_id,
                 &vote.voter_device_id,
                 DeviceCapabilityWire::Vote,
                 certificate.membership_epoch,
+                roster,
             )?;
             if !verifier.verify_vote(device, vote) {
                 return Err(ReplicatedSessionError::BadSignature);
             }
             old_voters.insert(vote.voter_player_id.clone());
         }
-        if old_voters.len() < self.quorum() {
+        if old_voters.len() < replicated_quorum(roster.active_players.len()) {
             return Err(ReplicatedSessionError::NoQuorum);
         }
         if let Some(transition) = transition {
+            if transition.active_players.iter().any(|player_id| {
+                !self
+                    .players
+                    .iter()
+                    .any(|player| &player.root.player_id == player_id)
+            }) {
+                return Err(ReplicatedSessionError::InvalidRoster);
+            }
             let new_votes = old_voters
                 .iter()
                 .filter(|player| transition.active_players.binary_search(player).is_ok())
@@ -450,10 +516,27 @@ impl ReplicatedSessionState {
         capability: DeviceCapabilityWire,
         epoch: u64,
     ) -> Result<&DeviceCertificateWire, ReplicatedSessionError> {
+        let roster = self
+            .roster(epoch)
+            .ok_or(ReplicatedSessionError::InvalidRoster)?;
+        self.require_device_in_roster(player_id, device_id, capability, epoch, roster)
+    }
+
+    fn require_device_in_roster(
+        &self,
+        player_id: &PrincipalId,
+        device_id: &DeviceId,
+        capability: DeviceCapabilityWire,
+        epoch: u64,
+        roster: &ReplicatedEpochRoster,
+    ) -> Result<&DeviceCertificateWire, ReplicatedSessionError> {
+        if roster.active_players.binary_search(player_id).is_err() {
+            return Err(ReplicatedSessionError::UnknownPlayer);
+        }
         let player = self
             .players
             .iter()
-            .find(|player| &player.root.player_id == player_id && player.active)
+            .find(|player| &player.root.player_id == player_id)
             .ok_or(ReplicatedSessionError::UnknownPlayer)?;
         let device = player
             .devices
@@ -470,9 +553,32 @@ impl ReplicatedSessionState {
         Ok(device)
     }
 
+    fn roster(&self, epoch: u64) -> Option<&ReplicatedEpochRoster> {
+        self.epoch_rosters
+            .binary_search_by_key(&epoch, |roster| roster.membership_epoch)
+            .ok()
+            .map(|index| &self.epoch_rosters[index])
+    }
+
     fn validate(&self) -> Result<(), ReplicatedSessionError> {
         if self.membership_epoch == 0
             || self.active_players().len() < 2
+            || self.epoch_rosters.last().is_none_or(|roster| {
+                roster.membership_epoch != self.membership_epoch
+                    || roster.active_players
+                        != self
+                            .active_players()
+                            .into_iter()
+                            .cloned()
+                            .collect::<Vec<_>>()
+            })
+            || self.epoch_rosters.windows(2).any(|pair| {
+                pair[0].membership_epoch.saturating_add(1) != pair[1].membership_epoch
+                    || !pair[0]
+                        .active_players
+                        .windows(2)
+                        .all(|players| players[0] < players[1])
+            })
             || self
                 .players
                 .windows(2)
@@ -489,6 +595,30 @@ impl ReplicatedSessionState {
         }
         Ok(())
     }
+}
+
+fn proposer_index(
+    parent_event_hash: SemanticHash,
+    height: u64,
+    round: u32,
+    active_player_count: usize,
+) -> Result<usize, ReplicatedSessionError> {
+    if active_player_count == 0 || height == 0 {
+        return Err(ReplicatedSessionError::InvalidHeight);
+    }
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"POCHE\0REPLICATED-PROPOSER\0V1");
+    hasher.update(&parent_event_hash.0);
+    hasher.update(&height.to_be_bytes());
+    hasher.update(&round.to_be_bytes());
+    let digest = hasher.finalize();
+    let index_bytes: [u8; 8] = digest.as_bytes()[..8]
+        .try_into()
+        .map_err(|_| ReplicatedSessionError::Invariant)?;
+    Ok(
+        usize::try_from(u64::from_be_bytes(index_bytes)).unwrap_or(usize::MAX)
+            % active_player_count,
+    )
 }
 
 /// Replicated identity/log validation failure.
@@ -929,6 +1059,67 @@ mod tests {
         );
         assert_eq!(fork_state.forks().len(), 1);
         assert_eq!(fork_state.height(), 1);
+    }
+
+    #[test]
+    fn replicated_uncertified_conflict_cannot_halt_the_log() {
+        struct RejectCandidateVerifier;
+
+        impl ReplicationSignatureVerifier for RejectCandidateVerifier {
+            fn verify_device_certificate(
+                &self,
+                root: &PlayerRootWire,
+                certificate: &DeviceCertificateWire,
+            ) -> bool {
+                FixtureVerifier.verify_device_certificate(root, certificate)
+            }
+
+            fn verify_device_revocation(
+                &self,
+                root: &PlayerRootWire,
+                revocation: &DeviceRevocationWire,
+            ) -> bool {
+                FixtureVerifier.verify_device_revocation(root, revocation)
+            }
+
+            fn verify_candidate(
+                &self,
+                _certificate: &DeviceCertificateWire,
+                _candidate: &ConsensusCandidateWire,
+            ) -> bool {
+                false
+            }
+
+            fn verify_vote(
+                &self,
+                certificate: &DeviceCertificateWire,
+                vote: &ConsensusVoteWire,
+            ) -> bool {
+                FixtureVerifier.verify_vote(certificate, vote)
+            }
+        }
+
+        let (mut state, players, devices) = fixture_state();
+        let first_candidate = candidate(&state, &players, &devices, 0, 3, None);
+        let first = event(
+            first_candidate,
+            &[(&players[0], &devices[0]), (&players[1], &devices[1])],
+            9,
+        );
+        let conflicting_candidate = candidate(&state, &players, &devices, 1, 4, None);
+        let conflicting = event(
+            conflicting_candidate,
+            &[(&players[1], &devices[1]), (&players[2], &devices[2])],
+            10,
+        );
+        state.apply_event(first, &FixtureVerifier).unwrap();
+
+        assert_eq!(
+            state.apply_event(conflicting, &RejectCandidateVerifier),
+            Err(ReplicatedSessionError::BadSignature)
+        );
+        assert!(state.forks().is_empty());
+        assert_eq!(state.height(), 1);
     }
 
     #[test]

@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 5.2, deterministic convergence, partition, reconnect, and kick recovery
+**Current implementation focus:** 5.3, formal and cross-implementation consensus evidence
 
 ## How to update this plan
 
@@ -1051,7 +1051,44 @@ cargo test -p poche-session replicated
 **Completion criteria:** Exact signing/certificate/event vectors and migration
 fixtures close G5/G6 before network or hidden-card code depends on them.
 
-### [~] 5.2 Implement deterministic convergence, partition, reconnect, and kick recovery
+### [x] 5.2 Implement deterministic convergence, partition, reconnect, and kick recovery
+
+**Completion notes:** Completed 2026-08-05. Added the transport-independent
+`ReplicatedRuntimeLog` and registered
+`replicated-micro-3players-5devices-4events-majority-partition-snapshot-tail`.
+The deterministic scenario drives four replicas, three players, five devices,
+and four committed events through a majority-side partition, opposite-order
+concurrent proposals, height-two-before-height-one buffering/draining, exact
+duplicate delivery, certified snapshot plus tail recovery, a joint-quorum kick
+of the current actor, stale-epoch and revoked-device denials, a minority
+no-quorum denial, and three device-local automatic proposals collapsing to one
+semantic event. Nine attempts yield five unique transition keys. All replicas
+finish at epoch two with exact state hash
+`1b51070836855771b6e51e8a0aae8cffe4784af2c478674e13f579ab5713c168`.
+
+The log verifies canonical proposal ordering, player-deduplicated strict
+majority, parent/event/successor hashes, and old/new joint quorum before
+mutation. Its snapshot constructor explicitly consumes already-certified
+metadata; cryptographic verification remains the protocol/session boundary
+from 5.1. That boundary now persists sorted historical epoch rosters and fully
+validates a conflicting event's historical proposer, device authority,
+candidate signature, vote signatures, and quorum before recording fork
+evidence. A dedicated negative test proves an uncertified fork-shaped event
+cannot halt the log. Commit certificates are now explicitly bound to the
+candidate round as well as room, epoch, height, and value; unknown players in a
+membership transition fail closed.
+
+The retained expected-false witness removes non-equivocation: two distinct
+two-of-three certificates intersect only at one player, so that player's
+equivocation can produce conflicting commits. The result is therefore
+conditional accountable crash-fault evidence under deterministic reduction,
+eventual delivery among connected honest devices, a strict player majority,
+and non-equivocation—not Byzantine consensus or one-survivor progress in a
+two-player partition. `docs/replicated-runtime.md` records the causal transcript
+and exact simulator/cryptographic/network boundaries. The prescribed runtime
+test and CLI check pass offline; full runtime/session regression (22 and 26
+unit tests plus integration/doc tests), formatting, and strict Clippy for the
+affected crates also pass.
 
 **Work:**
 
@@ -1074,7 +1111,7 @@ cargo run -p poche-xtask --offline -- consensus check --scope micro
 delivery/quorum assumptions; safety holds under tested omissions/partitions;
 counterexamples are retained when assumptions are removed.
 
-### [ ] 5.3 Add formal and cross-implementation consensus evidence
+### [~] 5.3 Add formal and cross-implementation consensus evidence
 
 **Work:**
 
