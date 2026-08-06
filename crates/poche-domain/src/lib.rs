@@ -677,6 +677,18 @@ impl FiniteDomain for Rank {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CardId(u8);
 
+/// Stable failure for a non-canonical human card name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CardNameError;
+
+impl fmt::Display for CardNameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("card must be rank-suit, for example jack-spades")
+    }
+}
+
+impl std::error::Error for CardNameError {}
+
 impl CardId {
     /// Construct from suit and rank.
     ///
@@ -708,6 +720,52 @@ impl CardId {
     pub fn rank(self) -> Rank {
         Rank::decode(u128::from(self.0 % 13)).expect("validated card rank")
     }
+
+    /// Return the canonical dense standard-deck code.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        self.0
+    }
+}
+
+/// Parse an exact lowercase `rank-suit` card name such as `jack-spades`.
+///
+/// # Errors
+///
+/// Rejects abbreviations, case variants, unknown values, and extra separators
+/// so CLI/help/replay text has one canonical spelling.
+pub fn parse_card_name(value: &str) -> Result<CardId, CardNameError> {
+    let (rank, suit) = value.split_once('-').ok_or(CardNameError)?;
+    if suit.contains('-') {
+        return Err(CardNameError);
+    }
+    let rank = match rank {
+        "two" => 2,
+        "three" => 3,
+        "four" => 4,
+        "five" => 5,
+        "six" => 6,
+        "seven" => 7,
+        "eight" => 8,
+        "nine" => 9,
+        "ten" => 10,
+        "jack" => 11,
+        "queen" => 12,
+        "king" => 13,
+        "ace" => 14,
+        _ => return Err(CardNameError),
+    };
+    let suit = match suit {
+        "clubs" => Suit::Clubs,
+        "diamonds" => Suit::Diamonds,
+        "hearts" => Suit::Hearts,
+        "spades" => Suit::Spades,
+        _ => return Err(CardNameError),
+    };
+    Ok(CardId::new(
+        suit,
+        Rank::new(rank).map_err(|_| CardNameError)?,
+    ))
 }
 
 impl FiniteDomain for CardId {
@@ -1010,6 +1068,16 @@ mod tests {
         assert_roundtrip::<MicroRoundScore>();
         assert_eq!(CardId::bit_width(), 6);
         assert_eq!(CardId::enumerate().len(), 52);
+    }
+
+    #[test]
+    fn canonical_card_name_parsing_is_exact_and_dense() {
+        assert_eq!(parse_card_name("two-clubs").unwrap().code(), 0);
+        assert_eq!(parse_card_name("jack-spades").unwrap().code(), 48);
+        assert_eq!(parse_card_name("ace-spades").unwrap().code(), 51);
+        for rejected in ["J-spades", "jack-spade", "jack--spades", " jack-spades"] {
+            assert!(parse_card_name(rejected).is_err(), "{rejected}");
+        }
     }
 
     #[test]

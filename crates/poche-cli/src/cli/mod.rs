@@ -182,7 +182,7 @@ pub fn help(path: &[String]) -> String {
         format!("Poche help for {}", path.join(" "))
     };
     format!(
-        "{heading}\n\nUSAGE:\n  poche [GLOBAL OPTIONS] <GROUP> <COMMAND> [ARGS]\n\nGLOBAL OPTIONS:\n  --debug\n  --log-filter <DIRECTIVES>\n  --log-file <NDJSON-PATH>\n  --output <text|json|ndjson>\n  --stop-after-ms <MILLISECONDS>\n  --help\n  --version\n\nCOMMANDS:\n  room host|join|show|ready|unready|countdown|abort|pause|resume|leave|close\n  game observe|actions|act\n  chat send|tail\n  spectator request-hand|grant-hand|revoke-hand\n  transcript record|replay|inspect\n  identity show|create\n"
+        "{heading}\n\nUSAGE:\n  poche [GLOBAL OPTIONS] <GROUP> <COMMAND> [ARGS]\n\nGLOBAL OPTIONS:\n  --debug\n  --log-filter <DIRECTIVES>\n  --log-file <NDJSON-PATH>\n  --output <text|json|ndjson>\n  --stop-after-ms <MILLISECONDS>\n  --help\n  --version\n\nCOMMANDS:\n  room host|join|show|ready|unready|countdown|abort|pause|resume|leave|close\n  game observe|actions|act|play-card\n  chat send|tail\n  spectator request-hand|grant-hand|revoke-hand\n  transcript record|replay|inspect\n  identity show|create\n"
     )
 }
 
@@ -249,6 +249,10 @@ mod tests {
             (&["game", "observe", "r"], ("game", "observe")),
             (&["game", "actions", "r"], ("game", "actions")),
             (&["game", "act", "r", "pass"], ("game", "act")),
+            (
+                &["game", "play-card", "r", "jack-spades"],
+                ("game", "play-card"),
+            ),
             (&["chat", "send", "r", "hello"], ("chat", "send")),
             (&["chat", "tail", "r", "20"], ("chat", "tail")),
             (

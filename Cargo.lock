@@ -6376,6 +6376,8 @@ name = "poche-cli"
 version = "0.1.0"
 dependencies = [
  "eyre",
+ "poche-domain",
+ "poche-protocol",
  "poche-runtime",
  "serde",
  "serde_json",
@@ -6475,6 +6477,7 @@ dependencies = [
  "poche-oracle-rust",
  "poche-protocol",
  "poche-session",
+ "poche-spatial",
  "serde",
  "serde_json",
 ]

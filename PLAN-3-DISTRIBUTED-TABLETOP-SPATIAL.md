@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 2.3, bridge `/play-card`, drag intent, transition, replay, and tween endpoints
+**Current implementation focus:** 2.4, prove the Rust refinement laws over supported scopes
 
 ## How to update this plan
 
@@ -540,7 +540,25 @@ cargo test -p poche-spatial text_attachment
 face/name/score text, and attachments remain unambiguous even with touching or
 overlapping card bounds.
 
-### [ ] 2.3 Bridge `/play-card`, drag intent, transition, replay, and tween endpoints
+### [x] 2.3 Bridge `/play-card`, drag intent, transition, replay, and tween endpoints
+
+**Completion notes:** Completed 2026-08-05. Added canonical exact-lowercase
+card names in `poche-domain`; `jack-spades` maps to dense code 48 and variants
+fail without echoing user data. The CLI now exposes `game play-card <room>
+<rank-suit>` and returns the existing typed `GameActionWire::Play`. Engine-
+neutral interaction resolution selects only one visible card in the issuing
+seat's typed hand; hidden, missing, other-seat/granted, duplicate, unknown,
+wrong-zone, dead-band, ambiguous, free, out-of-bounds, and reducer-illegal
+paths have stable findings and never mutate state. Named and drag releases use
+the same resolver. A `SpatialPlayRecord` stores only opaque object, typed
+source/destination, source endpoint, duration, and easing; replay reconstructs
+the exact destination from the registered layout without frame samples. The
+runtime adapter checks the reducer-supplied legal action set and emits the
+existing canonical protocol payload. Its executable fixture deliberately deals
+`jack-spades` to the actor and proves typed and drag payload equality, canonical
+NDJSON byte/hash round-trip, equal full oracle successors, and equal semantic
+successor hashes over public plus both private hands. Focused spatial/runtime/
+CLI tests and strict Clippy pass offline.
 
 **Work:**
 

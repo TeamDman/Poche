@@ -14,6 +14,7 @@ poche-environment = { path = "../poche-environment" }
 poche-oracle-rust = { path = "../poche-oracle-rust" }
 poche-protocol = { path = "../poche-protocol" }
 poche-session = { path = "../poche-session" }
+poche-spatial = { path = "../poche-spatial" }
 serde.workspace = true
 serde_json.workspace = true
 

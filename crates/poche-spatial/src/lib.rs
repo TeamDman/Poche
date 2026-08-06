@@ -11,6 +11,7 @@
 //! dependency.
 
 mod identity;
+mod interaction;
 mod layout;
 mod realization;
 mod scene;
@@ -18,6 +19,10 @@ mod units;
 
 pub use identity::{
     CardObjectId, LayoutId, ObjectId, SeatId, SurfaceId, SurfaceKind, TableId, TextRunId, ZoneId,
+};
+pub use interaction::{
+    InteractionFinding, ResolvedCardPlay, SpatialPlayRecord, reconstruct_animation_endpoint,
+    resolve_card_play, resolve_drag_play,
 };
 pub use layout::{
     LayoutError, SeatPlacement, SpatialLayout, ZoneClassification, ZoneVolume, registered_layout,

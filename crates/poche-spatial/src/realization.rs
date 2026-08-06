@@ -458,7 +458,7 @@ fn push_card(
     Ok(())
 }
 
-fn card_pose(
+pub(crate) fn card_pose(
     layout: &SpatialLayout,
     location: CardLocation,
     location_count: u8,
