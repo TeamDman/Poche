@@ -1,11 +1,11 @@
 # Poche phase 3: spatial tabletop refinement and distributed agency
 
 **Plan ID:** `poche-phase-3`
-**Plan status:** Execution in progress
+**Plan status:** Execution complete
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-06 (America/Toronto)
-**Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 9.3, complete the final triple audit and remote verification
+**Intent audit:** Final three-pass audit passed 2026-08-06 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
+**Current implementation focus:** Complete; no active implementation task
 
 ## How to update this plan
 
@@ -31,21 +31,29 @@ The plan is only ready once we have literally triple checked that no intent from
 
 ## Intent audit evidence
 
-- **Pass 1 — extraction:** Reread the available original user messages from the
-  browser/Veilid gateway discussion through the latest `/play_card`, Slug,
-  formal-spatial, and ECS questions. Split browser facilitation, device agency,
-  consensus, dropout, voting, retrospective cheating, command permissions,
-  tabletop looseness, typed-state strength, geometry, Slug, Bevy, formal
-  methods, and vertical-slice expectations into P3-U1 through P3-U38. Rechecked
-  `PLAN.md` and `PLAN-2-MULTIPLAYER-RL-RENDERING.md` so established choices were
-  preserved rather than silently reopened.
-- **Pass 2 — traceability:** Mapped every active P3-U ID to one or more gates,
-  tasks, support-matrix rows, completion criteria, or explicit non-goals. The
-  inverse audit tied every material plan choice to current source evidence, a
-  completed ADR, explicit user direction, or a named reversible assumption.
-  The initial missing distinction between a Poche-owned browser gateway and an
-  upstream general Veilid browser change was repaired in G9 and tasks 7.1-7.3.
-- **Pass 3 — adversarial omission:** Reread the user messages in reverse order
+- **Pass 1 — extraction:** At final release on 2026-08-06, reread the available
+  original user messages from the browser/Veilid gateway discussion through the
+  latest `/play_card`, Slug, formal-spatial, and ECS questions. Reconfirmed that
+  browser facilitation, device agency, consensus, dropout, voting,
+  retrospective cheating, command permissions, tabletop looseness,
+  typed-state strength, geometry, Slug, Bevy, formal methods, and the
+  player-observable vertical slice are represented individually by P3-U1
+  through P3-U38. Rechecked `PLAN.md` and
+  `PLAN-2-MULTIPLAYER-RL-RENDERING.md`; no active intent was dropped or silently
+  reopened. The later exact WinGet Typst path was operational evidence rather
+  than new product scope and is preserved in the release receipt.
+- **Pass 2 — traceability:** At final release, checked every active P3-U ID
+  against its completed gate, task, checked artifact, support-matrix row, or
+  explicit non-goal, then checked the inverse direction from every material
+  implementation choice back to user direction, an ADR, source evidence, or a
+  named reversible assumption. The executable audit initially caught a real
+  process omission: Phase 3 lacked a registered profile and one-to-one
+  traceability enforcement. `poche-phase-3.conf`, 38 individual mappings, and
+  regression tests repair that omission. The earlier missing distinction
+  between a Poche-owned browser gateway and an upstream general Veilid browser
+  change remains repaired in G9 and tasks 7.1-7.3.
+- **Pass 3 — adversarial omission:** At final release, reread the user messages
+  in reverse order and inspected the completed implementation and public claims
   and specifically checked qualifiers that are easy to lose: typed state is the
   main representation; the 3D model needs no physics; browser HTML should act
   like HTML rather than imitate a native renderer; an accused cheater's vote is
@@ -53,8 +61,9 @@ The plan is only ready once we have literally triple checked that no intent from
   progress hostage; client-local automation may propose but not secretly
   execute shared changes; arbitrary score changes are governable while the
   finite card universe remains hard; and an upstream Veilid improvement is an
-  option to research, not authority to modify that repository. No unrepresented
-  active intent remained after the repair, so all three passes were rerun.
+  option to research, not authority to modify that repository. No
+  unrepresented active intent or overstrong public claim remained after the
+  profile/traceability repair, so all three final passes were rerun.
 - **Known source limitation:** None for user intent. The linked YouTube and Math
   Stack Exchange pages were not transcribed; the links are retained as user
   inspiration, while security decisions require primary cryptographic sources
@@ -1853,15 +1862,34 @@ git diff --check
 contains no stronger anonymity, fairness, liveness, decentralization, or spatial
 proof claim than the registered receipts.
 
-### [~] 9.3 Complete the guidance audit, commit, push, and remote verification
+### [x] 9.3 Complete the guidance audit, commit, push, and remote verification
 
-**Completion notes:** In progress. The first executable release audit detected
-that Phase 3's P3-U1-P3-U38 ledger had no registered declarative audit profile;
-the repaired profile now passes with 38 individual mappings and regression
-tests. Remote verification then exposed the pre-existing Pages failure at
-`getrandom` 0.2's missing WASM JavaScript backend. A target-only feature
-unification fixes the exact locked Pages library build locally; remote proof is
-still pending before completion.
+**Completion notes:** Completed 2026-08-06. The first executable release audit
+detected that Phase 3's P3-U1-P3-U38 ledger had no registered declarative audit
+profile. The repaired `poche-phase-3` profile now passes with 38 active
+requirements, 38 one-to-one mappings, 12 closed gates, 28 tasks with adjacent
+notes, 13 overall criteria, one explicit deferred section, all eight
+adversarial markers, and regression coverage. Verified implementation and
+audit checkpoints `222ab88`, `b90a4a0`, `55db923`, and `0156187` are pushed.
+
+Remote verification exposed the prior Pages failure at `getrandom` 0.2.17's
+missing WASM JavaScript backend. The target-only `js` feature unification in
+checkpoint `1b8f5f3` fixes the exact locked `poche-ui --lib` WASM build; the
+local Pages build produced its HTML, JavaScript, and WASM artifacts. Eligible
+pushes unexpectedly created no new workflow run, so this is not represented as
+push-trigger evidence. Instead, existing protected workflow `pages.yml` was
+manually dispatched against exact commit
+`1b8f5f31399b95b3cb5a79635744c33b8c6ac45f`: run
+`31128858821` completed both build and deploy successfully. Public HTTPS probes
+then returned 200 for `/`, `/status.html`, `/spatial.html`,
+`/evidence/phase-3-release.json`, and `/replay/pkg/poche_ui_bg.wasm`; the public
+6,418-byte release receipt has SHA-256
+`7517902e4c4788263e119a158f0340c5f6abd7ffd1a17c2ea99ec3431999a15e`,
+identical to the checked local file, and the WASM is served as
+`application/wasm`. The commit containing this terminal plan evidence is the
+final closure commit; post-push handoff verification records its exact local,
+tracking, and GitHub remote equality without requiring a self-referential hash
+inside that commit.
 
 **Work:**
 
@@ -1888,40 +1916,40 @@ match, and the worktree is clean.
 
 ## Overall completion criteria
 
-- [ ] Every task is `[x]` with adjacent exact evidence; no open/blocked gate is
+- [x] Every task is `[x]` with adjacent exact evidence; no open/blocked gate is
   hidden by a broad completion claim.
-- [ ] Typed Poche/session state remains canonical, and engine-neutral spatial
+- [x] Typed Poche/session state remains canonical, and engine-neutral spatial
   refinement proves the registered round-trip, uniqueness, conservation,
   attachment, endpoint, and viewer-privacy laws.
-- [ ] `/play-card jack-spades`, native drag, typed calls, and canonical NDJSON
+- [x] `/play-card jack-spades`, native drag, typed calls, and canonical NDJSON
   resolve to the same checked transition and spatial successor.
-- [ ] Native 3D and semantic HTML present the same authorized state/history
+- [x] Native 3D and semantic HTML present the same authorized state/history
   while remaining target-appropriate; Slug text is attached semantically and
   never used as score/card identity authority.
-- [ ] Alloy, NuSMV, Scryer Prolog, and Rust independently check their honest
+- [x] Alloy, NuSMV, Scryer Prolog, and Rust independently check their honest
   spatial scopes, detect seeded counterexamples, and emit neutral agreement
   evidence without treating Rust as expected answer.
-- [ ] Prevent, allow-attempt, automatic-proposal, and manual-accusation modes
+- [x] Prevent, allow-attempt, automatic-proposal, and manual-accusation modes
   preserve hard invariants and produce replayable retrospective findings.
-- [ ] Typed permissions, proposals, votes, excluded-vote evidence, score
+- [x] Typed permissions, proposals, votes, excluded-vote evidence, score
   amendments, redeal/kick/end recovery, and AFK/disconnect handling work without
   waiting for the blocked player.
-- [ ] Player identities support multiple device keys with exact add/revoke/loss
+- [x] Player identities support multiple device keys with exact add/revoke/loss
   semantics; the replicated experimental mode has stated quorum/fork/fairness
   assumptions and convergence/counterexample evidence.
-- [ ] Hidden-card fairness/privacy/dropout claims are backed by a selected
+- [x] Hidden-card fairness/privacy/dropout claims are backed by a selected
   published construction, explicit threat assumptions, vectors, and prototype
   evidence—or remain plainly research-only if no safe construction is selected.
-- [ ] The Poche browser gateway preserves device agency as designed, uses
+- [x] The Poche browser gateway preserves device agency as designed, uses
   ordinary accessible HTML plus the selected HTTP/SSE/direct transport, and
   accurately discloses key custody, operator knowledge, and censorship/order
   capabilities.
-- [ ] Existing host mode, chat, any-player pause/unpause, spectator grants,
+- [x] Existing host mode, chat, any-player pause/unpause, spectator grants,
   replay, Pages, formal oracles, and `poche-2p-v1`/`round-score-v1` RL evidence
   remain passing or are explicitly versioned with cause.
-- [ ] MPL-2.0, dependency/license, secret-safety, generated-artifact, and Veilid
+- [x] MPL-2.0, dependency/license, secret-safety, generated-artifact, and Veilid
   upstream-contribution boundaries are satisfied.
-- [ ] The final three-pass guidance audit passes; intended changes are committed
+- [x] The final three-pass guidance audit passes; intended changes are committed
   and pushed; `HEAD == origin/model-checking`; the worktree is clean.
 
 ## Risk register
