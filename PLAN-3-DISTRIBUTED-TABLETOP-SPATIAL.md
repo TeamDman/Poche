@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 7.1, define hybrid/direct route codes and gateway trust boundaries
+**Current implementation focus:** 7.2, implement signed HTTP commands and reconnectable SSE projections
 
 ## How to update this plan
 
@@ -264,7 +264,7 @@ inferred merely from using Veilid.
 | G6 | How do player roots authorize multiple device keys, and how do add/revoke/loss/browser export work? | Exact signing vectors, projection scope, simultaneous-device and revocation tests. | Closed by ADR 0007: existing principal bytes are root identity; root-signed per-device keys; one vote/player; local default; gateway custody disclosed and export-and-rotate |
 | G7 | Which published mental-poker construction and threat assumptions cover fair shuffle/deal/reveal, collusion, active cheating, and dropout? | No implementation or fairness claim before primary-source review and vectors. | Closed by ADR 0008: exact `ziffle` 0.1.0 Bayer-Groth full-deck profile; active coalition up to `n-1` under stated assumptions; unanimous reveals; explicit cryptographic abort/redeal instead of same-hand dropout recovery; mandatory independent review before production claims |
 | G8 | What proposal/vote quorum, eligibility snapshot, timeout, tie, accused-member tally, and kick/redeal/end semantics apply? | Rust/formal fixtures cover out-of-turn recovery and visible non-counting votes. | Closed by task 4.3: strict majority of a proposal-time active eligibility snapshot; visible excluded votes; logical deadline rejection; exact capability alternative |
-| G9 | What exactly does a gateway know/do; which keys stay in-browser; and when are HTTP+SSE, WSS, WebTransport, or direct Veilid used? | Threat/topology matrix, reconnect evidence, and no false anonymity/directness claim. | Open in 7.1 |
+| G9 | What exactly does a gateway know/do; which keys stay in-browser; and when are HTTP+SSE, WSS, WebTransport, or direct Veilid used? | Threat/topology matrix, reconnect evidence, and no false anonymity/directness claim. | Closed by ADR 0009: legacy `p3-` preserved; explicit `p3r-` direct/gateway/loopback locators; six-layer separation; machine-checked host/replicated/local/degraded custody disclosures; HTTP+SSE first; direct browser support still evidence-gated |
 | G10 | What versioned command AST backs CLI, GUI, votes, and protocol; is pinned Figue compatible with the workspace Facet version? | Parser/help/completion/codec tests prove one typed meaning; raw strings are never authorized directly. | Closed by ADR 0006: `poche-governance-command-v1`; first-party parser/catalog because exact Figue pair fails offline resolution |
 | G11 | How do strict prevention, allow-attempt, auto-propose, manual accusation, retrospective findings, and recovery compose? | Policy matrix and history corpus demonstrate each mode without weakening C3. | Closed by ADR 0006: structural, authorization, legality, finding-publication, and governable-effect layers |
 | G12 | Does table-scale precision or multi-table scope justify `big_space`? | Measured precision/complexity ADR; default is table-local fixed units and render-time `f32`. | Closed by ADR 0005: no `big_space`; table-local integer mm plus render-time `f32` |
@@ -1325,7 +1325,32 @@ named threshold or reaches an explicit governable abort/redeal state; none hang.
 
 ## Phase 7 — Compose Veilid, browser gateways, and device agency
 
-### [ ] 7.1 Define hybrid/direct route codes and gateway trust boundaries
+### [x] 7.1 Define hybrid/direct route codes and gateway trust boundaries
+
+**Completion notes:** Completed 2026-08-05. ADR 0009 closes G9 and preserves
+legacy `p3-` as the byte-for-byte direct-Veilid v1 credential rather than
+silently wrapping or reinterpreting it. Added bounded `p3r-` v1 credentials
+whose one initial locator is direct public/local Veilid, an exact HTTPS Poche
+gateway origin, or explicit loopback-only HTTP. All bind protocol/rendezvous
+versions, expiry, expected host principal, and invitation secret within the
+existing 256-byte invite bound. Remote plaintext HTTP, URL paths/query/userinfo,
+malformed record keys/handles, mutation, expiry, and noncanonical re-encoding
+fail closed. The three deterministic route vectors have digest
+`blake3:b06e4dd25ce49e12663f02054a03b8e802f7dfbf36cd44985de32127b671560a`.
+
+Added canonical protocol gateway disclosures for host authority, replicated
+browser-local/end-to-end, and replicated gateway-custodied/degraded profiles.
+Explicit visibility/ability/quorum enums inventory command/projection/hidden
+state access, censorship/reordering/replay, impersonation, root exclusion,
+unilateral ordering, quorum, and export-rotate-revoke recovery. Decoding
+recomputes the profile and rejects softened claims. The three canonical
+profiles have digest
+`blake3:b07ec7cb405aaa5fbfd14f82ba7368b4fbe981eb697914f9b06b197fcb499df9`.
+ADR 0009 separately names Veilid bootstrap, Poche rendezvous, membership,
+device certification, event authority/consensus, and projection encryption;
+a room locator cannot grant any later layer. It also states that a Veilid room
+record cannot bootstrap an unattached node. All five focused room-code tests,
+four gateway tests, formatting, and strict protocol/Veilid Clippy pass offline.
 
 **Work:**
 
@@ -1348,7 +1373,7 @@ cargo test -p poche-protocol gateway
 **Completion criteria:** Codec vectors, threat matrix, and recovery semantics
 close G9 without changing current room-code meaning silently.
 
-### [ ] 7.2 Implement HTTP commands plus SSE projections for browser devices
+### [~] 7.2 Implement HTTP commands plus SSE projections for browser devices
 
 **Work:**
 

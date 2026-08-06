@@ -14,6 +14,7 @@ mod membership;
 mod projection_packet;
 mod rendezvous;
 mod room_code;
+mod room_route_code;
 mod store;
 mod transport;
 
@@ -22,6 +23,7 @@ pub use membership::*;
 pub use projection_packet::*;
 pub use rendezvous::*;
 pub use room_code::*;
+pub use room_route_code::*;
 pub use store::*;
 pub use transport::*;
 

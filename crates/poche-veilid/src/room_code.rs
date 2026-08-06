@@ -304,7 +304,7 @@ impl Drop for SecretBuffer {
     }
 }
 
-fn validate_record_key(value: &[u8]) -> Result<(), RoomCodeError> {
+pub(crate) fn validate_record_key(value: &[u8]) -> Result<(), RoomCodeError> {
     if value.is_empty()
         || value.len() > MAX_RECORD_KEY_BYTES
         || !value
@@ -316,7 +316,7 @@ fn validate_record_key(value: &[u8]) -> Result<(), RoomCodeError> {
     Ok(())
 }
 
-fn decode_hex_32(value: &str) -> Result<[u8; 32], RoomCodeError> {
+pub(crate) fn decode_hex_32(value: &str) -> Result<[u8; 32], RoomCodeError> {
     if value.len() != 64 {
         return Err(RoomCodeError::InvalidHostPrincipal);
     }
@@ -337,7 +337,7 @@ fn nibble(value: u8) -> Option<u8> {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

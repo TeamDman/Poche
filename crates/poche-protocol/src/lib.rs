@@ -14,6 +14,7 @@
 //! a command reaches authorization or reduction.
 
 mod codec;
+mod gateway;
 mod governance;
 mod ids;
 mod replication;
@@ -21,6 +22,7 @@ mod secret;
 mod types;
 
 pub use codec::*;
+pub use gateway::*;
 pub use governance::*;
 pub use ids::*;
 pub use replication::*;
