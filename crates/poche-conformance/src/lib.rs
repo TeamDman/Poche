@@ -12,6 +12,7 @@
 mod alloy;
 mod nusmv;
 mod prolog;
+mod spatial_alloy;
 
 pub use alloy::{AlloyConformanceError, AlloyConformanceReport, compare_rust_alloy};
 pub use nusmv::{NuSmvConformanceError, NuSmvConformanceReport, compare_rust_nusmv};
@@ -20,6 +21,7 @@ pub use prolog::{
     PrologConformanceError, PrologConformanceReport, PrologFixtureComparison, PrologFixtureSpec,
     compare_rust_prolog,
 };
+pub use spatial_alloy::{SpatialAlloyError, SpatialAlloyReport, check_spatial_alloy_layout_micro};
 
 use std::error::Error;
 use std::fmt;

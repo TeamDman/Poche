@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 3.1, model static layout and refinement relations in Alloy
+**Current implementation focus:** 3.2, model temporal spatial transitions in NuSMV
 
 ## How to update this plan
 
@@ -633,7 +633,29 @@ minimal counterexamples for each negative-control fault.
 
 ## Phase 3 — Add independent formal spatial oracles
 
-### [ ] 3.1 Model static layout and refinement relations in Alloy
+### [x] 3.1 Model static layout and refinement relations in Alloy
+
+**Completion notes:** Completed 2026-08-05. Added the independently
+handwritten `models/alloy/spatial.als` and a fail-closed normalized runner at
+`spatial alloy --scope layout-micro`. The exact scope ID is
+`layout-micro-2p-3v-8c-7z-7cells-8slots-int5`: two players, one spectator,
+two seats, seven typed zones, eight cards/faces/slots, seven discrete
+integer-coordinate cells, one typed viewer projection, one spatial scene, and
+5-bit Alloy integers (`-16..=15`). Eleven native commands pass with receipt-
+derived scopes: one SAT canonical realization, seven UNSAT positive assertions
+covering seat/owned-zone injection, zone separation, card location/slot
+uniqueness, face/score attachment totality, visibility, and
+realization/abstraction, plus three deliberately false assertions with SAT
+counterexamples. Those controls retain an overlapping shape-complete layout,
+a broad drop implicating multiple otherwise separated zones while selecting
+one, and a scene satisfying every modeled condition except a face run attached
+to the wrong object. Raw output, normalized polarity/source results, and full
+Alloy instances are written under ignored
+`target/spatial-alloy-layout-micro/`. `docs/spatial-alloy.md` states that cells
+are a finite relational coordinate abstraction and that this is not proof of
+continuous geometry, arbitrary meshes, floating-point rendering, physics, all
+52-card arrangements, or unbounded player/layout scopes. The prescribed CLI,
+focused conformance test, formatting, and strict Clippy all pass offline.
 
 **Work:**
 

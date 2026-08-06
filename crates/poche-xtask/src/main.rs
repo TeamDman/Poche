@@ -12,7 +12,8 @@ use std::process::{Command, ExitCode, Output};
 
 use poche_check::{CheckScope, TerminationReason, analyze_liveness, check_session, explore};
 use poche_conformance::{
-    Disposition, compare_rust_alloy, compare_rust_models, compare_rust_nusmv, compare_rust_prolog,
+    Disposition, check_spatial_alloy_layout_micro, compare_rust_alloy, compare_rust_models,
+    compare_rust_nusmv, compare_rust_prolog,
 };
 use poche_interchange::{
     BackendKindWire, ConfidenceKindWire, SessionClaimWire, SessionTrackEvidenceWire,
@@ -101,6 +102,7 @@ fn main() -> ExitCode {
         Some(command) if command == OsStr::new("transport") => transport(args),
         Some(command) if command == OsStr::new("multiplayer") => multiplayer(args),
         Some(command) if command == OsStr::new("rl") => rl(args),
+        Some(command) if command == OsStr::new("spatial") => spatial(args),
         Some(command) if command == OsStr::new("coverage") => coverage(args),
         Some(command) if command == OsStr::new("oracle") => oracle(args),
         Some(command) if command == OsStr::new("compare") => compare(args),
@@ -137,6 +139,7 @@ fn usage() {
          cargo run -p poche-xtask -- rl train --manifest PATH\n  \
          cargo run -p poche-xtask -- rl evaluate --manifest PATH\n  \
          cargo run -p poche-xtask -- rl replay --manifest PATH --matchup NAME --seed SEED\n  \
+         cargo run -p poche-xtask -- spatial alloy --scope layout-micro\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- oracle report\n  \
@@ -149,6 +152,36 @@ fn usage() {
          cargo run -p poche-xtask -- check rust-explicit --scope micro\n  \
          cargo run -p poche-xtask -- check rust-explicit --property game-terminates"
     );
+}
+
+fn spatial(mut args: impl Iterator<Item = OsString>) -> ExitCode {
+    if args.next().as_deref() != Some(OsStr::new("alloy"))
+        || args.next().as_deref() != Some(OsStr::new("--scope"))
+        || args.next().as_deref() != Some(OsStr::new("layout-micro"))
+        || args.next().is_some()
+    {
+        usage();
+        return ExitCode::from(2);
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    match check_spatial_alloy_layout_micro(&root) {
+        Ok(report) => {
+            println!(
+                "spatial Alloy: scope={} commands={} witnesses={} assertions={} negative_controls={} evidence={}",
+                report.scope,
+                report.command_count,
+                report.canonical_witnesses,
+                report.positive_assertions,
+                report.negative_controls,
+                report.evidence_directory
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("spatial Alloy failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn rl(mut args: impl Iterator<Item = OsString>) -> ExitCode {
