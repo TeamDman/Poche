@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 2.2, implement viewer-safe spatial realization and semantic text runs
+**Current implementation focus:** 2.3, bridge `/play-card`, drag intent, transition, replay, and tween endpoints
 
 ## How to update this plan
 
@@ -500,7 +500,23 @@ cargo test -p poche-spatial classify
 poses uniquely, rejects/marks boundary ambiguity, and demonstrates no forbidden
 cross-player or central-zone overlap.
 
-### [ ] 2.2 Implement viewer-safe spatial realization and semantic text runs
+### [x] 2.2 Implement viewer-safe spatial realization and semantic text runs
+
+**Completion notes:** Completed 2026-08-05. Added a dependency-direction-safe
+`ViewerSpatialProjection` contract and pure realization that accepts only
+public plus exact-recipient authorized data. Every realized active projection
+partitions exactly 52 opaque card objects across deck, separate face-up trump,
+hands, current play, and won piles; unknown faces are `None` and have no face
+text. Known face duplication, bad seat/hand/trick/won cardinalities, and deck
+over-allocation fail closed. Card faces use canonical Unicode labels such as
+`A♠`; names and canonical decimal scores bind explicitly to score-sheet
+surfaces, and `interpret_score_sheet(realize(...))` round-trips the typed
+ledger. `poche-ui` now retains authorized/public numeric card codes beside
+human labels and maps `PresentationModel` to a spatial scene without importing
+session authority. Alice-own-hand, ungranted spectator, and granted-spectator
+tests prove that only the exact additional grant faces/text appear. Focused
+`realization`, `visibility`, `text_attachment`, and UI adapter tests pass, as do
+strict Clippy and formatting with renderer/default UI features disabled.
 
 **Work:**
 

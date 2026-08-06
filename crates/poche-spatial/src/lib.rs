@@ -12,6 +12,7 @@
 
 mod identity;
 mod layout;
+mod realization;
 mod scene;
 mod units;
 
@@ -20,6 +21,10 @@ pub use identity::{
 };
 pub use layout::{
     LayoutError, SeatPlacement, SpatialLayout, ZoneClassification, ZoneVolume, registered_layout,
+};
+pub use realization::{
+    PlayedCardProjection, PlayerSpatialProjection, RealizationError, RevealedWonCard,
+    ScoreSheetError, ViewerSpatialProjection, interpret_score_sheet, realize_viewer_scene,
 };
 pub use scene::{
     AnimationEasing, AnimationEndpoint, CardFace, CardLocation, CardObject, SceneError,

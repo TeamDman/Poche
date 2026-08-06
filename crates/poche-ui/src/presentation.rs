@@ -80,7 +80,11 @@ pub struct TablePresentation {
     pub round_index: u16,
     pub hand_size: u8,
     pub hand_counts: Vec<u8>,
+    /// Exact public trump code retained for typed downstream projections.
+    pub trump_code: Option<u8>,
     pub trump: Option<String>,
+    /// Exact public current-trick cards retained beside their labels.
+    pub trick_codes: Vec<(u8, u8)>,
     pub trick: Vec<(u8, String)>,
     pub bids: Vec<Option<u8>>,
     pub tricks_won: Vec<u8>,
@@ -93,6 +97,8 @@ pub struct TablePresentation {
 pub struct HandPresentation {
     pub player: String,
     pub grant_epoch: u64,
+    /// Exact card codes already authorized to this viewer.
+    pub card_codes: Vec<u8>,
     pub cards: Vec<String>,
 }
 
@@ -139,22 +145,31 @@ impl PresentationModel {
                     connected: member.connected,
                 })
                 .collect(),
-            table: projection.public_game_state.map(|game| TablePresentation {
-                phase: game.phase,
-                actor: actor_label(game.actor),
-                round_index: game.round_index,
-                hand_size: game.hand_size,
-                hand_counts: game.hand_counts,
-                trump: game.trump.map(card_label),
-                trick: game
+            table: projection.public_game_state.map(|game| {
+                let trump_code = game.trump;
+                let trick_codes = game
                     .current_trick
-                    .into_iter()
-                    .map(|played| (played.seat, card_label(played.card)))
-                    .collect(),
-                bids: game.bids,
-                tricks_won: game.tricks_won,
-                scores: game.scores,
-                pot_cents: game.pot_cents,
+                    .iter()
+                    .map(|played| (played.seat, played.card))
+                    .collect::<Vec<_>>();
+                TablePresentation {
+                    phase: game.phase,
+                    actor: actor_label(game.actor),
+                    round_index: game.round_index,
+                    hand_size: game.hand_size,
+                    hand_counts: game.hand_counts,
+                    trump_code,
+                    trump: trump_code.map(card_label),
+                    trick: trick_codes
+                        .iter()
+                        .map(|(seat, card)| (*seat, card_label(*card)))
+                        .collect(),
+                    trick_codes,
+                    bids: game.bids,
+                    tricks_won: game.tricks_won,
+                    scores: game.scores,
+                    pot_cents: game.pot_cents,
+                }
             }),
             own_hand: projection.own_hand.map(hand_presentation),
             granted_hands: projection
@@ -176,10 +191,12 @@ impl PresentationModel {
 }
 
 fn hand_presentation(hand: poche_protocol::HandProjection) -> HandPresentation {
+    let card_codes = hand.cards;
     HandPresentation {
         player: hand.player.as_str().to_owned(),
         grant_epoch: hand.grant_epoch,
-        cards: hand.cards.into_iter().map(card_label).collect(),
+        cards: card_codes.iter().copied().map(card_label).collect(),
+        card_codes,
     }
 }
 

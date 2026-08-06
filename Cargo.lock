@@ -6501,6 +6501,7 @@ dependencies = [
  "poche-protocol",
  "poche-rl",
  "poche-runtime",
+ "poche-spatial",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",

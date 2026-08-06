@@ -132,7 +132,7 @@ impl SpatialLayout {
         &self.seats
     }
 
-    /// Return zones in stable deck/play then seat hand/won order.
+    /// Return zones in stable deck/trump/play then seat hand/won order.
     #[must_use]
     pub fn zones(&self) -> &[ZoneVolume] {
         &self.zones
@@ -141,7 +141,7 @@ impl SpatialLayout {
     /// Produce all non-card objects required by this layout.
     #[must_use]
     pub fn scene_objects(&self) -> Vec<SceneObject> {
-        let mut objects = Vec::with_capacity(2 + self.seats.len() * 4 + 2);
+        let mut objects = Vec::with_capacity(2 + self.seats.len() * 4 + 3);
         objects.push(self.table);
         objects.push(self.score_sheet);
         for placement in &self.seats {
@@ -320,7 +320,8 @@ pub fn registered_layout(table_id: TableId, id: LayoutId) -> Result<SpatialLayou
     let directions = directions(id.players());
     let mut seats = Vec::with_capacity(directions.len());
     let mut zones = vec![
-        zone(ZoneId::Deck, Point3Mm::new(-190, 125, 0), 40, 40, 50, 50)?,
+        zone(ZoneId::Deck, Point3Mm::new(-190, 125, 0), 45, 40, 50, 50)?,
+        zone(ZoneId::Trump, Point3Mm::new(-70, 125, 0), 45, 40, 50, 50)?,
         zone(ZoneId::Play, Point3Mm::new(0, 40, 0), 100, 20, 130, 30)?,
     ];
     for (ordinal, direction) in directions.iter().copied().enumerate() {
@@ -446,7 +447,7 @@ fn directions(players: u8) -> &'static [(i32, i32)] {
 }
 
 fn expected_zones(layout: LayoutId) -> HashSet<ZoneId> {
-    let mut zones = HashSet::from([ZoneId::Deck, ZoneId::Play]);
+    let mut zones = HashSet::from([ZoneId::Deck, ZoneId::Trump, ZoneId::Play]);
     for ordinal in 0..layout.players() {
         let seat = SeatId::new(ordinal, layout).expect("ordinal bounded by layout");
         zones.insert(ZoneId::Hand(seat));
@@ -516,7 +517,7 @@ mod tests {
             assert_eq!(layout.seats().len(), usize::from(layout.id().players()));
             assert_eq!(
                 layout.zones().len(),
-                2 + usize::from(layout.id().players()) * 2
+                3 + usize::from(layout.id().players()) * 2
             );
             for (index, left) in layout.zones().iter().enumerate() {
                 for right in layout.zones().iter().skip(index + 1) {

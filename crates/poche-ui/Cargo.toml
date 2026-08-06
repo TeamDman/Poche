@@ -25,6 +25,7 @@ eframe = { workspace = true, optional = true }
 poche-protocol = { path = "../poche-protocol" }
 poche-rl = { path = "../poche-rl" }
 poche-runtime = { path = "../poche-runtime" }
+poche-spatial = { path = "../poche-spatial" }
 serde_json.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

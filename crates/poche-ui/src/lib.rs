@@ -12,6 +12,7 @@ mod live;
 mod presentation;
 mod replay;
 mod semantic_html;
+mod spatial;
 #[cfg(feature = "egui")]
 mod widgets;
 
@@ -19,6 +20,7 @@ pub use live::*;
 pub use presentation::*;
 pub use replay::*;
 pub use semantic_html::*;
+pub use spatial::*;
 #[cfg(feature = "egui")]
 pub use widgets::{PocheReplayApp, render_live_client};
 

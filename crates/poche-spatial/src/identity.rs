@@ -93,6 +93,8 @@ pub struct CardObjectId {
 pub enum ZoneId {
     /// Draw/deal deck.
     Deck,
+    /// Face-up trump card separated from the draw deck.
+    Trump,
     /// One player's private hand region.
     Hand(SeatId),
     /// Central current-trick/play region.

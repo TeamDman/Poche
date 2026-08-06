@@ -36,6 +36,17 @@ impl CardFace {
     pub const fn code(self) -> u8 {
         self.0
     }
+
+    /// Render the canonical face as compact Unicode rank/suit text.
+    #[must_use]
+    pub fn label(self) -> String {
+        const RANKS: [&str; 13] = [
+            "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A",
+        ];
+        const SUITS: [&str; 4] = ["♣", "♦", "♥", "♠"];
+        let code = usize::from(self.0);
+        format!("{}{}", RANKS[code % 13], SUITS[code / 13])
+    }
 }
 
 /// Exact typed location represented by one card endpoint.
@@ -43,6 +54,8 @@ impl CardFace {
 pub enum CardLocation {
     /// Ordered deck slot, zero at the bottom.
     Deck { index_from_bottom: u8 },
+    /// Face-up trump card for the active round.
+    Trump,
     /// Ordered private hand slot.
     Hand { seat: SeatId, index_from_left: u8 },
     /// One seat's card in the current trick.
@@ -64,6 +77,7 @@ impl CardLocation {
     pub const fn zone(self) -> ZoneId {
         match self {
             Self::Deck { .. } => ZoneId::Deck,
+            Self::Trump => ZoneId::Trump,
             Self::Hand { seat, .. } => ZoneId::Hand(seat),
             Self::Play { .. } => ZoneId::Play,
             Self::Won { seat, .. } => ZoneId::Won(seat),
@@ -327,9 +341,9 @@ fn validate_object_seat(id: ObjectId, layout: LayoutId) -> Result<(), SceneError
         ObjectId::Seat(seat)
         | ObjectId::Player(seat)
         | ObjectId::Zone(ZoneId::Hand(seat) | ZoneId::Won(seat)) => validate_seat(seat, layout),
-        ObjectId::Table | ObjectId::ScoreSheet | ObjectId::Zone(ZoneId::Deck | ZoneId::Play) => {
-            Ok(())
-        }
+        ObjectId::Table
+        | ObjectId::ScoreSheet
+        | ObjectId::Zone(ZoneId::Deck | ZoneId::Trump | ZoneId::Play) => Ok(()),
         ObjectId::Card(_) => Err(SceneError::ObjectKind),
     }
 }
@@ -339,7 +353,7 @@ fn validate_location_seats(location: CardLocation, layout: LayoutId) -> Result<(
         CardLocation::Hand { seat, .. }
         | CardLocation::Play { seat }
         | CardLocation::Won { seat, .. } => validate_seat(seat, layout),
-        CardLocation::Deck { .. } => Ok(()),
+        CardLocation::Deck { .. } | CardLocation::Trump => Ok(()),
     }
 }
 
