@@ -1,10 +1,11 @@
 # Poche phase 3: spatial tabletop refinement and distributed agency
 
-**Plan status:** Active
+**Plan ID:** `poche-phase-3`
+**Plan status:** Execution in progress
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-06 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 9.1, run full regression, security, license, and performance gates
+**Current implementation focus:** 9.3, complete the final triple audit and remote verification
 
 ## How to update this plan
 
@@ -25,6 +26,8 @@ queried, sampled, empirical, cryptographic-assumption, and runtime evidence as
 different kinds of evidence. A fresh agent must read this plan, repository
 instructions, the referenced ADRs, and the affected source before changing a
 task.
+
+The plan is only ready once we have literally triple checked that no intent from the user has been omitted without explicit direction from the user.
 
 ## Intent audit evidence
 
@@ -126,14 +129,44 @@ inferred merely from using Veilid.
 
 | Guidance | Plan coverage | Evidence when complete |
 | --- | --- | --- |
-| P3-U1-P3-U5, P3-U30, P3-U34 | G6, G9; 5.1-5.3; 7.1-7.3 | Gateway/direct/hybrid fixtures, key-custody threat matrix, route-code vectors, topology receipts |
-| P3-U6-P3-U7 | G7-G8; 4.3; 6.1-6.3 | Threat model, primary-source decision, shuffle/deal vectors, disconnect/dropout recovery |
-| P3-U8-P3-U14 | G5, G8, G10-G11; phase 4; phase 5 | Stable accusation evidence, typed votes/commands, policy explanations, consensus convergence corpus |
-| P3-U15-P3-U21, P3-U25-P3-U26, P3-U36-P3-U37 | G1-G4; phases 1-3; 8.3 | Refinement laws, formal counterexamples, replay parity, vertical-slice transcript |
-| P3-U17-P3-U19, P3-U24 | 2.2-2.3; 8.1-8.3 | `/play-card`/drag parity, Slug text attachment, native/HTML viewer privacy |
-| P3-U22-P3-U23 | G3, G12; 1.2; 8.1 | ADR, dependency/license evidence, measured table-scale precision |
-| P3-U27-P3-U29, P3-U35, P3-U38 | Scope; C7, C12; 9.1-9.3 | Poche acceptance, unchanged RL hashes, plan audit, commit/push verification |
-| P3-U31-P3-U33 | G2, G10; 4.1; phases 5, 8 | CLI schema tests, layout matrix, pause/chat/grant regression matrix |
+| P3-U1 | G9; 7.1-7.3 | Routed gateway disclosure profiles plus signed HTTP/SSE browser-device acceptance |
+| P3-U2 | G6; 5.1-5.3 | Root/device certificate vectors, simultaneous-device convergence, and exact revocation |
+| P3-U3 | G5-G9; 5.1-7.3 | Host fallback and separately qualified replicated/cryptographic evidence tracks |
+| P3-U4 | G9; 7.2 | HTTP-command/SSE reconnect, idempotency, compression, and browser acceptance receipt |
+| P3-U5 | 7.1 | Versioned direct/gateway/loopback route-code vectors and bootstrap/rendezvous separation |
+| P3-U6 | G7; 6.1-6.2 | Primary-source mental-poker ADR plus full-deck shuffle/deal/reveal vectors |
+| P3-U7 | G8; 4.3; 6.3 | Out-of-turn vote-kick/redeal/end and five-point dropout corpus with no hang |
+| P3-U8 | G11; 4.2 | Stable chronological action evidence and delayed follow-suit finding corpus |
+| P3-U9 | G11; 4.1-4.2 | Prevent, allow-attempt, automatic-proposal, and manual-accusation policy fixtures |
+| P3-U10 | G8; 4.3 | Visible excluded vote plus score/redeal/kick/end recovery evidence |
+| P3-U11 | 4.2-4.3; 5.3 | Local detector/proposal boundary and consensus-authorized shared effects |
+| P3-U12 | G10; 4.1; 4.3 | Versioned command AST, parser/help/codec tests, proposals, and scoped capability execution |
+| P3-U13 | C3; 4.1; 4.3 | Governable score amendments and formal card-universe negative controls |
+| P3-U14 | G5; 5.1-5.3 | Deterministic semantic proposal keys, duplicate collapse, and certified event ordering |
+| P3-U15 | G1; G11; 2.1-2.4 | Loose/spatial object types and classification without a physics dependency |
+| P3-U16 | C1; 1.1; 2.1-2.4; 3.4 | Typed-state authority ADR and registered abstraction/realization laws |
+| P3-U17 | 2.3; 4.1; 8.3 | Named `/play-card` and drag inputs produce the same action and endpoint |
+| P3-U18 | G3; 2.2; 8.1 | Explicit Slug extraction and score-sheet text attached to a semantic surface |
+| P3-U19 | C5; 2.2; 8.1-8.3 | Viewer-specific native/HTML face-text presence and absence evidence |
+| P3-U20 | G1-G2; 2.1; 2.4; 3.1 | Integer units, 2-8-player layouts, exclusive zones, and overlap counterexample |
+| P3-U21 | G4; 3.1-3.4 | Independent Alloy/NuSMV/Prolog/Rust spatial models and neutral comparison |
+| P3-U22 | G3; 1.2; 8.1 | Bevy leaf-adapter ADR and tests that transforms cannot mutate canonical state |
+| P3-U23 | G12; 1.2 | Measured zero-mm endpoint error and explicit rejection of unnecessary `big_space` |
+| P3-U24 | 8.1-8.3 | Native Bevy/Slug and browser-native semantic HTML share one scene fingerprint |
+| P3-U25 | C8; 2.3; 8.1 | Consensus endpoints plus deterministic local tween reconstruction |
+| P3-U26 | 8.3 | One 185-record player-inspectable vertical slice and published static evidence |
+| P3-U27 | Scope; 8.3; 9.1 | Full Poche lifecycle/rules acceptance remains the vertical-slice release gate |
+| P3-U28 | C12; 9.1-9.3 | MPL notices, resolved-license receipt, verified commits, and remote equality |
+| P3-U29 | Intent audit; 9.3 | Literal readiness rule, declarative profile, three-pass evidence, and regression tests |
+| P3-U30 | G9; 7.3 | Read-only Veilid source/issue feasibility report with no AI-authored upstream change |
+| P3-U31 | G10; 4.1 | Facet-reflected AST and normal CLI/GUI entry points over inspectable NDJSON |
+| P3-U32 | G2; 2.1; 3.1 | Layouts support 2-8 independently from two-player game/RL proof scopes |
+| P3-U33 | C4-C6; 5.2; 7.2; 8.2-8.3 | Pause/unpause, chat, grants, revocation, and replay preservation fixtures |
+| P3-U34 | G6; G9; 5.1; 7.1-7.2 | Browser-local key acceptance plus conspicuous degraded custody/export profiles |
+| P3-U35 | C7; 9.1 | Unchanged `poche-2p-v1`/`round-score-v1` hashes and network-free benchmark |
+| P3-U36 | C8; 2.3; 4.2; 5.3; 8.3 | Canonical history, semantic hashes, and deterministic spatial endpoint replay |
+| P3-U37 | C2; 2.2 | Exact attachment IDs/local poses; proximity remains audit-only |
+| P3-U38 | Plan activation; 9.3 | Durable goal execution, adjacent evidence, final commit/push, and clean remote state |
 
 ## Scope
 
@@ -254,20 +287,20 @@ inferred merely from using Veilid.
 
 ## Design gates
 
-| Gate | Question and required decision | Downstream acceptance consequence | State |
-| --- | --- | --- | --- |
-| G1 | What exact scene, pose, unit, zone, attachment, loose-object, snap/dead-band, realization, and abstraction types form `poche-spatial-v1`? | 1.1 must freeze a versioned contract and laws before scene code. | Closed by ADR 0005: typed state is canonical; fixed-mm viewer-scene refinement |
-| G2 | Which player counts get concrete spatial layouts now, independently of current two-player game/RL specs? | Layout matrix and formal scopes name every supported/unsupported count. | Closed by ADR 0005: spatial layouts 2-8; game/RL/formal scopes remain independent |
-| G3 | Does native 3D use Bevy, which exact published version/features, and how is Slug reused without a dirty path dependency? | ADR, license audit, compile probe, and renderer boundary precede 8.1. | Closed by ADR 0005: Bevy 0.19 `3d` leaf adapter; provenance-pinned MPL-2.0 `poche-slug` extraction |
-| G4 | Which geometry is encoded directly in Alloy/NuSMV/Prolog versus precomputed by Rust? | Formal claims state finite grid/zone abstraction and never imply mesh/real proof. | Closed by tasks 3.1-3.4: finite cells, endpoints, and ground relations only; continuous renderer excluded |
-| G5 | What replicated-log algorithm, membership epoch, fork rule, quorum, leaderlessness/temporary coordinator, and liveness assumptions define experimental consensus? | Model/check convergence, safety, partitions, stale devices, and recovery before network advertising. | Closed by ADR 0007: accountable crash-fault strict-player-majority prevote/precommit log; deterministic rotating proposer; joint epochs; fork halt/evidence; partial-synchrony liveness |
-| G6 | How do player roots authorize multiple device keys, and how do add/revoke/loss/browser export work? | Exact signing vectors, projection scope, simultaneous-device and revocation tests. | Closed by ADR 0007: existing principal bytes are root identity; root-signed per-device keys; one vote/player; local default; gateway custody disclosed and export-and-rotate |
-| G7 | Which published mental-poker construction and threat assumptions cover fair shuffle/deal/reveal, collusion, active cheating, and dropout? | No implementation or fairness claim before primary-source review and vectors. | Closed by ADR 0008: exact `ziffle` 0.1.0 Bayer-Groth full-deck profile; active coalition up to `n-1` under stated assumptions; unanimous reveals; explicit cryptographic abort/redeal instead of same-hand dropout recovery; mandatory independent review before production claims |
-| G8 | What proposal/vote quorum, eligibility snapshot, timeout, tie, accused-member tally, and kick/redeal/end semantics apply? | Rust/formal fixtures cover out-of-turn recovery and visible non-counting votes. | Closed by task 4.3: strict majority of a proposal-time active eligibility snapshot; visible excluded votes; logical deadline rejection; exact capability alternative |
-| G9 | What exactly does a gateway know/do; which keys stay in-browser; and when are HTTP+SSE, WSS, WebTransport, or direct Veilid used? | Threat/topology matrix, reconnect evidence, and no false anonymity/directness claim. | Closed by ADR 0009: legacy `p3-` preserved; explicit `p3r-` direct/gateway/loopback locators; six-layer separation; machine-checked host/replicated/local/degraded custody disclosures; HTTP+SSE first; direct browser support still evidence-gated |
-| G10 | What versioned command AST backs CLI, GUI, votes, and protocol; is pinned Figue compatible with the workspace Facet version? | Parser/help/completion/codec tests prove one typed meaning; raw strings are never authorized directly. | Closed by ADR 0006: `poche-governance-command-v1`; first-party parser/catalog because exact Figue pair fails offline resolution |
-| G11 | How do strict prevention, allow-attempt, auto-propose, manual accusation, retrospective findings, and recovery compose? | Policy matrix and history corpus demonstrate each mode without weakening C3. | Closed by ADR 0006: structural, authorization, legality, finding-publication, and governable-effect layers |
-| G12 | Does table-scale precision or multi-table scope justify `big_space`? | Measured precision/complexity ADR; default is table-local fixed units and render-time `f32`. | Closed by ADR 0005: no `big_space`; table-local integer mm plus render-time `f32` |
+| Gate | Status | Question and required decision | Downstream acceptance consequence | Decision evidence |
+| --- | --- | --- | --- | --- |
+| G1 | Closed | What exact scene, pose, unit, zone, attachment, loose-object, snap/dead-band, realization, and abstraction types form `poche-spatial-v1`? | 1.1 must freeze a versioned contract and laws before scene code. | ADR 0005: typed state is canonical; fixed-mm viewer-scene refinement |
+| G2 | Closed | Which player counts get concrete spatial layouts now, independently of current two-player game/RL specs? | Layout matrix and formal scopes name every supported/unsupported count. | ADR 0005: spatial layouts 2-8; game/RL/formal scopes remain independent |
+| G3 | Closed | Does native 3D use Bevy, which exact published version/features, and how is Slug reused without a dirty path dependency? | ADR, license audit, compile probe, and renderer boundary precede 8.1. | ADR 0005: Bevy 0.19 `3d` leaf adapter; provenance-pinned MPL-2.0 `poche-slug` extraction |
+| G4 | Closed | Which geometry is encoded directly in Alloy/NuSMV/Prolog versus precomputed by Rust? | Formal claims state finite grid/zone abstraction and never imply mesh/real proof. | Tasks 3.1-3.4: finite cells, endpoints, and ground relations only; continuous renderer excluded |
+| G5 | Closed | What replicated-log algorithm, membership epoch, fork rule, quorum, leaderlessness/temporary coordinator, and liveness assumptions define experimental consensus? | Model/check convergence, safety, partitions, stale devices, and recovery before network advertising. | ADR 0007: accountable crash-fault strict-player-majority prevote/precommit log; deterministic rotating proposer; joint epochs; fork halt/evidence; partial-synchrony liveness |
+| G6 | Closed | How do player roots authorize multiple device keys, and how do add/revoke/loss/browser export work? | Exact signing vectors, projection scope, simultaneous-device and revocation tests. | ADR 0007: existing principal bytes are root identity; root-signed per-device keys; one vote/player; local default; gateway custody disclosed and export-and-rotate |
+| G7 | Closed | Which published mental-poker construction and threat assumptions cover fair shuffle/deal/reveal, collusion, active cheating, and dropout? | No implementation or fairness claim before primary-source review and vectors. | ADR 0008: exact `ziffle` 0.1.0 Bayer-Groth full-deck profile; active coalition up to `n-1` under stated assumptions; unanimous reveals; explicit cryptographic abort/redeal instead of same-hand dropout recovery; mandatory independent review before production claims |
+| G8 | Closed | What proposal/vote quorum, eligibility snapshot, timeout, tie, accused-member tally, and kick/redeal/end semantics apply? | Rust/formal fixtures cover out-of-turn recovery and visible non-counting votes. | Task 4.3: strict majority of a proposal-time active eligibility snapshot; visible excluded votes; logical deadline rejection; exact capability alternative |
+| G9 | Closed | What exactly does a gateway know/do; which keys stay in-browser; and when are HTTP+SSE, WSS, WebTransport, or direct Veilid used? | Threat/topology matrix, reconnect evidence, and no false anonymity/directness claim. | ADR 0009: legacy `p3-` preserved; explicit `p3r-` direct/gateway/loopback locators; six-layer separation; machine-checked host/replicated/local/degraded custody disclosures; HTTP+SSE first; direct browser support still evidence-gated |
+| G10 | Closed | What versioned command AST backs CLI, GUI, votes, and protocol; is pinned Figue compatible with the workspace Facet version? | Parser/help/completion/codec tests prove one typed meaning; raw strings are never authorized directly. | ADR 0006: `poche-governance-command-v1`; first-party parser/catalog because exact Figue pair fails offline resolution |
+| G11 | Closed | How do strict prevention, allow-attempt, auto-propose, manual accusation, retrospective findings, and recovery compose? | Policy matrix and history corpus demonstrate each mode without weakening C3. | ADR 0006: structural, authorization, legality, finding-publication, and governable-effect layers |
+| G12 | Closed | Does table-scale precision or multi-table scope justify `big_space`? | Measured precision/complexity ADR; default is table-local fixed units and render-time `f32`. | ADR 0005: no `big_space`; table-local integer mm plus render-time `f32` |
 
 Each remaining gate is closed in the named task before dependent
 implementation. If research cannot support a safe cryptographic or consensus
@@ -1820,6 +1853,10 @@ contains no stronger anonymity, fairness, liveness, decentralization, or spatial
 proof claim than the registered receipts.
 
 ### [~] 9.3 Complete the guidance audit, commit, push, and remote verification
+
+**Completion notes:** In progress. The first executable release audit detected
+that Phase 3's P3-U1-P3-U38 ledger had no registered declarative audit profile;
+this task is repairing that omission before any completion claim.
 
 **Work:**
 

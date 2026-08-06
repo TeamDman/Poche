@@ -38,6 +38,7 @@ const COVERAGE_TRACKS: [(&str, usize); 4] =
 const PLAN_AUDIT_CONTRACTS: &[&str] = &[
     include_str!("../../../tools/plan-audit/poche-foundation.conf"),
     include_str!("../../../tools/plan-audit/poche-phase-2.conf"),
+    include_str!("../../../tools/plan-audit/poche-phase-3.conf"),
 ];
 const REQUIRED_TRIPLE_AUDIT_MARKERS: &[&str] = &[
     "**Pass 1 — extraction:**",
@@ -56,6 +57,8 @@ struct AuditProfile {
     plan_id_required: bool,
     allowed_statuses: Vec<String>,
     guidance_ids: Vec<u32>,
+    guidance_cells: usize,
+    traceability_cells: usize,
     gate_section: String,
     gate_ids: Vec<u32>,
     gate_cells: usize,
@@ -2672,7 +2675,7 @@ fn audit_guidance_plan(plan: &str) -> Result<GuidanceAuditReport, Vec<String>> {
 
     let ledger = required_section(plan, "## Authoritative user guidance ledger", &mut errors)
         .map_or_else(BTreeMap::new, |section| {
-            numbered_table_rows(section, 'U', 3, &mut errors)
+            numbered_table_rows(section, 'U', profile.guidance_cells, &mut errors)
         });
     validate_exact_ids(
         &ledger,
@@ -2682,8 +2685,8 @@ fn audit_guidance_plan(plan: &str) -> Result<GuidanceAuditReport, Vec<String>> {
         &mut errors,
     );
     for (number, cells) in &ledger {
-        if cells[1].is_empty() || cells[2].is_empty() {
-            errors.push(format!("U{number} has empty guidance or consequence text"));
+        if cells.iter().skip(1).any(String::is_empty) {
+            errors.push(format!("U{number} has an empty guidance-ledger field"));
         }
         if profile.forbid_superseded && cells[1].contains("Superseded by") {
             errors.push(format!(
@@ -2695,7 +2698,7 @@ fn audit_guidance_plan(plan: &str) -> Result<GuidanceAuditReport, Vec<String>> {
 
     let traceability = required_section(plan, "## Guidance traceability", &mut errors)
         .map_or_else(BTreeMap::new, |section| {
-            numbered_table_rows(section, 'U', 2, &mut errors)
+            numbered_table_rows(section, 'U', profile.traceability_cells, &mut errors)
         });
     validate_exact_ids(
         &traceability,
@@ -2705,7 +2708,11 @@ fn audit_guidance_plan(plan: &str) -> Result<GuidanceAuditReport, Vec<String>> {
         &mut errors,
     );
     for (number, cells) in &traceability {
-        if cells[1].is_empty() || cells[1].eq_ignore_ascii_case("none") {
+        if cells
+            .iter()
+            .skip(1)
+            .any(|cell| cell.is_empty() || cell.eq_ignore_ascii_case("none"))
+        {
             errors.push(format!("U{number} has no concrete plan mapping"));
         }
     }
@@ -2845,6 +2852,8 @@ fn parse_audit_profile(contract: &str) -> Result<AuditProfile, String> {
         plan_id_required: parse_contract_bool(contract_field(&fields, "plan_id_required")?)?,
         allowed_statuses: parse_contract_list(contract_field(&fields, "allowed_statuses")?)?,
         guidance_ids,
+        guidance_cells: parse_contract_usize(contract_field(&fields, "guidance_cells")?)?,
+        traceability_cells: parse_contract_usize(contract_field(&fields, "traceability_cells")?)?,
         gate_section: contract_field(&fields, "gate_section")?.to_owned(),
         gate_ids,
         gate_cells: parse_contract_usize(contract_field(&fields, "gate_cells")?)?,
@@ -2866,6 +2875,18 @@ fn parse_audit_profile(contract: &str) -> Result<AuditProfile, String> {
         adversarial_markers: parse_contract_list(contract_field(&fields, "adversarial_markers")?)?,
         forbid_superseded: parse_contract_bool(contract_field(&fields, "forbid_superseded")?)?,
     };
+    if profile.guidance_cells < 3 {
+        return Err(format!(
+            "audit profile `{}` requires at least three guidance cells",
+            profile.plan_id
+        ));
+    }
+    if profile.traceability_cells < 2 {
+        return Err(format!(
+            "audit profile `{}` requires at least two traceability cells",
+            profile.plan_id
+        ));
+    }
     let mut task_ids = profile.task_ids.clone();
     task_ids.sort();
     task_ids.dedup();
@@ -3047,7 +3068,7 @@ fn numbered_table_rows(
 }
 
 fn parse_numbered_id(value: &str, prefix: char) -> Option<u32> {
-    value.strip_prefix(prefix)?.parse().ok()
+    value.rsplit('-').next()?.strip_prefix(prefix)?.parse().ok()
 }
 
 fn validate_exact_ids(
@@ -3542,6 +3563,7 @@ mod tests {
         AuditProfile, COMPLETE_STATUS, IN_PROGRESS_STATUS, REQUIRED_READY_SENTENCE,
         REQUIRED_TRIPLE_AUDIT_MARKERS, audit_guidance_plan, first_nonempty_line, is_disposition,
         is_source_anchor, load_audit_profiles, markdown_cells, parse_audit_profile,
+        parse_numbered_id,
     };
 
     #[test]
@@ -3590,6 +3612,27 @@ mod tests {
         assert_eq!(report.tasks, 42);
         assert_eq!(report.overall_criteria, 19);
         assert_eq!(report.deferred_sections, 4);
+    }
+
+    #[test]
+    fn in_progress_phase_three_profile_passes_audit() {
+        let profiles = load_audit_profiles().unwrap();
+        let profile = profile(&profiles, "poche-phase-3");
+        let report = audit_guidance_plan(&plan_fixture(profile, IN_PROGRESS_STATUS)).unwrap();
+        assert_eq!(report.plan_id, "poche-phase-3");
+        assert_eq!(report.guidance, 38);
+        assert_eq!(report.traceability, 38);
+        assert_eq!(report.gates, 12);
+        assert_eq!(report.tasks, 28);
+        assert_eq!(report.overall_criteria, 13);
+        assert_eq!(report.deferred_sections, 1);
+    }
+
+    #[test]
+    fn numbered_ids_accept_phase_qualified_guidance_labels() {
+        assert_eq!(parse_numbered_id("U38", 'U'), Some(38));
+        assert_eq!(parse_numbered_id("P3-U38", 'U'), Some(38));
+        assert_eq!(parse_numbered_id("P3-G12", 'G'), Some(12));
     }
 
     #[test]
@@ -3720,11 +3763,15 @@ mod tests {
         .expect("writing to a String cannot fail");
         plan.push_str("## Authoritative user guidance ledger\n\n");
         for number in &profile.guidance_ids {
-            writeln!(
-                plan,
-                "| U{number} | active guidance {number} | consequence {number} |\n"
-            )
-            .expect("writing to a String cannot fail");
+            let mut cells = vec![
+                format!("U{number}"),
+                format!("active guidance {number}"),
+                format!("consequence {number}"),
+            ];
+            for index in 3..profile.guidance_cells {
+                cells.push(format!("field {index}"));
+            }
+            writeln!(plan, "| {} |\n", cells.join(" | ")).expect("writing to a String cannot fail");
         }
         plan.push_str("\n## Intent audit evidence\n\n");
         for marker in REQUIRED_TRIPLE_AUDIT_MARKERS {
@@ -3754,8 +3801,11 @@ mod tests {
 
         plan.push_str("\n## Guidance traceability\n\n");
         for number in &profile.guidance_ids {
-            writeln!(plan, "| U{number} | task {number} |\n")
-                .expect("writing to a String cannot fail");
+            let mut cells = vec![format!("U{number}"), format!("task {number}")];
+            for index in 2..profile.traceability_cells {
+                cells.push(format!("field {index}"));
+            }
+            writeln!(plan, "| {} |\n", cells.join(" | ")).expect("writing to a String cannot fail");
         }
 
         plan.push_str("\n## Implementation\n\n");
