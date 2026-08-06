@@ -5,8 +5,8 @@
 use std::collections::HashSet;
 
 use crate::{
-    CardObjectId, HalfExtentsMm, LayoutId, ObjectId, PoseMm, SPATIAL_SCHEMA_VERSION, SeatId,
-    SurfaceId, SurfaceKind, TextRunId, ZoneId,
+    AabbMm, CardObjectId, HalfExtentsMm, LayoutId, ObjectId, PoseMm, SPATIAL_SCHEMA_VERSION,
+    SeatId, SurfaceId, SurfaceKind, TableId, TextRunId, ZoneId,
 };
 
 /// Whether spatial input is restricted to typed Poche zones or may propose a
@@ -172,6 +172,8 @@ pub struct AnimationEndpoint {
 pub struct SpatialScene {
     /// Spatial contract version.
     pub schema_version: u16,
+    /// Stable identity of the table-local coordinate frame.
+    pub table_id: TableId,
     /// Registered deterministic layout.
     pub layout: LayoutId,
     /// Viewer/privacy epoch used by opaque card handles.
@@ -207,6 +209,8 @@ pub enum SceneError {
     HiddenFaceText,
     /// A card's known face is not represented exactly once as text.
     MissingFaceText,
+    /// An endpoint pose or bound exceeds the v1 table-local coordinate limit.
+    PoseOutsideTable,
 }
 
 impl SpatialScene {
@@ -229,6 +233,11 @@ impl SpatialScene {
                 return Err(SceneError::ObjectKind);
             }
             validate_object_seat(object.id, self.layout)?;
+            if !object.pose.is_within_table_bounds()
+                || AabbMm::from_center(object.pose.translation, object.half_extents).is_none()
+            {
+                return Err(SceneError::PoseOutsideTable);
+            }
         }
         for card in &self.cards {
             let id = ObjectId::Card(card.id);
@@ -239,6 +248,11 @@ impl SpatialScene {
                 return Err(SceneError::CardEpoch);
             }
             validate_location_seats(card.location, self.layout)?;
+            if !card.pose.is_within_table_bounds()
+                || AabbMm::from_center(card.pose.translation, card.half_extents).is_none()
+            {
+                return Err(SceneError::PoseOutsideTable);
+            }
         }
 
         let cards_by_id = self
@@ -254,6 +268,9 @@ impl SpatialScene {
             }
             if text.text.is_empty() || !object_ids.contains(&text.attached_to.object) {
                 return Err(SceneError::MissingAttachment);
+            }
+            if !text.local_pose.is_within_table_bounds() {
+                return Err(SceneError::PoseOutsideTable);
             }
             match text.binding {
                 TextBinding::CardFace(card_id) => {
@@ -338,7 +355,7 @@ fn validate_seat(seat: SeatId, layout: LayoutId) -> Result<(), SceneError> {
 mod tests {
     use crate::{
         CardObjectId, HalfExtentsMm, LayoutId, ObjectId, Point3Mm, PoseMm, SPATIAL_SCHEMA_VERSION,
-        SeatId, SurfaceId, SurfaceKind, TextRunId, YawMilliDegrees, ZoneId,
+        SeatId, SurfaceId, SurfaceKind, TableId, TextRunId, YawMilliDegrees, ZoneId,
     };
 
     use super::{
@@ -377,6 +394,7 @@ mod tests {
         let flat = HalfExtentsMm::new(32, 1, 44);
         SpatialScene {
             schema_version: SPATIAL_SCHEMA_VERSION,
+            table_id: TableId::new(3),
             layout,
             projection_epoch: 7,
             objects: vec![

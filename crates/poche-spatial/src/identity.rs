@@ -4,6 +4,24 @@
 
 use crate::{MAX_LAYOUT_PLAYERS, MIN_LAYOUT_PLAYERS};
 
+/// Stable identity of one table-local coordinate frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TableId(u64);
+
+impl TableId {
+    /// Construct a table identity from an application-assigned value.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Return the application-assigned value.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
 /// Stable identifier for one registered spatial layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LayoutId {

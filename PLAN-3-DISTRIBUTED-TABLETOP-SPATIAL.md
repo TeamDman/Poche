@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 2.1, implement fixed units, objects, zones, layouts, and classification
+**Current implementation focus:** 2.2, implement viewer-safe spatial realization and semantic text runs
 
 ## How to update this plan
 
@@ -462,7 +462,21 @@ allowed to become canonical game state.
 
 ## Phase 2 — Build the spatial Poche vertical slice
 
-### [ ] 2.1 Implement fixed units, objects, zones, layouts, and classification
+### [x] 2.1 Implement fixed units, objects, zones, layouts, and classification
+
+**Completion notes:** Completed 2026-08-05. `poche-spatial` now has stable
+`TableId`-scoped local frames, checked `+-10,000 mm` poses/bounds, exact AABB
+operations, deterministic revision-one layouts for every 2-8-player
+cardinality, seats/player anchors, table/score-sheet objects, and complete
+deck/play/hand/won zone sets. Each zone has a closed inner snap volume and a
+strictly separated outer dead band. Classification examines the complete card
+bound and returns `Snapped`, `DeadBand`, `Free`, `Ambiguous`, or `OutOfBounds`;
+it never selects the first of multiple matches. Tests cover all registered
+zone centers, inner/outer boundaries, standard-card containment, deliberately
+broad ambiguous input, invalid revisions, duplicate semantic identities, and
+rejection of overlapping outer regions. `cargo test -p poche-spatial` passed 20
+tests; the focused `units`, `layout`, and `classify` commands, strict Clippy,
+formatting, and the complete workspace test suite all passed offline.
 
 **Work:**
 

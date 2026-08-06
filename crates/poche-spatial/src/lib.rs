@@ -11,11 +11,15 @@
 //! dependency.
 
 mod identity;
+mod layout;
 mod scene;
 mod units;
 
 pub use identity::{
-    CardObjectId, LayoutId, ObjectId, SeatId, SurfaceId, SurfaceKind, TextRunId, ZoneId,
+    CardObjectId, LayoutId, ObjectId, SeatId, SurfaceId, SurfaceKind, TableId, TextRunId, ZoneId,
+};
+pub use layout::{
+    LayoutError, SeatPlacement, SpatialLayout, ZoneClassification, ZoneVolume, registered_layout,
 };
 pub use scene::{
     AnimationEasing, AnimationEndpoint, CardFace, CardLocation, CardObject, SceneError,
@@ -34,3 +38,6 @@ pub const MIN_LAYOUT_PLAYERS: u8 = 2;
 
 /// Largest player count supported by the first spatial layout contract.
 pub const MAX_LAYOUT_PLAYERS: u8 = 8;
+
+/// Largest absolute table-local coordinate accepted by the v1 semantic scene.
+pub const MAX_ABS_TABLE_COORDINATE_MM: i32 = 10_000;
