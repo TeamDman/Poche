@@ -23,6 +23,7 @@ was exhaustive, bounded, symbolic, queried, sampled, or merely empirical.
 - [Burn PPO learner and evaluation](docs/burn-learning.md)
 - [Publication and format decision](docs/pages-publication.md)
 - [Bounded spatial Alloy oracle](docs/spatial-alloy.md)
+- [Symbolic spatial NuSMV oracle](docs/spatial-nusmv.md)
 
 Automatic target-language generation, trustless dealing, host migration,
 production account/matchmaking infrastructure, polished rendering, and RL
@@ -72,6 +73,7 @@ cargo run -p poche-xtask -- doctor
 cargo run -p poche-xtask -- protocol replay --all
 cargo run -p poche-xtask -- session compare all --scope lobby-micro
 cargo run -p poche-xtask --offline -- spatial alloy --scope layout-micro
+cargo run -p poche-xtask --offline -- spatial nusmv --scope transition-micro
 cargo run -p poche-xtask -- multiplayer smoke --transport in-process
 cargo run -p poche-cli -- --output text transcript replay tests/fixtures/protocol/session-micro-v1.script.ndjson
 ```

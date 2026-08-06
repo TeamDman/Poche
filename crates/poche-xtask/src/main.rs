@@ -12,8 +12,8 @@ use std::process::{Command, ExitCode, Output};
 
 use poche_check::{CheckScope, TerminationReason, analyze_liveness, check_session, explore};
 use poche_conformance::{
-    Disposition, check_spatial_alloy_layout_micro, compare_rust_alloy, compare_rust_models,
-    compare_rust_nusmv, compare_rust_prolog,
+    Disposition, check_spatial_alloy_layout_micro, check_spatial_nusmv_transition_micro,
+    compare_rust_alloy, compare_rust_models, compare_rust_nusmv, compare_rust_prolog,
 };
 use poche_interchange::{
     BackendKindWire, ConfidenceKindWire, SessionClaimWire, SessionTrackEvidenceWire,
@@ -140,6 +140,7 @@ fn usage() {
          cargo run -p poche-xtask -- rl evaluate --manifest PATH\n  \
          cargo run -p poche-xtask -- rl replay --manifest PATH --matchup NAME --seed SEED\n  \
          cargo run -p poche-xtask -- spatial alloy --scope layout-micro\n  \
+         cargo run -p poche-xtask -- spatial nusmv --scope transition-micro\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- oracle report\n  \
@@ -155,16 +156,37 @@ fn usage() {
 }
 
 fn spatial(mut args: impl Iterator<Item = OsString>) -> ExitCode {
-    if args.next().as_deref() != Some(OsStr::new("alloy"))
-        || args.next().as_deref() != Some(OsStr::new("--scope"))
-        || args.next().as_deref() != Some(OsStr::new("layout-micro"))
-        || args.next().is_some()
-    {
+    let backend = args.next();
+    if args.next().as_deref() != Some(OsStr::new("--scope")) {
+        usage();
+        return ExitCode::from(2);
+    }
+    let scope = args.next();
+    if args.next().is_some() {
         usage();
         return ExitCode::from(2);
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    match check_spatial_alloy_layout_micro(&root) {
+    match (backend.as_deref(), scope.as_deref()) {
+        (Some(backend), Some(scope))
+            if backend == OsStr::new("alloy") && scope == OsStr::new("layout-micro") =>
+        {
+            spatial_alloy(&root)
+        }
+        (Some(backend), Some(scope))
+            if backend == OsStr::new("nusmv") && scope == OsStr::new("transition-micro") =>
+        {
+            spatial_nusmv(&root)
+        }
+        _ => {
+            usage();
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn spatial_alloy(root: &Path) -> ExitCode {
+    match check_spatial_alloy_layout_micro(root) {
         Ok(report) => {
             println!(
                 "spatial Alloy: scope={} commands={} witnesses={} assertions={} negative_controls={} evidence={}",
@@ -179,6 +201,30 @@ fn spatial(mut args: impl Iterator<Item = OsString>) -> ExitCode {
         }
         Err(error) => {
             eprintln!("spatial Alloy failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn spatial_nusmv(root: &Path) -> ExitCode {
+    match check_spatial_nusmv_transition_micro(root) {
+        Ok(report) => {
+            println!(
+                "spatial NuSMV: scope={} properties={} invariants={} temporal={} negative_controls={} stuck_states={} cross_owner_states={} privacy_states={} evidence={}",
+                report.scope,
+                report.property_count,
+                report.safety_invariants,
+                report.temporal_properties,
+                report.negative_controls,
+                report.stuck_trace_states,
+                report.cross_owner_trace_states,
+                report.privacy_leak_trace_states,
+                report.evidence_directory
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("spatial NuSMV failed: {error}");
             ExitCode::FAILURE
         }
     }

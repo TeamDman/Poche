@@ -1,0 +1,196 @@
+-- This Source Code Form is subject to the terms of the Mozilla Public
+-- License, v. 2.0. If a copy of the MPL was not distributed with this
+-- file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+-- Independent transition-micro oracle for poche-spatial-v1.
+-- Scope: two stable card identities, their owner/play/won endpoint zones,
+-- optional per-card presentation transit, two viewers, pause/recovery, and one
+-- logical command per transition. Intermediate animation is never canonical.
+--
+-- There is deliberately no global FAIRNESS declaration. The fair_animation
+-- mode is the named scheduling assumption: it performs one legal play, holds
+-- transit for one state, then schedules presentation convergence. The
+-- stuck_animation mode removes exactly that obligation.
+
+MODULE main
+
+VAR
+  mode : {safe_unconstrained, fair_animation, stuck_animation,
+          cross_owner_defect, privacy_leak_defect};
+  command : {idle, play0, play1, capture0, capture1, pause, resume,
+             disconnect, reconnect, finish, defect_cross, defect_reveal};
+  phase : {running, paused, recovery, finished};
+
+  -- Stable identities are separate variables. Canonical state contains only
+  -- committed semantic endpoints; it has no transit value.
+  committed0 : {hand0, hand1, play0_zone, play1_zone, won0, won1};
+  committed1 : {hand0, hand1, play0_zone, play1_zone, won0, won1};
+
+  -- Presentation may temporarily differ via a finite transit location.
+  present0 : {hand0, hand1, transit0, transit1,
+              play0_zone, play1_zone, won0, won1};
+  present1 : {hand0, hand1, transit0, transit1,
+              play0_zone, play1_zone, won0, won1};
+
+  -- Cross-viewer knowledge. Each viewer always knows its own stable card.
+  viewer0_knows1 : boolean;
+  viewer1_knows0 : boolean;
+
+DEFINE
+  safe_mode := mode = safe_unconstrained | mode = fair_animation |
+               mode = stuck_animation;
+  accepted_play0 := phase = running & command = play0 & committed0 = hand0;
+  accepted_play1 := phase = running & command = play1 & committed1 = hand1;
+  accepted_capture0 := phase = running & command = capture0 &
+                       committed0 = play0_zone;
+  accepted_capture1 := phase = running & command = capture1 &
+                       committed1 = play1_zone;
+  presentation_converged := present0 = committed0 & present1 = committed1;
+
+ASSIGN
+  init(mode) := {safe_unconstrained, fair_animation, stuck_animation,
+                 cross_owner_defect, privacy_leak_defect};
+  next(mode) := mode;
+
+  init(command) := case
+    mode = fair_animation | mode = stuck_animation : play0;
+    mode = cross_owner_defect : defect_cross;
+    mode = privacy_leak_defect : defect_reveal;
+    TRUE : idle;
+  esac;
+  next(command) := case
+    mode = fair_animation | mode = stuck_animation : idle;
+    mode = cross_owner_defect | mode = privacy_leak_defect : idle;
+    mode = safe_unconstrained :
+      {idle, play0, play1, capture0, capture1, pause, resume,
+       disconnect, reconnect, finish};
+    TRUE : idle;
+  esac;
+
+  init(phase) := running;
+  next(phase) := case
+    phase = finished : finished;
+    phase = running & command = pause : paused;
+    phase = paused & command = resume : running;
+    phase != finished & command = disconnect : recovery;
+    phase = recovery & command = reconnect : running;
+    phase = running & command = finish : finished;
+    TRUE : phase;
+  esac;
+
+  init(committed0) := hand0;
+  next(committed0) := case
+    mode = cross_owner_defect & phase = running & command = defect_cross :
+      committed0;
+    accepted_play0 : play0_zone;
+    accepted_capture0 : won0;
+    TRUE : committed0;
+  esac;
+
+  init(committed1) := hand1;
+  next(committed1) := case
+    mode = cross_owner_defect & phase = running & command = defect_cross :
+      play0_zone;
+    accepted_play1 : play1_zone;
+    accepted_capture1 : won1;
+    TRUE : committed1;
+  esac;
+
+  init(present0) := hand0;
+  next(present0) := case
+    accepted_play0 : transit0;
+    present0 = transit0 & mode = stuck_animation : transit0;
+    present0 = transit0 : committed0;
+    present0 != committed0 : committed0;
+    TRUE : present0;
+  esac;
+
+  init(present1) := hand1;
+  next(present1) := case
+    accepted_play1 : transit1;
+    present1 = transit1 & mode = stuck_animation : transit1;
+    present1 = transit1 : committed1;
+    present1 != committed1 : committed1;
+    TRUE : present1;
+  esac;
+
+  init(viewer0_knows1) := FALSE;
+  next(viewer0_knows1) := case
+    mode = privacy_leak_defect & phase = running & command = defect_reveal : TRUE;
+    accepted_play1 | accepted_capture1 : TRUE;
+    TRUE : viewer0_knows1;
+  esac;
+
+  init(viewer1_knows0) := FALSE;
+  next(viewer1_knows0) := case
+    accepted_play0 | accepted_capture0 : TRUE;
+    TRUE : viewer1_knows0;
+  esac;
+
+-- Stable ownership and private-face safety in every non-defect mode.
+INVARSPEC NAME safe_card0_owned_zone :=
+  !safe_mode | committed0 = hand0 | committed0 = play0_zone | committed0 = won0;
+INVARSPEC NAME safe_card1_owned_zone :=
+  !safe_mode | committed1 = hand1 | committed1 = play1_zone | committed1 = won1;
+INVARSPEC NAME safe_private_face_knowledge :=
+  !safe_mode |
+  (committed0 != hand0 | !viewer1_knows0) &
+  (committed1 != hand1 | !viewer0_knows1);
+
+-- Transit is presentation-only and refines a committed play endpoint.
+INVARSPEC NAME transit_refines_committed_play :=
+  !safe_mode |
+  (present0 != transit0 | committed0 = play0_zone) &
+  (present1 != transit1 | committed1 = play1_zone);
+
+-- A legal play commits exactly its selected card and preserves the other.
+CTLSPEC NAME legal_play_moves_exactly_one_card :=
+  AG (safe_mode & accepted_play0 ->
+        AX committed0 = play0_zone &
+        (committed1 = hand1 -> AX committed1 = hand1) &
+        (committed1 = play1_zone -> AX committed1 = play1_zone) &
+        (committed1 = won1 -> AX committed1 = won1)) &
+  AG (safe_mode & accepted_play1 ->
+        AX committed1 = play1_zone &
+        (committed0 = hand0 -> AX committed0 = hand0) &
+        (committed0 = play0_zone -> AX committed0 = play0_zone) &
+        (committed0 = won0 -> AX committed0 = won0));
+
+CTLSPEC NAME paused_committed_state_is_immobile :=
+  AG (safe_mode & phase = paused ->
+        (committed0 = hand0 -> AX committed0 = hand0) &
+        (committed0 = play0_zone -> AX committed0 = play0_zone) &
+        (committed0 = won0 -> AX committed0 = won0) &
+        (committed1 = hand1 -> AX committed1 = hand1) &
+        (committed1 = play1_zone -> AX committed1 = play1_zone) &
+        (committed1 = won1 -> AX committed1 = won1));
+
+CTLSPEC NAME recovery_committed_state_is_immobile :=
+  AG (safe_mode & phase = recovery ->
+        (committed0 = hand0 -> AX committed0 = hand0) &
+        (committed0 = play0_zone -> AX committed0 = play0_zone) &
+        (committed0 = won0 -> AX committed0 = won0) &
+        (committed1 = hand1 -> AX committed1 = hand1) &
+        (committed1 = play1_zone -> AX committed1 = play1_zone) &
+        (committed1 = won1 -> AX committed1 = won1));
+
+CTLSPEC NAME spatial_transition_deadlock_free := AG EX TRUE;
+
+-- Named scheduling assumption: fair_animation cannot leave a transit state
+-- pending. Both CTL and LTL formulations are checked independently.
+CTLSPEC NAME fair_endpoint_convergence :=
+  mode != fair_animation |
+  AG (!presentation_converged -> AF presentation_converged);
+LTLSPEC NAME fair_ltl_endpoint_convergence :=
+  mode != fair_animation |
+  G (!presentation_converged -> F presentation_converged);
+
+-- Controlled defects. Each expected FALSE property must retain a native
+-- counterexample; the stuck trace includes a loop at the transit state.
+CTLSPEC NAME stuck_animation_refutes_endpoint_convergence :=
+  mode != stuck_animation |
+  AG (!presentation_converged -> AF presentation_converged);
+INVARSPEC NAME cross_owner_defect_witness :=
+  !(mode = cross_owner_defect & committed1 = play0_zone);
+INVARSPEC NAME privacy_leak_defect_witness :=
+  !(mode = privacy_leak_defect & committed1 = hand1 & viewer0_knows1);

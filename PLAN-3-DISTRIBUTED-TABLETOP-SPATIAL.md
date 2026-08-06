@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 3.2, model temporal spatial transitions in NuSMV
+**Current implementation focus:** 3.3, model relational intent and audit queries in Scryer Prolog
 
 ## How to update this plan
 
@@ -676,7 +676,31 @@ cargo run -p poche-xtask --offline -- spatial alloy --scope layout-micro
 claims, finds the seeded overlap/ambiguity defects, and documents integer
 bitwidth/scope rather than implying continuous-mesh proof.
 
-### [ ] 3.2 Model temporal spatial transitions in NuSMV
+### [x] 3.2 Model temporal spatial transitions in NuSMV
+
+**Completion notes:** Completed 2026-08-05. Added the independently
+handwritten `models/nusmv/spatial.smv` and normalized command `spatial nusmv
+--scope transition-micro`. Its exact scope ID is
+`transition-micro-2cards-2viewers-endpoints-transit-pause-recovery`: two stable
+card identities, two owner/viewers, typed hand/play/won endpoints, optional
+presentation-only transit, and running/paused/recovery/finished phases. All 13
+named properties have their required values; `check_fsm` reports the mixed
+transition system total and deadlock-free. Four invariants prove safe-mode
+owner-zone confinement, private-face knowledge, and transit-to-committed-play
+refinement. Six true CTL/LTL properties check one-card movement, paused and
+recovery immobility, deadlock freedom, and endpoint convergence. There is no
+global `FAIRNESS`: the named `fair_animation` environment mode explicitly
+schedules one legal play, one transit state, and presentation service; both
+CTL and LTL convergence hold only under that inspectable assumption. Three
+false controls retain and structurally validate a three-state stuck-transit
+lasso, a two-state cross-owner move, and a two-state private-face leak. The
+canonical `committed*` variables cannot contain transit; only `present*` can,
+so renderer progress never becomes game authority. Native output, normalized
+properties, carried-forward counterexample assignments/loop index, and FSM
+diagnostics stay under ignored `target/spatial-nusmv-transition-micro/`.
+`docs/spatial-nusmv.md` records that the model abstracts the 52-card universe,
+coordinates, frames, clocks, network delivery, and complete round lifecycle.
+The prescribed CLI and direct NuSMV run pass offline.
 
 **Work:**
 
