@@ -6399,6 +6399,7 @@ dependencies = [
  "poche-native-tools",
  "poche-oracle-rust",
  "poche-protocol",
+ "poche-runtime",
  "poche-session",
  "serde_json",
 ]

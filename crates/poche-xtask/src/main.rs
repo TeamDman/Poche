@@ -12,10 +12,11 @@ use std::process::{Command, ExitCode, Output};
 
 use poche_check::{CheckScope, TerminationReason, analyze_liveness, check_session, explore};
 use poche_conformance::{
-    Disposition, audit_spatial_coverage, check_spatial_alloy_layout_micro,
-    check_spatial_nusmv_transition_micro, check_spatial_prolog_query_micro,
-    compare_governance_models, compare_rust_alloy, compare_rust_models, compare_rust_nusmv,
-    compare_rust_prolog, compare_spatial_models,
+    Disposition, audit_consensus_coverage, audit_spatial_coverage,
+    check_spatial_alloy_layout_micro, check_spatial_nusmv_transition_micro,
+    check_spatial_prolog_query_micro, compare_consensus_models, compare_governance_models,
+    compare_rust_alloy, compare_rust_models, compare_rust_nusmv, compare_rust_prolog,
+    compare_spatial_models,
 };
 use poche_interchange::{
     BackendKindWire, ConfidenceKindWire, SessionClaimWire, SessionTrackEvidenceWire,
@@ -134,6 +135,8 @@ fn usage() {
          cargo run -p poche-xtask -- session compare all --scope lobby-micro\n  \
          cargo run -p poche-xtask -- session compare all --scope governance-micro\n  \
          cargo run -p poche-xtask -- consensus check --scope micro\n  \
+         cargo run -p poche-xtask -- consensus compare all --scope micro\n  \
+         cargo run -p poche-xtask -- consensus coverage audit --all\n  \
          cargo run -p poche-xtask -- transport test veilid-local|veilid-public\n  \
          cargo run -p poche-xtask -- multiplayer smoke --transport in-process\n  \
          cargo run -p poche-xtask -- multiplayer smoke --transport veilid-local|veilid-public\n  \
@@ -163,15 +166,29 @@ fn usage() {
     );
 }
 
-fn consensus(mut args: impl Iterator<Item = OsString>) -> ExitCode {
-    if args.next().as_deref() != Some(OsStr::new("check"))
-        || args.next().as_deref() != Some(OsStr::new("--scope"))
-        || args.next().as_deref() != Some(OsStr::new("micro"))
-        || args.next().is_some()
-    {
+fn consensus(args: impl Iterator<Item = OsString>) -> ExitCode {
+    let args = args.collect::<Vec<_>>();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let matches = |expected: &[&str]| {
+        args.len() == expected.len()
+            && args
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| actual == OsStr::new(expected))
+    };
+    if matches(&["check", "--scope", "micro"]) {
+        consensus_check()
+    } else if matches(&["compare", "all", "--scope", "micro"]) {
+        consensus_compare(&root)
+    } else if matches(&["coverage", "audit", "--all"]) {
+        consensus_coverage(&root)
+    } else {
         usage();
-        return ExitCode::from(2);
+        ExitCode::from(2)
     }
+}
+
+fn consensus_check() -> ExitCode {
     let report = match poche_runtime::run_replicated_micro_check() {
         Ok(report) => report,
         Err(error) => {
@@ -225,6 +242,55 @@ fn consensus(mut args: impl Iterator<Item = OsString>) -> ExitCode {
     } else {
         eprintln!("consensus micro receipt drifted from its registered scope");
         ExitCode::FAILURE
+    }
+}
+
+fn consensus_compare(root: &Path) -> ExitCode {
+    match compare_consensus_models(root) {
+        Ok(report) => {
+            println!(
+                "consensus comparison: scope={} source_gates={} tracks={} claims={} observations={} disagreements={} alloy_commands={} nusmv_properties={} prolog_rows={}",
+                report.agreement.scope_id,
+                report.source_gates,
+                report.agreement.tracks,
+                report.agreement.compared_claims,
+                report.agreement.observations,
+                report.agreement.disagreements.len(),
+                report.alloy_commands,
+                report.nusmv_properties,
+                report.prolog_rows
+            );
+            for track in report.tracks {
+                println!(
+                    "  {:?}: confidence={:?} claims={} qualification={}",
+                    track.backend,
+                    track.confidence,
+                    track.claims.len(),
+                    track.qualification
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("consensus comparison failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn consensus_coverage(root: &Path) -> ExitCode {
+    match audit_consensus_coverage(root) {
+        Ok(report) => {
+            println!(
+                "consensus coverage audit: obligations={} tracks={} classified_cells={} applicable_cells={}",
+                report.obligations, report.tracks, report.classified_cells, report.applicable_cells
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("consensus coverage audit failed: {error}");
+            ExitCode::FAILURE
+        }
     }
 }
 

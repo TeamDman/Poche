@@ -10,6 +10,8 @@
 //! round prefix exactly, while preserving (rather than hiding) scope changes.
 
 mod alloy;
+mod consensus_compare;
+mod consensus_coverage;
 mod governance_compare;
 mod nusmv;
 mod prolog;
@@ -20,6 +22,12 @@ mod spatial_nusmv;
 mod spatial_prolog;
 
 pub use alloy::{AlloyConformanceError, AlloyConformanceReport, compare_rust_alloy};
+pub use consensus_compare::{
+    ConsensusComparisonError, ConsensusComparisonReport, compare_consensus_models,
+};
+pub use consensus_coverage::{
+    ConsensusCoverageError, ConsensusCoverageReport, audit_consensus_coverage,
+};
 pub use governance_compare::{
     GovernanceComparisonError, GovernanceComparisonReport, compare_governance_models,
 };

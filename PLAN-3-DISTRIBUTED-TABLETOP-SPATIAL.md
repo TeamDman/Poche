@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 5.3, formal and cross-implementation consensus evidence
+**Current implementation focus:** 6.1, freeze the hidden-card threat model from primary sources
 
 ## How to update this plan
 
@@ -1111,7 +1111,38 @@ cargo run -p poche-xtask --offline -- consensus check --scope micro
 delivery/quorum assumptions; safety holds under tested omissions/partitions;
 counterexamples are retained when assumptions are removed.
 
-### [~] 5.3 Add formal and cross-implementation consensus evidence
+### [x] 5.3 Add formal and cross-implementation consensus evidence
+
+**Completion notes:** Completed 2026-08-05. Added independently handwritten
+`models/alloy/consensus.als`, `models/nusmv/consensus.smv`, and
+`models/prolog/consensus.pl`, plus a Rust runtime/bounded-enumerator gate and a
+neutral comparison in `poche-conformance`. Ten stable `P3-C-*` obligations
+cover device/player voting weight, strict quorum, stale/revoked authority,
+canonical batches, conditional fork safety, out-of-turn recovery, conditional
+liveness, snapshot+tail, client-local proposals, and the two-player quorum
+limit. Snapshot+tail remains an explicit Rust-only observation rather than
+being laundered into tracks that do not model snapshot installation.
+
+Alloy runs nine commands over exactly three players, five devices, two epochs,
+and two values: two positive recovery/automatic witnesses, six assertion
+searches, and the retained satisfiable equivocation witness. NuSMV symbolically
+explores ten finite scheduler modes over five steps/four replica heights. Its
+twelve named properties include expected-false equivocation/fair-delivery
+controls, a total/deadlock-free FSM, conditional convergence, and current-actor
+kick recovery. Prolog emits 34 exact queried explanations across authority,
+proposal, vote, certificate, recovery, predecessor, and assumption fixtures.
+Rust replays the exact 5.2 receipt and exhaustively checks strict-majority set
+intersection for every subset of two through eight players.
+
+The neutral receipt has four source gates/tracks, nine genuinely shared claims,
+35 participating observations, and zero disagreements. The machine coverage
+audit classifies all 40 cells for ten obligations/four tracks, with 36 native
+applicable cells and four reasoned `N/A` cells. `docs/consensus-coverage.md`
+records exact scopes and states that safety needs authenticated votes plus
+non-equivocation, liveness needs eventual delivery/connected quorum/responsive
+proposers, and neither result is Byzantine consensus, Sybil resistance, or an
+unbounded network proof. Both prescribed commands pass offline; focused
+conformance tests, formatting, and strict Clippy pass.
 
 **Work:**
 

@@ -16,6 +16,7 @@ poche-model = { path = "../poche-model" }
 poche-native-tools = { path = "../poche-native-tools" }
 poche-oracle-rust = { path = "../poche-oracle-rust" }
 poche-protocol = { path = "../poche-protocol" }
+poche-runtime = { path = "../poche-runtime" }
 poche-session = { path = "../poche-session" }
 serde_json = "=1.0.151"
 

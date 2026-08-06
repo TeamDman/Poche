@@ -30,6 +30,7 @@ was exhaustive, bounded, symbolic, queried, sampled, or merely empirical.
 - [Retrospective action audit](docs/retrospective-audit.md)
 - [Replicated player/device authority decision](docs/decisions/0007-player-device-and-replicated-log.md)
 - [Replicated runtime convergence scenario](docs/replicated-runtime.md)
+- [Replicated consensus formal evidence and coverage](docs/consensus-coverage.md)
 
 Automatic target-language generation, trustless dealing, host migration,
 production account/matchmaking infrastructure, polished rendering, and RL

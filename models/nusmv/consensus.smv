@@ -1,0 +1,148 @@
+-- This Source Code Form is subject to the terms of the Mozilla Public
+-- License, v. 2.0. If a copy of the MPL was not distributed with this
+-- file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+-- Independent symbolic micro-oracle. Modes are finite schedulers; defect
+-- modes retain counterexamples outside the registered assumptions.
+
+MODULE main
+
+VAR
+  mode : {converge, reorder, duplicate, kick, stale_device, revoked_device,
+          minority, auto_proposal, equivocation_defect, unfair_delivery_defect};
+  step : 0..4;
+  alice_height : 0..4;
+  bob_height : 0..4;
+  carol_height : 0..4;
+  browser_height : 0..4;
+  epoch : 1..2;
+  current_actor_carol : boolean;
+  carol_active : boolean;
+  stale_admitted : boolean;
+  revoked_admitted : boolean;
+  signer_players : 0..3;
+  signer_devices : 0..5;
+  committed : boolean;
+  auto_proposals : 0..3;
+  auto_effects : 0..1;
+  forked : boolean;
+
+DEFINE
+  converged := alice_height = 4 & bob_height = 4 &
+    carol_height = 4 & browser_height = 4;
+  safe_mode := mode != equivocation_defect;
+  strict_majority := (epoch = 1 & signer_players >= 2) |
+    (epoch = 2 & signer_players = 2);
+
+ASSIGN
+  init(mode) := {converge, reorder, duplicate, kick, stale_device,
+    revoked_device, minority, auto_proposal, equivocation_defect,
+    unfair_delivery_defect};
+  next(mode) := mode;
+
+  init(step) := 0;
+  next(step) := case step < 4 : step + 1; TRUE : step; esac;
+
+  init(alice_height) := 0;
+  next(alice_height) := case
+    mode = converge & step < 4 : step + 1;
+    mode = reorder & step < 4 : step + 1;
+    mode = duplicate & step < 4 : step + 1;
+    TRUE : alice_height;
+  esac;
+  init(bob_height) := 0;
+  next(bob_height) := case
+    (mode = converge | mode = reorder | mode = duplicate) & step < 4 : step + 1;
+    TRUE : bob_height;
+  esac;
+  init(carol_height) := 0;
+  next(carol_height) := case
+    mode = converge & step < 4 : step + 1;
+    mode = reorder & step = 1 : 0;
+    mode = reorder & step = 2 : 3;
+    mode = reorder & step = 3 : 4;
+    mode = duplicate & step < 4 : step + 1;
+    TRUE : carol_height;
+  esac;
+  init(browser_height) := 0;
+  next(browser_height) := case
+    mode = converge & step < 4 : step + 1;
+    mode = reorder & step = 1 : 2;
+    mode = reorder & step = 2 : 3;
+    mode = reorder & step = 3 : 4;
+    mode = duplicate & step < 4 : step + 1;
+    TRUE : browser_height;
+  esac;
+
+  init(epoch) := 1;
+  next(epoch) := case mode = kick & step = 1 : 2; TRUE : epoch; esac;
+  init(current_actor_carol) := FALSE;
+  next(current_actor_carol) := case mode = kick & step = 0 : TRUE;
+    TRUE : current_actor_carol; esac;
+  init(carol_active) := TRUE;
+  next(carol_active) := case mode = kick & step = 1 : FALSE;
+    TRUE : carol_active; esac;
+
+  init(stale_admitted) := FALSE;
+  next(stale_admitted) := stale_admitted;
+  init(revoked_admitted) := FALSE;
+  next(revoked_admitted) := revoked_admitted;
+
+  init(signer_players) := 0;
+  next(signer_players) := case
+    mode = minority & step = 0 : 1;
+    mode = auto_proposal & step = 0 : 2;
+    mode = kick & step = 0 : 2;
+    mode = equivocation_defect & step = 0 : 2;
+    TRUE : signer_players;
+  esac;
+  init(signer_devices) := 0;
+  next(signer_devices) := case
+    mode = minority & step = 0 : 1;
+    mode = kick & step = 0 : 2;
+    mode = auto_proposal & step = 0 : 3;
+    mode = equivocation_defect & step = 0 : 3;
+    TRUE : signer_devices;
+  esac;
+  init(committed) := FALSE;
+  next(committed) := case
+    mode = kick & step = 1 : TRUE;
+    mode = auto_proposal & step = 1 : TRUE;
+    mode = equivocation_defect & step = 1 : TRUE;
+    TRUE : committed;
+  esac;
+  init(auto_proposals) := 0;
+  next(auto_proposals) := case mode = auto_proposal & step = 0 : 3;
+    TRUE : auto_proposals; esac;
+  init(auto_effects) := 0;
+  next(auto_effects) := case mode = auto_proposal & step = 1 : 1;
+    TRUE : auto_effects; esac;
+  init(forked) := FALSE;
+  next(forked) := case mode = equivocation_defect & step = 1 : TRUE;
+    TRUE : forked; esac;
+
+INVARSPEC NAME device_multiplicity_does_not_add_player_votes :=
+  signer_players <= signer_devices | signer_devices = 0;
+INVARSPEC NAME minority_cannot_commit :=
+  mode != minority | !committed;
+INVARSPEC NAME stale_device_is_denied :=
+  mode != stale_device | !stale_admitted;
+INVARSPEC NAME revoked_device_is_denied :=
+  mode != revoked_device | !revoked_admitted;
+INVARSPEC NAME automatic_proposals_collapse_to_one_effect :=
+  mode != auto_proposal | auto_effects <= 1;
+INVARSPEC NAME fork_safety_under_non_equivocation :=
+  !safe_mode | !forked;
+INVARSPEC NAME commit_requires_player_quorum :=
+  !safe_mode | !committed | strict_majority;
+CTLSPEC NAME out_of_turn_kick_recovers :=
+  mode != kick | EF (current_actor_carol & !carol_active & committed);
+CTLSPEC NAME conditional_eventual_delivery_converges :=
+  mode != converge | AF converged;
+CTLSPEC NAME consensus_transition_deadlock_free := AG EX TRUE;
+
+-- Expected-false controls.
+INVARSPEC NAME equivocation_fork_defect_witness :=
+  !(mode = equivocation_defect & forked);
+CTLSPEC NAME unfair_delivery_liveness_defect_witness :=
+  mode != unfair_delivery_defect | AF converged;
