@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "evidence_id": "poche-phase-3-release-2026-08-06",
+  "branch": "model-checking",
+  "validated_parent_commit": "222ab88",
+  "toolchain": {
+    "rust": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "alloy": "6.2.0",
+    "nusmv": "2.7.1",
+    "scryer_prolog": "v0.10.0-17-ge4d96925",
+    "typst": "0.15.1 (9dfd3a08)",
+    "typst_winget_install_verified_outside_sandbox": true,
+    "typst_workspace_cache_sha256": "19ce3551153c2fe7ee9fa2f95208310c8f4d3209fedb699e0333faf8913f6736"
+  },
+  "rust_gates": {
+    "cargo_fmt_all_check": "passed",
+    "cargo_clippy_workspace_all_targets_offline_deny_warnings": "passed",
+    "cargo_test_workspace_offline": "passed",
+    "protocol_decoder_fuzz_tests": 2,
+    "cli_contract_tests": 6,
+    "larger_scope_model_property_tests": 4
+  },
+  "formal_gates": {
+    "rules_covered": 61,
+    "todo_rules": 0,
+    "game_acceptance_hash_groups": 9,
+    "game_unclassified_differences": 0,
+    "lobby": {
+      "rust_states": 800,
+      "rust_transitions": 38400,
+      "accepted_transitions": 5872,
+      "denied_transitions": 32528,
+      "terminal_states": 272,
+      "max_depth": 14,
+      "semantic_hash": "89c626a11bcef07d93007ba5a7bf097fa9dd88c94244775dec5c138a17e023b1",
+      "tracks": 4,
+      "shared_claims": 10,
+      "observations": 31,
+      "disagreements": 0
+    },
+    "governance": {
+      "tracks": 4,
+      "shared_claims": 7,
+      "observations": 27,
+      "disagreements": 0
+    },
+    "spatial": {
+      "obligations": 15,
+      "tracks": 4,
+      "shared_claims": 9,
+      "observations": 24,
+      "unshared_classified_claims": 5,
+      "disagreements": 0
+    },
+    "consensus": {
+      "obligations": 10,
+      "tracks": 4,
+      "shared_claims": 9,
+      "observations": 35,
+      "disagreements": 0
+    }
+  },
+  "runtime_gates": {
+    "canonical_protocol_fixture_steps": 32,
+    "canonical_protocol_final_state_hash": "678455b9937db722bd8e25c3585aa2c678455ba31522b3a9e07f36daffa3b662",
+    "in_process_inputs": 178,
+    "in_process_revisions": 177,
+    "in_process_deals": 13,
+    "in_process_transcript_hash": "ab90ff79acb755d72defaef22a37369a71a9125df64c91a8645260254934a075",
+    "in_process_final_public_hash": "be439108bb7ddb5695232faa074cb9180d1b34df6a1748598ad6e19c6f9759dd",
+    "trustless_dropout_scenarios": 5,
+    "trustless_abort_count": 5,
+    "trustless_no_hangs": true,
+    "trustless_corpus_digest": "1134633ac68490a908103d8e2751ec423e9970f1c813a4dbb15f6e31b52d8624",
+    "veilid_release": "0.5.7",
+    "veilid_semantic_tests": 29,
+    "veilid_compile_fail_secret_boundary_tests": 2,
+    "veilid_local_topology": "expected isolated limit: zero peers and no public/local readiness or private routes"
+  },
+  "spatial_and_publication_gates": {
+    "vertical_slice_records": 185,
+    "scene_semantic_hash": "0a6de46fd21791260bb57c8516ce9ef5e1666e03e17d29cf6f8cda746c07baee",
+    "vertical_slice_ndjson_hash": "eb3f32b9471b2a88d1cdb7f40d082af3bfdeb91d84243a1dc8a9299012138c30",
+    "published_source_pages": 3,
+    "published_safe_evidence_files": 2,
+    "typst_pdf_bytes": 192974,
+    "native_renderer": {
+      "bounded_real_window": true,
+      "startup_to_first_update_microseconds": 817288,
+      "semantic_commit_nanoseconds": 400,
+      "sampled_frames": 712,
+      "mean_frame_milliseconds": 7.285341292134832,
+      "p95_frame_milliseconds": 8.2483,
+      "committed_face": "4♣",
+      "scene_cards": 52,
+      "visible_face_runs": 3,
+      "hidden_cards_without_face_runs": 49,
+      "screenshot_sha256": "ab9e2c4c0e02bb609e4411531a000b90a191c89e7c80e920a795b6386ddcad7d",
+      "qualification": "real-window startup, semantic input-to-commit, and sampled presentation timing; not input-to-photon latency"
+    }
+  },
+  "rl_gates": {
+    "spec_id": "poche-2p-v1",
+    "spec_hash": "8852f8568ead1e40aad7bb4ca5b7725340cc01422e077ffddcd5d4f5665bf0bf",
+    "reward_id": "round-score-v1",
+    "learned_replay_hash": "adc2da13e127d65678a5c1cca3d04019a701ba1f1f30b4f965bc0c934586b3fa",
+    "burn_cpu_forward_backward_and_checkpoint": true,
+    "burn_wgpu_forward_backward_and_checkpoint": true,
+    "illegal_probability_sum": 0.0,
+    "benchmark_decisions": 1000000,
+    "benchmark_batch": 256,
+    "direct_decisions_per_second": 83006.771,
+    "naive_batch_decisions_per_second": 84835.628,
+    "preallocated_batch_decisions_per_second": 84931.254,
+    "four_partition_decisions_per_second": 322445.670,
+    "preallocated_hot_reallocations": 0,
+    "network": "none",
+    "qualification": "one current-source diagnostic sample; policy evaluation remains empirical rather than proof"
+  },
+  "supply_chain_and_secret_gates": {
+    "cargo_lock_sha256": "495a9a127840f17c09ecc0d336532fc88749f5e4a13fc9ccc2b3c092e28dc944",
+    "resolved_packages": 1001,
+    "workspace_packages": 23,
+    "packages_missing_license": 0,
+    "external_local_path_packages": 0,
+    "git_packages": [
+      {
+        "name": "teamy-cancellation",
+        "version": "0.3.1",
+        "license": "MPL-2.0",
+        "revision": "cc782906597b4294a63ab0f056c2928d48f724a4"
+      }
+    ],
+    "resolved_license_policy": "all expressions offer permissive, data/font, or MPL-2.0-compatible terms",
+    "cargo_deny_available": false,
+    "cargo_audit_available": false,
+    "advisory_database_scan": "not run; no vulnerability-free claim is made",
+    "phase_3_new_rust_files": 44,
+    "phase_3_new_rust_files_missing_mpl_notice": 0,
+    "publishable_secret_scan_hits": 0,
+    "tracked_generated_artifact_candidates": 0
+  },
+  "limitations": [
+    "Direct secure browser Veilid remains unsupported without a companion or Poche gateway.",
+    "The local Veilid probe proves the isolated released topology limit, not public delivery.",
+    "The hidden-card crate is an experimental unanimously revealed prototype; upstream security review is still mandatory.",
+    "The native app renders a checked exact-recipient checkpoint, not a complete live Veilid player.",
+    "The static vertical slice composes registered fixtures and reducers; it is not one atomic live distributed execution.",
+    "The sandbox cannot execute the user's WinGet Typst path, so host verification and a checksum-matched workspace cache are recorded separately."
+  ]
+}

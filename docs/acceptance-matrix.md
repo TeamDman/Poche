@@ -89,13 +89,13 @@ source families without hashing generated output or machine paths.
 | --- | --- | --- |
 | rules | `blake3:04559f8bc9001b8ed9a56757dbc966f3d8aa382d683094b89cf5bfb551072580` | Typst authority and 61-rule ledger |
 | rust-oracle | `blake3:ea709b4e644370f647cfb0ea1cf6266e4087dbaf13a2b309760c874694a7be99` | conventional full-deck Rust oracle |
-| rust-formal | `blake3:c43a78dc2c2d2b8b31e1a6e6a9a1c56bcdb0076eb5ef4385236b6b8fe4341106` | strict model, Weavy kernels, explicit safety/liveness checker |
-| contracts | `blake3:12c14c41657705d01e537a7c3abf492e67337db8ba4a49bbc3453b51d9f73a52` | finite domain, environment, formal dialect, Phon interchange |
+| rust-formal | `blake3:b8a8361049e6dc7795eb10fcf0cd77f82c1b9590e42851bc5cdc6ce7b3d3fa3e` | strict model, Weavy kernels, explicit safety/liveness checker |
+| contracts | `blake3:3ad745ffb285e820d5561e1ae6e29fce7f01a4c55b63b5cb9be4ef3e84fb28bc` | finite domain, environment, formal dialect, Phon interchange |
 | alloy | `blake3:9f5b657cf5fa8e8de43b4919ea1c854d6efcd51694e6ed3951afbdca9de50741` | base and conformance Alloy sources |
 | nusmv | `blake3:d63cdb5928d4b785dcd6549f4b501b8f3d36477a6d8165bab258e39ca20aabc4` | base and conformance NuSMV sources |
 | prolog | `blake3:df858eeaa772923fd41a4044d0290b79b05de4777077593c4631e5a6507b558c` | Scryer Prolog source |
-| conformance | `blake3:984aaa037bad047a4d0f9e2c9e33d4ab6271ee711383d8bcd8752a03b8e08fdd` | native adapters/runners and pairwise comparison implementations |
-| toolchain | `blake3:dbd785469e9116210313af6fe44301cf80e6d74233c96e774b9816157b79cb3c` | Cargo lock, Rust toolchain, native version pins |
+| conformance | `blake3:cd6ed0e05782ebfd9a5c3e1cc0bb54a9c28f6f2a5c7174b891986de684f996d2` | native adapters/runners and pairwise comparison implementations |
+| toolchain | `blake3:bf6601dedc983f1ad681d20c3648a42ee93854b0621f88fce47b2a32d8b8032c` | Cargo lock, Rust toolchain, native version pins |
 
 Recompute and audit revisions with:
 

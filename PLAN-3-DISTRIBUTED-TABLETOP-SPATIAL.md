@@ -1706,7 +1706,41 @@ evidence, and exact scope qualifications for the same scenario.
 
 ## Phase 9 — Acceptance, documentation, and release
 
-### [~] 9.1 Run full regression, security, license, and performance gates
+### [x] 9.1 Run full regression, security, license, and performance gates
+
+**Completion notes:** Completed 2026-08-06 from current source after the Phase
+8.3 checkpoint. Formatting, strict all-target workspace Clippy, the exact
+offline workspace suite, focused decoder-fuzz/CLI-redaction/larger-scope
+property corpora, all game/session/governance/spatial/consensus comparisons,
+canonical replay, in-process multiplayer, trustless dropout, spatial vertical
+slice, Pages source build, and local Veilid gates pass. The game acceptance
+matrix now verifies all nine BLAKE3 groups after explicitly versioning the four
+Phase 3 Rust formal/contracts/conformance/toolchain source groups; independent
+rules, Alloy, NuSMV, and Prolog groups did not change.
+
+The exact current evidence includes 800 lobby states and 38,400 edges with
+zero cross-track disagreements; 185 vertical-slice records with scene hash
+`0a6de46fd21791260bb57c8516ce9ef5e1666e03e17d29cf6f8cda746c07baee`;
+five governable hidden-card dropout points with no hang; and the released
+Veilid 0.5.7 isolated-topology limitation reproduced after 29 semantic and two
+compile-fail secret-boundary tests. A bounded native release window reproduced
+the same scene and byte-identical screenshot while retaining only three
+authorized face runs and 49 hidden cards without face text. Typst 0.15.1 built
+a 192,974-byte PDF; the user's WinGet executable passed under the host identity,
+while the sandbox correctly required the checksum-matched workspace fallback.
+
+Current `poche-2p-v1`/`round-score-v1` evaluation, selected learned replay,
+Burn Flex CPU and WGPU forward/backward/checkpoint smoke all pass. One fresh
+network-free million-decision release sample measured 83,006.771 direct,
+84,931.254 preallocated-batch, and 322,445.670 four-partition decisions/s;
+this is diagnostic rather than a performance promise. Resolved locked metadata
+contains 1,001 packages, zero missing license fields, zero external local paths,
+and one revision-pinned MPL-2.0 Git dependency. All 44 new Phase 3 Rust files
+now carry MPL notices. Publishable evidence has zero private-key/invite hits and
+Git tracks zero generated-artifact candidates. `cargo-deny` and `cargo-audit`
+are unavailable, so the resolved-license audit is recorded and no advisory-
+database or vulnerability-free claim is made. The complete machine receipt is
+`docs/evidence/phase-3-release.json`.
 
 **Work:**
 
@@ -1734,7 +1768,7 @@ cargo run -p poche-xtask --offline -- consensus compare all --scope micro
 external infrastructure and research-only claims are explicitly scoped rather
 than skipped silently.
 
-### [ ] 9.2 Update public architecture, threat model, rules, and status
+### [~] 9.2 Update public architecture, threat model, rules, and status
 
 **Work:**
 
