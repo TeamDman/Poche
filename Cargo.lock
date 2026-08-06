@@ -8776,8 +8776,12 @@ dependencies = [
  "poche-interchange",
  "poche-native-tools",
  "poche-oracle-rust",
+ "poche-protocol",
  "poche-rl",
  "poche-runtime",
+ "poche-session",
+ "poche-spatial",
+ "poche-ui",
  "serde",
  "serde_json",
 ]

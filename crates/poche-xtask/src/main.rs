@@ -30,6 +30,8 @@ use poche_native_tools::{
 use poche_oracle_rust::{Action, DeckOrder, Game, GameState, Seat, Turn};
 use serde::{Deserialize, Serialize};
 
+mod vertical_slice;
+
 const COVERAGE_TRACKS: [(&str, usize); 4] =
     [("rust", 3), ("alloy", 4), ("nusmv", 5), ("prolog", 6)];
 
@@ -108,6 +110,7 @@ fn main() -> ExitCode {
         Some(command) if command == OsStr::new("multiplayer") => multiplayer(args),
         Some(command) if command == OsStr::new("rl") => rl(args),
         Some(command) if command == OsStr::new("spatial") => spatial(args),
+        Some(command) if command == OsStr::new("pages") => pages(args),
         Some(command) if command == OsStr::new("coverage") => coverage(args),
         Some(command) if command == OsStr::new("oracle") => oracle(args),
         Some(command) if command == OsStr::new("compare") => compare(args),
@@ -154,6 +157,8 @@ fn usage() {
          cargo run -p poche-xtask -- spatial prolog --scope query-micro\n  \
          cargo run -p poche-xtask -- spatial compare all --scope micro\n  \
          cargo run -p poche-xtask -- spatial coverage audit --all\n  \
+         cargo run -p poche-xtask -- spatial vertical-slice\n  \
+         cargo run -p poche-xtask -- pages build [--output PATH]\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- oracle report\n  \
@@ -367,9 +372,58 @@ fn spatial(args: impl Iterator<Item = OsString>) -> ExitCode {
         spatial_compare(&root)
     } else if matches(&["coverage", "audit", "--all"]) {
         spatial_coverage(&root)
+    } else if matches(&["vertical-slice"]) {
+        match vertical_slice::build_vertical_slice(&root) {
+            Ok(report) => {
+                println!(
+                    "spatial vertical slice: steps={} scene_hash={} alloy_witness={} artifacts={}",
+                    report.transcript_steps,
+                    report.scene_hash,
+                    report.alloy_witness,
+                    report.artifact_directory.display()
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("spatial vertical slice failed: {error}");
+                ExitCode::FAILURE
+            }
+        }
     } else {
         usage();
         ExitCode::from(2)
+    }
+}
+
+fn pages(args: impl Iterator<Item = OsString>) -> ExitCode {
+    let args = args.collect::<Vec<_>>();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = match args.as_slice() {
+        [command] if command == OsStr::new("build") => root.join("target/pages-site"),
+        [command, flag, path]
+            if command == OsStr::new("build") && flag == OsStr::new("--output") =>
+        {
+            Path::new(path).to_path_buf()
+        }
+        _ => {
+            usage();
+            return ExitCode::from(2);
+        }
+    };
+    match vertical_slice::build_pages(&root, &output) {
+        Ok(report) => {
+            println!(
+                "Pages source build: pages={} evidence_files={} output={}",
+                report.pages,
+                report.evidence_files,
+                report.output_directory.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("Pages source build failed: {error}");
+            ExitCode::FAILURE
+        }
     }
 }
 

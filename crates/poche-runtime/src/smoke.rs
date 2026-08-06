@@ -153,11 +153,24 @@ struct RecordedSmoke {
 ///
 /// Returns the first transport, reducer, projection, replay, or evidence error.
 pub fn run_in_process_smoke(seed: u64) -> Result<InProcessSmokeReport, String> {
+    run_in_process_smoke_transcript(seed).map(|(_, report)| report)
+}
+
+/// Record and independently replay the complete in-process acceptance
+/// scenario, retaining the secret-free typed transcript for inspection.
+///
+/// # Errors
+///
+/// Returns the first transport, reducer, projection, replay, or evidence error.
+pub fn run_in_process_smoke_transcript(
+    seed: u64,
+) -> Result<(SmokeTranscript, InProcessSmokeReport), String> {
     let recorded = record_smoke(seed)?;
     let replayed = replay_smoke(&recorded.transcript)?;
     if replayed.transcript.records != recorded.transcript.records {
         return Err("smoke replay records diverged from the recorded transcript".to_owned());
     }
+    let transcript = recorded.transcript;
     let mut report = recorded.report;
     if replayed.report.final_public_hash != report.final_public_hash
         || replayed.report.final_scores != report.final_scores
@@ -166,7 +179,7 @@ pub fn run_in_process_smoke(seed: u64) -> Result<InProcessSmokeReport, String> {
         return Err("smoke replay summary diverged from the recorded run".to_owned());
     }
     report.verified.push("transcript-replay".to_owned());
-    Ok(report)
+    Ok((transcript, report))
 }
 
 #[expect(
@@ -894,7 +907,9 @@ mod tests {
 
     #[test]
     fn smoke_scenario_replays_every_input_and_finishes_the_real_game() {
-        let report = run_in_process_smoke(0x5eed).unwrap();
+        let (transcript, report) = run_in_process_smoke_transcript(0x5eed).unwrap();
+        assert_eq!(transcript.inputs.len(), transcript.records.len());
+        assert_eq!(transcript.inputs.len(), report.inputs);
         assert!(report.verified.contains(&"transcript-replay".to_owned()));
         assert!(report.verified.contains(&"spectator-grant".to_owned()));
         assert!(report.verified.contains(&"spectator-revocation".to_owned()));

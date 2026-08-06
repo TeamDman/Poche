@@ -28,6 +28,9 @@ was exhaustive, bounded, symbolic, queried, sampled, or merely empirical.
 - [Neutral spatial conformance and coverage](docs/spatial-coverage.md)
 - [Native canonical spatial mirror and Slug evidence](docs/native-spatial-ui.md)
 - [Accessible semantic HTML tabletop and browser acceptance](docs/semantic-html-tabletop.md)
+- [Complete spatial vertical slice and checked transcript](docs/spatial-vertical-slice.md)
+- [Published spatial evidence](https://teamdman.github.io/Poche/spatial.html) —
+  Rust-rendered endpoint and bounded Alloy counterexample; no live room
 - [Typed command and legality-policy decision](docs/decisions/0006-typed-commands-and-legality-policy.md)
 - [Retrospective action audit](docs/retrospective-audit.md)
 - [Replicated player/device authority decision](docs/decisions/0007-player-device-and-replicated-log.md)
@@ -90,6 +93,8 @@ cargo run -p poche-xtask --offline -- spatial nusmv --scope transition-micro
 cargo run -p poche-xtask --offline -- spatial prolog --scope query-micro
 cargo run -p poche-xtask --offline -- spatial compare all --scope micro
 cargo run -p poche-xtask --offline -- spatial coverage audit --all
+cargo run -p poche-xtask --offline -- spatial vertical-slice
+cargo run -p poche-xtask --offline -- pages build
 cargo run --release -p poche-native-ui -- --debug-overlay
 cargo run -p poche-cli --offline -- --output json command parse '/startvote "/score add player1 100"'
 cargo run -p poche-xtask -- multiplayer smoke --transport in-process
@@ -143,6 +148,7 @@ do not hide IP/timing/DHT metadata from the relevant transport participants.
 | Signed browser-device gateway lab | Browser-local WebCrypto key, signed bounded typed HTTP, idempotent receipts, reconnectable exact-recipient SSE, and independent device revocation work on loopback | Still host-authoritative and plaintext to the gateway; lab enrollment is not the replicated root-certificate path |
 | Native spatial mirror | Bevy 0.19 renders the checked exact-recipient scene, Slug card/score outlines, typed/drag parity, deterministic tween, and audit bounds in a real release window | Checked replay checkpoint only; not yet a live Veilid player client, physics authority, polished renderer, or input-to-photon measurement |
 | Semantic HTML tabletop | Ordinary landmarks, tables, lists, POST forms, keyboard controls, optional drag/drop, exact-recipient privacy, audit, governance, and reconnect run over the same spatial semantics | Loopback development identities are not production authentication; live authority remains host-colocated and trusted |
+| Published spatial evidence | One checked 185-record NDJSON stream, native/HTML scene fingerprint, Rust-rendered endpoint, and retained bounded Alloy overlap witness | Static composition of registered fixtures and reducers; not one atomic network execution, a live authority, or an unbounded spatial theorem |
 
 Do not expose the Datastar demo beyond loopback without adding TLS,
 authentication, durable state, abuse controls, and a deployment-specific threat

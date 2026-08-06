@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-06 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 8.3, publish the complete inspectable vertical slice and replay
+**Current implementation focus:** 9.1, run full regression, security, license, and performance gates
 
 ## How to update this plan
 
@@ -1634,7 +1634,54 @@ grant/revoke, accusation, vote, and reconnect.
 fixture/history and reach identical hashes while using target-appropriate
 layouts and interactions.
 
-### [~] 8.3 Publish the complete inspectable vertical slice and replay
+### [x] 8.3 Publish the complete inspectable vertical slice and replay
+
+**Completion notes:** Completed 2026-08-06. The runtime now exposes the
+already independently replayed, secret-free `SmokeTranscript` together with
+its checked report rather than discarding the typed inputs. The new
+`spatial vertical-slice` gate writes one 185-record NDJSON stream: 178 complete
+in-process lifecycle input/result pairs followed by explicit typed records for
+the registered three-player/five-device replicated scenario, named play,
+drag-equivalent play, score-text interpretation, delayed cheat finding,
+recovery vote, and final replay. The checked receipt pins all semantic hashes,
+counts, scope qualifications, artifacts, and exclusions. Invite references
+remain labels; invite proofs, device secrets, and unauthorized hands are absent.
+
+The shared exact-recipient fixture resolves `4♣` by name and opaque drag to the
+identical hand-to-play record and integer endpoint. Its canonical scene hash
+remains
+`0a6de46fd21791260bb57c8516ce9ef5e1666e03e17d29cf6f8cda746c07baee`,
+and its score-sheet glyph records round-trip to typed score values. A separate
+audit fixture emits no finding before John later reveals a club, then derives
+the stable `delayed_public_play` finding. Governance replays that evidence,
+retains John's visible rejection as uncounted, accepts two eligible approvals,
+and applies the typed kick recovery effect without waiting for him.
+
+Native Alloy reruns all 11 `layout-micro` commands. Rust reads the raw retained
+`OverlapNegativeControl` SAT instance, requires deck and trump to share one
+`Layout.outer` atom, removes solver-local atom names, compares the normalized
+witness with
+`tests/fixtures/spatial/alloy-overlap-negative-control-v1.json`, and renders
+the same witness to accessible SVG/HTML. The checked aggregate is
+`docs/evidence/spatial-vertical-slice.json`; generated NDJSON and standalone
+semantic/witness HTML stay ignored under `target/spatial-vertical-slice`.
+
+Added the source-only `pages build` gate. It safely replaces publication
+metadata, injects Rust-rendered endpoint and Alloy witness fragments into the
+new `pages/spatial.html`, copies only the checked safe JSON evidence, and
+rejects unresolved placeholders. GitHub Actions now calls this builder before
+adding the pinned Typst PDF and egui/WASM replay, so generated publication
+artifacts remain outside Git. README, index, status, and
+`docs/spatial-vertical-slice.md` link and accurately qualify the result.
+
+Both required commands pass. Focused runtime/xtask tests pass (25 runtime unit,
+two runtime integration, 14 xtask), strict focused Clippy and formatting pass,
+and `git diff --check` is clean. Real Edge inspection confirmed the built page's
+heading/region structure, generated SVG accessible names, exact endpoint/hash,
+bounded-witness qualification, readable dark-mode layout, and evidence links.
+The local JSON navigation was blocked by the Edge extension after the correct
+relative URL was exposed; file existence/non-emptiness and copying remain
+enforced by `pages build`, so this is not reported as a network acceptance.
 
 **Work:**
 
@@ -1659,7 +1706,7 @@ evidence, and exact scope qualifications for the same scenario.
 
 ## Phase 9 — Acceptance, documentation, and release
 
-### [ ] 9.1 Run full regression, security, license, and performance gates
+### [~] 9.1 Run full regression, security, license, and performance gates
 
 **Work:**
 

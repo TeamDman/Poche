@@ -11,14 +11,21 @@ on:
       - rust-toolchain.toml
       - crates/poche-domain/**
       - crates/poche-environment/**
+      - crates/poche-conformance/**
       - crates/poche-model/**
+      - crates/poche-native-tools/**
       - crates/poche-oracle-rust/**
       - crates/poche-protocol/**
       - crates/poche-rl/**
       - crates/poche-runtime/**
       - crates/poche-session/**
+      - crates/poche-spatial/**
       - crates/poche-ui/**
+      - crates/poche-xtask/**
       - rl/**
+      - models/alloy/spatial.als
+      - tests/fixtures/spatial/**
+      - docs/evidence/**
       - docs/main.typ
       - pages/**
       - tools/versions.toml
@@ -72,21 +79,15 @@ jobs:
         env:
           PUBLICATION_TIME: ${{ github.event.head_commit.timestamp }}
         run: |
-          mkdir --parents site
+          cargo run --locked -p poche-xtask -- pages build --output site
           "$TYPST_BIN" compile --root . docs/main.typ site/poche-rules.pdf
           test -s site/poche-rules.pdf
-          build_time="${PUBLICATION_TIME:-workflow-dispatch}"
-          for source in pages/*.html; do
-            output="site/$(basename "$source")"
-            sed \
-              -e "s/__POCHE_GIT_SHA__/${GITHUB_SHA}/g" \
-              -e "s/__POCHE_BUILD_TIME__/${build_time}/g" \
-              "$source" > "$output"
-          done
-          cp LICENSE site/LICENSE.txt
           pwsh crates/poche-ui/web/build.ps1 -OutputDirectory site/replay
           test -s site/index.html
           test -s site/status.html
+          test -s site/spatial.html
+          test -s site/evidence/spatial-vertical-slice.json
+          test -s site/evidence/alloy-overlap-negative-control-v1.json
           test -s site/replay/index.html
           test -s site/replay/pkg/poche_ui.js
           test -s site/replay/pkg/poche_ui_bg.wasm

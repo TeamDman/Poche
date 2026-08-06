@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "scope_id": "poche-spatial-vertical-slice-v1",
+  "composition_qualification": "A deterministic evidence bundle composes the full in-process lifecycle, replicated-device micro-scenario, checked replay-derived exact-recipient scene, audit/governance reducers, and bounded Alloy layout witness. These components share contracts but are not one atomic live network execution.",
+  "transcript": {
+    "steps": 185,
+    "ndjson_hash": "eb3f32b9471b2a88d1cdb7f40d082af3bfdeb91d84243a1dc8a9299012138c30",
+    "coverage": [
+      "room-join",
+      "multiple-devices",
+      "all-deals",
+      "typed-drag-equivalence",
+      "delayed-cheat-finding",
+      "recovery-vote",
+      "score-text",
+      "pause-unpause",
+      "chat",
+      "hand-grant-revoke",
+      "disconnect-reconnect",
+      "independent-final-replay"
+    ]
+  },
+  "lifecycle": {
+    "schema_version": 1,
+    "transport": "in-process-canonical-ndjson",
+    "seed": 24301,
+    "inputs": 178,
+    "applied": 176,
+    "denied": 1,
+    "final_revision": 177,
+    "deals": 13,
+    "rounds": 13,
+    "final_scores": [
+      40,
+      20
+    ],
+    "chat_messages": 5,
+    "verified": [
+      "spectator-grant",
+      "spectator-revocation",
+      "reconnect",
+      "transcript-replay"
+    ],
+    "transcript_hash": "ab90ff79acb755d72defaef22a37369a71a9125df64c91a8645260254934a075",
+    "final_public_hash": "be439108bb7ddb5695232faa074cb9180d1b34df6a1748598ad6e19c6f9759dd"
+  },
+  "replicated_devices": {
+    "scope": "replicated-micro-3players-5devices-4events-majority-partition-snapshot-tail",
+    "replicas": 4,
+    "committed_events": 4,
+    "proposal_attempts": 9,
+    "unique_proposals": 5,
+    "duplicate_deliveries": 1,
+    "buffered_reorders": 2,
+    "stale_device_denials": 1,
+    "revoked_device_denials": 1,
+    "minority_no_quorum_denials": 1,
+    "snapshot_installs": 1,
+    "snapshot_tail_events": 1,
+    "quorum_before_kick": 2,
+    "quorum_after_kick": 2,
+    "final_membership_epoch": 2,
+    "final_state_hash": "1b51070836855771b6e51e8a0aae8cffe4784af2c478674e13f579ab5713c168",
+    "convergence": true,
+    "retained_counterexamples": [
+      "non-equivocation-removed: two 2-of-3 certificates intersect only at player 0202020202020202020202020202020202020202020202020202020202020202; conflicting commits become possible"
+    ]
+  },
+  "spatial_interaction": {
+    "scene_hash": "0a6de46fd21791260bb57c8516ce9ef5e1666e03e17d29cf6f8cda746c07baee",
+    "face_code": 2,
+    "face_label": "4♣",
+    "object_projection_epoch": 1,
+    "object_ordinal": 3,
+    "source": "hand(seat=1)[0]",
+    "destination": "play(seat=1)",
+    "from": {
+      "x_mm": -7,
+      "y_mm": 40,
+      "z_mm": -520
+    },
+    "to": {
+      "x_mm": 0,
+      "y_mm": 40,
+      "z_mm": -50
+    },
+    "duration_milliseconds": 300,
+    "typed_drag_equal": true,
+    "score_text": [
+      "seat 0 = 0",
+      "seat 1 = 0"
+    ],
+    "semantic_html_hash": "b9548d4a3e041d9af96b34d0f084e10408fbcfba0f5ebab6b89857b288cdc779"
+  },
+  "delayed_audit": {
+    "offending_action": "vertical-off-suit",
+    "revealing_action": "vertical-later-club",
+    "findings_before_reveal": 0,
+    "finding_id": "finding-df6abeec731818a2a61a2b4c",
+    "confidence": "delayed_public_play",
+    "revealed_card": 4
+  },
+  "recovery_vote": {
+    "proposal_id": "proposal-d5286a9e351eb71305cf9fd2",
+    "action": "recover.kick(john)",
+    "visible_accused_vote_counted": false,
+    "eligible_voters": 2,
+    "approvals": 2,
+    "rejections": 0,
+    "effect": "john removed from active roster",
+    "target_kicked": true
+  },
+  "alloy_overlap_witness": {
+    "schema_version": 1,
+    "source_model": "models/alloy/spatial.als",
+    "command": "OverlapNegativeControl",
+    "outcome": "sat",
+    "scope": "layout-micro-2p-3v-8c-7z-7cells-8slots-int5",
+    "relation": "Layout.outer",
+    "zones": [
+      "deck",
+      "trump"
+    ],
+    "shared_abstract_cell": "shared-cell-0",
+    "meaning": "The deliberately false separation assertion admits a layout where the deck and trump outer volumes overlap. A first-match drop classifier could therefore choose by iteration order.",
+    "qualification": "This is one normalized SAT instance of a deliberate negative control in the printed finite Alloy scope; it is not a concrete millimetre layout and does not claim an unbounded theorem."
+  },
+  "artifacts": [
+    "transcript.ndjson",
+    "semantic-tabletop.html",
+    "alloy-overlap.html",
+    "receipt.json"
+  ],
+  "exclusions": [
+    "No native window, browser network, Veilid route, GPU frame, or external relay is driven by this offline command.",
+    "The Alloy result is bounded to its printed layout-micro scope and the overlap assertion is a deliberate negative control.",
+    "The HTML artifact is a static exact-recipient projection; its forms have no authority endpoint.",
+    "The transcript contains invite references, never invite proofs, device private keys, hidden hands for another viewer, or room secrets."
+  ]
+}

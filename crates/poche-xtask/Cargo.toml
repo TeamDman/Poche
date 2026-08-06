@@ -15,8 +15,12 @@ poche-conformance = { path = "../poche-conformance" }
 poche-interchange = { path = "../poche-interchange" }
 poche-native-tools = { path = "../poche-native-tools" }
 poche-oracle-rust = { path = "../poche-oracle-rust" }
+poche-protocol = { path = "../poche-protocol" }
 poche-rl = { path = "../poche-rl" }
 poche-runtime = { path = "../poche-runtime" }
+poche-session = { path = "../poche-session" }
+poche-spatial = { path = "../poche-spatial" }
+poche-ui = { path = "../poche-ui", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 

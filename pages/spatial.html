@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Inspectable Poche spatial-tabletop evidence: one checked card endpoint and one bounded Alloy layout counterexample.">
+    <title>Poche spatial evidence</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #182223;
+        --muted: #586766;
+        --paper: #f2ecdd;
+        --panel: #fffdf7;
+        --line: #d3c8b4;
+        --red: #8b2f2f;
+        --blue: #285f7a;
+        --green: #286148;
+        --shadow: rgba(52, 42, 22, 0.14);
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 10% 0%, rgba(139, 47, 47, 0.14), transparent 28rem),
+          radial-gradient(circle at 100% 35%, rgba(40, 95, 122, 0.13), transparent 34rem),
+          var(--paper);
+        font: 1rem/1.62 Georgia, "Times New Roman", serif;
+      }
+      a { color: #6d2525; text-underline-offset: .16em; }
+      code { font: .9em/1.45 ui-monospace, "Cascadia Mono", monospace; overflow-wrap: anywhere; }
+      .shell { width: min(74rem, calc(100% - 2rem)); margin: 0 auto; }
+      .topbar { border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--paper) 90%, transparent); }
+      .topbar .shell { display: flex; min-height: 3.7rem; align-items: center; justify-content: space-between; gap: 1rem; }
+      .brand { color: var(--ink); font-weight: 700; text-decoration: none; }
+      .topbar nav { display: flex; flex-wrap: wrap; gap: .4rem 1rem; font: 650 .83rem/1.3 system-ui, sans-serif; }
+      main { padding: clamp(3rem, 7vw, 6rem) 0; }
+      .eyebrow { margin: 0 0 .8rem; color: var(--red); font: 750 .76rem/1.3 system-ui, sans-serif; letter-spacing: .16em; text-transform: uppercase; }
+      h1, h2, h3, p { margin-top: 0; }
+      h1 { max-width: 11ch; margin-bottom: 1.25rem; font-size: clamp(3rem, 8vw, 6.2rem); font-weight: 500; line-height: .94; letter-spacing: -.05em; }
+      h2 { margin-bottom: .8rem; font-size: clamp(2rem, 4vw, 3.3rem); font-weight: 500; line-height: 1; letter-spacing: -.035em; }
+      .lede { max-width: 48rem; color: var(--muted); font-size: clamp(1.08rem, 2vw, 1.35rem); }
+      .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin: 2.5rem 0 0; overflow: hidden; border: 1px solid var(--line); border-radius: .7rem; background: var(--line); box-shadow: 0 1rem 3rem var(--shadow); }
+      .summary div { padding: 1.15rem; background: var(--panel); }
+      .summary strong { display: block; margin-bottom: .35rem; color: var(--red); font: 750 .78rem/1.25 system-ui, sans-serif; text-transform: uppercase; letter-spacing: .06em; }
+      section { padding-top: clamp(4rem, 8vw, 7rem); }
+      .intro { max-width: 50rem; color: var(--muted); }
+      figure { margin: 1.5rem 0 0; padding: clamp(1rem, 3vw, 2rem); border: 1px solid var(--line); border-radius: .75rem; background: var(--panel); box-shadow: 0 .7rem 2.2rem var(--shadow); }
+      svg { display: block; width: 100%; height: auto; }
+      svg text { fill: var(--ink); font: 650 17px/1 system-ui, sans-serif; }
+      .endpoint .hand { fill: color-mix(in srgb, var(--blue) 25%, transparent); stroke: var(--blue); stroke-width: 4; }
+      .endpoint .play { fill: color-mix(in srgb, var(--green) 25%, transparent); stroke: var(--green); stroke-width: 4; }
+      .endpoint path { fill: none; stroke: var(--red); stroke-width: 5; }
+      .endpoint polygon { fill: var(--red); }
+      .witness .zone { fill-opacity: .44; stroke-width: 5; }
+      .witness .deck { fill: #58a8df; stroke: #24658e; }
+      .witness .trump { fill: #ee706c; stroke: #9a3533; }
+      .witness .overlap-label { font-size: 14px; }
+      figcaption { margin-top: 1rem; color: var(--muted); }
+      figcaption strong { color: var(--ink); }
+      figcaption span { display: block; margin-top: .55rem; }
+      .ledger { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; margin-top: 1.5rem; }
+      .ledger article { padding: 1.2rem; border: 1px solid var(--line); border-radius: .55rem; background: color-mix(in srgb, var(--panel) 94%, transparent); }
+      .ledger h3 { margin-bottom: .5rem; font: 750 .83rem/1.3 system-ui, sans-serif; letter-spacing: .05em; text-transform: uppercase; }
+      .command { margin-top: 1.5rem; padding: 1rem 1.15rem; overflow-x: auto; border-left: .3rem solid var(--red); background: #272d2c; color: #f5ecda; }
+      .links { display: flex; flex-wrap: wrap; gap: .5rem 1.2rem; margin-top: 1.25rem; font: 650 .88rem/1.4 system-ui, sans-serif; }
+      .limits { padding: 1.5rem; border: 1px solid color-mix(in srgb, var(--red) 45%, var(--line)); border-radius: .65rem; background: color-mix(in srgb, var(--panel) 90%, #f5dddd); }
+      footer { padding: 2rem 0 3rem; border-top: 1px solid var(--line); color: var(--muted); font: .78rem/1.55 ui-monospace, "Cascadia Mono", monospace; }
+      @media (max-width: 48rem) { .summary, .ledger { grid-template-columns: 1fr; } }
+      @media (prefers-color-scheme: dark) {
+        :root { color-scheme: dark; --ink: #f4ecdc; --muted: #c9bea9; --paper: #151a19; --panel: #202624; --line: #4d5048; --red: #e18d7e; --blue: #78b9d9; --green: #78b99c; --shadow: rgba(0,0,0,.34); }
+        a { color: #f1a69a; }
+        .command { background: #090d0c; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="shell">
+        <a class="brand" href="./">Poche</a>
+        <nav aria-label="Project pages">
+          <a href="poche-rules.pdf">Rulebook</a>
+          <a href="replay/">Projection replay</a>
+          <a href="status.html">Engineering status</a>
+          <a href="https://github.com/TeamDman/Poche/tree/model-checking">Source</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="shell">
+      <header>
+        <p class="eyebrow">Spatial refinement · checked evidence</p>
+        <h1>One move, two views.</h1>
+        <p class="lede">
+          Poche state stays typed. A deterministic table-local scene gives native 3D a place to render it;
+          semantic HTML presents the same authorized meaning without copying camera pixels. This page is a
+          static evidence view, not a live room.
+        </p>
+        <div class="summary" aria-label="Evidence summary">
+          <div><strong>Same endpoint</strong><span>Named and dragged play resolve to one card, action, and integer pose.</span></div>
+          <div><strong>Same fingerprint</strong><span>Native and HTML fixtures pin one renderer-neutral scene hash.</span></div>
+          <div><strong>Counterexample kept</strong><span>Rust parses and highlights a real bounded Alloy SAT witness.</span></div>
+        </div>
+      </header>
+
+      <section aria-labelledby="endpoint-heading">
+        <p class="eyebrow">Rust spatial adapter</p>
+        <h2 id="endpoint-heading">Typed and dragged input commute</h2>
+        <p class="intro">
+          The checked replay selects an exact-recipient hand. Both input paths identify the same opaque object,
+          produce the same typed Poche play, and reconstruct only the committed endpoint; the 300 ms tween is local presentation.
+        </p>
+        <!--__POCHE_SPATIAL_ENDPOINT__-->
+      </section>
+
+      <section aria-labelledby="alloy-heading">
+        <p class="eyebrow">Alloy negative control</p>
+        <h2 id="alloy-heading">A bad layout is made visible</h2>
+        <p class="intro">
+          The real Alloy runner asks a deliberately false separation assertion to fail. Rust reads the retained
+          instance, verifies that deck and trump share an outer cell, normalizes solver atom names, and renders that same abstract witness below.
+        </p>
+        <!--__POCHE_SPATIAL_WITNESS__-->
+      </section>
+
+      <section aria-labelledby="slice-heading">
+        <p class="eyebrow">Inspectable vertical slice</p>
+        <h2 id="slice-heading">What the bundle actually runs</h2>
+        <div class="ledger">
+          <article><h3>Lifecycle</h3><p>178 no-socket commands cover join, all 13 deals, pause/unpause, chat, spectator grant/revoke, disconnect/reconnect, post-game, reset, close, and exact replay.</p></article>
+          <article><h3>Devices</h3><p>A separate registered micro-scenario uses three players, five device authorities, four replicas, duplicate/reordered delivery, membership change, snapshot plus tail, and convergence checks.</p></article>
+          <article><h3>Audit and recovery</h3><p>An off-suit action is initially unprovable. A later public club produces a delayed finding; a kick vote records the accused player’s rejection but excludes it from the two eligible approvals.</p></article>
+          <article><h3>Presentation</h3><p>The bundle emits semantic HTML, integer source/destination coordinates, score-sheet text interpreted back into typed scores, the Alloy witness view, and one machine-readable receipt.</p></article>
+        </div>
+        <div class="command"><code>cargo run -p poche-xtask --offline -- spatial vertical-slice</code></div>
+        <nav class="links" aria-label="Spatial evidence links">
+          <a href="evidence/spatial-vertical-slice.json">Checked receipt (JSON)</a>
+          <a href="evidence/alloy-overlap-negative-control-v1.json">Normalized Alloy witness (JSON)</a>
+          <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/native-spatial-ui.md">Native 3D acceptance</a>
+          <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/semantic-html-tabletop.md">Semantic HTML acceptance</a>
+          <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/spatial-alloy.md">Alloy spatial scope</a>
+        </nav>
+      </section>
+
+      <section aria-labelledby="limits-heading">
+        <div class="limits">
+          <h2 id="limits-heading">Exact limits</h2>
+          <p>
+            This command composes registered fixtures and reducers; it is not one atomic live network execution.
+            It opens no native window, browser connection, Veilid route, GPU frame, or external relay. The Alloy
+            witness is bounded to <code>layout-micro-2p-3v-8c-7z-7cells-8slots-int5</code> and is deliberately invalid.
+            The published HTML ships no room secret, invite proof, private key, or live authority endpoint.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="shell">
+        Published from <a href="https://github.com/TeamDman/Poche/commit/__POCHE_GIT_SHA__">__POCHE_GIT_SHA__</a><br>
+        Source event time: __POCHE_BUILD_TIME__ · MPL-2.0
+      </div>
+    </footer>
+  </body>
+</html>

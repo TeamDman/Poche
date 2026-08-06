@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "source_model": "models/alloy/spatial.als",
+  "command": "OverlapNegativeControl",
+  "outcome": "sat",
+  "scope": "layout-micro-2p-3v-8c-7z-7cells-8slots-int5",
+  "relation": "Layout.outer",
+  "zones": [
+    "deck",
+    "trump"
+  ],
+  "shared_abstract_cell": "shared-cell-0",
+  "meaning": "The deliberately false separation assertion admits a layout where the deck and trump outer volumes overlap. A first-match drop classifier could therefore choose by iteration order.",
+  "qualification": "This is one normalized SAT instance of a deliberate negative control in the printed finite Alloy scope; it is not a concrete millimetre layout and does not claim an unbounded theorem."
+}

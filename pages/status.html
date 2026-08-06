@@ -612,6 +612,7 @@
         <nav class="topnav" aria-label="Project pages">
           <a href="poche-rules.pdf">Rulebook</a>
           <a href="replay/">Projection replay</a>
+          <a href="spatial.html">Spatial evidence</a>
           <a href="#experiments">Experiments</a>
           <a href="https://github.com/TeamDman/Poche/tree/model-checking">Source</a>
         </nav>
@@ -632,6 +633,7 @@
         <nav class="hero-actions" aria-label="Primary project links">
           <a class="button" href="poche-rules.pdf">Read the rules</a>
           <a class="button secondary" href="replay/">Open static replay</a>
+          <a class="button secondary" href="spatial.html">Inspect spatial evidence</a>
           <a class="button secondary" href="https://github.com/TeamDman/Poche/blob/model-checking/PLAN-2-MULTIPLAYER-RL-RENDERING.md">Read the completed plan</a>
         </nav>
 
@@ -784,6 +786,15 @@
 
           <article class="card">
             <div class="card-head">
+              <h3>Spatial tabletop refinement</h3>
+              <span class="badge pass">Checked slice</span>
+            </div>
+            <p>Native 3D and semantic HTML consume one exact-recipient scene fingerprint. Named and dragged play resolve to the same typed action and integer endpoint; Rust also renders a retained Alloy overlap witness.</p>
+            <p class="result"><strong>Inspect:</strong> <a href="spatial.html">open the static spatial evidence page</a>. Its receipt separates composed offline checks from a live network run.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
               <h3>Loopback multiplayer</h3>
               <span class="badge pass">Pass</span>
             </div>
@@ -914,6 +925,7 @@
           <div class="command"><span>Formal game acceptance</span><code>cargo run -p poche-xtask --offline -- compare all --scope micro</code></div>
           <div class="command"><span>Formal session acceptance</span><code>cargo run -p poche-xtask --offline -- session compare all --scope lobby-micro</code></div>
           <div class="command"><span>Inspectable protocol</span><code>cargo run -p poche-xtask --offline -- protocol replay --all</code></div>
+          <div class="command"><span>Spatial vertical slice</span><code>cargo run -p poche-xtask --offline -- spatial vertical-slice</code></div>
           <div class="command"><span>No-socket full lifecycle</span><code>cargo run -p poche-xtask --offline -- multiplayer smoke --transport in-process</code></div>
           <div class="command"><span>Static native replay</span><code>cargo run --release -p poche-ui --bin poche-replay</code></div>
           <div class="command"><span>Hostable browser demo</span><code>cargo run --locked --release -p poche-web-spike</code></div>
