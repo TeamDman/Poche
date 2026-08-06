@@ -1,5 +1,5 @@
 # Rust build output stays outside source control and outside OneDrive.
-/target/
+target/
 /tmp/
 
 # Local Typst output. GitHub Pages owns published artifacts.

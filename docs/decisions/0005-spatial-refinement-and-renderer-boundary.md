@@ -1,6 +1,6 @@
 # Spatial refinement and renderer boundary
 
-- Status: Accepted for G1/G2; G3/G12 remain open for plan task 1.2
+- Status: Accepted; G1/G2/G3/G12 closed
 - Date: 2026-08-05 (America/Toronto)
 - Scope: `poche-phase-3`, `poche-spatial-v1`
 - Supersedes: Nothing; ADRs 0001-0004 remain in force
@@ -142,18 +142,82 @@ lesson is not that ECS or Bevy is unsuitable; it is that renderer ECS state
 must mirror one validated spatial/card-location record and must not be the
 semantic source.
 
-Task 1.2 decides the exact renderer dependency and Slug packaging. The default
-direction is a dedicated engine-neutral Poche spatial crate plus a disciplined
-Bevy adapter, not a new GPU/window/input engine.
+The native adapter will use Bevy rather than building another window/input/GPU
+shell. Bevy remains downstream of `poche-spatial`; its ECS mirrors a validated
+scene and may cache renderer resources, but a component query cannot directly
+change canonical game/session state.
 
-## Deferred gates
+## G3: native renderer and Slug packaging
 
-- **G3:** exact published Bevy version/features and reproducible Slug packaging.
-- **G12:** `big_space` is admitted only if measured multi-table scale justifies
-  it. A metre-scale table uses local integer millimetres and ordinary render
-  transforms by default.
+### Bevy selection
 
-Neither deferred gate changes the G1/G2 semantic contract.
+The native adapter will pin `bevy = "=0.19.0"`, disable default features, and
+enable Bevy's published `3d` feature profile. The adapter lives in the future
+`poche-native-ui` crate and is not a dependency of domain, model, environment,
+formal, protocol, network, browser, or RL crates. Windows is the first
+executable target; Bevy's portable renderer boundary remains available without
+claiming untested platform support.
+
+The exact-version probe in `tools/probes/bevy-0.19` compiled with Rust 1.96.
+Its isolated lock resolved 501 packages, which is a meaningful build and audit
+cost and another reason to keep Bevy at the leaf. The probe uses a Bevy
+`Component` and `Transform`, so it checks the actual intended seam rather than
+only dependency metadata.
+
+### Slug selection and provenance
+
+Poche will extract the renderer-neutral Slug curve, directional-band, packed
+word, and CPU-oracle contract into a first-party MPL-2.0 `poche-slug` crate.
+That crate will accept explicit licensed font bytes and will not depend on
+Teamy Terminal's embedded-font singleton, terminal cell model, snapshots,
+Ash/Vulkan lifecycle, or dirty/absolute sibling paths. `poche-native-ui` will
+own the Bevy GPU material/buffer adapter and parity tests. Semantic `TextRun`
+attachments and typed card/score values remain upstream authority.
+
+The extraction source is pinned for provenance, not used as a path dependency:
+
+- Teamy Terminal revision `8aede3a196d46354e253ecc0e9446fd4ff00fe74`;
+- `crates/teamy-terminal-font/src/slug.rs`, SHA-256
+  `8bd99bbb93c7a3c69376af1338306b00d716a02a10b7b57be07c123660f2d9a4`;
+- reference WGSL
+  `crates/teamy-terminal-renderer/shaders/gpu_slug.wgsl`, SHA-256
+  `24c46c2278190537779e263357dba1e8fd0d5650d5f49e4fe35556e471c5df74`;
+- Teamy Terminal code is MPL-2.0. Any selected font asset must preserve its own
+  license and hash beside the extracted crate.
+
+The renderer-neutral source is reusable; the existing retained GPU renderer is
+terminal-specific and is architecture evidence only. Task 8.1 must perform a
+file-level provenance/licence review while extracting because MPL-2.0
+modifications remain MPL-2.0 source files.
+
+## G12: origin and precision
+
+`big_space` is not admitted for the Poche vertical slice. Canonical positions
+remain integer millimetres in a `TableId`-local frame; Bevy receives derived
+`f32` metres. The executable probe checks every integer millimetre endpoint in
+`-10_000..=10_000`: all round-trip to the original integer, with maximum error
+`0 mm`. A conservative `f32` epsilon at two metres is
+`0.000238419 mm`, far below the one-millimetre semantic grid.
+
+Multiple rooms/tables therefore use separate table-local frames rather than
+astronomically separated renderer coordinates. Reopen G12 only if one rendered
+scene must span sufficiently separated tables that a measured interaction or
+visual tolerance fails. At this decision date, the published `big_space`
+compatibility table also stops at Bevy 0.18 (`big_space` 0.12), while the chosen
+Bevy is 0.19; taking that integration burden without a precision need would be
+counterproductive.
+
+## Support and license consequences
+
+- Bevy 0.19.0 declares Rust 1.95 and `MIT OR Apache-2.0`; the Poche workspace
+  uses Rust 1.96 and MPL-2.0 first-party files.
+- No MPL-incompatible source is copied by selecting Bevy. Third-party notices
+  remain a distribution/release responsibility.
+- `cargo-deny` was not installed when this gate closed, so no `cargo deny`
+  result is claimed. Cargo's resolved package metadata was inspected instead;
+  the final release gate still requires the repository's license audit.
+- Bevy, Slug GPU data, render transforms, and glyph proximity do not change the
+  G1/G2 semantic contract.
 
 ## Initial executable evidence
 
@@ -170,3 +234,10 @@ sheet, cards in two hands/deck/play, authorized face text, hidden cards without
 face text, and explicit name/score attachments. Negative tests reject hidden
 face text, missing face text, invalid epochs/attachments, and prove touching
 card poses cannot reassign semantic text.
+
+Task 1.2 validates the selected leaf dependency and precision boundary with:
+
+```pwsh
+cargo run --manifest-path tools/probes/bevy-0.19/Cargo.toml --locked --offline
+cargo tree --manifest-path tools/probes/bevy-0.19/Cargo.toml --locked --offline
+```

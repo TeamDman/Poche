@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 1.2, decide Bevy/Slug packaging and the `big_space` gate
+**Current implementation focus:** 2.1, implement fixed units, objects, zones, layouts, and classification
 
 ## How to update this plan
 
@@ -256,9 +256,9 @@ inferred merely from using Veilid.
 
 | Gate | Question and required decision | Downstream acceptance consequence | State |
 | --- | --- | --- | --- |
-| G1 | What exact scene, pose, unit, zone, attachment, loose-object, snap/dead-band, realization, and abstraction types form `poche-spatial-v1`? | 1.1 must freeze a versioned contract and laws before scene code. | Open in 1.1 |
-| G2 | Which player counts get concrete spatial layouts now, independently of current two-player game/RL specs? | Layout matrix and formal scopes name every supported/unsupported count. | Open in 1.1 |
-| G3 | Does native 3D use Bevy, which exact published version/features, and how is Slug reused without a dirty path dependency? | ADR, license audit, compile probe, and renderer boundary precede 8.1. | Open in 1.2 |
+| G1 | What exact scene, pose, unit, zone, attachment, loose-object, snap/dead-band, realization, and abstraction types form `poche-spatial-v1`? | 1.1 must freeze a versioned contract and laws before scene code. | Closed by ADR 0005: typed state is canonical; fixed-mm viewer-scene refinement |
+| G2 | Which player counts get concrete spatial layouts now, independently of current two-player game/RL specs? | Layout matrix and formal scopes name every supported/unsupported count. | Closed by ADR 0005: spatial layouts 2-8; game/RL/formal scopes remain independent |
+| G3 | Does native 3D use Bevy, which exact published version/features, and how is Slug reused without a dirty path dependency? | ADR, license audit, compile probe, and renderer boundary precede 8.1. | Closed by ADR 0005: Bevy 0.19 `3d` leaf adapter; provenance-pinned MPL-2.0 `poche-slug` extraction |
 | G4 | Which geometry is encoded directly in Alloy/NuSMV/Prolog versus precomputed by Rust? | Formal claims state finite grid/zone abstraction and never imply mesh/real proof. | Open in 3.1 |
 | G5 | What replicated-log algorithm, membership epoch, fork rule, quorum, leaderlessness/temporary coordinator, and liveness assumptions define experimental consensus? | Model/check convergence, safety, partitions, stale devices, and recovery before network advertising. | Open in 5.1 |
 | G6 | How do player roots authorize multiple device keys, and how do add/revoke/loss/browser export work? | Exact signing vectors, projection scope, simultaneous-device and revocation tests. | Open in 5.1 |
@@ -267,12 +267,12 @@ inferred merely from using Veilid.
 | G9 | What exactly does a gateway know/do; which keys stay in-browser; and when are HTTP+SSE, WSS, WebTransport, or direct Veilid used? | Threat/topology matrix, reconnect evidence, and no false anonymity/directness claim. | Open in 7.1 |
 | G10 | What versioned command AST backs CLI, GUI, votes, and protocol; is pinned Figue compatible with the workspace Facet version? | Parser/help/completion/codec tests prove one typed meaning; raw strings are never authorized directly. | Open in 4.1 |
 | G11 | How do strict prevention, allow-attempt, auto-propose, manual accusation, retrospective findings, and recovery compose? | Policy matrix and history corpus demonstrate each mode without weakening C3. | Open in 4.1 |
-| G12 | Does table-scale precision or multi-table scope justify `big_space`? | Measured precision/complexity ADR; default is table-local fixed units and render-time `f32`. | Open in 1.2 |
+| G12 | Does table-scale precision or multi-table scope justify `big_space`? | Measured precision/complexity ADR; default is table-local fixed units and render-time `f32`. | Closed by ADR 0005: no `big_space`; table-local integer mm plus render-time `f32` |
 
-No open gate blocks starting 1.1. Each gate is closed in the named task before
-dependent implementation. If research cannot support a safe cryptographic or
-consensus choice, the task records an honest prototype/non-goal rather than
-inventing a protocol.
+Each remaining gate is closed in the named task before dependent
+implementation. If research cannot support a safe cryptographic or consensus
+choice, the task records an honest prototype/non-goal rather than inventing a
+protocol.
 
 ## Source and implementation references
 
@@ -411,7 +411,24 @@ cargo fmt --all --check
 renderer/network/RL dependencies; fixture tests name and exercise the exact
 round-trip and privacy contracts that later tasks implement.
 
-### [ ] 1.2 Decide Bevy/Slug packaging and the `big_space` gate
+### [x] 1.2 Decide Bevy/Slug packaging and the `big_space` gate
+
+**Completion notes:** Completed 2026-08-05 after task 1.1 commit `4cf2132` was
+pushed and verified. ADR 0005 closes G3 with exact Bevy 0.19.0,
+`default-features = false`, feature `3d`, confined to the future
+`poche-native-ui` leaf. Slug will be extracted into an MPL-2.0 `poche-slug`
+crate from Teamy Terminal revision `8aede3a196d4`, with exact source/WGSL
+SHA-256 provenance, explicit font bytes, and no sibling path dependency. Its
+terminal-specific Ash lifecycle is not copied. G12 is closed without
+`big_space`: the checked-in isolated probe compiled a Bevy component/transform
+with Rust 1.96 and checked every integer endpoint in `-10_000..=10_000`; maximum
+rounded error was `0 mm`, with a conservative 2 m epsilon of `0.000238419 mm`.
+Its lock contains 501 dependencies (502 metadata packages including the probe),
+reinforcing the leaf boundary. `cargo-deny` was unavailable and is not claimed;
+resolved metadata reports zero packages missing a license field and only
+permissive/MPL-compatible expressions. `cargo test -p poche-spatial --offline`
+passed 11 tests and both workspace/probe dependency trees resolved offline.
+Dirty or ahead sibling repositories remained read-only.
 
 **Work:**
 
