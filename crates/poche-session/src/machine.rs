@@ -65,6 +65,7 @@ pub fn authorize<G>(state: &SessionState<G>, command: &CommandEnvelope) -> Polic
         } else {
             "P-DEFAULT-DENY"
         }),
+        priority: i32::MIN,
         allowed: baseline_allowed,
         reason: (!baseline_allowed).then_some(DenyReason::MissingCapability),
         audit_only: false,
@@ -72,16 +73,25 @@ pub fn authorize<G>(state: &SessionState<G>, command: &CommandEnvelope) -> Polic
 
     let mut enforce_allow = baseline_allowed;
     let mut enforce_deny = None;
-    for rule in &state.policies {
-        if !rule.applies(&command.principal_id, principal_kind, command_kind) {
-            continue;
-        }
+    let mut applicable = state
+        .policies
+        .iter()
+        .filter(|rule| rule.applies(&command.principal_id, principal_kind, command_kind))
+        .collect::<Vec<_>>();
+    applicable.sort_by(|left, right| {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then_with(|| left.policy_id.cmp(&right.policy_id))
+    });
+    for rule in applicable {
         let (allowed, reason) = match rule.effect {
             PolicyEffect::Allow => (true, None),
             PolicyEffect::Deny(reason) => (false, Some(reason)),
         };
         results.push(PolicyResult {
             policy_id: rule.policy_id.clone(),
+            priority: rule.priority,
             allowed,
             reason,
             audit_only: rule.audit_only,
@@ -105,7 +115,12 @@ pub fn authorize<G>(state: &SessionState<G>, command: &CommandEnvelope) -> Polic
     } else if enforce_allow {
         let policy_id = results
             .iter()
-            .find(|result| !result.audit_only && result.allowed)
+            .filter(|result| !result.audit_only && result.allowed)
+            .max_by(|left, right| {
+                left.priority
+                    .cmp(&right.priority)
+                    .then_with(|| right.policy_id.cmp(&left.policy_id))
+            })
             .map_or_else(
                 || policy_id("P-BASELINE-ALLOW"),
                 |result| result.policy_id.clone(),
@@ -351,6 +366,7 @@ pub fn decide_transport_disconnect<G: SessionGame>(
         policy_id: policy_id("P-TRANSPORT-DISCONNECT"),
         results: vec![PolicyResult {
             policy_id: policy_id("P-TRANSPORT-DISCONNECT"),
+            priority: 0,
             allowed: true,
             reason: None,
             audit_only: false,

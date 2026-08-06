@@ -119,6 +119,9 @@ does not parse text or open a socket. See
 [`docs/session-engine.md`](docs/session-engine.md),
 [`docs/protocol-v1.md`](docs/protocol-v1.md), and
 [`docs/rl-environment.md`](docs/rl-environment.md).
+Slash text, GUI controls, and future votes must first become the same validated
+`poche-governance-command-v1` AST; see
+[`ADR 0006`](docs/decisions/0006-typed-commands-and-legality-policy.md).
 
 ## Native tools and reproducible commands
 

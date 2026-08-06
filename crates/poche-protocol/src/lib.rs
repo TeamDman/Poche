@@ -14,11 +14,13 @@
 //! a command reaches authorization or reduction.
 
 mod codec;
+mod governance;
 mod ids;
 mod secret;
 mod types;
 
 pub use codec::*;
+pub use governance::*;
 pub use ids::*;
 pub use secret::SecretKeyMaterial;
 pub use types::*;

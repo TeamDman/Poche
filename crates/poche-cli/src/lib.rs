@@ -66,6 +66,7 @@ pub fn run_from(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
             );
             let emitted = match parsed.command {
                 cli::Command::Transcript(command) => command.invoke(parsed.global.output)?,
+                cli::Command::Governance(command) => command.invoke(parsed.global.output)?,
                 _ => false,
             };
             if !emitted {

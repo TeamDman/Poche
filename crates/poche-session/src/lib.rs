@@ -24,6 +24,8 @@ pub use state::*;
 pub struct PolicyResult {
     /// Stable policy that produced the result.
     pub policy_id: PolicyId,
+    /// Stable total-order key; higher values are evaluated first.
+    pub priority: i32,
     /// Whether this individual policy would allow the attempt.
     pub allowed: bool,
     /// Stable denial reason when `allowed` is false.

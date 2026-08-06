@@ -94,6 +94,10 @@ text_identifier!(
     /// Stable policy identifier recorded with a decision.
     PolicyId
 );
+text_identifier!(
+    /// Stable governance proposal identifier.
+    ProposalId
+);
 
 #[cfg(test)]
 mod tests {

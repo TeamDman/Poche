@@ -141,6 +141,8 @@ pub enum PolicyEffect {
 #[derive(Clone, Debug, PartialEq, Eq, Facet)]
 pub struct PolicyRule {
     pub policy_id: PolicyId,
+    /// Higher priorities are evaluated first; policy ID breaks ties.
+    pub priority: i32,
     pub principal: PrincipalSelector,
     pub command: CommandKind,
     pub effect: PolicyEffect,
@@ -523,6 +525,14 @@ impl<G> SessionState<G> {
                 return Err(SessionInvariantError::DuplicateMemberOrSeat);
             }
         }
+        for (index, policy) in self.policies.iter().enumerate() {
+            if self.policies[index + 1..]
+                .iter()
+                .any(|other| other.policy_id == policy.policy_id)
+            {
+                return Err(SessionInvariantError::InvalidPolicy);
+            }
+        }
         match &self.phase {
             SessionPhase::Uninitialized => {
                 if self.host.is_some() || !self.members.is_empty() {
@@ -620,6 +630,7 @@ pub enum SessionInvariantError {
     InvalidPhaseData,
     MissingHost,
     InvalidCommandRecord,
+    InvalidPolicy,
     InvalidInvite,
     TooManyHandCapabilities,
     InvalidHandCapability,

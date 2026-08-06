@@ -475,6 +475,7 @@ fn policy_is_default_deny_with_deny_override_and_audit_non_authority() {
 
     state.policies.push(PolicyRule {
         policy_id: id("P-AUDIT-DENY", PolicyId::new),
+        priority: 50,
         principal: PrincipalSelector::Exact(principal("host")),
         command: CommandKind::Chat,
         effect: PolicyEffect::Deny(DenyReason::DenyPolicy),
@@ -501,14 +502,29 @@ fn policy_is_default_deny_with_deny_override_and_audit_non_authority() {
 
     state.policies.push(PolicyRule {
         policy_id: id("P-ENFORCE-DENY", PolicyId::new),
+        priority: -50,
         principal: PrincipalSelector::Kind(PrincipalKind::Host),
         command: CommandKind::Chat,
         effect: PolicyEffect::Deny(DenyReason::DenyPolicy),
         audit_only: false,
     });
+    let decision = authorize(&state, &chat);
+    assert_eq!(deny_reason(&decision), DenyReason::DenyPolicy);
+    let PolicyDecision::Deny {
+        policy_id, results, ..
+    } = decision
+    else {
+        unreachable!()
+    };
+    assert_eq!(policy_id, Some(id("P-ENFORCE-DENY", PolicyId::new)));
+    let ordered_custom = results
+        .iter()
+        .filter(|result| result.priority != i32::MIN)
+        .map(|result| (result.priority, result.policy_id.as_str()))
+        .collect::<Vec<_>>();
     assert_eq!(
-        deny_reason(&authorize(&state, &chat)),
-        DenyReason::DenyPolicy
+        ordered_custom,
+        vec![(50, "P-AUDIT-DENY"), (-50, "P-ENFORCE-DENY")]
     );
 }
 
@@ -967,6 +983,7 @@ fn every_registered_deny_reason_survives_policy_evidence() {
         state.policies.clear();
         state.policies.push(PolicyRule {
             policy_id: id(&format!("P-DENY-{index}"), PolicyId::new),
+            priority: i32::try_from(index).unwrap(),
             principal: PrincipalSelector::Exact(principal("host")),
             command: CommandKind::Chat,
             effect: PolicyEffect::Deny(reason),
@@ -1046,6 +1063,7 @@ fn controlled_readiness_start_pause_and_unknown_role_defects_fail_closed() {
     let mut unknown_allow = created_room();
     unknown_allow.policies.push(PolicyRule {
         policy_id: id("P-UNKNOWN-ALLOW", PolicyId::new),
+        priority: 100,
         principal: PrincipalSelector::Kind(PrincipalKind::Unknown),
         command: CommandKind::Chat,
         effect: PolicyEffect::Allow,
@@ -1400,6 +1418,7 @@ fn synthetic_event(
                 policy_id: policy_id.clone(),
                 results: vec![PolicyResult {
                     policy_id,
+                    priority: 0,
                     allowed: true,
                     reason: None,
                     audit_only: false,

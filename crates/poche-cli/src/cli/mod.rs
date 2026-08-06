@@ -1,6 +1,7 @@
 //! Strict typed CLI schema and parser.
 
 pub mod chat;
+pub mod command;
 pub mod game;
 pub mod identity;
 pub mod output;
@@ -11,6 +12,7 @@ pub mod transcript;
 use core::fmt;
 
 use chat::ChatArgs;
+use command::CommandArgs;
 use game::GameArgs;
 use identity::IdentityArgs;
 use output::OutputFormat;
@@ -41,6 +43,7 @@ pub enum Command {
     Room(RoomArgs),
     Game(GameArgs),
     Chat(ChatArgs),
+    Governance(CommandArgs),
     Spectator(SpectatorArgs),
     Transcript(TranscriptArgs),
     Identity(IdentityArgs),
@@ -53,6 +56,7 @@ impl Command {
             Self::Room(command) => ("room", command.name()),
             Self::Game(command) => ("game", command.name()),
             Self::Chat(command) => ("chat", command.name()),
+            Self::Governance(command) => ("command", command.name()),
             Self::Spectator(command) => ("spectator", command.name()),
             Self::Transcript(command) => ("transcript", command.name()),
             Self::Identity(command) => ("identity", command.name()),
@@ -166,6 +170,7 @@ pub fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<ParseOu
         "room" => Command::Room(RoomArgs::parse(rest)?),
         "game" => Command::Game(GameArgs::parse(rest)?),
         "chat" => Command::Chat(ChatArgs::parse(rest)?),
+        "command" => Command::Governance(CommandArgs::parse(rest)?),
         "spectator" => Command::Spectator(SpectatorArgs::parse(rest)?),
         "transcript" => Command::Transcript(TranscriptArgs::parse(rest)?),
         "identity" => Command::Identity(IdentityArgs::parse(rest)?),
@@ -182,7 +187,7 @@ pub fn help(path: &[String]) -> String {
         format!("Poche help for {}", path.join(" "))
     };
     format!(
-        "{heading}\n\nUSAGE:\n  poche [GLOBAL OPTIONS] <GROUP> <COMMAND> [ARGS]\n\nGLOBAL OPTIONS:\n  --debug\n  --log-filter <DIRECTIVES>\n  --log-file <NDJSON-PATH>\n  --output <text|json|ndjson>\n  --stop-after-ms <MILLISECONDS>\n  --help\n  --version\n\nCOMMANDS:\n  room host|join|show|ready|unready|countdown|abort|pause|resume|leave|close\n  game observe|actions|act|play-card\n  chat send|tail\n  spectator request-hand|grant-hand|revoke-hand\n  transcript record|replay|inspect\n  identity show|create\n"
+        "{heading}\n\nUSAGE:\n  poche [GLOBAL OPTIONS] <GROUP> <COMMAND> [ARGS]\n\nGLOBAL OPTIONS:\n  --debug\n  --log-filter <DIRECTIVES>\n  --log-file <NDJSON-PATH>\n  --output <text|json|ndjson>\n  --stop-after-ms <MILLISECONDS>\n  --help\n  --version\n\nCOMMANDS:\n  room host|join|show|ready|unready|countdown|abort|pause|resume|leave|close\n  game observe|actions|play-card\n  command parse <SLASH-COMMAND>\n  chat send|tail\n  spectator request-hand|grant-hand|revoke-hand\n  transcript record|replay|inspect\n  identity show|create\n"
     )
 }
 
@@ -248,10 +253,13 @@ mod tests {
             (&["room", "close", "r"], ("room", "close")),
             (&["game", "observe", "r"], ("game", "observe")),
             (&["game", "actions", "r"], ("game", "actions")),
-            (&["game", "act", "r", "pass"], ("game", "act")),
             (
                 &["game", "play-card", "r", "jack-spades"],
                 ("game", "play-card"),
+            ),
+            (
+                &["command", "parse", "/score add player1 100"],
+                ("command", "parse"),
             ),
             (&["chat", "send", "r", "hello"], ("chat", "send")),
             (&["chat", "tail", "r", "20"], ("chat", "tail")),

@@ -7,7 +7,6 @@ use super::super::{ParseError, exact};
 pub enum GameArgs {
     Observe { room: String },
     Actions { room: String },
-    Act { room: String, action: String },
     PlayCard { room: String, card: CardId },
 }
 
@@ -23,13 +22,6 @@ impl GameArgs {
             "actions" => Ok(Self::Actions {
                 room: exact(arguments, 1)?[0].clone(),
             }),
-            "act" => {
-                let arguments = exact(arguments, 2)?;
-                Ok(Self::Act {
-                    room: arguments[0].clone(),
-                    action: arguments[1].clone(),
-                })
-            }
             "play-card" => {
                 let arguments = exact(arguments, 2)?;
                 Ok(Self::PlayCard {
@@ -47,7 +39,6 @@ impl GameArgs {
         match self {
             Self::Observe { .. } => "observe",
             Self::Actions { .. } => "actions",
-            Self::Act { .. } => "act",
             Self::PlayCard { .. } => "play-card",
         }
     }
@@ -57,7 +48,7 @@ impl GameArgs {
     pub const fn game_action(&self) -> Option<GameActionWire> {
         match self {
             Self::PlayCard { card, .. } => Some(GameActionWire::Play { card: card.code() }),
-            Self::Observe { .. } | Self::Actions { .. } | Self::Act { .. } => None,
+            Self::Observe { .. } | Self::Actions { .. } => None,
         }
     }
 }

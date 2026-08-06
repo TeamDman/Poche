@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 4.1, freeze typed command and legality-policy contracts
+**Current implementation focus:** 4.2, implement retrospective rule findings and accusation evidence
 
 ## How to update this plan
 
@@ -259,14 +259,14 @@ inferred merely from using Veilid.
 | G1 | What exact scene, pose, unit, zone, attachment, loose-object, snap/dead-band, realization, and abstraction types form `poche-spatial-v1`? | 1.1 must freeze a versioned contract and laws before scene code. | Closed by ADR 0005: typed state is canonical; fixed-mm viewer-scene refinement |
 | G2 | Which player counts get concrete spatial layouts now, independently of current two-player game/RL specs? | Layout matrix and formal scopes name every supported/unsupported count. | Closed by ADR 0005: spatial layouts 2-8; game/RL/formal scopes remain independent |
 | G3 | Does native 3D use Bevy, which exact published version/features, and how is Slug reused without a dirty path dependency? | ADR, license audit, compile probe, and renderer boundary precede 8.1. | Closed by ADR 0005: Bevy 0.19 `3d` leaf adapter; provenance-pinned MPL-2.0 `poche-slug` extraction |
-| G4 | Which geometry is encoded directly in Alloy/NuSMV/Prolog versus precomputed by Rust? | Formal claims state finite grid/zone abstraction and never imply mesh/real proof. | Open in 3.1 |
+| G4 | Which geometry is encoded directly in Alloy/NuSMV/Prolog versus precomputed by Rust? | Formal claims state finite grid/zone abstraction and never imply mesh/real proof. | Closed by tasks 3.1-3.4: finite cells, endpoints, and ground relations only; continuous renderer excluded |
 | G5 | What replicated-log algorithm, membership epoch, fork rule, quorum, leaderlessness/temporary coordinator, and liveness assumptions define experimental consensus? | Model/check convergence, safety, partitions, stale devices, and recovery before network advertising. | Open in 5.1 |
 | G6 | How do player roots authorize multiple device keys, and how do add/revoke/loss/browser export work? | Exact signing vectors, projection scope, simultaneous-device and revocation tests. | Open in 5.1 |
 | G7 | Which published mental-poker construction and threat assumptions cover fair shuffle/deal/reveal, collusion, active cheating, and dropout? | No implementation or fairness claim before primary-source review and vectors. | Open in 6.1 |
 | G8 | What proposal/vote quorum, eligibility snapshot, timeout, tie, accused-member tally, and kick/redeal/end semantics apply? | Rust/formal fixtures cover out-of-turn recovery and visible non-counting votes. | Open in 4.3 |
 | G9 | What exactly does a gateway know/do; which keys stay in-browser; and when are HTTP+SSE, WSS, WebTransport, or direct Veilid used? | Threat/topology matrix, reconnect evidence, and no false anonymity/directness claim. | Open in 7.1 |
-| G10 | What versioned command AST backs CLI, GUI, votes, and protocol; is pinned Figue compatible with the workspace Facet version? | Parser/help/completion/codec tests prove one typed meaning; raw strings are never authorized directly. | Open in 4.1 |
-| G11 | How do strict prevention, allow-attempt, auto-propose, manual accusation, retrospective findings, and recovery compose? | Policy matrix and history corpus demonstrate each mode without weakening C3. | Open in 4.1 |
+| G10 | What versioned command AST backs CLI, GUI, votes, and protocol; is pinned Figue compatible with the workspace Facet version? | Parser/help/completion/codec tests prove one typed meaning; raw strings are never authorized directly. | Closed by ADR 0006: `poche-governance-command-v1`; first-party parser/catalog because exact Figue pair fails offline resolution |
+| G11 | How do strict prevention, allow-attempt, auto-propose, manual accusation, retrospective findings, and recovery compose? | Policy matrix and history corpus demonstrate each mode without weakening C3. | Closed by ADR 0006: structural, authorization, legality, finding-publication, and governable-effect layers |
 | G12 | Does table-scale precision or multi-table scope justify `big_space`? | Measured precision/complexity ADR; default is table-local fixed units and render-time `f32`. | Closed by ADR 0005: no `big_space`; table-local integer mm plus render-time `f32` |
 
 Each remaining gate is closed in the named task before dependent
@@ -807,7 +807,40 @@ every applicable result and disagreement, and never widens a track's scope.
 
 ## Phase 4 — Generalize commands, auditing, and governance
 
-### [~] 4.1 Freeze typed command and legality-policy contracts
+### [x] 4.1 Freeze typed command and legality-policy contracts
+
+**Completion notes:** Completed 2026-08-05. ADR 0006 closes G10/G11 and
+freezes `poche-governance-command-v1`. The Facet-reflected AST contains only
+typed execute, start-vote, and vote commands over Poche game actions, bounded
+score amendments, exact rights changes, stable-event accusations, and named
+redeal/kick/end-game recovery. Each action exposes its rule layer and exact
+direct authority consequence (`CurrentGameActor`, `ActivePlayer`, or
+`VoteOrCapability`). There is no raw execute, recursive vote string, arbitrary
+state patch, or create/delete/change-card variant. The isolated canonical JSON
+codec is versioned, unknown-field rejecting, limited to 4,096 bytes, and bounds
+nonzero score changes to absolute 1,000,000 without treating that abuse bound
+as a Poche scoring rule.
+
+Added the normal `command parse <SLASH-COMMAND>` CLI surface and removed the
+untyped `game act <string>` placeholder. `/play-card jack-spades`, `/score add
+player1 100`, `/rights remove ...`, `/accuse event-2`, recovery, vote, and
+`/startvote "/score add player1 100"` all discard source text and yield the same
+typed protocol meanings used by GUI/protocol callers. Help and Bash/Zsh/Fish
+completion output share the parser's fixed command catalog. The observable
+JSON smoke prints `start_vote(adjust_score(player1,+100))` and executes nothing.
+
+The exact Figue probe found API and version compatibility (`figue
+5.0.0-rc.5`/Facet `0.50.0-rc.5`) but failed the required locked/offline
+dependency gate because `figue-attrs ^5.0.0-rc.5` was absent from the local
+registry index. No dirty/absolute sibling path was added; ADR 0006 permits a
+later leaf-parser replacement only if the exact published pair resolves without
+changing AST bytes or meanings. TPBAC-shaped session evidence now records
+integer priority, evaluates higher priority then canonical policy ID, rejects
+duplicate policy IDs, keeps audit-only decisions non-authoritative, default
+denies unknowns, and lets any explicit enforce-deny override allow regardless
+of priority. Full protocol tests pass (11 unit, two decoder-fuzz, three compile-
+fail doctests), the prescribed protocol/session/CLI filtered suites pass (2, 2,
+and 6 tests), and strict Clippy passes for all three crates.
 
 **Work:**
 
@@ -832,7 +865,7 @@ cargo test -p poche-cli command
 `/play-card ...`, accusation, and rights commands have one stable typed meaning,
 help/codec/parser fixtures, and explicit authorization consequences.
 
-### [ ] 4.2 Implement retrospective rule findings and accusation evidence
+### [~] 4.2 Implement retrospective rule findings and accusation evidence
 
 **Work:**
 
