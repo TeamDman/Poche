@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 6.1, freeze the hidden-card threat model from primary sources
+**Current implementation focus:** 6.2, implement the bounded hidden-card transcript prototype
 
 ## How to update this plan
 
@@ -262,7 +262,7 @@ inferred merely from using Veilid.
 | G4 | Which geometry is encoded directly in Alloy/NuSMV/Prolog versus precomputed by Rust? | Formal claims state finite grid/zone abstraction and never imply mesh/real proof. | Closed by tasks 3.1-3.4: finite cells, endpoints, and ground relations only; continuous renderer excluded |
 | G5 | What replicated-log algorithm, membership epoch, fork rule, quorum, leaderlessness/temporary coordinator, and liveness assumptions define experimental consensus? | Model/check convergence, safety, partitions, stale devices, and recovery before network advertising. | Closed by ADR 0007: accountable crash-fault strict-player-majority prevote/precommit log; deterministic rotating proposer; joint epochs; fork halt/evidence; partial-synchrony liveness |
 | G6 | How do player roots authorize multiple device keys, and how do add/revoke/loss/browser export work? | Exact signing vectors, projection scope, simultaneous-device and revocation tests. | Closed by ADR 0007: existing principal bytes are root identity; root-signed per-device keys; one vote/player; local default; gateway custody disclosed and export-and-rotate |
-| G7 | Which published mental-poker construction and threat assumptions cover fair shuffle/deal/reveal, collusion, active cheating, and dropout? | No implementation or fairness claim before primary-source review and vectors. | Open in 6.1 |
+| G7 | Which published mental-poker construction and threat assumptions cover fair shuffle/deal/reveal, collusion, active cheating, and dropout? | No implementation or fairness claim before primary-source review and vectors. | Closed by ADR 0008: exact `ziffle` 0.1.0 Bayer-Groth full-deck profile; active coalition up to `n-1` under stated assumptions; unanimous reveals; explicit cryptographic abort/redeal instead of same-hand dropout recovery; mandatory independent review before production claims |
 | G8 | What proposal/vote quorum, eligibility snapshot, timeout, tie, accused-member tally, and kick/redeal/end semantics apply? | Rust/formal fixtures cover out-of-turn recovery and visible non-counting votes. | Closed by task 4.3: strict majority of a proposal-time active eligibility snapshot; visible excluded votes; logical deadline rejection; exact capability alternative |
 | G9 | What exactly does a gateway know/do; which keys stay in-browser; and when are HTTP+SSE, WSS, WebTransport, or direct Veilid used? | Threat/topology matrix, reconnect evidence, and no false anonymity/directness claim. | Open in 7.1 |
 | G10 | What versioned command AST backs CLI, GUI, votes, and protocol; is pinned Figue compatible with the workspace Facet version? | Parser/help/completion/codec tests prove one typed meaning; raw strings are never authorized directly. | Closed by ADR 0006: `poche-governance-command-v1`; first-party parser/catalog because exact Figue pair fails offline resolution |
@@ -1166,7 +1166,34 @@ disagreements and states exact Byzantine/crash/quorum/fairness limits.
 
 ## Phase 6 — Research and prototype trustless hidden cards
 
-### [ ] 6.1 Select a published protocol and freeze the security model
+### [x] 6.1 Select a published protocol and freeze the security model
+
+**Completion notes:** Completed 2026-08-05. ADR 0008 closes G7 with the
+research-only `poche-mental-poker-bg12-v0` profile: a canonical 52-card ElGamal
+deck, sequential Bayer-Groth verifiable re-encryption shuffles, unique encrypted
+position assignments, card-specific verifiable reveal shares, private holder
+delivery, public play reveal, and full round-end audit. The dependency is pinned
+to published `ziffle` 0.1.0 (tag commit
+`2bdd74408ac536583b03058ef6529035f39f57bc`, MIT OR Apache-2.0); its exact
+source passes 16 unit tests and 15 doctests. This is reproducibility evidence,
+not an audit: upstream calls the crate experimental and unaudited.
+
+The frozen adversary permits an active coalition of up to `n-1` computationally
+bounded players, subject to an honest holder key, at least one honest shuffle,
+authenticated consistent broadcast, confidential private-share delivery, and
+the named group/proof assumptions. The track claims bounded privacy,
+permutation/reveal verification, uniqueness, and completed-round audit, but not
+termination, adaptive-abort fairness, traffic-analysis resistance, or
+production fitness. Every enrolled player is required for reveal. A missing
+share therefore produces a typed cryptographic abort and governable
+kick/redeal/end/remedy, never magical recovery of the same hand. Full shuffle,
+Golle-style on-demand cards, threshold/VSS, the published dropout-tolerant
+remasking protocol, LibTMCG, commit/reveal, and the trusted-dealer fallback are
+compared explicitly. The user's Secret Santa analogy is retained for exclusive
+private allocation while its malicious-proof, channel, collusion, abort, and
+audit limits are stated. An independent qualified review of the exact
+dependency and Poche composition is mandatory before any production-strength
+claim.
 
 **Work:**
 
@@ -1195,7 +1222,7 @@ names every assumption and unsupported case, and provides a bounded prototype
 plan. If no construction satisfies dropout requirements, trustless mode remains
 research-only and the plan says so plainly.
 
-### [ ] 6.2 Implement shuffle/deal/hold/play/reveal verification
+### [~] 6.2 Implement shuffle/deal/hold/play/reveal verification
 
 **Work:**
 
