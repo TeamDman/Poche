@@ -190,6 +190,17 @@ impl LiveDemo {
         self.submit_payload(viewer, payload, true)
     }
 
+    /// Submit a typed payload supplied by a separately authenticated gateway
+    /// device. Authentication and replay protection remain the gateway
+    /// adapter's responsibility; this method crosses only the semantic bridge.
+    pub fn submit_gateway_payload(
+        &mut self,
+        viewer: &str,
+        payload: CommandPayload,
+    ) -> Result<String, String> {
+        self.submit_payload(viewer, payload, true)
+    }
+
     /// Reset and prepare a deterministic lobby, countdown, or running game.
     pub fn setup(&mut self, stage: &str) -> Result<String, String> {
         *self = Self::new()?;

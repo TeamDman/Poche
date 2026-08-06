@@ -7,18 +7,25 @@ use std::{
     fmt::Write as _,
     net::SocketAddr,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use axum::{
-    Router,
-    extract::{Path, State},
-    http::StatusCode,
-    response::{Html, IntoResponse, Response, Sse},
+    Json, Router,
+    extract::{DefaultBodyLimit, Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    response::{
+        Html, IntoResponse, Response, Sse,
+        sse::{Event, KeepAlive},
+    },
     routing::{get, post},
 };
 use datastar::prelude::PatchElements;
-use futures_util::stream;
-use poche_protocol::{CommandPayload, PrincipalId, ProtocolFrame, RoomId};
+use futures_util::{StreamExt as _, stream};
+use poche_protocol::{
+    CommandPayload, DeviceCustodyWire, GatewayAuthorityModeWire, GatewayProjectionProtectionWire,
+    GatewayTrustDisclosureWire, PrincipalId, ProtocolFrame, RoomId,
+};
 use poche_runtime::{
     AuthorityDisposition, ClientPort, InProcessAuthority, InProcessTransport, LoopbackCodec,
     OracleSessionGame, ScriptedClient,
@@ -28,12 +35,19 @@ use poche_ui::{
     ConnectionPresentation, EMBEDDED_REPLAY, PresentationInput, PresentationModel, ReplayDeck,
     render_live_semantic_html, render_semantic_html, render_semantic_html_with_root_id,
 };
+use serde::Deserialize;
 
 mod demo;
+mod gateway;
 
 use demo::LiveDemo;
+use gateway::{
+    CommandDecision, GatewayAction, GatewayDeviceRegistration, GatewayLab, GatewayProjectionEvent,
+    SignedGatewayCommand,
+};
 
 const INDEX: &str = include_str!("../web/index.html");
+const GATEWAY_INDEX: &str = include_str!("../web/gateway.html");
 
 #[derive(Clone)]
 struct AppState {
@@ -41,6 +55,8 @@ struct AppState {
     rl_episode: Arc<poche_rl::EpisodeTranscript>,
     authority: Arc<Mutex<AuthorityHost>>,
     live: Arc<Mutex<LiveDemo>>,
+    gateway: GatewayLab,
+    gateway_live: Arc<Mutex<LiveDemo>>,
 }
 
 struct AuthorityHost {
@@ -145,7 +161,178 @@ fn router(state: AppState) -> Router {
         .route("/live/{viewer}/disconnect", post(live_disconnect))
         .route("/live/{viewer}/transcript.ndjson", get(live_transcript))
         .route("/live/{viewer}/replay", get(live_replay))
+        .route("/gateway", get(gateway_index))
+        .route("/gateway/device/register", post(gateway_register))
+        .route("/gateway/device/{device}/events", get(gateway_events))
+        .route("/gateway/command", post(gateway_command))
+        .route("/gateway/native/revoke/{device}", post(gateway_revoke))
+        .route("/gateway/devices", get(gateway_devices))
+        .route("/gateway/metrics", get(gateway_metrics))
+        .layer(DefaultBodyLimit::max(8 * 1024))
         .with_state(state)
+}
+
+async fn gateway_index() -> Response {
+    let disclosure = GatewayTrustDisclosureWire::for_browser(
+        GatewayAuthorityModeWire::HostAuthoritative,
+        DeviceCustodyWire::BrowserLocal,
+        GatewayProjectionProtectionWire::GatewayPlaintext,
+    )
+    .and_then(|profile| {
+        serde_json::to_string_pretty(&profile)
+            .map_err(|_| poche_protocol::GatewayDisclosureError::InvalidJson)
+    });
+    match disclosure {
+        Ok(disclosure) => {
+            Html(GATEWAY_INDEX.replace("__DISCLOSURE__", &disclosure)).into_response()
+        }
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
+}
+
+async fn gateway_register(
+    State(state): State<AppState>,
+    Json(registration): Json<GatewayDeviceRegistration>,
+) -> Response {
+    let html = match state
+        .gateway_live
+        .lock()
+        .map_err(|_| "gateway live authority lock poisoned".to_owned())
+        .and_then(|demo| live_html(&demo, "alice"))
+    {
+        Ok(html) => html,
+        Err(error) => return gateway_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
+    };
+    match state.gateway.register_browser(&registration, html) {
+        Ok(device) => Json(device).into_response(),
+        Err(error) => gateway_error(StatusCode::CONFLICT, &error.to_string()),
+    }
+}
+
+async fn gateway_command(
+    State(state): State<AppState>,
+    Json(command): Json<SignedGatewayCommand>,
+) -> Response {
+    let live = Arc::clone(&state.gateway_live);
+    let decision = state.gateway.apply_command(&command, |action| {
+        let Ok(mut demo) = live.lock() else {
+            return (
+                "gateway live authority lock poisoned".to_owned(),
+                "<main><h2>Projection unavailable</h2></main>".to_owned(),
+            );
+        };
+        let result = match action {
+            GatewayAction::Pause => demo.control("alice", "pause"),
+            GatewayAction::Unpause => demo.control("alice", "unpause"),
+            GatewayAction::Chat { text } => {
+                demo.submit_gateway_payload("alice", CommandPayload::Chat { text: text.clone() })
+            }
+            GatewayAction::GrantSpectator => demo.control("alice", "grant-hand-0"),
+            GatewayAction::RevokeSpectator => demo.control("alice", "revoke-hand-0"),
+        };
+        let status = result.unwrap_or_else(|error| format!("semantic denial: {error}"));
+        let html = live_html(&demo, "alice").unwrap_or_else(|error| {
+            format!("<main><h2>Projection unavailable</h2><p>{error}</p></main>")
+        });
+        (status, html)
+    });
+    match decision {
+        Ok(CommandDecision::Applied(receipt) | CommandDecision::Duplicate(receipt)) => {
+            Json(receipt).into_response()
+        }
+        Err(error) => gateway_error(StatusCode::CONFLICT, &error.to_string()),
+    }
+}
+
+async fn gateway_revoke(State(state): State<AppState>, Path(device): Path<String>) -> Response {
+    let html = state
+        .gateway_live
+        .lock()
+        .map_err(|_| "gateway live authority lock poisoned".to_owned())
+        .and_then(|demo| live_html(&demo, "alice"));
+    match html.and_then(|html| {
+        state
+            .gateway
+            .revoke_from_native(&device, &html)
+            .map_err(|error| error.to_string())
+    }) {
+        Ok(device) => Json(device).into_response(),
+        Err(error) => gateway_error(StatusCode::CONFLICT, &error),
+    }
+}
+
+async fn gateway_devices(State(state): State<AppState>) -> Response {
+    match state.gateway.devices() {
+        Ok(devices) => Json(devices).into_response(),
+        Err(error) => gateway_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+    }
+}
+
+async fn gateway_metrics(State(state): State<AppState>) -> Response {
+    match state.gateway.metrics() {
+        Ok(metrics) => Json(metrics).into_response(),
+        Err(error) => gateway_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+    }
+}
+
+#[derive(Default, Deserialize)]
+struct EventCursor {
+    after: Option<u64>,
+}
+
+async fn gateway_events(
+    State(state): State<AppState>,
+    Path(device): Path<String>,
+    Query(cursor): Query<EventCursor>,
+    headers: HeaderMap,
+) -> Response {
+    let header_cursor = headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    let after = cursor.after.or(header_cursor).unwrap_or(0);
+    let (history, receiver) = match state.gateway.subscribe(&device, after) {
+        Ok(subscription) => subscription,
+        Err(error) => return gateway_error(StatusCode::FORBIDDEN, &error.to_string()),
+    };
+    let history = stream::iter(
+        history
+            .into_iter()
+            .map(|event| Ok::<_, Infallible>(gateway_sse_event(&event))),
+    );
+    let live = stream::unfold((receiver, device), |(mut receiver, device)| async move {
+        loop {
+            match receiver.recv().await {
+                Ok(event) if event.recipient_device_id == device => {
+                    return Some((
+                        Ok::<_, Infallible>(gateway_sse_event(&event)),
+                        (receiver, device),
+                    ));
+                }
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    });
+    Sse::new(history.chain(live))
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(10))
+                .text("poche-gateway-keep-alive"),
+        )
+        .into_response()
+}
+
+fn gateway_sse_event(event: &GatewayProjectionEvent) -> Event {
+    Event::default()
+        .id(event.event_id.to_string())
+        .event("projection")
+        .json_data(event)
+        .expect("gateway projection event always serializes")
+}
+
+fn gateway_error(status: StatusCode, message: &str) -> Response {
+    (status, Json(serde_json::json!({"error": message}))).into_response()
 }
 
 async fn rl_replay(State(state): State<AppState>) -> Response {
@@ -412,6 +599,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rl_episode: Arc::new(selected_rl_episode()?),
         authority: Arc::new(Mutex::new(AuthorityHost::new()?)),
         live: Arc::new(Mutex::new(LiveDemo::new()?)),
+        gateway: GatewayLab::new()?,
+        gateway_live: Arc::new(Mutex::new(gateway_demo()?)),
     };
     let listener = tokio::net::TcpListener::bind(address).await?;
     println!(
@@ -422,11 +611,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn gateway_demo() -> Result<LiveDemo, String> {
+    let mut demo = LiveDemo::new()?;
+    demo.setup("running")?;
+    demo.control("spectator", "request-hand-0")?;
+    Ok(demo)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        AuthorityHost, EMBEDDED_REPLAY, INDEX, LiveDemo, ReplayDeck, live_html, load_rl_episode,
-        rl_replay_html, selected_rl_episode,
+        AuthorityHost, EMBEDDED_REPLAY, GATEWAY_INDEX, INDEX, LiveDemo, ReplayDeck, gateway_demo,
+        live_html, load_rl_episode, rl_replay_html, selected_rl_episode,
     };
     use poche_protocol::RoomPhase;
     use poche_ui::render_semantic_html;
@@ -501,6 +697,21 @@ mod tests {
         assert!(INDEX.contains("datastar@1.0.0-RC.7/bundles/datastar.js"));
         assert!(INDEX.contains("aria-live=\"polite\""));
         assert!(INDEX.contains("__LIVE_CLIENT__"));
+    }
+
+    #[test]
+    fn gateway_page_discloses_trust_and_uses_ordinary_accessible_controls() {
+        assert!(GATEWAY_INDEX.contains("host-authoritative compatibility lab"));
+        assert!(GATEWAY_INDEX.contains("Gateway-custodied fallback is disabled"));
+        assert!(GATEWAY_INDEX.contains("aria-live=\"polite\""));
+        assert!(GATEWAY_INDEX.contains("<label for=\"chat-text\">"));
+        assert!(GATEWAY_INDEX.contains("Drop SSE only"));
+        assert!(GATEWAY_INDEX.contains("Retry identical signed HTTP body"));
+        assert!(!GATEWAY_INDEX.contains("WebSocket"));
+        let demo = gateway_demo().expect("gateway demo");
+        let alice = live_html(&demo, "alice").expect("Alice exact projection");
+        assert!(alice.contains("Your hand"));
+        assert!(!alice.contains("POCHE-LAB"));
     }
 
     #[test]

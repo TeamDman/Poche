@@ -31,6 +31,7 @@ was exhaustive, bounded, symbolic, queried, sampled, or merely empirical.
 - [Replicated player/device authority decision](docs/decisions/0007-player-device-and-replicated-log.md)
 - [Bounded verifiable hidden-card prototype decision](docs/decisions/0008-hidden-card-prototype.md)
 - [Routed room codes and gateway trust decision](docs/decisions/0009-routed-room-codes-and-gateway-trust.md)
+- [Signed browser-device HTTP/SSE gateway evidence](docs/browser-device-gateway.md)
 - [Replicated runtime convergence scenario](docs/replicated-runtime.md)
 - [Replicated consensus formal evidence and coverage](docs/consensus-coverage.md)
 
@@ -135,6 +136,7 @@ do not hide IP/timing/DHT metadata from the relevant transport participants.
 | Native Veilid protocol | Guarded two-process public DHT/private-route lifecycle, stable keys, signed commands/events, encrypted recipient projections | No packaged player client; Veilid peers can observe network metadata; the host sees all hands |
 | Direct browser Veilid | Not supported with Veilid 0.5.7 from a Pages HTTPS origin | Public WSS bootstrap/relay topology failed; no companion app is implied |
 | Self-hosted Datastar demo | Host-colocated Axum authority and accessible semantic HTML work on loopback | Development invite/viewer routes are not production authentication; the operator sees connection metadata and, as host, all state |
+| Signed browser-device gateway lab | Browser-local WebCrypto key, signed bounded typed HTTP, idempotent receipts, reconnectable exact-recipient SSE, and independent device revocation work on loopback | Still host-authoritative and plaintext to the gateway; lab enrollment is not the replicated root-certificate path |
 
 Do not expose the Datastar demo beyond loopback without adding TLS,
 authentication, durable state, abuse controls, and a deployment-specific threat
@@ -143,6 +145,8 @@ review. Its current development command is:
 ```pwsh
 cargo run --locked --release -p poche-web-spike
 ```
+
+The ordinary host demo is at `/`; the signed device lab is at `/gateway`.
 
 ## Reinforcement learning
 

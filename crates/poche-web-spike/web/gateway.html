@@ -1,0 +1,333 @@
+<!doctype html>
+<!--
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <link rel="icon" href="data:,">
+    <title>Poche signed browser-device gateway lab</title>
+    <style>
+      body { max-width: 68rem; margin: 0 auto; padding: 1rem; font: 1rem/1.5 system-ui, sans-serif; }
+      section, main { margin-block: 1rem; padding-block: .75rem; border-top: 1px solid currentColor; }
+      .actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-block: .75rem; }
+      button { min-height: 2.75rem; padding-inline: .9rem; }
+      button:disabled { opacity: .55; }
+      code, pre { border: 1px solid currentColor; border-radius: .25rem; padding: .2rem .35rem; overflow-wrap: anywhere; }
+      pre { white-space: pre-wrap; }
+      .warning { border: .2rem solid #b24; padding: .75rem; }
+      .good { border-left: .3rem solid #287a3b; padding-left: .75rem; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid currentColor; padding: .35rem; text-align: left; vertical-align: top; }
+      dt { font-weight: 700; }
+      dd { margin-bottom: .5rem; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <p><a href="/">Back to host-authoritative topology demo</a></p>
+      <h1>Poche signed browser-device gateway lab</h1>
+      <p class="warning">
+        This is a host-authoritative compatibility lab, not decentralized
+        consensus. The browser holds a non-extractable session device key and
+        signs typed actions. The gateway can read command and exact-recipient
+        projection plaintext, delay/censor/reorder traffic, and unilaterally
+        order this lab room. It cannot sign as the browser device or read a
+        player-root key because neither secret is sent here.
+      </p>
+    </header>
+
+    <section aria-labelledby="trust-heading">
+      <h2 id="trust-heading">Machine-readable trust disclosure</h2>
+      <p>
+        Enrollment is deliberately a lab invite shortcut. Production replicated
+        membership uses the root-signed device certificates checked in phase 5;
+        this page does not pretend its facilitator enrollment is that protocol.
+        Gateway-custodied fallback is disabled: an unsupported browser is
+        blocked conspicuously instead of silently uploading a key.
+      </p>
+      <pre id="trust-disclosure">__DISCLOSURE__</pre>
+    </section>
+
+    <section aria-labelledby="device-heading">
+      <h2 id="device-heading">Device agency</h2>
+      <p id="key-status" role="status" aria-live="polite">Creating a browser-local Ed25519 key…</p>
+      <p>Browser device: <code id="device-id">not registered</code></p>
+      <div class="actions">
+        <button id="native-revoke" type="button" disabled>Revoke browser device from native fixture</button>
+      </div>
+      <table>
+        <caption>One player, independently revocable device keys</caption>
+        <thead><tr><th>Player</th><th>Device</th><th>Custody / role</th><th>Status</th></tr></thead>
+        <tbody id="device-list"><tr><td colspan="4">Loading devices…</td></tr></tbody>
+      </table>
+    </section>
+
+    <section aria-labelledby="stream-heading">
+      <h2 id="stream-heading">Reconnectable exact-recipient SSE</h2>
+      <p id="stream-status" role="status" aria-live="polite">Not connected.</p>
+      <p>Last applied event ID: <strong id="last-event">0</strong></p>
+      <div class="actions">
+        <button id="drop-stream" type="button" disabled>Drop SSE only</button>
+        <button id="reconnect-stream" type="button" disabled>Reconnect after last event</button>
+      </div>
+      <p>
+        HTTP commands remain available while SSE is dropped. Reconnect asks for
+        events strictly after the displayed ID; retained IDs prevent a replayed
+        projection from becoming a second semantic effect.
+      </p>
+    </section>
+
+    <section aria-labelledby="command-heading">
+      <h2 id="command-heading">Signed typed commands</h2>
+      <div class="actions">
+        <button class="signed-action" data-kind="pause" type="button" disabled>Pause</button>
+        <button class="signed-action" data-kind="unpause" type="button" disabled>Unpause</button>
+        <button class="signed-action" data-kind="grant_spectator" type="button" disabled>Grant spectator Alice’s hand</button>
+        <button class="signed-action" data-kind="revoke_spectator" type="button" disabled>Revoke spectator hand view</button>
+      </div>
+      <form id="chat-form">
+        <label for="chat-text">Room chat</label>
+        <input id="chat-text" name="chat" maxlength="256" value="browser-local signed hello" required>
+        <button class="signed-action" id="chat-submit" type="submit" disabled>Send signed chat</button>
+      </form>
+      <div class="actions">
+        <button id="retry-last" type="button" disabled>Retry identical signed HTTP body</button>
+      </div>
+      <p id="command-status" role="status" aria-live="polite">No command submitted.</p>
+      <pre id="last-envelope">The signed envelope will appear here. The private key will not.</pre>
+    </section>
+
+    <section aria-labelledby="metrics-heading">
+      <h2 id="metrics-heading">Measured transport evidence</h2>
+      <p>
+        The server reports signing-envelope size, semantic processing time, and
+        both raw and candidate gzip sizes for the last JSON SSE event. This lab
+        leaves the live stream uncompressed to avoid an unmeasured compressor
+        buffering interactive events; a deployment may enable HTTP compression
+        after measuring flush behavior. Browser round-trip is an application
+        observation, not input-to-photon latency.
+      </p>
+      <dl id="metrics"><dt>Status</dt><dd>No measurements yet.</dd></dl>
+      <p>Last browser command round-trip: <strong id="roundtrip">not measured</strong></p>
+    </section>
+
+    <main id="gateway-projection" tabindex="-1" aria-live="polite">
+      <h2>Awaiting exact-recipient projection</h2>
+      <p>The registered Alice device will receive only Alice’s semantic view.</p>
+    </main>
+
+    <script type="module">
+      const encoder = new TextEncoder();
+      const keyStatus = document.querySelector('#key-status');
+      const streamStatus = document.querySelector('#stream-status');
+      const commandStatus = document.querySelector('#command-status');
+      const deviceIdNode = document.querySelector('#device-id');
+      const lastEventNode = document.querySelector('#last-event');
+      const projection = document.querySelector('#gateway-projection');
+      const envelopeNode = document.querySelector('#last-envelope');
+      const roundtripNode = document.querySelector('#roundtrip');
+      let deviceKey = null;
+      let deviceId = null;
+      let sequence = 0;
+      let source = null;
+      let lastEvent = 0;
+      let lastEnvelope = null;
+
+      function hex(bytes) {
+        return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
+      }
+
+      function signingBytes(command) {
+        const actionText = command.action.kind === 'chat' ? command.action.text : '';
+        const parts = [
+          'poche.gateway-command.v1',
+          String(command.schema_version),
+          command.player_id,
+          command.device_id,
+          command.command_id,
+          String(command.sequence),
+          command.action.kind,
+          actionText,
+        ].map(value => encoder.encode(value));
+        const size = parts.reduce((total, part) => total + 4 + part.length, 0);
+        const framed = new Uint8Array(size);
+        const view = new DataView(framed.buffer);
+        let offset = 0;
+        for (const part of parts) {
+          view.setUint32(offset, part.length, false);
+          offset += 4;
+          framed.set(part, offset);
+          offset += part.length;
+        }
+        return framed;
+      }
+
+      async function jsonFetch(url, options = {}) {
+        const response = await fetch(url, options);
+        const value = await response.json().catch(() => ({error: `HTTP ${response.status}`}));
+        if (!response.ok) throw new Error(value.error ?? `HTTP ${response.status}`);
+        return value;
+      }
+
+      async function register() {
+        if (!globalThis.isSecureContext || !crypto?.subtle) {
+          throw new Error('WebCrypto needs a secure context; loopback HTTP and HTTPS qualify. Gateway custody remains disabled.');
+        }
+        deviceKey = await crypto.subtle.generateKey({name: 'Ed25519'}, false, ['sign', 'verify']);
+        const publicBytes = await crypto.subtle.exportKey('raw', deviceKey.publicKey);
+        deviceId = hex(publicBytes);
+        deviceIdNode.textContent = deviceId;
+        await jsonFetch('/gateway/device/register', {
+          method: 'POST',
+          headers: {'content-type': 'application/json'},
+          body: JSON.stringify({
+            schema_version: 1,
+            player_id: 'alice',
+            device_id: deviceId,
+            signing_public_key: deviceId,
+            custody: 'browser_local',
+          }),
+        });
+        keyStatus.textContent = 'Active browser-local, non-extractable session key. No private key bytes crossed HTTP.';
+        keyStatus.classList.add('good');
+        document.querySelectorAll('.signed-action').forEach(button => { button.disabled = false; });
+        document.querySelector('#native-revoke').disabled = false;
+        document.querySelector('#drop-stream').disabled = false;
+        connectStream();
+        await refreshEvidence();
+      }
+
+      function connectStream() {
+        source?.close();
+        streamStatus.textContent = `Connecting after event ${lastEvent}…`;
+        source = new EventSource(`/gateway/device/${deviceId}/events?after=${lastEvent}`);
+        source.addEventListener('open', () => {
+          streamStatus.textContent = `Connected; replay cursor is ${lastEvent}.`;
+          document.querySelector('#reconnect-stream').disabled = true;
+          document.querySelector('#drop-stream').disabled = false;
+        });
+        source.addEventListener('projection', event => {
+          const data = JSON.parse(event.data);
+          const eventId = Number(event.lastEventId || data.event_id);
+          if (eventId <= lastEvent) return;
+          lastEvent = eventId;
+          lastEventNode.textContent = String(lastEvent);
+          projection.innerHTML = data.html;
+          streamStatus.textContent = `Applied exact-recipient event ${lastEvent}: ${data.semantic_status}`;
+          refreshEvidence();
+        });
+        source.addEventListener('error', () => {
+          if (source) streamStatus.textContent = 'SSE unavailable; EventSource may retry until explicitly dropped.';
+        });
+      }
+
+      function dropStream() {
+        source?.close();
+        source = null;
+        streamStatus.textContent = `SSE deliberately dropped after event ${lastEvent}; HTTP commands remain enabled.`;
+        document.querySelector('#drop-stream').disabled = true;
+        document.querySelector('#reconnect-stream').disabled = false;
+      }
+
+      async function makeEnvelope(action) {
+        sequence += 1;
+        const envelope = {
+          schema_version: 1,
+          player_id: 'alice',
+          device_id: deviceId,
+          command_id: `browser_${Date.now()}_${sequence}`,
+          sequence,
+          action,
+          signature: '',
+        };
+        envelope.signature = hex(await crypto.subtle.sign('Ed25519', deviceKey.privateKey, signingBytes(envelope)));
+        return envelope;
+      }
+
+      async function sendEnvelope(envelope, isRetry = false) {
+        const start = performance.now();
+        const receipt = await jsonFetch('/gateway/command', {
+          method: 'POST',
+          headers: {'content-type': 'application/json'},
+          body: JSON.stringify(envelope),
+        });
+        const elapsed = performance.now() - start;
+        commandStatus.textContent = `${receipt.duplicate ? 'Duplicate suppressed' : 'Accepted'}: ${receipt.semantic_status}; event ${receipt.event_id}.`;
+        roundtripNode.textContent = `${elapsed.toFixed(1)} ms (${isRetry ? 'identical retry' : 'new signed command'})`;
+        envelopeNode.textContent = JSON.stringify(envelope, null, 2);
+        await refreshEvidence();
+      }
+
+      async function sendAction(action) {
+        try {
+          lastEnvelope = await makeEnvelope(action);
+          document.querySelector('#retry-last').disabled = false;
+          await sendEnvelope(lastEnvelope);
+        } catch (error) {
+          commandStatus.textContent = `Rejected: ${error.message}`;
+          await refreshEvidence();
+        }
+      }
+
+      async function refreshEvidence() {
+        try {
+          const [devices, metrics] = await Promise.all([
+            jsonFetch('/gateway/devices'),
+            jsonFetch('/gateway/metrics'),
+          ]);
+          document.querySelector('#device-list').innerHTML = devices.map(device =>
+            `<tr><td>${device.player_id}</td><td><code>${device.device_id}</code></td><td>${device.custody} · ${device.role}</td><td>${device.active ? 'active' : 'revoked'}</td></tr>`
+          ).join('');
+          const ratio = metrics.last_projection_raw_bytes === 0 ? 'n/a' :
+            `${(100 * metrics.last_projection_gzip_bytes / metrics.last_projection_raw_bytes).toFixed(1)}% of raw`;
+          document.querySelector('#metrics').innerHTML = `
+            <dt>Accepted / duplicate / rejected commands</dt><dd>${metrics.accepted_commands} / ${metrics.duplicate_retries} / ${metrics.rejected_commands}</dd>
+            <dt>SSE connections / reconnects</dt><dd>${metrics.sse_connections} / ${metrics.sse_reconnects}</dd>
+            <dt>Last signed envelope</dt><dd>${metrics.last_command_bytes} bytes</dd>
+            <dt>Last event raw / gzip</dt><dd>${metrics.last_projection_raw_bytes} / ${metrics.last_projection_gzip_bytes} bytes (${ratio})</dd>
+            <dt>Last semantic processing</dt><dd>${metrics.last_server_latency_micros} µs</dd>
+            <dt>Operator-visible metadata</dt><dd>action=${metrics.last_action_kind ?? 'none'}, recipient device=${metrics.last_recipient_device_id ?? 'none'}</dd>`;
+        } catch (error) {
+          commandStatus.textContent = `Evidence refresh failed: ${error.message}`;
+        }
+      }
+
+      document.querySelectorAll('button[data-kind]').forEach(button => {
+        button.addEventListener('click', () => sendAction({kind: button.dataset.kind}));
+      });
+      document.querySelector('#chat-form').addEventListener('submit', event => {
+        event.preventDefault();
+        sendAction({kind: 'chat', text: document.querySelector('#chat-text').value});
+      });
+      document.querySelector('#retry-last').addEventListener('click', () => {
+        if (lastEnvelope) sendEnvelope(lastEnvelope, true).catch(error => { commandStatus.textContent = `Rejected: ${error.message}`; });
+      });
+      document.querySelector('#drop-stream').addEventListener('click', dropStream);
+      document.querySelector('#reconnect-stream').addEventListener('click', connectStream);
+      document.querySelector('#native-revoke').addEventListener('click', async () => {
+        try {
+          await jsonFetch(`/gateway/native/revoke/${deviceId}`, {method: 'POST'});
+          keyStatus.textContent = 'Revoked by the independently identified native fixture. This device can no longer command or reconnect.';
+          document.querySelectorAll('.signed-action').forEach(button => { button.disabled = true; });
+          document.querySelector('#retry-last').disabled = true;
+          document.querySelector('#native-revoke').disabled = true;
+          source?.close();
+          source = null;
+          await refreshEvidence();
+        } catch (error) {
+          commandStatus.textContent = `Revocation failed: ${error.message}`;
+        }
+      });
+
+      register().catch(error => {
+        keyStatus.textContent = `Browser-local key unavailable: ${error.message}`;
+        keyStatus.classList.add('warning');
+      });
+    </script>
+  </body>
+</html>

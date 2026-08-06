@@ -10,6 +10,7 @@ in the dependency graph” is not treated as a deployable client.
 | Exact-projection replay, native | Proven locally | Native egui process | No authority/network/user data; checked fixture only | `cargo run --release -p poche-ui --bin poche-replay` |
 | Browser-only Veilid | Unsupported | A Pages HTTPS origin cannot use the passing insecure-WS development path | No companion is implied; the tested public WSS bootstrap reset before TLS and Veilid 0.5.7 documents the missing outbound-relay HTTPS topology | Evidence in `rendering-topology-spike.md` |
 | Host-colocated Datastar authority demo | Proven locally; self-hostable development mode | One Axum process plus ordinary browsers | Operator owns full state and can inspect every hand. Current named viewer routes and static invite codes are not authenticated, state is in-memory, and this is not anonymous/trustless production multiplayer | `cargo run --release -p poche-web-spike` |
+| Signed browser-device gateway lab | Proven locally; compatibility experiment | The same Axum process at `/gateway`, a browser-local WebCrypto device, and a co-located native fixture | Browser command key is non-extractable and never uploaded; gateway still sees command/projection plaintext and is the disclosed host authority. Lab enrollment is not production root certification | [`browser-device-gateway.md`](browser-device-gateway.md) |
 | Native live Veilid protocol | Acceptance proven; no packaged player client yet | Two native Veilid processes on the opt-in public network | Stable application keys authorize commands independently of node IDs/routes; DHT/private routes expose network metadata to Veilid peers, while exact-recipient projections remain encrypted | `cargo run -p poche-xtask --offline -- multiplayer smoke --transport veilid-public` with the explicit environment guard; see `veilid-native-acceptance.md` |
 
 ## Datastar demo connection configuration
@@ -22,7 +23,9 @@ For the proven safe development posture, publish only to the host machine:
 cargo run --locked --release -p poche-web-spike
 ```
 
-Open <http://127.0.0.1:4174/>. Do not expose this deterministic harness to an
+Open <http://127.0.0.1:4174/> for the original host demo or
+<http://127.0.0.1:4174/gateway> for the signed browser-device lab. Do not expose
+this deterministic harness to an
 untrusted network: `/live/{viewer}` selects an identity by name, invitation
 codes are static, and there is no persistent store or production login. A
 future deployable server must bind authenticated application principals to

@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 7.2, implement signed HTTP commands and reconnectable SSE projections
+**Current implementation focus:** 7.3, re-evaluate direct browser Veilid and upstream feasibility
 
 ## How to update this plan
 
@@ -1373,7 +1373,51 @@ cargo test -p poche-protocol gateway
 **Completion criteria:** Codec vectors, threat matrix, and recovery semantics
 close G9 without changing current room-code meaning silently.
 
-### [~] 7.2 Implement HTTP commands plus SSE projections for browser devices
+### [x] 7.2 Implement HTTP commands plus SSE projections for browser devices
+
+**Completion notes:** Completed 2026-08-05. The existing host demo remains
+available at `/`; `/gateway` is a separate compatibility lab with the exact
+canonical ADR-0009 host-authoritative/browser-local/gateway-plaintext disclosure
+visible before participation. Chromium WebCrypto creates a non-extractable
+session Ed25519 device key and uploads only its public key and signatures.
+Unsupported WebCrypto blocks conspicuously; there is no silent gateway-custody
+fallback. Enrollment is explicitly a fixed Alice lab shortcut rather than a
+false root-certificate claim; the ADR-0007 certificate path remains required
+for replicated deployment.
+
+An 8 KiB-limited, deny-unknown-fields HTTP envelope carries a version, fixed
+player, public-key-bound device ID, bounded command ID, monotonic sequence,
+typed pause/unpause/chat/grant/revoke action, and signature. Domain-separated
+length-framed signing bytes, strict Ed25519 verification, active-device checks,
+bounded chat, exact command-ID idempotency, and conflicting-retry rejection run
+before the typed bridge enters the existing semantic reducer. Retrying an exact
+signed body returns the retained receipt and neither re-executes the transition
+nor publishes another event. Re-registration preserves sequence state and
+cannot reactivate a revoked device.
+
+Persistent SSE emits monotonic-ID JSON full projections to an exact device,
+retains 128 recipient events, accepts `after` or `Last-Event-ID`, replays only
+later events, and continues live with keepalives. A separately identified
+co-located native fixture and browser device belong to the same Alice player;
+the fixture independently revokes only the browser device without increasing
+player voting weight. `docs/browser-device-gateway.md` records the protocol,
+limitations, measurements, and reproduction.
+
+All 15 focused web-spike tests and strict focused Clippy pass offline; the
+locked release binary builds. Real-browser ordinary-DOM acceptance registered
+both devices, signed pause/chat/grant/revoke, suppressed one identical retry at
+the same event ID, dropped SSE after event 2, applied unpause as event 3 while
+offline, replayed exactly event 3 on reconnect, and revoked the browser device
+while the native device stayed active. Console error/warning capture was empty.
+Final counters were five accepted commands, one duplicate, two SSE connections,
+and one reconnect. The last 230-byte signed command took 335 microseconds in
+the local semantic path; its 2,569-byte event encoded to 959-byte candidate
+gzip (37.3%). Live SSE remains uncompressed until streaming flush behavior is
+measured. One browser-observed grant round trip was 2.9 ms and is explicitly
+not input-to-photon evidence. The final release binary is 4,073,984 bytes; its
+browser-accepted predecessor used about 10.5 MB working set and 10.8 MB peak in
+this bounded run. HTTP+SSE met every
+registered need, so no WSS/WebTransport path was added.
 
 **Work:**
 
@@ -1403,7 +1447,7 @@ disconnect/reconnect; a unit test alone does not close this task.
 signed command path and exact-recipient stream; gateway knowledge/authority is
 accurately displayed and documented.
 
-### [ ] 7.3 Re-evaluate direct browser Veilid and document upstream feasibility
+### [~] 7.3 Re-evaluate direct browser Veilid and document upstream feasibility
 
 **Work:**
 
