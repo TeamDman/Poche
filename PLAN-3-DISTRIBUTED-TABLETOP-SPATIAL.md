@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 3.3, model relational intent and audit queries in Scryer Prolog
+**Current implementation focus:** 3.4, compare spatial claims without treating Rust as oracle
 
 ## How to update this plan
 
@@ -718,7 +718,30 @@ cargo run -p poche-xtask --offline -- spatial nusmv --scope transition-micro
 **Completion criteria:** Symbolic receipts distinguish unconditional safety from
 fairness-conditioned liveness and include negative scheduler/property fixtures.
 
-### [ ] 3.3 Add Scryer Prolog spatial queries and explanations
+### [x] 3.3 Add Scryer Prolog spatial queries and explanations
+
+**Completion notes:** Completed 2026-08-05. Added the independently
+handwritten finite relational model `models/prolog/spatial.pl` and normalized
+command `spatial prolog --scope query-micro`. Its exact scope ID is
+`query-micro-2p-3v-8cards-8drops-4layouts-7transitions`. Seven complete ground
+fixture queries return 63 sorted duplicate-free answers: 8 card locations, 24
+viewer-specific/public semantic text attachments, 5 named/drag command
+resolutions, 8 legal/illegal drop explanations, 4 valid/invalid layout
+findings, 7 successors, and the exact 7 reverse predecessors. Fifty-five rows
+retain stable `because/2` explanations. Typed and drag input produce exactly
+two rows with the same `allow(play(c0))` intent/rule; the one broad Deck/Trump
+placement returns `deny(ambiguous([deck,trump]))` and never selects the first
+zone. Essential answer checks include attachment privacy, overlap, and
+pause/recovery reversal. Length-framed per-fixture hashes combine into corpus
+digest
+`blake3:5dbf46198a011fe7815f1ea92c7378b925d088d9a7a8d3c189d504290dc2aa54`;
+raw/normalized evidence stays in ignored
+`target/prolog-conformance/spatial-*/`. `docs/spatial-prolog.md` documents that
+the productive modes are finite enumeration, unification, positive rules, and
+reverse use of `spatial_step/5`. No Rust callback participates, and the model
+does not claim arbitrary real/nonlinear constraints, collision/mesh solving,
+continuous motion, or completeness outside the named corpus. The prescribed
+CLI and direct seven-fixture Scryer run pass offline.
 
 **Work:**
 

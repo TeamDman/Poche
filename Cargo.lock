@@ -6392,6 +6392,7 @@ dependencies = [
 name = "poche-conformance"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "poche-check",
  "poche-model",
  "poche-native-tools",

@@ -13,7 +13,8 @@ use std::process::{Command, ExitCode, Output};
 use poche_check::{CheckScope, TerminationReason, analyze_liveness, check_session, explore};
 use poche_conformance::{
     Disposition, check_spatial_alloy_layout_micro, check_spatial_nusmv_transition_micro,
-    compare_rust_alloy, compare_rust_models, compare_rust_nusmv, compare_rust_prolog,
+    check_spatial_prolog_query_micro, compare_rust_alloy, compare_rust_models, compare_rust_nusmv,
+    compare_rust_prolog,
 };
 use poche_interchange::{
     BackendKindWire, ConfidenceKindWire, SessionClaimWire, SessionTrackEvidenceWire,
@@ -141,6 +142,7 @@ fn usage() {
          cargo run -p poche-xtask -- rl replay --manifest PATH --matchup NAME --seed SEED\n  \
          cargo run -p poche-xtask -- spatial alloy --scope layout-micro\n  \
          cargo run -p poche-xtask -- spatial nusmv --scope transition-micro\n  \
+         cargo run -p poche-xtask -- spatial prolog --scope query-micro\n  \
          cargo run -p poche-xtask -- coverage audit [--all | --track TRACK]\n  \
          cargo run -p poche-xtask -- oracle check rust|alloy|nusmv|prolog|all\n  \
          cargo run -p poche-xtask -- oracle report\n  \
@@ -177,6 +179,11 @@ fn spatial(mut args: impl Iterator<Item = OsString>) -> ExitCode {
             if backend == OsStr::new("nusmv") && scope == OsStr::new("transition-micro") =>
         {
             spatial_nusmv(&root)
+        }
+        (Some(backend), Some(scope))
+            if backend == OsStr::new("prolog") && scope == OsStr::new("query-micro") =>
+        {
+            spatial_prolog(&root)
         }
         _ => {
             usage();
@@ -225,6 +232,34 @@ fn spatial_nusmv(root: &Path) -> ExitCode {
         }
         Err(error) => {
             eprintln!("spatial NuSMV failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn spatial_prolog(root: &Path) -> ExitCode {
+    match check_spatial_prolog_query_micro(root) {
+        Ok(report) => {
+            println!(
+                "spatial Prolog: scope={} fixtures={} answers={} explanations={} equivalent_plays={} ambiguous={} corpus_digest={}",
+                report.scope,
+                report.fixtures.len(),
+                report.answer_count,
+                report.explanation_rows,
+                report.equivalent_play_resolutions,
+                report.ambiguous_explanations,
+                report.corpus_digest
+            );
+            for fixture in report.fixtures {
+                println!(
+                    "  {} answers={} digest={} evidence={}",
+                    fixture.goal, fixture.answer_count, fixture.digest, fixture.evidence_directory
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("spatial Prolog failed: {error}");
             ExitCode::FAILURE
         }
     }
