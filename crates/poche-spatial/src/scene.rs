@@ -223,6 +223,8 @@ pub enum SceneError {
     HiddenFaceText,
     /// A card's known face is not represented exactly once as text.
     MissingFaceText,
+    /// Card-face text does not equal the typed face value.
+    FaceTextMismatch,
     /// An endpoint pose or bound exceeds the v1 table-local coordinate limit.
     PoseOutsideTable,
 }
@@ -298,6 +300,9 @@ impl SpatialScene {
                     }
                     if card.face.is_none() {
                         return Err(SceneError::HiddenFaceText);
+                    }
+                    if card.face.is_some_and(|face| text.text != face.label()) {
+                        return Err(SceneError::FaceTextMismatch);
                     }
                     if !face_text_cards.insert(card_id) {
                         return Err(SceneError::DuplicateText);

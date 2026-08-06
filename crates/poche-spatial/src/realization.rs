@@ -349,6 +349,21 @@ fn validate_projection(
     projection: &ViewerSpatialProjection,
 ) -> Result<(), RealizationError> {
     let players = ordered_players(layout, projection)?;
+    if projection
+        .players
+        .iter()
+        .enumerate()
+        .any(|(ordinal, player)| usize::from(player.seat.get()) != ordinal)
+    {
+        return Err(RealizationError::PlayerSet);
+    }
+    if projection.revealed_won_cards.windows(2).any(|pair| {
+        let left = (pair[0].winner.get(), pair[0].trick, pair[0].index);
+        let right = (pair[1].winner.get(), pair[1].trick, pair[1].index);
+        left >= right
+    }) {
+        return Err(RealizationError::RevealedWonCard);
+    }
     let mut known_faces = HashSet::new();
     if let Some(trump) = projection.trump
         && !known_faces.insert(trump)

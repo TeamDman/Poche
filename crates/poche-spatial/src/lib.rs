@@ -10,6 +10,7 @@
 //! no renderer, window, network, protocol-codec, or reinforcement-learning
 //! dependency.
 
+mod abstraction;
 mod identity;
 mod interaction;
 mod layout;
@@ -17,6 +18,7 @@ mod realization;
 mod scene;
 mod units;
 
+pub use abstraction::{AbstractionError, abstract_viewer_scene};
 pub use identity::{
     CardObjectId, LayoutId, ObjectId, SeatId, SurfaceId, SurfaceKind, TableId, TextRunId, ZoneId,
 };

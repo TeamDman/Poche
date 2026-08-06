@@ -6369,6 +6369,8 @@ dependencies = [
  "phon",
  "poche-interchange",
  "poche-model",
+ "poche-oracle-rust",
+ "poche-spatial",
 ]
 
 [[package]]

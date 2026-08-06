@@ -8,6 +8,7 @@ mod evidence;
 mod liveness;
 mod safety;
 mod session;
+mod spatial;
 
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
@@ -24,6 +25,9 @@ pub use liveness::{
 };
 pub use safety::{PropertyMeasurements, SafetyFailure, SafetyReport, check_safety_catalog};
 pub use session::*;
+pub use spatial::{
+    NegativeSpatialControl, SpatialCheckError, SpatialCheckReport, check_spatial_refinement,
+};
 
 /// Stable name for a fully declared finite transition system.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
