@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 7.3, re-evaluate direct browser Veilid and upstream feasibility
+**Current implementation focus:** 8.1, implement native 3D spatial adapter and Slug text
 
 ## How to update this plan
 
@@ -1447,7 +1447,37 @@ disconnect/reconnect; a unit test alone does not close this task.
 signed command path and exact-recipient stream; gateway knowledge/authority is
 accurately displayed and documented.
 
-### [~] 7.3 Re-evaluate direct browser Veilid and document upstream feasibility
+### [x] 7.3 Re-evaluate direct browser Veilid and document upstream feasibility
+
+**Completion notes:** Completed 2026-08-05 without editing, building into, or
+otherwise changing `D:\Repos\rust\veilid`. Poche still pins the current
+crates.io `veilid-core` 0.5.7. Official tag v0.5.7 is `f5cdcca3`; the clean
+local read-only reference and upstream main are `76b21769` (2026-07-31), the
+same version/commit used by ADR 0004's WASM artifact. The full escalated doctor
+gate passed Rust 1.96.0, Alloy 6.2.0, NuSMV 2.7.1, Scryer Prolog
+0.10.0-17-ge4d96925, and Typst 0.15.1.
+
+Current and v0.5.7 upstream README evidence still marks secure HTTPS browser
+operation unimplemented. Upstream issue 487/MR 461 additionally deprecates WSS
+behind `enable-protocol-wss` because of privacy/deployment roadblocks and names
+WebTransport as the replacement. Issue 460 remained open with every bootstrap,
+wire type, codec, listener/config, port-multiplexing, native, and WASM checklist
+item unchecked. Source inspection found opt-in WSS implementations but no
+WebTransport protocol/dial implementation. Issue 430 independently states
+outbound relaying is not implemented.
+
+A fresh bounded public prerequisite probe resolved the documented bootstrap to
+`170.64.186.46` and `159.223.237.84`. A correct plain-WS upgrade returned
+HTTP 101 and stayed open until the five-second client timeout; the same HTTPS
+endpoint reset before the TLS handshake (`curl` 35). An HTTPS browser cannot
+downgrade to that WS path, so the production-equivalent browser row remains
+unsupported without pretending a repeated attach can cross a failed TLS
+prerequisite. `docs/veilid-browser-feasibility.md` records source links, exact
+version evidence, the upstream WebTransport work/infrastructure needed, and the
+difference between a general Veilid transport and Poche's narrow signed
+HTTP/SSE gateway. README, deployment matrix, and ADR 0004 now link the result.
+Veilid's AI contribution policy and `CONTRIBUTING.md` are called out; no issue,
+MR, or upstream code was generated.
 
 **Work:**
 
@@ -1476,7 +1506,7 @@ HTTPS/WSS succeeds without a companion.
 
 ## Phase 8 — Deliver native 3D and browser-native interaction
 
-### [ ] 8.1 Implement the native 3D spatial adapter and Slug text
+### [~] 8.1 Implement the native 3D spatial adapter and Slug text
 
 **Work:**
 

@@ -98,6 +98,17 @@ does not erase those browser-server operational requirements.
 ## Primary references
 
 - [Veilid WASM limitations](https://gitlab.com/veilid/veilid/-/blob/v0.5.7/veilid-wasm/README.md)
+
+## Phase-3 re-evaluation, 2026-08-05
+
+Task 7.3 leaves this decision unchanged. Veilid 0.5.7 is the newest crates.io
+release. Its secure-origin README still says HTTPS/WSS browser operation is not
+implemented. Upstream has since deprecated WSS behind an opt-in feature and
+selected WebTransport as the intended replacement, but issue #460's bootstrap,
+wire, codec, config, native, and WASM checklist remains entirely open. A fresh
+bounded probe reached `101 Switching Protocols` over documented development
+WS, while the same public endpoint reset before TLS over HTTPS/WSS. See
+[`veilid-browser-feasibility.md`](../veilid-browser-feasibility.md) for exact
+versions, source/issue links, endpoint evidence, and upstream-versus-Poche scope.
 - [Veilid 0.5.7 source](https://gitlab.com/veilid/veilid/-/tree/v0.5.7)
 - [Datastar Rust 0.3.1](https://docs.rs/datastar/0.3.1/datastar/)
-
