@@ -4,7 +4,7 @@
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-05 (America/Toronto)
 **Intent audit:** Passed 2026-08-05 against the complete post-phase-two user discussion and the completed phase-one/phase-two plans
-**Current implementation focus:** 8.1, implement native 3D spatial adapter and Slug text
+**Current implementation focus:** 8.2, project the same scene semantics into accessible HTML
 
 ## How to update this plan
 
@@ -337,7 +337,7 @@ cargo run -p poche-xtask --offline -- session compare all --scope lobby-micro
 | Engine-neutral spatial core | Supported on workspace targets | Unit/property/refinement tests, no renderer dependency | Pending 2.1-2.4 |
 | Existing host-authoritative native/loopback | Supported unchanged | Full phase-two regression and semantic hashes | Pending 9.1 |
 | Experimental replicated authority | Explicitly experimental | Deterministic corpus, formal model, partition/dropout/convergence tests | Pending phase 5 |
-| Native 3D tabletop | Windows first; portable Bevy support named by G3 | Real window, input/CLI parity, privacy, snapshot, timing | Pending 8.1 |
+| Native 3D tabletop | Windows first; portable Bevy support named by G3 | Real window, input/CLI parity, privacy, snapshot, timing | Phase 8.1 evidence in `docs/native-spatial-ui.md` |
 | Semantic HTML live browser | Supported through self-hosted gateway | Ordinary DOM/accessibility, HTTP+SSE reconnect, exact viewer state | Pending 7.2 and 8.2 |
 | Static Pages replay | Supported and preserved | WASM/site build plus checked replay; no live authority claim | Pending 8.3/9.2 |
 | Direct browser Veilid HTTPS/WSS | Unsupported until new public topology evidence | Re-run ADR-0004 production-equivalent matrix before changing status | Deferred behind 7.3 |
@@ -1506,7 +1506,37 @@ HTTPS/WSS succeeds without a companion.
 
 ## Phase 8 — Deliver native 3D and browser-native interaction
 
-### [~] 8.1 Implement the native 3D spatial adapter and Slug text
+### [x] 8.1 Implement the native 3D spatial adapter and Slug text
+
+**Completion notes:** Completed 2026-08-05. Added the provenance-pinned
+MPL-2.0 `poche-slug` crate with Teamy Terminal's renderer-neutral quadratic
+outline, directional-band, packed-word, metadata, and independent CPU coverage
+contract; the embedded-font singleton was removed. The explicit 255,460-byte
+OFL-1.1 Caskaydia Cove Regular asset is checked by hash and contains real
+`♣♦♥♠` outlines. No dirty or absolute reference-repository dependency is used.
+
+The Bevy 0.19 `3d` leaf crate `poche-native-ui` mirrors validated stable object
+IDs, exact poses, and typed card locations from the shared exact-recipient
+replay fixture. It renders table, seats/players, all semantic zones, 52 cards,
+authorized face text, score sheet, names/scores, deterministic smooth-step
+tweens, picking/drag-drop, typed CLI/keyboard play, camera, and inner/outer
+zone plus seat-anchor audit gizmos. Semantic text entities are parented to the
+validated card or score-sheet surface; Slug curve/band/metadata packets remain
+presentation data. Bevy transforms and drag previews cannot mutate the
+canonical scene. Tests prove named and drag input produce the identical typed
+play/sidecar/endpoint and that hidden cards never gain face text.
+
+Five focused native tests, two extracted Slug tests, strict focused Clippy, and
+the optimized offline build pass. A bounded real release window committed
+`4♣`, displayed the audit overlay and Slug outlines, and produced the inspected
+`docs/assets/native-spatial-acceptance.png`. Startup to first update was
+716.681 ms; the named semantic resolve/commit was 500 ns; 733 sampled frame
+intervals averaged 7.212 ms with p95 7.486 ms. The fixture contained 13 scene
+objects, 52 cards, seven semantic text runs, three authorized face runs, and 49
+hidden cards without face runs. These are process/semantic/presentation
+measurements, explicitly not automated input-to-photon latency. Exact commands,
+raw receipt, screenshot hash, architecture, and limitations are in
+`docs/native-spatial-ui.md`.
 
 **Work:**
 
@@ -1534,7 +1564,7 @@ automation latency input-to-photon latency.
 the same committed transition/tween, inspect score glyphs, and toggle spatial
 audit overlays in a real desktop window.
 
-### [ ] 8.2 Project the same scene semantics into accessible HTML
+### [~] 8.2 Project the same scene semantics into accessible HTML
 
 **Work:**
 

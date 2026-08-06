@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/poche-burn", "crates/poche-check", "crates/poche-cli", "crates/poche-conformance", "crates/poche-crypto-prototype", "crates/poche-domain", "crates/poche-environment", "crates/poche-formal", "crates/poche-interchange", "crates/poche-model", "crates/poche-native-tools", "crates/poche-oracle-rust", "crates/poche-protocol", "crates/poche-rl", "crates/poche-runtime", "crates/poche-session", "crates/poche-spatial", "crates/poche-ui", "crates/poche-veilid", "crates/poche-web-spike", "crates/poche-xtask"]
+members = ["crates/poche-burn", "crates/poche-check", "crates/poche-cli", "crates/poche-conformance", "crates/poche-crypto-prototype", "crates/poche-domain", "crates/poche-environment", "crates/poche-formal", "crates/poche-interchange", "crates/poche-model", "crates/poche-native-tools", "crates/poche-native-ui", "crates/poche-oracle-rust", "crates/poche-protocol", "crates/poche-rl", "crates/poche-runtime", "crates/poche-session", "crates/poche-slug", "crates/poche-spatial", "crates/poche-ui", "crates/poche-veilid", "crates/poche-web-spike", "crates/poche-xtask"]
 resolver = "3"
 
 [workspace.package]
@@ -12,6 +12,7 @@ repository = "https://github.com/TeamDman/Poche"
 
 [workspace.dependencies]
 ark-serialize = { version = "=0.5.0", default-features = false }
+bevy = { version = "=0.19.0", default-features = false, features = ["3d"] }
 blake3 = "=1.8.5"
 burn = { version = "=0.21.0", default-features = false, features = ["std", "autodiff", "flex", "wgpu", "store"] }
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
@@ -24,6 +25,7 @@ facet = "=0.50.0-rc.5"
 flate2 = "=1.1.9"
 futures-util = "=0.3.33"
 getrandom = "=0.3.4"
+num-traits = "=0.2.19"
 phon = "=0.2.0-rc.5"
 rand = "=0.8.7"
 rand_chacha = "=0.3.1"
@@ -33,6 +35,7 @@ tempfile = "=3.27.0"
 tokio = { version = "=1.53.1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
+ttf-parser = "=0.25.1"
 weavy = "=0.2.2"
 veilid-core = { version = "=0.5.7", default-features = false, features = ["rt-tokio", "enable-crypto-vld0"] }
 wasm-bindgen = "=0.2.126"

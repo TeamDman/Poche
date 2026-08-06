@@ -1,0 +1,16 @@
+[package]
+name = "poche-slug"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Renderer-neutral Slug outline, directional-band, and CPU coverage contract"
+
+[dependencies]
+num-traits.workspace = true
+ttf-parser.workspace = true
+
+[lints]
+workspace = true

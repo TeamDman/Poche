@@ -26,6 +26,7 @@ was exhaustive, bounded, symbolic, queried, sampled, or merely empirical.
 - [Symbolic spatial NuSMV oracle](docs/spatial-nusmv.md)
 - [Relational spatial Scryer Prolog oracle](docs/spatial-prolog.md)
 - [Neutral spatial conformance and coverage](docs/spatial-coverage.md)
+- [Native canonical spatial mirror and Slug evidence](docs/native-spatial-ui.md)
 - [Typed command and legality-policy decision](docs/decisions/0006-typed-commands-and-legality-policy.md)
 - [Retrospective action audit](docs/retrospective-audit.md)
 - [Replicated player/device authority decision](docs/decisions/0007-player-device-and-replicated-log.md)
@@ -57,7 +58,7 @@ flowchart LR
   codec --> session["Default-deny SessionState reducer"]
   session --> game["Optional GameEnvironment"]
   game --> events["Ordered events + per-viewer projections"]
-  events --> clients["Text replay / egui / semantic HTML / Veilid"]
+  events --> clients["Text replay / egui / native spatial / semantic HTML / Veilid"]
 
   rust --> rl["poche-2p-v1 direct batched rollouts"]
   rl --> burn["Burn PPO on CPU or WGPU"]
@@ -88,6 +89,7 @@ cargo run -p poche-xtask --offline -- spatial nusmv --scope transition-micro
 cargo run -p poche-xtask --offline -- spatial prolog --scope query-micro
 cargo run -p poche-xtask --offline -- spatial compare all --scope micro
 cargo run -p poche-xtask --offline -- spatial coverage audit --all
+cargo run --release -p poche-native-ui -- --debug-overlay
 cargo run -p poche-cli --offline -- --output json command parse '/startvote "/score add player1 100"'
 cargo run -p poche-xtask -- multiplayer smoke --transport in-process
 cargo run -p poche-cli -- --output text transcript replay tests/fixtures/protocol/session-micro-v1.script.ndjson
@@ -138,6 +140,7 @@ do not hide IP/timing/DHT metadata from the relevant transport participants.
 | Direct browser Veilid | Not supported with Veilid 0.5.7 from a Pages HTTPS origin | Public WSS bootstrap still resets before TLS; upstream deprecated WSS and the replacement WebTransport checklist remains open; no companion app is implied |
 | Self-hosted Datastar demo | Host-colocated Axum authority and accessible semantic HTML work on loopback | Development invite/viewer routes are not production authentication; the operator sees connection metadata and, as host, all state |
 | Signed browser-device gateway lab | Browser-local WebCrypto key, signed bounded typed HTTP, idempotent receipts, reconnectable exact-recipient SSE, and independent device revocation work on loopback | Still host-authoritative and plaintext to the gateway; lab enrollment is not the replicated root-certificate path |
+| Native spatial mirror | Bevy 0.19 renders the checked exact-recipient scene, Slug card/score outlines, typed/drag parity, deterministic tween, and audit bounds in a real release window | Checked replay checkpoint only; not yet a live Veilid player client, physics authority, polished renderer, or input-to-photon measurement |
 
 Do not expose the Datastar demo beyond loopback without adding TLS,
 authentication, durable state, abuse controls, and a deployment-specific threat

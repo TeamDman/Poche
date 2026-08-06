@@ -1,0 +1,20 @@
+[package]
+name = "poche-native-ui"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bevy leaf adapter for Poche's canonical spatial presentation"
+
+[dependencies]
+bevy.workspace = true
+poche-slug = { path = "../poche-slug" }
+poche-spatial = { path = "../poche-spatial" }
+poche-ui = { path = "../poche-ui" }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

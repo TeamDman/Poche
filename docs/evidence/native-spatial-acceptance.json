@@ -1,0 +1,17 @@
+{
+  "startup_to_first_update_microseconds": 716681,
+  "semantic_commit_microseconds": 0,
+  "semantic_commit_nanoseconds": 500,
+  "sampled_frames": 733,
+  "mean_frame_milliseconds": 7.2116064120054535,
+  "p95_frame_milliseconds": 7.4855,
+  "committed_face": "4♣",
+  "scene_objects": 13,
+  "scene_cards": 52,
+  "semantic_text_runs": 7,
+  "visible_face_runs": 3,
+  "hidden_cards_without_face_runs": 49,
+  "debug_overlay": true,
+  "screenshot": "target\\acceptance\\native-spatial.png",
+  "qualification": "real-window startup, semantic input-to-commit, and sampled frame presentation timing; not automated input-to-photon latency"
+}
