@@ -200,7 +200,7 @@ review. Its current development command is:
 cargo run --locked --release -p poche-web-spike
 ```
 
-The ordinary host demo is at `/`; the signed device lab is at `/gateway`; the
+The ordinary peer demo is at `/`; the signed device lab is at `/gateway`; the
 accessible semantic tabletop is at `/tabletop/alice` (with Bob and spectator
 viewer links on the page).
 

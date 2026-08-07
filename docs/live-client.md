@@ -22,7 +22,7 @@ The authority remains the only component that changes game/session semantics:
 
 The HTML never serializes `CommandPayload`, `InviteProof`, or an invitation
 secret into a command endpoint. The deliberately visible demo join code is
-display data for the current candidate/host. Invitation values never enter the
+display data for the current candidate/coordinator. Invitation values never enter the
 canonical projection transcript. A stale or invented control ID fails closed.
 Removing a button is not an authorization mechanism: the focused test submits
 a typed spectator `Pause` directly past the UI and the authority returns
@@ -44,12 +44,20 @@ Run the checked release server from the repository root:
 cargo run --release -p poche-web-spike
 ```
 
-Then open the host client at `http://127.0.0.1:4174/client/host`. The root URL
-opens the same client. Select `Create room`. Use one of the visible new-tab
-links to open Alice, Bob, or the spectator. The new client shows its invite and
-the `Join this room` command. Each client path is durable, so the browser URL
-and the rendered identity agree. Every displayed demo invite has its own copy
-button and clipboard status message.
+Then open `http://127.0.0.1:4174/`, which is Alice's ordinary peer client. Bob
+is at `/client/bob`, and the spectator is at `/client/spectator`. Alice or Bob
+may select `Create room`; the first accepted creator becomes the room's current
+lifecycle coordinator and may also take a player seat. The other peer then
+receives its own invite and `Join this room` command through the live stream.
+Each client path is durable, so the browser URL and rendered identity agree.
+Every displayed demo invite has its own copy button and clipboard status
+message. No `/client/host` identity exists.
+
+`Coordinator` is an explicit compatibility-mode capability, not a magic demo
+device and not a claim that replicated consensus is already deployed. The
+current self-hosted process still orders authoritative state. The creator may
+start/reset/close the room until those lifecycle powers are migrated to the
+replicated voting model.
 
 `POCHE_WEB_SPIKE_ADDR` changes the listen address. The scenario buttons are an
 explicit development harness. They reset the local authority and prepare
@@ -71,10 +79,12 @@ adapter rejects it before constructing a typed command. It then refreshes the
 client and shows a `STALE-CONTROL` status. Authority denials use the same
 visible client-event surface.
 
-The four identities are host, Alice, Bob, and spectator. Static one-use demo
-codes are intentionally unsuitable for deployment. A real room must issue
-fresh protected invitations through the rendezvous flow described in
-`veilid-rendezvous.md`.
+The three interactive identities are Alice, Bob, and spectator. Static one-use
+demo codes are intentionally unsuitable for deployment. Before a room exists,
+peers see only `Create room`, not a meaningless join command or code. After
+creation, the coordinator sees codes for the other identities and each
+nonmember sees only its own join code. A real room must issue fresh protected
+invitations through the rendezvous flow described in `veilid-rendezvous.md`.
 
 The transcript endpoint exports canonical NDJSON projection/error frames for
 one exact recipient. It intentionally omits commands, invitation proofs, full
@@ -106,8 +116,8 @@ measurements, not performance guarantees.
 The in-app browser (whose version is not exposed by the test surface) then
 exercised the release server as ordinary semantic HTML:
 
-- pending host rendered only `Create room`;
-- deterministic running setup rendered host, two seated players, one
+- pending Alice and Bob each rendered only `Create room`;
+- deterministic running setup rendered a dynamic coordinator, two seated players, one
   spectator, public pot/scores/trump, and exact private player hands;
 - the ungranted spectator DOM contained no own or granted hand;
 - spectator request -> Alice grant added only Alice's `3C` to the spectator

@@ -156,9 +156,14 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
       it is not a third-party projection relay. Buttons carry opaque control IDs,
       while typed commands and policy enforcement remain at the authority.
     </p>
+    <p class="trust-note">
+      <strong>Coordinator is a capability, not a special device.</strong>
+      Whichever peer creates this compatibility-mode room may start its countdown,
+      reset it, and close it. The server still orders authoritative state; replicated
+      voting has not replaced that capability yet.
+    </p>
 
     <nav class="client-nav" aria-label="Live client identity">
-      <a href="/client/host">Host client</a>
       <a href="/client/alice">Alice client</a>
       <a href="/client/bob">Bob client</a>
       <a href="/client/spectator">Spectator client</a>
@@ -167,8 +172,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
     <aside class="join-guidance" aria-labelledby="join-guidance-heading">
       <h2 id="join-guidance-heading">Join from another tab</h2>
       <p>
-        Each client has its own URL. Create the room as the host. Then open an
-        unused client and select <strong>Join this room</strong>.
+        Alice and Bob are ordinary peer identities. Either may create the room;
+        the first creator becomes its current lifecycle coordinator. Then open
+        the other client and select <strong>Join this room</strong>.
       </p>
       <nav aria-label="Open another client in a new tab">
         <a href="/client/alice" target="_blank" rel="noopener">Open Alice client in a new tab</a>
@@ -191,7 +197,6 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
         <button data-on:click="@post('/live/clock/advance')">Advance authority clock</button>
       </div>
       <div class="actions">
-        <button data-on:click="@post('/live/host/disconnect')">Disconnect host</button>
         <button data-on:click="@post('/live/alice/disconnect')">Disconnect Alice</button>
         <button data-on:click="@post('/live/bob/disconnect')">Disconnect Bob</button>
         <button data-on:click="@post('/live/spectator/disconnect')">Disconnect spectator</button>

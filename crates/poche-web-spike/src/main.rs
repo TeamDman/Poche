@@ -436,7 +436,7 @@ fn load_rl_episode(path: &std::path::Path) -> Result<poche_rl::EpisodeTranscript
 }
 
 async fn index(State(state): State<AppState>) -> Response {
-    live_client_document(&state, "host")
+    live_client_document(&state, "alice")
 }
 
 async fn client_view(State(state): State<AppState>, Path(viewer): Path<String>) -> Response {
@@ -564,14 +564,14 @@ async fn live_command(
 async fn live_setup(State(state): State<AppState>, Path(scenario): Path<String>) -> Response {
     with_live(&state, true, |demo| {
         demo.setup(&scenario)?;
-        live_html(demo, "host")
+        live_html(demo, "alice")
     })
 }
 
 async fn live_advance_clock(State(state): State<AppState>) -> Response {
     with_live(&state, true, |demo| {
         demo.advance_clock()?;
-        live_html(demo, "host")
+        live_html(demo, "alice")
     })
 }
 
@@ -864,6 +864,7 @@ mod tests {
         assert!(INDEX.contains("<button data-on:click="));
         assert!(INDEX.contains("datastar@1.0.0-RC.7/bundles/datastar.js"));
         assert!(INDEX.contains("href=\"/client/alice\""));
+        assert!(!INDEX.contains("/client/host"));
         assert!(INDEX.contains("Open Alice client in a new tab"));
         assert!(INDEX.contains("/live/__CLIENT_NAME__/events"));
         assert!(INDEX.contains("data-copy-text"));
@@ -873,19 +874,52 @@ mod tests {
     }
 
     #[test]
-    fn path_addressed_second_client_can_join_a_host_created_room() {
+    fn either_peer_can_create_and_the_other_can_join() {
         let mut demo = LiveDemo::named("path-client-test").expect("demo");
-        demo.control("host", "create-room").expect("create room");
+        let alice_pending = live_client_html(&demo, "alice").expect("Alice pending page");
+        let bob_pending = live_client_html(&demo, "bob").expect("Bob pending page");
+        assert!(alice_pending.contains("data-command-id=\"create-room\""));
+        assert!(bob_pending.contains("data-command-id=\"create-room\""));
+        assert!(!alice_pending.contains("data-command-id=\"join-room\""));
+        assert!(!bob_pending.contains("data-command-id=\"join-room\""));
 
-        let candidate = live_client_html(&demo, "alice").expect("Alice client page");
-        assert!(candidate.contains("This tab is the <strong>alice</strong> client"));
+        demo.control("alice", "create-room").expect("create room");
+
+        let creator = live_client_html(&demo, "alice").expect("Alice creator page");
+        assert!(creator.contains("role=coordinator"));
+        assert!(creator.contains("data-command-id=\"take-seat-0\""));
+        assert!(!creator.contains("POCHE-LAB-ALICE"));
+        assert!(creator.contains("POCHE-LAB-BOB"));
+
+        let candidate = live_client_html(&demo, "bob").expect("Bob client page");
+        assert!(candidate.contains("This tab is the <strong>bob</strong> client"));
         assert!(candidate.contains("data-command-id=\"join-room\""));
         assert!(candidate.contains("Join this room"));
 
-        demo.control("alice", "join-room").expect("join room");
-        let joined = live_client_html(&demo, "alice").expect("joined Alice client page");
+        demo.control("bob", "join-room").expect("join room");
+        let joined = live_client_html(&demo, "bob").expect("joined Bob client page");
         assert!(!joined.contains("data-command-id=\"join-room\""));
         assert!(joined.contains("data-command-id=\"take-seat-0\""));
+
+        let mut bob_created = LiveDemo::named("bob-created-room-test").expect("demo");
+        bob_created
+            .control("bob", "create-room")
+            .expect("Bob creates room");
+        assert!(
+            bob_created
+                .view("bob")
+                .expect("Bob coordinator view")
+                .command("take-seat-0")
+                .is_some()
+        );
+        assert!(
+            bob_created
+                .view("alice")
+                .expect("Alice candidate view")
+                .command("join-room")
+                .is_some()
+        );
+        assert!(live_client_html(&bob_created, "host").is_err());
     }
 
     #[tokio::test]
@@ -905,7 +939,7 @@ mod tests {
         assert_eq!(
             live.lock()
                 .expect("live lock")
-                .view("host")
+                .view("alice")
                 .unwrap()
                 .projection
                 .room_phase,
@@ -927,14 +961,21 @@ mod tests {
         let demo = gateway_demo().expect("gateway demo");
         let alice = live_html(&demo, "alice").expect("Alice exact projection");
         assert!(alice.contains("Your hand"));
-        assert!(!alice.contains("POCHE-LAB"));
+        assert!(!alice.contains("POCHE-LAB-ALICE"));
+        assert!(alice.contains("POCHE-LAB-BOB"));
     }
 
     #[test]
     fn live_html_keeps_typed_payloads_and_invite_proofs_server_side() {
-        let demo = LiveDemo::named("test-live").expect("demo");
-        let alice = live_html(&demo, "alice").expect("alice live view");
+        let mut demo = LiveDemo::named("test-live").expect("demo");
+        let pending = live_html(&demo, "alice").expect("Alice pending view");
+        assert!(!pending.contains("POCHE-LAB"));
+        assert!(!pending.contains("data-command-id=\"join-room\""));
+        demo.control("bob", "create-room")
+            .expect("Bob creates room");
+        let alice = live_html(&demo, "alice").expect("Alice candidate view");
         assert!(alice.contains("POCHE-LAB-ALICE"));
+        assert!(!alice.contains("POCHE-LAB-BOB"));
         assert!(alice.contains("data-command-id=\"join-room\""));
         assert!(!alice.contains("InviteProof"));
         assert!(!alice.contains("RedeemInvite"));

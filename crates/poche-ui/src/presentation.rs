@@ -134,7 +134,7 @@ impl PresentationModel {
                 .map(|member| MemberPresentation {
                     principal: member.principal_id.as_str().to_owned(),
                     role: if member.host {
-                        "host"
+                        "coordinator"
                     } else if member.seat.is_some() {
                         "player"
                     } else {

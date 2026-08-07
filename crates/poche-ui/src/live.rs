@@ -143,7 +143,7 @@ fn derive_typed_controls(
     let member = member.expect("checked above");
     let seated = member.seat.is_some();
     let connected = member.connected;
-    let is_host = member.role == "host";
+    let is_coordinator = member.role == "coordinator";
 
     if !connected
         || model.connection == ConnectionPresentation::Reconnecting
@@ -158,9 +158,16 @@ fn derive_typed_controls(
         return controls;
     }
 
-    add_phase_controls(&mut controls, model, input, seated, is_host, member.ready);
+    add_phase_controls(
+        &mut controls,
+        model,
+        input,
+        seated,
+        is_coordinator,
+        member.ready,
+    );
     add_hand_controls(&mut controls, input, viewer);
-    add_common_controls(&mut controls, model, input, connected, is_host);
+    add_common_controls(&mut controls, model, input, connected, is_coordinator);
     controls
 }
 
@@ -169,11 +176,13 @@ fn add_phase_controls(
     model: &PresentationModel,
     input: &LiveClientInput,
     seated: bool,
-    is_host: bool,
+    is_coordinator: bool,
     ready: bool,
 ) {
     match model.room_phase {
-        RoomPhase::Lobby => add_lobby_controls(controls, model, input, seated, is_host, ready),
+        RoomPhase::Lobby => {
+            add_lobby_controls(controls, model, input, seated, is_coordinator, ready);
+        }
         RoomPhase::Countdown if seated => push_control(
             controls,
             "abort-countdown",
@@ -184,7 +193,7 @@ fn add_phase_controls(
         RoomPhase::Paused if seated => {
             push_control(controls, "unpause", "Resume game", CommandPayload::Unpause);
         }
-        RoomPhase::PostGame if is_host => push_control(
+        RoomPhase::PostGame if is_coordinator => push_control(
             controls,
             "reset-lobby",
             "Return to lobby",
@@ -199,7 +208,7 @@ fn add_lobby_controls(
     model: &PresentationModel,
     input: &LiveClientInput,
     seated: bool,
-    is_host: bool,
+    is_coordinator: bool,
     ready: bool,
 ) {
     if seated {
@@ -236,7 +245,7 @@ fn add_lobby_controls(
         .iter()
         .filter(|candidate| candidate.seat.is_some())
         .collect::<Vec<_>>();
-    if is_host
+    if is_coordinator
         && seated_members.len() == usize::from(input.seat_count)
         && seated_members.iter().all(|candidate| candidate.ready)
         && let Some((deadline_tick, countdown_token)) = &input.countdown_command
@@ -336,7 +345,7 @@ fn add_common_controls(
     model: &PresentationModel,
     input: &LiveClientInput,
     connected: bool,
-    is_host: bool,
+    is_coordinator: bool,
 ) {
     if !connected || model.room_phase == RoomPhase::Closed {
         return;
@@ -349,7 +358,7 @@ fn add_common_controls(
             CommandPayload::Chat { text: text.clone() },
         );
     }
-    if is_host {
+    if is_coordinator {
         push_control(
             controls,
             "close-room",

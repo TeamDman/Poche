@@ -22,7 +22,6 @@ use poche_ui::{
     render_semantic_html_with_root_id,
 };
 
-const HOST: &str = "host";
 const ALICE: &str = "alice";
 const BOB: &str = "bob";
 const SPECTATOR: &str = "spectator";
@@ -32,7 +31,7 @@ const ROOM: &str = "datastar-live-room";
 const ALICE_CODE: &str = "POCHE-LAB-ALICE";
 const BOB_CODE: &str = "POCHE-LAB-BOB";
 const SPECTATOR_CODE: &str = "POCHE-LAB-SPECTATOR";
-const UI_VIEWERS: [&str; 4] = [HOST, ALICE, BOB, SPECTATOR];
+const UI_VIEWERS: [&str; 3] = [ALICE, BOB, SPECTATOR];
 
 /// Stateful local authority used to exercise every live-client surface.
 pub struct LiveDemo {
@@ -62,7 +61,7 @@ impl LiveDemo {
         }
         let mut transport = InProcessTransport::new(LoopbackCodec::CanonicalNdjson);
         let mut clients = BTreeMap::new();
-        for name in [HOST, ALICE, BOB, SPECTATOR, GAME] {
+        for name in [ALICE, BOB, SPECTATOR, GAME] {
             let client = transport.connect(principal(name)?).map_err(debug_error)?;
             clients.insert(name.to_owned(), client);
         }
@@ -131,7 +130,12 @@ impl LiveDemo {
         });
         let involved = member.is_some_and(|member| member.connection == ConnectionState::Connected);
         let (hand_requests, hand_grants) = self.hand_access(&viewer_id, involved);
-        let (room_invites, join_proof) = room_access(viewer, member.is_some())?;
+        let (room_invites, join_proof) = room_access(
+            viewer,
+            member.is_some(),
+            member.is_some_and(|member| member.host),
+            self.authority.state.host.is_some(),
+        )?;
         let countdown_token = CountdownToken::new(format!("ui-countdown-{}", self.next_command))
             .map_err(|_| "invalid countdown token".to_owned())?;
         Ok(LiveClientPresentation::from_input(
@@ -232,12 +236,8 @@ impl LiveDemo {
         if stage == "pending" {
             return Ok("reset to pending".to_owned());
         }
-        self.submit_payload(HOST, CommandPayload::CreateRoom, false)?;
-        for (viewer, code) in [
-            (ALICE, ALICE_CODE),
-            (BOB, BOB_CODE),
-            (SPECTATOR, SPECTATOR_CODE),
-        ] {
+        self.submit_payload(ALICE, CommandPayload::CreateRoom, false)?;
+        for (viewer, code) in [(BOB, BOB_CODE), (SPECTATOR, SPECTATOR_CODE)] {
             self.submit_payload(
                 viewer,
                 CommandPayload::RedeemInvite {
@@ -256,7 +256,7 @@ impl LiveDemo {
         let token = CountdownToken::new("demo-countdown")
             .map_err(|_| "invalid demo countdown".to_owned())?;
         self.submit_payload(
-            HOST,
+            ALICE,
             CommandPayload::ArmCountdown {
                 deadline_tick: 3,
                 countdown_token: token,
@@ -618,19 +618,35 @@ fn invite_for(viewer: &str) -> Option<&'static str> {
 fn room_access(
     viewer: &str,
     is_member: bool,
+    is_coordinator: bool,
+    room_exists: bool,
 ) -> Result<(Vec<RoomInvitePresentation>, Option<InviteProof>), String> {
-    let room_invites = match (viewer, is_member) {
-        (HOST, true) => vec![
-            room_invite("Alice", ALICE_CODE),
-            room_invite("Bob", BOB_CODE),
-            room_invite("Spectator", SPECTATOR_CODE),
-        ],
-        (ALICE, false) => vec![room_invite("Alice", ALICE_CODE)],
-        (BOB, false) => vec![room_invite("Bob", BOB_CODE)],
-        (SPECTATOR, false) => vec![room_invite("Spectator", SPECTATOR_CODE)],
-        _ => Vec::new(),
+    let room_invites = if is_coordinator {
+        [
+            (ALICE, "Alice", ALICE_CODE),
+            (BOB, "Bob", BOB_CODE),
+            (SPECTATOR, "Spectator", SPECTATOR_CODE),
+        ]
+        .into_iter()
+        .filter(|(candidate, _, _)| *candidate != viewer)
+        .map(|(_, label, code)| room_invite(label, code))
+        .collect()
+    } else if !is_member && room_exists {
+        invite_for(viewer)
+            .map(|code| {
+                let label = match viewer {
+                    ALICE => "Alice",
+                    BOB => "Bob",
+                    SPECTATOR => "Spectator",
+                    _ => "Peer",
+                };
+                vec![room_invite(label, code)]
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
     };
-    let join_proof = (!is_member)
+    let join_proof = (!is_member && room_exists)
         .then(|| invite_for(viewer))
         .flatten()
         .map(InviteProof::new)
@@ -699,15 +715,16 @@ mod tests {
     use poche_protocol::{CommandPayload, ProtocolFrame, RoomPhase, decode_frame_line};
     use poche_ui::render_live_semantic_html;
 
-    use super::{ALICE, BOB, HOST, LiveDemo, SPECTATOR};
+    use super::{ALICE, BOB, LiveDemo, SPECTATOR};
 
     #[test]
     fn full_live_demo_uses_typed_controls_and_exact_projection_histories() {
         let mut demo = LiveDemo::named("test-live").expect("demo");
-        let pending = demo.view(HOST).expect("pending view");
+        let pending = demo.view(ALICE).expect("pending view");
         assert_eq!(pending.projection.members.len(), 0);
         assert_eq!(pending.authority_revision, 0);
-        assert!(demo.view(HOST).unwrap().command("create-room").is_some());
+        assert!(demo.view(ALICE).unwrap().command("create-room").is_some());
+        assert!(demo.view(BOB).unwrap().command("create-room").is_some());
         demo.setup("running").expect("running setup");
         let alice = demo.view(ALICE).expect("alice view");
         let spectator = demo.view(SPECTATOR).expect("spectator view");
@@ -757,7 +774,7 @@ mod tests {
         demo.setup("countdown").expect("countdown setup");
         demo.control(ALICE, "abort-countdown").expect("abort");
         assert_eq!(
-            demo.view(HOST).unwrap().projection.room_phase,
+            demo.view(ALICE).unwrap().projection.room_phase,
             RoomPhase::Lobby
         );
 
@@ -768,7 +785,7 @@ mod tests {
             .expect("authority returns a denial disposition");
         assert!(denial.starts_with("denied D-NOT-SEATED; revision "));
         assert_eq!(
-            demo.view(HOST).unwrap().projection.room_phase,
+            demo.view(ALICE).unwrap().projection.room_phase,
             RoomPhase::Running
         );
     }
@@ -778,7 +795,7 @@ mod tests {
         let mut demo = LiveDemo::named("countdown-tick-test").expect("demo");
         demo.setup("countdown").expect("countdown setup");
         assert_eq!(
-            demo.view(HOST)
+            demo.view(ALICE)
                 .unwrap()
                 .projection
                 .countdown
@@ -788,7 +805,7 @@ mod tests {
         );
         assert!(demo.tick_countdown().expect("first tick"));
         assert_eq!(
-            demo.view(HOST)
+            demo.view(ALICE)
                 .unwrap()
                 .projection
                 .countdown
@@ -798,7 +815,7 @@ mod tests {
         );
         assert!(demo.tick_countdown().expect("second tick"));
         assert_eq!(
-            demo.view(HOST)
+            demo.view(ALICE)
                 .unwrap()
                 .projection
                 .countdown
@@ -808,7 +825,7 @@ mod tests {
         );
         assert!(demo.tick_countdown().expect("deadline tick"));
         assert_eq!(
-            demo.view(HOST).unwrap().projection.room_phase,
+            demo.view(ALICE).unwrap().projection.room_phase,
             RoomPhase::Running
         );
         assert!(!demo.tick_countdown().expect("running does not tick"));
@@ -817,13 +834,14 @@ mod tests {
     #[test]
     fn stale_control_refreshes_the_view_and_records_visible_feedback() {
         let mut demo = LiveDemo::named("stale-control-test").expect("demo");
-        demo.control(HOST, "create-room").expect("create room");
-        demo.control(ALICE, "join-room").expect("join room");
-        assert!(demo.view(ALICE).unwrap().command("take-seat-0").is_some());
+        demo.control(ALICE, "create-room").expect("create room");
+        demo.control(BOB, "join-room").expect("join room");
+        assert!(demo.view(BOB).unwrap().command("take-seat-0").is_some());
 
-        demo.control(HOST, "take-seat-0").expect("host takes seat");
-        assert!(demo.control(ALICE, "take-seat-0").is_err());
-        let refreshed = demo.view(ALICE).expect("refreshed Alice view");
+        demo.control(ALICE, "take-seat-0")
+            .expect("coordinator takes seat");
+        assert!(demo.control(BOB, "take-seat-0").is_err());
+        let refreshed = demo.view(BOB).expect("refreshed Bob view");
         assert!(refreshed.command("take-seat-0").is_none());
         let notice = refreshed
             .projection
