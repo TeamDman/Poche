@@ -21,6 +21,7 @@ use std::{
 
 use bevy::{
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
+    input::mouse::AccumulatedMouseMotion,
     prelude::*,
     render::view::screenshot::{Screenshot, save_to_disk},
     window::{CursorIcon, PrimaryWindow, SystemCursorIcon, WindowPlugin},
@@ -44,6 +45,12 @@ pub const FONT_BYTES: &[u8] = include_bytes!("../assets/CaskaydiaCove-Regular.tt
 const METRES_PER_MILLIMETRE: f32 = 0.001;
 const SLUG_FONT_UNIT_METRES: f32 = 0.000_028;
 const SLUG_CURVE_STEPS: u32 = 7;
+const CAMERA_MOVE_METRES_PER_SECOND: f32 = 0.8;
+const CAMERA_ROTATE_RADIANS_PER_SECOND: f32 = 1.35;
+const CAMERA_MOUSE_PAN_METRES_PER_PIXEL: f32 = 0.002_2;
+const CAMERA_RESET_SECONDS: f32 = 0.55;
+const CAMERA_MIN_PITCH: f32 = 0.22;
+const CAMERA_MAX_PITCH: f32 = 1.32;
 
 /// Renderer buffer packet made from the stable Slug ABI.
 #[derive(Clone, Debug, PartialEq)]
@@ -350,6 +357,104 @@ struct TweenClock {
     elapsed_seconds: f32,
 }
 
+#[derive(Component)]
+struct TabletopCamera;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CameraView {
+    target: Vec3,
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+}
+
+impl CameraView {
+    fn home() -> Self {
+        let target = Vec3::new(0.0, 0.08, 0.0);
+        let offset = Vec3::new(0.0, 1.55, 1.65) - target;
+        Self {
+            target,
+            yaw: offset.x.atan2(offset.z),
+            pitch: (offset.y / offset.length()).asin(),
+            distance: offset.length(),
+        }
+    }
+
+    fn eye(self) -> Vec3 {
+        let horizontal = self.distance * self.pitch.cos();
+        self.target
+            + Vec3::new(
+                horizontal * self.yaw.sin(),
+                self.distance * self.pitch.sin(),
+                horizontal * self.yaw.cos(),
+            )
+    }
+
+    fn transform(self) -> Transform {
+        Transform::from_translation(self.eye()).looking_at(self.target, Vec3::Y)
+    }
+
+    fn interpolate(self, to: Self, factor: f32) -> Self {
+        let yaw_delta = (to.yaw - self.yaw + PI).rem_euclid(2.0 * PI) - PI;
+        Self {
+            target: self.target.lerp(to.target, factor),
+            yaw: self.yaw + yaw_delta * factor,
+            pitch: self.pitch + (to.pitch - self.pitch) * factor,
+            distance: self.distance + (to.distance - self.distance) * factor,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CameraResetTween {
+    from: CameraView,
+    elapsed_seconds: f32,
+}
+
+#[derive(Resource, Debug)]
+struct CameraRig {
+    view: CameraView,
+    reset: Option<CameraResetTween>,
+}
+
+impl Default for CameraRig {
+    fn default() -> Self {
+        Self {
+            view: CameraView::home(),
+            reset: None,
+        }
+    }
+}
+
+impl CameraRig {
+    fn begin_reset(&mut self) {
+        self.reset = Some(CameraResetTween {
+            from: self.view,
+            elapsed_seconds: 0.0,
+        });
+    }
+
+    fn cancel_reset(&mut self) {
+        self.reset = None;
+    }
+
+    fn advance_reset(&mut self, delta_seconds: f32) {
+        let Some(mut tween) = self.reset else {
+            return;
+        };
+        tween.elapsed_seconds += delta_seconds;
+        let linear = (tween.elapsed_seconds / CAMERA_RESET_SECONDS).clamp(0.0, 1.0);
+        let eased = linear * linear * (3.0 - 2.0 * linear);
+        if linear < 1.0 {
+            self.view = tween.from.interpolate(CameraView::home(), eased);
+            self.reset = Some(tween);
+        } else {
+            self.view = CameraView::home();
+            self.reset = None;
+        }
+    }
+}
+
 #[derive(Resource)]
 struct LaunchClock {
     started: Instant,
@@ -452,7 +557,8 @@ pub fn run_from_env() -> Result<(), String> {
                 println!(
                     "poche-native-ui [--play-card FACE|first] [--debug-overlay] [--screenshot PATH] \
                      [--acceptance-report PATH] [--exit-after-seconds N]\n\
-                     Keyboard: P play first owned card; F3 toggle spatial audit overlay"
+                     Camera: middle-drag pan; WASD move; arrows rotate; Space reset view\n\
+                     Game/debug: P play first owned card; F3 toggle spatial audit overlay"
                 );
                 return Ok(());
             }
@@ -468,6 +574,7 @@ pub fn run_from_env() -> Result<(), String> {
         .insert_resource(debug_overlay)
         .insert_resource(acceptance)
         .init_resource::<TweenClock>()
+        .init_resource::<CameraRig>()
         .init_resource::<LaunchClock>()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -483,6 +590,7 @@ pub fn run_from_env() -> Result<(), String> {
             Update,
             (
                 keyboard_input,
+                camera_input,
                 apply_mirrored_transforms,
                 draw_slug_text,
                 draw_spatial_debug,
@@ -504,7 +612,8 @@ fn setup_native_scene(
 ) {
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(0.0, 1.55, 1.65).looking_at(Vec3::new(0.0, 0.08, 0.0), Vec3::Y),
+        CameraView::home().transform(),
+        TabletopCamera,
     ));
     commands.spawn((
         DirectionalLight {
@@ -719,6 +828,55 @@ fn keyboard_input(
     }
 }
 
+fn camera_input(
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
+    mut rig: ResMut<CameraRig>,
+    mut camera: Single<&mut Transform, With<TabletopCamera>>,
+) {
+    if keys.just_pressed(KeyCode::Space) {
+        rig.begin_reset();
+    } else {
+        let mut movement = Vec2::ZERO;
+        movement.y += f32::from(keys.pressed(KeyCode::KeyW));
+        movement.y -= f32::from(keys.pressed(KeyCode::KeyS));
+        movement.x += f32::from(keys.pressed(KeyCode::KeyD));
+        movement.x -= f32::from(keys.pressed(KeyCode::KeyA));
+
+        let mut rotation = Vec2::ZERO;
+        rotation.x += f32::from(keys.pressed(KeyCode::ArrowRight));
+        rotation.x -= f32::from(keys.pressed(KeyCode::ArrowLeft));
+        rotation.y += f32::from(keys.pressed(KeyCode::ArrowUp));
+        rotation.y -= f32::from(keys.pressed(KeyCode::ArrowDown));
+
+        let mouse_pan = if mouse_buttons.pressed(MouseButton::Middle) {
+            mouse_motion.delta
+        } else {
+            Vec2::ZERO
+        };
+        if movement != Vec2::ZERO || rotation != Vec2::ZERO || mouse_pan != Vec2::ZERO {
+            rig.cancel_reset();
+        }
+
+        let view_forward = Vec3::new(-rig.view.yaw.sin(), 0.0, -rig.view.yaw.cos());
+        let view_right = Vec3::new(rig.view.yaw.cos(), 0.0, -rig.view.yaw.sin());
+        let movement =
+            movement.normalize_or_zero() * CAMERA_MOVE_METRES_PER_SECOND * time.delta_secs();
+        rig.view.target += view_right * movement.x + view_forward * movement.y;
+        rig.view.target += (view_right * -mouse_pan.x + view_forward * mouse_pan.y)
+            * CAMERA_MOUSE_PAN_METRES_PER_PIXEL;
+        rig.view.yaw += rotation.x * CAMERA_ROTATE_RADIANS_PER_SECOND * time.delta_secs();
+        rig.view.pitch = (rig.view.pitch
+            + rotation.y * CAMERA_ROTATE_RADIANS_PER_SECOND * time.delta_secs())
+        .clamp(CAMERA_MIN_PITCH, CAMERA_MAX_PITCH);
+    }
+
+    rig.advance_reset(time.delta_secs());
+    **camera = rig.view.transform();
+}
+
 fn apply_mirrored_transforms(
     time: Res<Time>,
     controller: Res<NativeController>,
@@ -787,6 +945,7 @@ fn draw_spatial_debug(
     mut gizmos: Gizmos,
     debug: Res<DebugOverlay>,
     controller: Res<NativeController>,
+    camera: Res<CameraRig>,
 ) {
     if !debug.enabled {
         return;
@@ -815,6 +974,12 @@ fn draw_spatial_debug(
             Color::srgb(0.7, 0.8, 1.0),
         );
     }
+    gizmos.cross(camera.view.target, 0.045, Color::srgb(1.0, 0.84, 0.2));
+    gizmos.line(
+        camera.view.target,
+        camera.view.eye(),
+        Color::srgba(1.0, 0.84, 0.2, 0.4),
+    );
 }
 
 fn update_status(
@@ -997,9 +1162,25 @@ mod tests {
     use poche_spatial::{CardFace, CardLocation, ObjectId, TextBinding, ZoneId};
 
     use super::{
-        FONT_BYTES, NativeController, parse_card_face, replay_fixture_controller,
-        slug_packet_for_text, zone_center_card_bounds,
+        CAMERA_RESET_SECONDS, CameraRig, CameraView, FONT_BYTES, NativeController, parse_card_face,
+        replay_fixture_controller, slug_packet_for_text, zone_center_card_bounds,
     };
+
+    #[test]
+    fn camera_reset_tweens_back_to_the_registered_home_view() {
+        let mut rig = CameraRig::default();
+        let home = rig.view;
+        rig.view.target += bevy::prelude::Vec3::new(0.4, 0.0, -0.3);
+        rig.view.yaw += 1.1;
+        rig.view.pitch = 0.3;
+        rig.begin_reset();
+        rig.advance_reset(CAMERA_RESET_SECONDS / 2.0);
+        assert_ne!(rig.view, home);
+        assert!(rig.reset.is_some());
+        rig.advance_reset(CAMERA_RESET_SECONDS / 2.0);
+        assert_eq!(rig.view, CameraView::home());
+        assert!(rig.reset.is_none());
+    }
 
     #[test]
     fn card_parser_accepts_dense_unicode_and_cli_spellings() {

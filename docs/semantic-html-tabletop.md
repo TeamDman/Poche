@@ -1,11 +1,11 @@
 # Semantic HTML tabletop
 
 Phase 8.2 projects the same engine-neutral `SpatialScene` used by the native
-Bevy leaf into ordinary HTML. The HTML is not a rasterized camera view and does
-not receive transforms as layout instructions. It derives semantic regions for
-the deck, trump/current trick, exact-recipient hands, score sheet, public
-history, chat, audit findings, proposals, and votes; the browser then performs
-its normal responsive layout.
+Bevy leaf into ordinary HTML. It derives semantic regions for the deck,
+trump/current trick, exact-recipient hands, score sheet, public history, chat,
+audit findings, proposals, and votes. CSS perspective, transforms, overlap, and
+responsive layout then present those regions as a compact command table; those
+visual transforms never become card or game state.
 
 Run the local lab and open `/tabletop/alice`, `/tabletop/bob`, or
 `/tabletop/spectator`:
@@ -21,7 +21,13 @@ The adapter resolves that ID to `CommandPayload`, and the ordinary session,
 game, audit, or governance reducer decides whether it applies. Neither HTML nor
 CSS position is game authority.
 
-At the bottom of each page, a server-derived SVG highlights the independent
+The primary desktop viewport keeps the player/turn banners, table, hand, legal
+actions, and room utilities visible without document scrolling. The current
+viewer banner opens an ordinary link menu for switching exact-recipient
+projections. Activity, governance, diagnostics, and laboratory controls live in
+inspectable side panels rather than extending the game board vertically.
+
+In the diagnostic inspector, a server-derived SVG highlights the independent
 room, viewer-transport, and game-phase states. A read-only copy-safe diagnostic
 summary carries the authority incarnation/revision, public state, available
 commands, public history, and viewer-local events while omitting join codes,
@@ -65,6 +71,14 @@ showing those forms, while `TabletopLab` synchronizes disconnect/reconnect into
 `GovernanceState`. Unit tests and the second browser pass verify the correction.
 The machine-readable receipt is
 [`evidence/semantic-html-acceptance.json`](evidence/semantic-html-acceptance.json).
+
+The current acceptance suite also performs a renderer-driven full-game test.
+For every nonterminal turn it renders both players, confirms that every retained
+`GameAction` control appears in the HTML, submits one of those opaque rendered
+IDs through `TabletopLab`, and continues until `PostGame`. This complements the
+fixed replay checkpoints: it proves the presented bidding and card controls can
+drive a complete deterministic game, though it remains DOM/adapter acceptance
+rather than pixel-level browser automation for every action.
 
 ## Scope
 

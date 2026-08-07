@@ -33,7 +33,7 @@ pub struct TabletopLab {
 impl TabletopLab {
     pub fn new() -> Result<Self, String> {
         let mut demo = LiveDemo::named("semantic-tabletop")?;
-        demo.setup("playing")?;
+        demo.setup("running")?;
         let mut audit = RetrospectiveAudit::default();
         audit
             .append_action(AuditedGameAction {
@@ -228,6 +228,7 @@ impl TabletopLab {
     fn supplement(&self) -> TabletopHtmlSupplement {
         TabletopHtmlSupplement {
             status: Some(self.status.clone()),
+            viewer_href_prefix: Some("/tabletop".to_owned()),
             findings: self
                 .audit
                 .findings()
@@ -290,7 +291,9 @@ fn debug_error(error: impl core::fmt::Debug) -> String {
 
 #[cfg(test)]
 mod tests {
+    use poche_protocol::{CommandPayload, PublicGamePhase, RoomPhase};
     use poche_spatial::spatial_scene_hash_hex;
+    use poche_ui::render_tabletop_semantic_html;
 
     use super::TabletopLab;
 
@@ -334,5 +337,68 @@ mod tests {
         assert!(lab.action("alice", "start-vote").is_err());
         lab.action("alice", "reconnect").expect("reconnect");
         assert!(lab.action("alice", "start-vote").is_ok());
+    }
+
+    #[test]
+    fn rendered_controls_drive_a_complete_game_without_a_preprogrammed_action_script() {
+        let mut lab = TabletopLab::new().expect("lab");
+        let mut saw_bidding = false;
+        let mut saw_playing = false;
+        let mut submitted_actions = 0_usize;
+
+        for _ in 0..512 {
+            let mut next = None;
+            let mut terminal = false;
+            for viewer in ["alice", "bob"] {
+                let (live, scene, supplement) = lab.projection(viewer).expect("viewer projection");
+                terminal |= live.projection.room_phase == RoomPhase::PostGame;
+                if let Some(table) = &live.projection.table {
+                    saw_bidding |= table.phase == PublicGamePhase::Bidding;
+                    saw_playing |= table.phase == PublicGamePhase::Playing;
+                }
+                let html = render_tabletop_semantic_html(
+                    &live,
+                    &scene,
+                    "test-tabletop",
+                    &format!("/tabletop/{viewer}/action"),
+                    &supplement,
+                )
+                .expect("rendered tabletop");
+                let game_controls = live
+                    .controls
+                    .iter()
+                    .filter(|control| matches!(control.payload, CommandPayload::GameAction { .. }))
+                    .collect::<Vec<_>>();
+                for control in &game_controls {
+                    assert!(
+                        html.contains(&format!("data-command-id=\"{}\"", control.id)),
+                        "every retained game action must be operable from rendered HTML"
+                    );
+                }
+                if let Some(control) = game_controls.first() {
+                    assert!(
+                        next.is_none(),
+                        "only the current actor may expose game actions"
+                    );
+                    next = Some((viewer, control.id.clone()));
+                }
+            }
+            if terminal {
+                assert!(next.is_none());
+                break;
+            }
+            let (viewer, control) = next.expect("a nonterminal game must expose an actor control");
+            lab.action(viewer, &control)
+                .expect("rendered typed control must apply");
+            submitted_actions += 1;
+        }
+
+        let (final_view, _, _) = lab.projection("alice").expect("final projection");
+        assert_eq!(final_view.projection.room_phase, RoomPhase::PostGame);
+        assert!(saw_bidding && saw_playing);
+        assert!(
+            submitted_actions > 100,
+            "the test must drive the whole game"
+        );
     }
 }

@@ -28,9 +28,13 @@ this exact viewer; 49 card objects remain backs with no face text.
   band, and metadata packets. The current slice visualizes the curves through
   Bevy's 3D gizmo line pass; it does not claim the Teamy Vulkan analytic shader
   was transplanted.
+- Hold the middle mouse button and drag to pan across the table. `WASD` moves
+  the camera target in its current ground-plane frame, the arrow keys rotate
+  yaw and pitch, and `Space` eases the camera back to the registered home view
+  over 550 ms. These are presentation-only camera transforms.
 - Press `P` for the first owned typed play, drag an owned card onto the play
   volume for the picking path, and press `F3` for the spatial audit overlay.
-  Both input paths call the same `resolve_card_play`/`resolve_drag_play`
+  Both card-input paths call the same `resolve_card_play`/`resolve_drag_play`
   contract and reconstruct the same 300 ms smooth-step endpoint.
 
 Run the interactive release application with:
@@ -73,9 +77,10 @@ fingerprint; see [semantic-html-tabletop.md](semantic-html-tabletop.md).
 | Scene objects / cards / semantic text runs | 13 / 52 / 7 |
 | Authorized face runs / hidden cards without face runs | 3 / 49 |
 
-Five focused native tests pass: CLI face parsing, real suit outlines and packed
-metadata, Slug all-curves/banded CPU parity, named/drag transition equality,
-and absence of invented hidden-face text or canonical scene mutation. The two
+Six focused native tests pass: camera reset interpolation, CLI face parsing,
+real suit outlines and packed metadata, Slug all-curves/banded CPU parity,
+named/drag transition equality, and absence of invented hidden-face text or
+canonical scene mutation. The two
 extracted Slug source tests, strict focused Clippy, and optimized offline build
 also pass.
 
