@@ -306,7 +306,9 @@ code { overflow-wrap: anywhere; }
 .diagnostic-context { width: 100%; min-height: 11rem; padding: .55rem; resize: vertical; border: 1px solid #3d5145; background: #080c09; color: #d9e5dc; font: .72rem/1.4 ui-monospace, monospace; }
 .state-machine-diagram { width: 100%; min-width: 44rem; color: currentColor; }
 .state-machine-diagram .state-node rect { fill: #111914; stroke: currentColor; }
+.state-machine-diagram .state-node:not(.current), .state-machine-diagram .state-edge { opacity: .5; }
 .state-machine-diagram .state-node.current rect { fill: #176b37; stroke-width: 3; }
+.state-machine-diagram .state-node.current text { fill: #fff; font-weight: 800; }
 .state-machine-diagram text { fill: currentColor; font: 14px system-ui, sans-serif; }
 .state-machine-diagram .lane-label { font-weight: 700; }
 .state-machine-diagram .state-edge { fill: none; stroke: currentColor; }

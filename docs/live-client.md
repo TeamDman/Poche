@@ -44,12 +44,18 @@ Run the checked release server from the repository root:
 cargo run --release -p poche-web-spike
 ```
 
-Then open `http://127.0.0.1:4174/`. `POCHE_WEB_SPIKE_ADDR` changes the listen
-address. The scenario buttons are an explicit development harness; they reset
-the local authority and prepare pending, lobby, countdown, or running state by
-submitting the same typed commands as ordinary clients. Chance and settlement
-are explicit environment commands. The authority clock is logical rather than
-wall time.
+Then open the host client at `http://127.0.0.1:4174/client/host`. The root URL
+opens the same client. Select `Create room`. Use one of the visible new-tab
+links to open Alice, Bob, or the spectator. The new client shows its invite and
+the `Join this room` command. Each client path is durable, so the browser URL
+and the rendered identity agree.
+
+`POCHE_WEB_SPIKE_ADDR` changes the listen address. The scenario buttons are an
+explicit development harness. They reset the local authority and prepare
+pending, lobby, countdown, or running state through ordinary typed commands.
+Chance and settlement are explicit environment commands. The authority clock
+is logical rather than wall time. Each tab holds an exact-recipient snapshot.
+Refresh that client to see changes made by another tab.
 
 The four identities are host, Alice, Bob, and spectator. Static one-use demo
 codes are intentionally unsuitable for deployment. A real room must issue

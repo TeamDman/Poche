@@ -124,7 +124,7 @@ fn derive_typed_controls(
             push_control(
                 &mut controls,
                 "join-room",
-                "Join with room code",
+                "Join this room",
                 CommandPayload::RedeemInvite {
                     invite: invite.clone(),
                 },

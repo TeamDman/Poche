@@ -154,6 +154,7 @@ fn room(value: &str) -> Result<RoomId, String> {
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
+        .route("/client/{viewer}", get(client_view))
         .route("/view/{viewer}/{ordinal}", get(view_checkpoint))
         .route("/rl/replay", get(rl_replay))
         .route("/rl/replay.ndjson", get(rl_replay_ndjson))
@@ -431,15 +432,30 @@ fn load_rl_episode(path: &std::path::Path) -> Result<poche_rl::EpisodeTranscript
 }
 
 async fn index(State(state): State<AppState>) -> Response {
+    live_client_document(&state, "host")
+}
+
+async fn client_view(State(state): State<AppState>, Path(viewer): Path<String>) -> Response {
+    live_client_document(&state, &viewer)
+}
+
+fn live_client_document(state: &AppState, viewer: &str) -> Response {
     let live = state
         .live
         .lock()
         .map_err(|_| "live authority lock poisoned".to_owned())
-        .and_then(|demo| live_html(&demo, "host"));
+        .and_then(|demo| live_client_html(&demo, viewer));
     match live {
-        Ok(live) => Html(INDEX.replace("__LIVE_CLIENT__", &live)).into_response(),
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+        Ok(document) => Html(document).into_response(),
+        Err(error) => (StatusCode::NOT_FOUND, error).into_response(),
     }
+}
+
+fn live_client_html(demo: &LiveDemo, viewer: &str) -> Result<String, String> {
+    let live = live_html(demo, viewer)?;
+    Ok(INDEX
+        .replace("__LIVE_CLIENT__", &live)
+        .replace("__CLIENT_NAME__", viewer))
 }
 
 async fn view_checkpoint(
@@ -692,7 +708,7 @@ fn gateway_demo() -> Result<LiveDemo, String> {
 mod tests {
     use super::{
         AuthorityHost, EMBEDDED_REPLAY, GATEWAY_INDEX, INDEX, LiveDemo, ReplayDeck, gateway_demo,
-        live_html, load_rl_episode, rl_replay_html, selected_rl_episode,
+        live_client_html, live_html, load_rl_episode, rl_replay_html, selected_rl_episode,
     };
     use poche_protocol::RoomPhase;
     use poche_ui::render_semantic_html;
@@ -765,8 +781,27 @@ mod tests {
     fn page_uses_semantic_controls_and_the_pinned_reference_client() {
         assert!(INDEX.contains("<button data-on:click="));
         assert!(INDEX.contains("datastar@1.0.0-RC.7/bundles/datastar.js"));
+        assert!(INDEX.contains("href=\"/client/alice\""));
+        assert!(INDEX.contains("Open Alice client in a new tab"));
         assert!(INDEX.contains("aria-live=\"polite\""));
         assert!(INDEX.contains("__LIVE_CLIENT__"));
+        assert!(INDEX.contains("__CLIENT_NAME__"));
+    }
+
+    #[test]
+    fn path_addressed_second_client_can_join_a_host_created_room() {
+        let mut demo = LiveDemo::named("path-client-test").expect("demo");
+        demo.control("host", "create-room").expect("create room");
+
+        let candidate = live_client_html(&demo, "alice").expect("Alice client page");
+        assert!(candidate.contains("This tab is the <strong>alice</strong> client"));
+        assert!(candidate.contains("data-command-id=\"join-room\""));
+        assert!(candidate.contains("Join this room"));
+
+        demo.control("alice", "join-room").expect("join room");
+        let joined = live_client_html(&demo, "alice").expect("joined Alice client page");
+        assert!(!joined.contains("data-command-id=\"join-room\""));
+        assert!(joined.contains("data-command-id=\"take-seat-0\""));
     }
 
     #[test]

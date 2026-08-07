@@ -31,6 +31,28 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
         margin-block: 1rem;
       }
 
+      .client-nav a,
+      .join-guidance a {
+        min-height: 2.75rem;
+        display: inline-flex;
+        align-items: center;
+        padding-inline: 0.9rem;
+        border: 1px solid currentColor;
+        border-radius: 0.3rem;
+        text-decoration: none;
+      }
+
+      .join-guidance {
+        padding: 0.8rem;
+        border: 2px solid #2e8b57;
+        border-radius: 0.4rem;
+      }
+
+      .client-status {
+        margin-block: 0.5rem;
+        font-size: 1.1rem;
+      }
+
       button {
         min-height: 2.75rem;
         padding-inline: 0.9rem;
@@ -68,9 +90,20 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
         stroke: currentColor;
       }
 
+      .state-machine-diagram .state-node:not(.current),
+      .state-machine-diagram .state-edge {
+        opacity: 0.5;
+      }
+
       .state-machine-diagram .state-node.current rect {
         fill: #b8efc2;
+        stroke: #2e8b57;
         stroke-width: 3;
+      }
+
+      .state-machine-diagram .state-node.current text {
+        fill: #08240f;
+        font-weight: 800;
       }
 
       .state-machine-diagram text {
@@ -94,6 +127,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
   </head>
   <body>
     <h1>Poche deterministic live client</h1>
+    <p class="client-status">This tab is the <strong>__CLIENT_NAME__</strong> client.</p>
     <p><a href="/gateway">Open the signed browser-device gateway lab</a></p>
     <p><a href="/tabletop/alice">Open the accessible semantic tabletop</a></p>
     <p>
@@ -103,12 +137,25 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
       while typed commands and policy enforcement remain at the authority.
     </p>
 
-    <nav aria-label="Live viewer identity">
-      <button data-on:click="@get('/live/host')">Host view</button>
-      <button data-on:click="@get('/live/alice')">Alice player view</button>
-      <button data-on:click="@get('/live/bob')">Bob player view</button>
-      <button data-on:click="@get('/live/spectator')">Spectator view</button>
+    <nav class="client-nav" aria-label="Live client identity">
+      <a href="/client/host">Host client</a>
+      <a href="/client/alice">Alice client</a>
+      <a href="/client/bob">Bob client</a>
+      <a href="/client/spectator">Spectator client</a>
     </nav>
+
+    <aside class="join-guidance" aria-labelledby="join-guidance-heading">
+      <h2 id="join-guidance-heading">Join from another tab</h2>
+      <p>
+        Each client has its own URL. Create the room as the host. Then open an
+        unused client and select <strong>Join this room</strong>.
+      </p>
+      <nav aria-label="Open another client in a new tab">
+        <a href="/client/alice" target="_blank" rel="noopener">Open Alice client in a new tab</a>
+        <a href="/client/bob" target="_blank" rel="noopener">Open Bob client in a new tab</a>
+        <a href="/client/spectator" target="_blank" rel="noopener">Open spectator client in a new tab</a>
+      </nav>
+    </aside>
 
     <section aria-labelledby="scenario-heading">
       <h2 id="scenario-heading">Deterministic scenario controls</h2>

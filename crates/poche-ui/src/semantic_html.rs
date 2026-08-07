@@ -160,9 +160,7 @@ pub fn render_live_semantic_html(
         escape_html(&live.authority_instance),
         live.authority_revision,
     );
-    if let Some(code) = &live.room_code {
-        let _ = write!(html, "<p>Join code: <code>{}</code></p>", escape_html(code));
-    }
+    render_room_access(&mut html, live);
     html.push_str("</header>");
 
     if !live.hand_requests.is_empty() {
@@ -242,6 +240,27 @@ pub fn render_live_semantic_html(
     ));
     html.push_str("</article>");
     html
+}
+
+fn render_room_access(html: &mut String, live: &LiveClientPresentation) {
+    let Some(code) = &live.room_code else {
+        return;
+    };
+    let is_member = live
+        .projection
+        .members
+        .iter()
+        .any(|member| member.principal == live.projection.viewer);
+    html.push_str("<section class=\"room-access\" aria-labelledby=\"room-access-heading\"><h3 id=\"room-access-heading\">Room access</h3>");
+    let _ = write!(html, "<p>Join code: <code>{}</code></p>", escape_html(code));
+    if is_member {
+        html.push_str("<p>Open another client in a new tab to join this room.</p>");
+    } else {
+        html.push_str(
+            "<p>This client has not joined. Select <strong>Join this room</strong> below.</p>",
+        );
+    }
+    html.push_str("</section>");
 }
 
 fn render_hand(html: &mut String, heading: &str, hand: &HandPresentation) {
@@ -362,7 +381,9 @@ mod tests {
         );
 
         let html = render_live_semantic_html(&live, "live", "/command/candidate");
-        assert!(html.contains("Join with room code"));
+        assert!(html.contains("Join this room"));
+        assert!(html.contains("This client has not joined"));
+        assert!(html.contains("class=\"room-access\""));
         assert!(html.contains("DISPLAY-CODE"));
         assert!(html.contains("data-command-id=\"join-room\""));
         assert!(html.contains("What state am I in?"));
