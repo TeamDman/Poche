@@ -24,6 +24,13 @@ pub struct HandGrantPresentation {
     pub grant_epoch: u64,
 }
 
+/// One explicitly displayable invite; its retained typed command stays adapter-side.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoomInvitePresentation {
+    pub label: String,
+    pub code: String,
+}
+
 /// One server-retained typed command represented by an opaque UI control ID.
 ///
 /// Renderers expose `id` and `label`, never the serialized payload. A live
@@ -44,7 +51,7 @@ pub struct LiveClientInput {
     pub authority_instance: String,
     /// Current committed authority revision for stale-tab diagnostics.
     pub authority_revision: u64,
-    pub room_code: Option<String>,
+    pub room_invites: Vec<RoomInvitePresentation>,
     pub join_proof: Option<InviteProof>,
     pub seat_count: u8,
     pub chat_draft: Option<String>,
@@ -63,7 +70,7 @@ pub struct LiveClientPresentation {
     pub room_id: String,
     pub authority_instance: String,
     pub authority_revision: u64,
-    pub room_code: Option<String>,
+    pub room_invites: Vec<RoomInvitePresentation>,
     pub hand_requests: Vec<HandRequestPresentation>,
     pub hand_grants: Vec<HandGrantPresentation>,
     pub transcript_href: Option<String>,
@@ -81,7 +88,7 @@ impl LiveClientPresentation {
             room_id: input.room_id,
             authority_instance: input.authority_instance,
             authority_revision: input.authority_revision,
-            room_code: input.room_code,
+            room_invites: input.room_invites,
             hand_requests: input.hand_requests,
             hand_grants: input.hand_grants,
             transcript_href: input.transcript_href,
@@ -376,7 +383,7 @@ mod tests {
 
     use crate::{
         ConnectionPresentation, LiveClientInput, LiveClientPresentation, PresentationInput,
-        PresentationModel,
+        PresentationModel, RoomInvitePresentation,
     };
 
     fn principal(value: &str) -> PrincipalId {
@@ -426,7 +433,10 @@ mod tests {
             room_id: "room".to_owned(),
             authority_instance: "test-live/0".to_owned(),
             authority_revision: 7,
-            room_code: Some("CODE".to_owned()),
+            room_invites: vec![RoomInvitePresentation {
+                label: "Test player".to_owned(),
+                code: "CODE".to_owned(),
+            }],
             join_proof: None,
             seat_count: 2,
             chat_draft: Some("hello".to_owned()),

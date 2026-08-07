@@ -310,8 +310,13 @@ pub fn render_live_client(
     ui.heading("Live room client");
     ui.label(format!("identity: {}", live.projection.viewer));
     ui.label(format!("room: {}", live.room_id));
-    if let Some(code) = &live.room_code {
-        ui.label(format!("join code: {code}"));
+    for invite in &live.room_invites {
+        ui.horizontal(|ui| {
+            ui.label(format!("{} join code: {}", invite.label, invite.code));
+            if ui.button(format!("Copy {} code", invite.label)).clicked() {
+                ui.ctx().copy_text(invite.code.clone());
+            }
+        });
     }
     if !live.hand_requests.is_empty() {
         ui.collapsing("Pending hand requests", |ui| {

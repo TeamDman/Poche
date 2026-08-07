@@ -48,14 +48,28 @@ Then open the host client at `http://127.0.0.1:4174/client/host`. The root URL
 opens the same client. Select `Create room`. Use one of the visible new-tab
 links to open Alice, Bob, or the spectator. The new client shows its invite and
 the `Join this room` command. Each client path is durable, so the browser URL
-and the rendered identity agree.
+and the rendered identity agree. Every displayed demo invite has its own copy
+button and clipboard status message.
 
 `POCHE_WEB_SPIKE_ADDR` changes the listen address. The scenario buttons are an
 explicit development harness. They reset the local authority and prepare
 pending, lobby, countdown, or running state through ordinary typed commands.
 Chance and settlement are explicit environment commands. The authority clock
-is logical rather than wall time. Each tab holds an exact-recipient snapshot.
-Refresh that client to see changes made by another tab.
+is logical rather than wall time. While the executable is running, a one-second
+adapter timer advances an active countdown by one logical tick. Reducer tests
+can still advance the same clock directly without waiting for wall time.
+
+Each client opens a long-lived Datastar SSE request. An accepted command,
+denied stale control, scenario change, disconnect, or countdown tick publishes
+a fresh exact-recipient patch to every open client. The server renders each
+patch independently for that viewer. It does not broadcast one player's
+private projection to other clients. Reconnecting the SSE request starts with
+the latest projection, so a missed event cannot leave the tab stale.
+
+If a tab submits a control that became stale before the update arrived, the
+adapter rejects it before constructing a typed command. It then refreshes the
+client and shows a `STALE-CONTROL` status. Authority denials use the same
+visible client-event surface.
 
 The four identities are host, Alice, Bob, and spectator. Static one-use demo
 codes are intentionally unsuitable for deployment. A real room must issue

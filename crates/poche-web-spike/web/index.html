@@ -53,6 +53,26 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
         font-size: 1.1rem;
       }
 
+      .room-invites {
+        display: grid;
+        gap: 0.5rem;
+        padding: 0;
+        list-style: none;
+      }
+
+      .room-invites li {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .client-notice {
+        padding: 0.7rem;
+        border-left: 0.3rem solid #2e8b57;
+        background: Canvas;
+      }
+
       button {
         min-height: 2.75rem;
         padding-inline: 0.9rem;
@@ -125,7 +145,7 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
       }
     </style>
   </head>
-  <body>
+  <body data-init="@get('/live/__CLIENT_NAME__/events', {retry: 'always'})">
     <h1>Poche deterministic live client</h1>
     <p class="client-status">This tab is the <strong>__CLIENT_NAME__</strong> client.</p>
     <p><a href="/gateway">Open the signed browser-device gateway lab</a></p>
@@ -212,26 +232,46 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
     </main>
     </details>
     <script>
+      async function writePocheClipboard(text) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch (_) {
+          const scratch = document.createElement("textarea");
+          scratch.value = text;
+          scratch.style.position = "fixed";
+          scratch.style.opacity = "0";
+          document.body.appendChild(scratch);
+          scratch.select();
+          const copied = document.execCommand("copy");
+          scratch.remove();
+          return copied;
+        }
+      }
+
       async function copyPocheDiagnostic(button) {
         const target = document.getElementById(button.dataset.copyContext);
         const status = document.getElementById(button.dataset.copyStatus);
         if (!target) return;
-        try {
-          await navigator.clipboard.writeText(target.value);
-          if (status) status.textContent = "Copied safe diagnostic context to the clipboard.";
-        } catch (_) {
-          target.focus();
-          target.select();
-          const copied = document.execCommand("copy");
-          if (status) status.textContent = copied
-            ? "Copied safe diagnostic context to the clipboard."
-            : "Clipboard access was unavailable; the diagnostic text is selected for manual copying.";
-        }
+        const copied = await writePocheClipboard(target.value);
+        if (status) status.textContent = copied
+          ? "Copied safe diagnostic context to the clipboard."
+          : "Clipboard access was unavailable.";
+      }
+
+      async function copyPocheText(button) {
+        const target = document.getElementById(button.dataset.copyText);
+        const status = document.getElementById(button.dataset.copyStatus);
+        if (!target) return;
+        const copied = await writePocheClipboard(target.textContent);
+        if (status) status.textContent = copied ? "Copied join code." : "Clipboard access was unavailable.";
       }
 
       document.addEventListener("click", (event) => {
-        const button = event.target.closest("[data-copy-context]");
-        if (button) void copyPocheDiagnostic(button);
+        const diagnosticButton = event.target.closest("[data-copy-context]");
+        if (diagnosticButton) void copyPocheDiagnostic(diagnosticButton);
+        const textButton = event.target.closest("[data-copy-text]");
+        if (textButton) void copyPocheText(textButton);
       });
     </script>
   </body>

@@ -502,7 +502,7 @@ mod tests {
                 room_id: "fixture-room".to_owned(),
                 authority_instance: "tabletop-test/0".to_owned(),
                 authority_revision: 0,
-                room_code: None,
+                room_invites: Vec::new(),
                 join_proof: None,
                 seat_count: fixture.layout.id().players(),
                 chat_draft: None,

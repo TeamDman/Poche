@@ -18,7 +18,8 @@ use poche_session::{
 use poche_ui::{
     ChatPresentation, ConnectionPresentation, CountdownPresentation, HandGrantPresentation,
     HandRequestPresentation, LiveClientInput, LiveClientPresentation, NoticePresentation,
-    PresentationInput, PresentationModel, render_semantic_html_with_root_id,
+    PresentationInput, PresentationModel, RoomInvitePresentation,
+    render_semantic_html_with_root_id,
 };
 
 const HOST: &str = "host";
@@ -130,7 +131,7 @@ impl LiveDemo {
         });
         let involved = member.is_some_and(|member| member.connection == ConnectionState::Connected);
         let (hand_requests, hand_grants) = self.hand_access(&viewer_id, involved);
-        let (room_code, join_proof) = room_access(viewer, member.is_some())?;
+        let (room_invites, join_proof) = room_access(viewer, member.is_some())?;
         let countdown_token = CountdownToken::new(format!("ui-countdown-{}", self.next_command))
             .map_err(|_| "invalid countdown token".to_owned())?;
         Ok(LiveClientPresentation::from_input(
@@ -139,7 +140,7 @@ impl LiveDemo {
                 room_id: ROOM.to_owned(),
                 authority_instance: self.authority_instance(),
                 authority_revision: self.authority.state.revision,
-                room_code,
+                room_invites,
                 join_proof,
                 seat_count: 2,
                 chat_draft: Some(format!("hello from {viewer}")),
@@ -193,10 +194,19 @@ impl LiveDemo {
 
     /// Resolve an opaque UI ID and submit its retained typed payload.
     pub fn control(&mut self, viewer: &str, control_id: &str) -> Result<String, String> {
-        let payload = self
-            .view(viewer)?
-            .command(control_id)
-            .ok_or_else(|| "unknown or stale UI control".to_owned())?;
+        let Some(payload) = self.view(viewer)?.command(control_id) else {
+            self.push_notice(
+                viewer,
+                "STALE-CONTROL",
+                "That action is no longer available. The room changed in another client. This view is now up to date.",
+            );
+            println!(
+                "poche-web-spike event=stale-control authority={} viewer={viewer} control={control_id} revision={}",
+                self.authority_instance(),
+                self.authority.state.revision,
+            );
+            return Err("unknown or stale UI control".to_owned());
+        };
         self.submit_payload(viewer, payload, true)
     }
 
@@ -314,6 +324,23 @@ impl LiveDemo {
             "advanced authority clock to {tick}; outcomes {}",
             outcomes.len()
         ))
+    }
+
+    /// Advance one logical second only while a countdown is active.
+    pub fn tick_countdown(&mut self) -> Result<bool, String> {
+        if !matches!(self.authority.state.phase, SessionPhase::Countdown { .. }) {
+            return Ok(false);
+        }
+        let tick = self.authority.clock.now().saturating_add(1);
+        self.authority.advance_clock_to(tick).map_err(debug_error)?;
+        self.drain_all()?;
+        self.drive_environment()?;
+        println!(
+            "poche-web-spike event=countdown-tick authority={} tick={tick} revision={}",
+            self.authority_instance(),
+            self.authority.state.revision,
+        );
+        Ok(true)
     }
 
     /// Simulate loss, then bind a fresh transport so the typed reconnect can run.
@@ -591,13 +618,17 @@ fn invite_for(viewer: &str) -> Option<&'static str> {
 fn room_access(
     viewer: &str,
     is_member: bool,
-) -> Result<(Option<String>, Option<InviteProof>), String> {
-    let room_code = match (viewer, is_member) {
-        (HOST, true) => Some(format!("{ALICE_CODE} · {BOB_CODE} · {SPECTATOR_CODE}")),
-        (ALICE, false) => Some(ALICE_CODE.to_owned()),
-        (BOB, false) => Some(BOB_CODE.to_owned()),
-        (SPECTATOR, false) => Some(SPECTATOR_CODE.to_owned()),
-        _ => None,
+) -> Result<(Vec<RoomInvitePresentation>, Option<InviteProof>), String> {
+    let room_invites = match (viewer, is_member) {
+        (HOST, true) => vec![
+            room_invite("Alice", ALICE_CODE),
+            room_invite("Bob", BOB_CODE),
+            room_invite("Spectator", SPECTATOR_CODE),
+        ],
+        (ALICE, false) => vec![room_invite("Alice", ALICE_CODE)],
+        (BOB, false) => vec![room_invite("Bob", BOB_CODE)],
+        (SPECTATOR, false) => vec![room_invite("Spectator", SPECTATOR_CODE)],
+        _ => Vec::new(),
     };
     let join_proof = (!is_member)
         .then(|| invite_for(viewer))
@@ -605,7 +636,14 @@ fn room_access(
         .map(InviteProof::new)
         .transpose()
         .map_err(|_| "invalid checked demo invite".to_owned())?;
-    Ok((room_code, join_proof))
+    Ok((room_invites, join_proof))
+}
+
+fn room_invite(label: &str, code: &str) -> RoomInvitePresentation {
+    RoomInvitePresentation {
+        label: label.to_owned(),
+        code: code.to_owned(),
+    }
 }
 
 fn deny_code(reason: poche_protocol::DenyReason) -> &'static str {
@@ -733,6 +771,67 @@ mod tests {
             demo.view(HOST).unwrap().projection.room_phase,
             RoomPhase::Running
         );
+    }
+
+    #[test]
+    fn countdown_ticks_one_step_at_a_time_and_starts_the_game() {
+        let mut demo = LiveDemo::named("countdown-tick-test").expect("demo");
+        demo.setup("countdown").expect("countdown setup");
+        assert_eq!(
+            demo.view(HOST)
+                .unwrap()
+                .projection
+                .countdown
+                .unwrap()
+                .remaining(),
+            3
+        );
+        assert!(demo.tick_countdown().expect("first tick"));
+        assert_eq!(
+            demo.view(HOST)
+                .unwrap()
+                .projection
+                .countdown
+                .unwrap()
+                .remaining(),
+            2
+        );
+        assert!(demo.tick_countdown().expect("second tick"));
+        assert_eq!(
+            demo.view(HOST)
+                .unwrap()
+                .projection
+                .countdown
+                .unwrap()
+                .remaining(),
+            1
+        );
+        assert!(demo.tick_countdown().expect("deadline tick"));
+        assert_eq!(
+            demo.view(HOST).unwrap().projection.room_phase,
+            RoomPhase::Running
+        );
+        assert!(!demo.tick_countdown().expect("running does not tick"));
+    }
+
+    #[test]
+    fn stale_control_refreshes_the_view_and_records_visible_feedback() {
+        let mut demo = LiveDemo::named("stale-control-test").expect("demo");
+        demo.control(HOST, "create-room").expect("create room");
+        demo.control(ALICE, "join-room").expect("join room");
+        assert!(demo.view(ALICE).unwrap().command("take-seat-0").is_some());
+
+        demo.control(HOST, "take-seat-0").expect("host takes seat");
+        assert!(demo.control(ALICE, "take-seat-0").is_err());
+        let refreshed = demo.view(ALICE).expect("refreshed Alice view");
+        assert!(refreshed.command("take-seat-0").is_none());
+        let notice = refreshed
+            .projection
+            .notices
+            .last()
+            .expect("stale control notice");
+        assert_eq!(notice.reason_code, "STALE-CONTROL");
+        assert!(notice.message.contains("view is now up to date"));
     }
 
     #[test]

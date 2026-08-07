@@ -160,8 +160,9 @@ pub fn render_live_semantic_html(
         escape_html(&live.authority_instance),
         live.authority_revision,
     );
-    render_room_access(&mut html, live);
+    render_room_access(&mut html, live, root_id);
     html.push_str("</header>");
+    render_latest_notice(&mut html, live);
 
     if !live.hand_requests.is_empty() {
         html.push_str(
@@ -242,17 +243,32 @@ pub fn render_live_semantic_html(
     html
 }
 
-fn render_room_access(html: &mut String, live: &LiveClientPresentation) {
-    let Some(code) = &live.room_code else {
+fn render_room_access(html: &mut String, live: &LiveClientPresentation, root_id: &str) {
+    if live.room_invites.is_empty() {
         return;
-    };
+    }
     let is_member = live
         .projection
         .members
         .iter()
         .any(|member| member.principal == live.projection.viewer);
-    html.push_str("<section class=\"room-access\" aria-labelledby=\"room-access-heading\"><h3 id=\"room-access-heading\">Room access</h3>");
-    let _ = write!(html, "<p>Join code: <code>{}</code></p>", escape_html(code));
+    html.push_str("<section class=\"room-access\" aria-labelledby=\"room-access-heading\"><h3 id=\"room-access-heading\">Room access</h3><ul class=\"room-invites\">");
+    for (index, invite) in live.room_invites.iter().enumerate() {
+        let code_id = format!("{root_id}-invite-{index}");
+        let status_id = format!("{root_id}-invite-status-{index}");
+        let _ = write!(
+            html,
+            "<li><span>{}: <code id=\"{}\">{}</code></span><button type=\"button\" data-copy-text=\"{}\" data-copy-status=\"{}\">Copy {} code</button><output id=\"{}\" role=\"status\" aria-live=\"polite\"></output></li>",
+            escape_html(&invite.label),
+            escape_html(&code_id),
+            escape_html(&invite.code),
+            escape_html(&code_id),
+            escape_html(&status_id),
+            escape_html(&invite.label),
+            escape_html(&status_id),
+        );
+    }
+    html.push_str("</ul>");
     if is_member {
         html.push_str("<p>Open another client in a new tab to join this room.</p>");
     } else {
@@ -261,6 +277,18 @@ fn render_room_access(html: &mut String, live: &LiveClientPresentation) {
         );
     }
     html.push_str("</section>");
+}
+
+fn render_latest_notice(html: &mut String, live: &LiveClientPresentation) {
+    let Some(notice) = live.projection.notices.last() else {
+        return;
+    };
+    let _ = write!(
+        html,
+        "<p class=\"client-notice\" role=\"status\" aria-live=\"polite\"><code>{}</code> {}</p>",
+        escape_html(&notice.reason_code),
+        escape_html(&notice.message),
+    );
 }
 
 fn render_hand(html: &mut String, heading: &str, hand: &HandPresentation) {
@@ -367,7 +395,10 @@ mod tests {
                 room_id: "room".to_owned(),
                 authority_instance: "semantic-html-test/0".to_owned(),
                 authority_revision: 0,
-                room_code: Some("DISPLAY-CODE".to_owned()),
+                room_invites: vec![crate::RoomInvitePresentation {
+                    label: "Candidate".to_owned(),
+                    code: "DISPLAY-CODE".to_owned(),
+                }],
                 join_proof: Some(InviteProof::new("runtime-only-secret").unwrap()),
                 seat_count: 2,
                 chat_draft: None,
@@ -384,6 +415,8 @@ mod tests {
         assert!(html.contains("Join this room"));
         assert!(html.contains("This client has not joined"));
         assert!(html.contains("class=\"room-access\""));
+        assert!(html.contains("data-copy-text=\"live-invite-0\""));
+        assert!(html.contains("Copy Candidate code"));
         assert!(html.contains("DISPLAY-CODE"));
         assert!(html.contains("data-command-id=\"join-room\""));
         assert!(html.contains("What state am I in?"));

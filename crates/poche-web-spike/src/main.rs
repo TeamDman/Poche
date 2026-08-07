@@ -37,6 +37,7 @@ use poche_ui::{
     render_semantic_html_with_root_id, render_tabletop_semantic_html,
 };
 use serde::Deserialize;
+use tokio::sync::broadcast;
 
 mod demo;
 mod gateway;
@@ -52,6 +53,7 @@ use tabletop::TabletopLab;
 const INDEX: &str = include_str!("../web/index.html");
 const GATEWAY_INDEX: &str = include_str!("../web/gateway.html");
 const TABLETOP_CSS: &str = include_str!("../web/tabletop.css");
+const LIVE_UPDATE_CAPACITY: usize = 64;
 
 #[derive(Clone)]
 struct AppState {
@@ -59,6 +61,7 @@ struct AppState {
     rl_episode: Arc<poche_rl::EpisodeTranscript>,
     authority: Arc<Mutex<AuthorityHost>>,
     live: Arc<Mutex<LiveDemo>>,
+    live_updates: broadcast::Sender<()>,
     gateway: GatewayLab,
     gateway_live: Arc<Mutex<LiveDemo>>,
     tabletop: Arc<Mutex<TabletopLab>>,
@@ -161,6 +164,7 @@ fn router(state: AppState) -> Router {
         .route("/authority/create", post(authority_create))
         .route("/authority/reset", post(authority_reset))
         .route("/live/{viewer}", get(live_view))
+        .route("/live/{viewer}/events", get(live_events))
         .route("/live/{viewer}/command/{control}", post(live_command))
         .route("/live/setup/{stage}", post(live_setup))
         .route("/live/clock/advance", post(live_advance_clock))
@@ -513,35 +517,66 @@ async fn authority_reset(State(state): State<AppState>) -> Response {
 }
 
 async fn live_view(State(state): State<AppState>, Path(viewer): Path<String>) -> Response {
-    with_live(&state, |demo| live_html(demo, &viewer))
+    with_live(&state, false, |demo| live_html(demo, &viewer))
+}
+
+async fn live_events(State(state): State<AppState>, Path(viewer): Path<String>) -> Response {
+    let receiver = state.live_updates.subscribe();
+    let initial = match live_patch_event(&state.live, &viewer) {
+        Ok(event) => event,
+        Err(error) => return (StatusCode::NOT_FOUND, error).into_response(),
+    };
+    let live = Arc::clone(&state.live);
+    let updates = stream::unfold(
+        (receiver, live, viewer),
+        |(mut receiver, live, viewer)| async move {
+            loop {
+                match receiver.recv().await {
+                    Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                        if let Ok(event) = live_patch_event(&live, &viewer) {
+                            return Some((Ok::<_, Infallible>(event), (receiver, live, viewer)));
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return None,
+                }
+            }
+        },
+    );
+    Sse::new(stream::once(async move { Ok::<_, Infallible>(initial) }).chain(updates))
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(10))
+                .text("poche-live-keep-alive"),
+        )
+        .into_response()
 }
 
 async fn live_command(
     State(state): State<AppState>,
     Path((viewer, control)): Path<(String, String)>,
 ) -> Response {
-    with_live(&state, |demo| {
-        demo.control(&viewer, &control)?;
+    with_live(&state, true, |demo| {
+        let _ = demo.control(&viewer, &control);
         live_html(demo, &viewer)
     })
 }
 
 async fn live_setup(State(state): State<AppState>, Path(scenario): Path<String>) -> Response {
-    with_live(&state, |demo| {
+    with_live(&state, true, |demo| {
         demo.setup(&scenario)?;
         live_html(demo, "host")
     })
 }
 
 async fn live_advance_clock(State(state): State<AppState>) -> Response {
-    with_live(&state, |demo| {
+    with_live(&state, true, |demo| {
         demo.advance_clock()?;
         live_html(demo, "host")
     })
 }
 
 async fn live_disconnect(State(state): State<AppState>, Path(viewer): Path<String>) -> Response {
-    with_live(&state, |demo| {
+    with_live(&state, true, |demo| {
         demo.disconnect(&viewer)?;
         live_html(demo, &viewer)
     })
@@ -647,6 +682,7 @@ async function copyPocheDiagnostic(button){{const target=document.getElementById
 
 fn with_live(
     state: &AppState,
+    notify: bool,
     operation: impl FnOnce(&mut LiveDemo) -> Result<String, String>,
 ) -> Response {
     let result = state
@@ -655,7 +691,12 @@ fn with_live(
         .map_err(|_| "live authority lock poisoned".to_owned())
         .and_then(|mut demo| operation(&mut demo));
     match result {
-        Ok(elements) => patch_response(elements),
+        Ok(elements) => {
+            if notify {
+                let _ = state.live_updates.send(());
+            }
+            patch_response(elements)
+        }
         Err(error) => (StatusCode::CONFLICT, error).into_response(),
     }
 }
@@ -674,20 +715,55 @@ fn patch_response(elements: String) -> Response {
     Sse::new(stream::once(async move { Ok::<_, Infallible>(event) })).into_response()
 }
 
+fn live_patch_event(live: &Arc<Mutex<LiveDemo>>, viewer: &str) -> Result<Event, String> {
+    let elements = live
+        .lock()
+        .map_err(|_| "live authority lock poisoned".to_owned())
+        .and_then(|demo| live_html(&demo, viewer))?;
+    Ok(PatchElements::new(elements).write_as_axum_sse_event())
+}
+
+fn spawn_live_clock(
+    live: Arc<Mutex<LiveDemo>>,
+    updates: broadcast::Sender<()>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let result = live
+                .lock()
+                .map_err(|_| "live authority lock poisoned".to_owned())
+                .and_then(|mut demo| demo.tick_countdown());
+            match result {
+                Ok(true) => {
+                    let _ = updates.send(());
+                }
+                Ok(false) => {}
+                Err(error) => eprintln!("poche-web-spike countdown clock failed: {error}"),
+            }
+        }
+    })
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let address = std::env::var("POCHE_WEB_SPIKE_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:4174".to_owned())
         .parse::<SocketAddr>()?;
+    let (live_updates, _) = broadcast::channel(LIVE_UPDATE_CAPACITY);
     let state = AppState {
         replay: Arc::new(ReplayDeck::from_json(EMBEDDED_REPLAY)?),
         rl_episode: Arc::new(selected_rl_episode()?),
         authority: Arc::new(Mutex::new(AuthorityHost::new()?)),
         live: Arc::new(Mutex::new(LiveDemo::named("main-live")?)),
+        live_updates,
         gateway: GatewayLab::new()?,
         gateway_live: Arc::new(Mutex::new(gateway_demo()?)),
         tabletop: Arc::new(Mutex::new(TabletopLab::new()?)),
     };
+    let _clock_task = spawn_live_clock(Arc::clone(&state.live), state.live_updates.clone());
     let listener = tokio::net::TcpListener::bind(address).await?;
     println!(
         "poche-web-spike listening on http://{}",
@@ -709,9 +785,15 @@ mod tests {
     use super::{
         AuthorityHost, EMBEDDED_REPLAY, GATEWAY_INDEX, INDEX, LiveDemo, ReplayDeck, gateway_demo,
         live_client_html, live_html, load_rl_episode, rl_replay_html, selected_rl_episode,
+        spawn_live_clock,
     };
     use poche_protocol::RoomPhase;
     use poche_ui::render_semantic_html;
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+    use tokio::sync::broadcast;
 
     #[test]
     fn selected_rl_replay_is_hash_identical_and_contains_no_hidden_state() {
@@ -783,6 +865,8 @@ mod tests {
         assert!(INDEX.contains("datastar@1.0.0-RC.7/bundles/datastar.js"));
         assert!(INDEX.contains("href=\"/client/alice\""));
         assert!(INDEX.contains("Open Alice client in a new tab"));
+        assert!(INDEX.contains("/live/__CLIENT_NAME__/events"));
+        assert!(INDEX.contains("data-copy-text"));
         assert!(INDEX.contains("aria-live=\"polite\""));
         assert!(INDEX.contains("__LIVE_CLIENT__"));
         assert!(INDEX.contains("__CLIENT_NAME__"));
@@ -802,6 +886,33 @@ mod tests {
         let joined = live_client_html(&demo, "alice").expect("joined Alice client page");
         assert!(!joined.contains("data-command-id=\"join-room\""));
         assert!(joined.contains("data-command-id=\"take-seat-0\""));
+    }
+
+    #[tokio::test]
+    async fn executable_clock_publishes_countdown_ticks_until_running() {
+        let mut demo = LiveDemo::named("clock-task-test").expect("demo");
+        demo.setup("countdown").expect("countdown setup");
+        let live = Arc::new(Mutex::new(demo));
+        let (updates, mut receiver) = broadcast::channel(8);
+        let clock = spawn_live_clock(Arc::clone(&live), updates);
+
+        for _ in 0..3 {
+            tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+                .await
+                .expect("countdown update deadline")
+                .expect("countdown update");
+        }
+        assert_eq!(
+            live.lock()
+                .expect("live lock")
+                .view("host")
+                .unwrap()
+                .projection
+                .room_phase,
+            RoomPhase::Running,
+        );
+        clock.abort();
+        let _ = clock.await;
     }
 
     #[test]

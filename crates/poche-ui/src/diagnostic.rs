@@ -279,7 +279,7 @@ fn write_privacy_and_evidence(context: &mut String, live: &LiveClientPresentatio
     );
     let _ = writeln!(
         context,
-        "- tab_freshness: command responses patch only the requesting tab; compare authority instance/revision and refresh this viewer"
+        "- tab_freshness: this view is exact at the authority instance/revision above; the client adapter may stream or refresh later revisions"
     );
 
     context.push_str("\nevidence_boundary:\n");
@@ -303,7 +303,7 @@ pub fn render_live_diagnostics(live: &LiveClientPresentation, root_id: &str) -> 
         .game
         .map_or_else(|| "Inactive".to_owned(), |phase| format!("{phase:?}"));
     format!(
-        "<section class=\"diagnostics\" aria-labelledby=\"{root_id}-heading\"><h3 id=\"{root_id}-heading\">What state am I in?</h3><p><strong>Room:</strong> {:?} · <strong>this viewer's transport:</strong> {:?} · <strong>game:</strong> {}</p><p>{}</p><p><strong>Authority instance:</strong> <code>{}</code> at revision <strong>{}</strong>. Other tabs are snapshots and may show an earlier incarnation or revision until that viewer is refreshed.</p>{}<details><summary>What this diagram proves—and does not prove</summary><p>The highlighted nodes come from the typed Rust projection accepted by the live reducer. The diagram does not run Alloy, NuSMV, or Prolog during an HTTP request; those remain independent bounded, symbolic, and query-oriented release gates.</p></details><h4>Copy-safe diagnostic context</h4><p>This intentionally omits join codes, chat contents, and private card faces. The ordinary page remains selectable if you deliberately need to share viewer-private content.</p><textarea id=\"{}\" class=\"diagnostic-context\" rows=\"24\" readonly spellcheck=\"false\">{}</textarea><div class=\"actions\"><button type=\"button\" data-copy-context=\"{}\" data-copy-status=\"{}\">Copy diagnostic context</button></div><output id=\"{}\" role=\"status\" aria-live=\"polite\"></output></section>",
+        "<section class=\"diagnostics\" aria-labelledby=\"{root_id}-heading\"><h3 id=\"{root_id}-heading\">What state am I in?</h3><p><strong>Room:</strong> {:?} · <strong>this viewer's transport:</strong> {:?} · <strong>game:</strong> {}</p><p>{}</p><p><strong>Authority instance:</strong> <code>{}</code> at revision <strong>{}</strong>. This exact view may receive later revisions through its client adapter; compare these values when diagnosing freshness.</p>{}<details><summary>What this diagram proves—and does not prove</summary><p>The highlighted nodes come from the typed Rust projection accepted by the live reducer. The diagram does not run Alloy, NuSMV, or Prolog during an HTTP request; those remain independent bounded, symbolic, and query-oriented release gates.</p></details><h4>Copy-safe diagnostic context</h4><p>This intentionally omits join codes, chat contents, and private card faces. The ordinary page remains selectable if you deliberately need to share viewer-private content.</p><textarea id=\"{}\" class=\"diagnostic-context\" rows=\"24\" readonly spellcheck=\"false\">{}</textarea><div class=\"actions\"><button type=\"button\" data-copy-context=\"{}\" data-copy-status=\"{}\">Copy diagnostic context</button></div><output id=\"{}\" role=\"status\" aria-live=\"polite\"></output></section>",
         diagram.room,
         diagram.transport,
         escape_html(&game),
@@ -403,7 +403,10 @@ mod tests {
                 room_id: "room".to_owned(),
                 authority_instance: "web-live/4".to_owned(),
                 authority_revision: 19,
-                room_code: Some("DO-NOT-COPY".to_owned()),
+                room_invites: vec![crate::RoomInvitePresentation {
+                    label: "Private".to_owned(),
+                    code: "DO-NOT-COPY".to_owned(),
+                }],
                 join_proof: None,
                 seat_count: 1,
                 chat_draft: None,
