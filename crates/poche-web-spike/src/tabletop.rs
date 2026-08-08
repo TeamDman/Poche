@@ -230,6 +230,8 @@ impl TabletopLab {
             status: Some(self.status.clone()),
             room_code: None,
             main_menu_href: Some("/".to_owned()),
+            chat_endpoint: None,
+            governance_commands: true,
             viewer_href_prefix: Some("/tabletop".to_owned()),
             findings: self
                 .audit

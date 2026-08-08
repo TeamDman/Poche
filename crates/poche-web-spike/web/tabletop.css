@@ -281,9 +281,13 @@ code { overflow-wrap: anywhere; }
   background: #11281a;
 }
 .action-dock h2 { margin: 0; font-size: .82rem; text-transform: uppercase; letter-spacing: .08em; }
+.command-groups { min-width:0; display:flex; align-items:end; gap:.7rem; overflow-x:auto; padding-bottom:.1rem; }
+.command-group { min-width:max-content; }
+.command-group h3 { margin:0 0 .25rem; color:var(--muted); font-size:.62rem; text-transform:uppercase; letter-spacing:.08em; }
+.room-commands { margin-left:auto; padding-left:.7rem; border-left:1px solid #4b3b38; }
 .actions { display: flex; gap: .38rem; flex-wrap: wrap; }
-.actions form, .utility-bar form { margin: 0; }
-.primary-action, .utility-action, .inspector-panel button, .developer-tools button {
+.actions form { margin: 0; }
+.primary-action, .secondary-action, .danger-action, .inspector-panel button, .developer-tools button {
   border: 1px solid #567060;
   border-radius: .3rem;
   background: #18241d;
@@ -292,8 +296,10 @@ code { overflow-wrap: anywhere; }
 }
 .primary-action { min-width: 7rem; min-height:3rem; border-color: var(--green); background: #176b37; font-size:1rem; font-weight: 800; text-transform: capitalize; }
 .primary-action:hover, .primary-action:focus-visible { background: #218b49; }
-.utility-bar { display: flex; justify-content: end; gap: .32rem; min-height: 2rem; }
-.utility-action { padding: .32rem .55rem; color: #c4d1c8; font-size: .72rem; }
+.secondary-action, .danger-action { min-height:2.45rem; padding:.4rem .65rem; color:#e2ece5; font-size:.76rem; }
+.secondary-action:hover, .secondary-action:focus-visible { background:#263b2e; }
+.danger-action { border-color:#9c665d; background:#331c19; color:#ffd9d1; }
+.danger-action:hover, .danger-action:focus-visible { background:#552722; }
 
 .game-inspector {
   min-height: 0;
@@ -321,6 +327,17 @@ code { overflow-wrap: anywhere; }
 .inspector-panel h2 { margin: 0 0 .35rem; color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
 .event-log { max-height: 10rem; overflow: auto; margin: 0; padding-left: 1.2rem; color: #cbd7cf; font: .72rem/1.45 ui-monospace, monospace; }
 .event-log li + li { margin-top: .22rem; }
+.chat-log { max-height:13rem; overflow:auto; list-style:none; margin:0; padding:0; display:grid; gap:.35rem; }
+.chat-log li { display:grid; gap:.1rem; padding:.38rem .48rem; border-radius:.3rem; background:#101a14; }
+.chat-log strong { color:#8fe6b1; font-size:.68rem; }
+.chat-log span { overflow-wrap:anywhere; font-size:.78rem; line-height:1.35; }
+.chat-log .empty-chat { color:var(--muted); font-style:italic; }
+.chat-composer { display:grid; gap:.3rem; margin-top:.55rem; }
+.chat-composer label { color:var(--muted); font-size:.68rem; text-transform:uppercase; letter-spacing:.08em; }
+.chat-composer > div { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.35rem; }
+.chat-composer input { min-width:0; min-height:2.45rem; padding:.45rem .55rem; border:1px solid #526b5b; border-radius:.3rem; background:#090f0b; color:#fff; }
+.chat-composer button { min-width:4.5rem; border-color:var(--green); background:#176b37; }
+.chat-composer output { min-height:1em; color:#c9d8ce; font-size:.68rem; }
 .inspector-panel table { width: 100%; border-collapse: collapse; font-size: .7rem; }
 .inspector-panel th, .inspector-panel td { padding: .25rem; border-bottom: 1px solid #28362e; text-align: left; }
 
@@ -352,6 +369,13 @@ code { overflow-wrap: anywhere; }
 .developer-tools p, .developer-tools form { margin: 0; padding: .45rem; }
 .granted-hand { padding: .35rem .6rem; border: 1px solid var(--line); }
 
+.session-end-shell { place-items:center; grid-template-rows:1fr; padding:1rem; }
+.session-end-card { width:min(34rem,100%); display:grid; justify-items:center; gap:.75rem; padding:clamp(1.5rem,5vw,3rem); border:1px solid #526b5b; border-radius:.75rem; background:#0d1710f2; box-shadow:0 1.5rem 5rem #000a; text-align:center; }
+.session-end-card > span { color:var(--amber); font-size:.72rem; font-weight:850; letter-spacing:.18em; }
+.session-end-card h1 { margin:0; font-size:clamp(1.7rem,5vw,2.8rem); }
+.session-end-card p { margin:0; max-width:28rem; color:#c9d7ce; line-height:1.5; }
+.session-end-card a { margin-top:.5rem; display:grid; place-items:center; text-decoration:none; color:#fff; }
+
 @media (max-width: 900px) {
   body { overflow: auto; }
   .game-shell { height: auto; min-height: 100svh; overflow: visible; }
@@ -378,6 +402,8 @@ code { overflow-wrap: anywhere; }
   .lobby-center { max-width:10rem; }
   .lobby-center p { display:none; }
   .seat { width:34%; min-height:5.5rem; padding:.4rem; }
+  .action-dock { grid-template-columns:1fr; }
+  .command-groups { align-items:start; }
 }
 
 @media (max-height: 700px) and (min-width: 901px) {

@@ -150,6 +150,13 @@ Alice/Bob identity. Take different seats, ready both players, and let the
 creator start the countdown. Phase-appropriate bid/play controls then drive the
 same typed reducer used by the formal and transcript checks.
 
+Human-facing cards use `♣ ♦ ♥ ♠`. Clicking or dragging a card and choosing its
+matching `Play …` command are equivalent typed actions. The command palette also
+links to full room chat and separates ordinary table actions from confirmed
+leave/close actions. Leaving or closing retains an explicit terminal screen
+with a return-to-menu action instead of silently navigating or leaving stale
+controls behind.
+
 The normal player path is intentionally full-viewport and game-like. Deep
 diagnostics are collapsed, and the old deterministic Alice/Bob harness now
 lives at `/lab`. The current room registry is process-local development state;

@@ -45,7 +45,7 @@ mod gateway;
 mod tabletop;
 
 use demo::LiveDemo;
-use game::BrowserRooms;
+use game::{BrowserRooms, BrowserSessionEnd};
 use gateway::{
     CommandDecision, GatewayAction, GatewayDeviceRegistration, GatewayLab, GatewayProjectionEvent,
     SignedGatewayCommand,
@@ -54,6 +54,7 @@ use tabletop::TabletopLab;
 
 const INDEX: &str = include_str!("../web/index.html");
 const MENU: &str = include_str!("../web/menu.html");
+const GAME_JS: &str = include_str!("../web/game.js");
 const GATEWAY_INDEX: &str = include_str!("../web/gateway.html");
 const TABLETOP_CSS: &str = include_str!("../web/tabletop.css");
 const LIVE_UPDATE_CAPACITY: usize = 64;
@@ -168,6 +169,7 @@ fn router(state: AppState) -> Router {
         .route("/game/{session}", get(game_view))
         .route("/game/{session}/events", get(game_events))
         .route("/game/{session}/command/{control}", post(game_command))
+        .route("/game/{session}/chat", post(game_chat))
         .route("/game/{session}/disconnect", post(game_disconnect))
         .route("/client/{viewer}", get(client_view))
         .route("/view/{viewer}/{ordinal}", get(view_checkpoint))
@@ -558,6 +560,28 @@ async fn game_command(
     }
 }
 
+#[derive(Deserialize)]
+struct ChatForm {
+    text: String,
+}
+
+async fn game_chat(
+    State(state): State<AppState>,
+    Path(session): Path<String>,
+    Form(chat): Form<ChatForm>,
+) -> Response {
+    let result = state
+        .rooms
+        .lock()
+        .map_err(|_| "room registry lock poisoned".to_owned())
+        .and_then(|mut rooms| rooms.chat(&session, &chat.text));
+    let _ = state.room_updates.send(());
+    match result {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => (StatusCode::CONFLICT, error).into_response(),
+    }
+}
+
 async fn game_disconnect(State(state): State<AppState>, Path(session): Path<String>) -> Response {
     let result = state
         .rooms
@@ -575,20 +599,18 @@ fn game_document(rooms: &Arc<Mutex<BrowserRooms>>, session: &str) -> Result<Stri
     let fragment = game_fragment(rooms, session)?;
     let session = escape_html(session);
     Ok(format!(
-        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Poche room</title><style>{TABLETOP_CSS}</style></head><body>{fragment}<script>
-const roomEvents=new EventSource('/game/{session}/events');roomEvents.addEventListener('room',event=>{{const template=document.createElement('template');template.innerHTML=event.data;const next=template.content.firstElementChild;const current=document.getElementById('game-shell');if(next&&current)current.replaceWith(next)}});
-document.addEventListener('submit',event=>{{const form=event.target.closest('#game-shell form');if(!form)return;event.preventDefault();void fetch(form.action,{{method:'POST'}})}});
-document.addEventListener('click',event=>{{const command=event.target.closest('#game-shell [data-command-id]');if(command){{const form=command.closest('form');if(form){{event.preventDefault();void fetch(form.action,{{method:'POST'}})}}return}}const button=event.target.closest('[data-copy-text]');if(!button)return;const target=document.getElementById(button.dataset.copyText);if(!target)return;const previous=button.textContent;navigator.clipboard.writeText(target.textContent).then(()=>{{button.textContent='Copied';setTimeout(()=>button.textContent=previous,1400)}})}});
-let dragged=null;document.addEventListener('dragstart',event=>{{dragged=event.target.closest('[data-command-id]')?.dataset.commandId||null}});document.addEventListener('drop',event=>{{const target=event.target.closest('#play-target');if(!target||!dragged)return;event.preventDefault();void fetch('/game/{session}/command/'+encodeURIComponent(dragged),{{method:'POST'}})}});document.addEventListener('dragover',event=>{{if(event.target.closest('#play-target'))event.preventDefault()}});
-</script></body></html>"#
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Poche room</title><style>{TABLETOP_CSS}</style></head><body data-game-session="{session}">{fragment}<script>{GAME_JS}</script></body></html>"#
     ))
 }
 
 fn game_fragment(rooms: &Arc<Mutex<BrowserRooms>>, session: &str) -> Result<String, String> {
-    let view = rooms
+    let rooms = rooms
         .lock()
-        .map_err(|_| "room registry lock poisoned".to_owned())?
-        .view(session)?;
+        .map_err(|_| "room registry lock poisoned".to_owned())?;
+    if let Some(end) = rooms.end_state(session)? {
+        return Ok(render_session_end(end));
+    }
+    let view = rooms.view(session)?;
     render_tabletop_semantic_html(
         &view.live,
         &view.scene,
@@ -597,6 +619,24 @@ fn game_fragment(rooms: &Arc<Mutex<BrowserRooms>>, session: &str) -> Result<Stri
         &view.supplement,
     )
     .map_err(|error| format!("player table rendering failed: {error:?}"))
+}
+
+fn render_session_end(end: BrowserSessionEnd) -> String {
+    let (eyebrow, heading, explanation) = match end {
+        BrowserSessionEnd::LeftRoom => (
+            "ROOM LEFT",
+            "You have left this room.",
+            "Your former player session cannot issue more room commands from this tab.",
+        ),
+        BrowserSessionEnd::RoomClosed => (
+            "ROOM CLOSED",
+            "This room has been closed.",
+            "The room is permanently closed for every participant in this process.",
+        ),
+    };
+    format!(
+        "<main id=\"game-shell\" class=\"game-shell session-end-shell\" data-session-ended=\"true\"><section class=\"session-end-card\"><span>{eyebrow}</span><h1>{heading}</h1><p>{explanation}</p><a class=\"primary-action\" href=\"/\">Return to main menu</a></section></main>"
+    )
 }
 
 fn game_sse_event(rooms: &Arc<Mutex<BrowserRooms>>, session: &str) -> Result<Event, String> {
@@ -1033,7 +1073,7 @@ mod tests {
         let revoked = render_semantic_html(&bob[2].presentation);
         assert!(!ungranted.contains("Granted spectator view"));
         assert!(granted.contains("Granted spectator view: host"));
-        assert!(granted.contains("<code>2C</code> <code>3C</code>"));
+        assert!(granted.contains("<code>2♣</code> <code>3♣</code>"));
         assert!(!revoked.contains("Granted spectator view"));
     }
 
@@ -1088,13 +1128,51 @@ mod tests {
 
         assert!(document.contains("Teamy"));
         assert!(document.contains("PCH-"));
-        assert!(document.contains("new EventSource('/game/"));
-        assert!(document.contains("fetch(form.action,{method:'POST'})"));
+        assert!(
+            document.contains("new EventSource(`/game/${encodeURIComponent(session)}/events`)")
+        );
+        assert!(document.contains("fetch(form.action, options)"));
+        assert!(document.contains("new FormData(form)"));
         assert!(document.contains("data-copy-text"));
+        assert!(document.contains("data-copy-context"));
+        assert!(document.contains("writeClipboard(target.value)"));
+        assert!(document.contains("data-confirm="));
+        assert!(document.contains("window.confirm(confirmation)"));
+        assert!(document.contains("data-chat-form"));
         assert!(!document.contains("POCHE-LAB"));
         assert!(!document.contains("datastar@"));
         assert!(!document.contains("Alice"));
         assert!(!document.contains("Bob"));
+    }
+
+    #[test]
+    fn player_chat_is_escaped_in_the_complete_room_document() {
+        let mut registry = BrowserRooms::default();
+        let session = registry.create("Chatter").expect("player room");
+        registry
+            .chat(&session, "hello <table> & friends")
+            .expect("typed chat");
+        let rooms = Arc::new(Mutex::new(registry));
+        let document = game_document(&rooms, &session).expect("chat room document");
+
+        assert!(document.contains("hello &lt;table&gt; &amp; friends"));
+        assert!(!document.contains("<table> & friends"));
+    }
+
+    #[test]
+    fn closed_player_sessions_render_a_terminal_screen_instead_of_stale_game_controls() {
+        let mut registry = BrowserRooms::default();
+        let session = registry.create("Closer").expect("player room");
+        registry
+            .command(&session, "close-room")
+            .expect("close room");
+        let rooms = Arc::new(Mutex::new(registry));
+        let document = game_document(&rooms, &session).expect("closed room document");
+
+        assert!(document.contains("This room has been closed."));
+        assert!(document.contains("data-session-ended=\"true\""));
+        assert!(document.contains("Return to main menu"));
+        assert!(!document.contains("data-command-id="));
     }
 
     #[test]

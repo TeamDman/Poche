@@ -301,6 +301,11 @@ impl LiveDemo {
         self.submit_payload(viewer, payload, true)
     }
 
+    /// Submit user-authored chat through the same typed authority boundary.
+    pub fn chat_as(&mut self, viewer: &str, text: String) -> Result<String, String> {
+        self.submit_payload(viewer, CommandPayload::Chat { text }, true)
+    }
+
     /// Reset and prepare a deterministic lobby, countdown, or running game.
     pub fn setup(&mut self, stage: &str) -> Result<String, String> {
         let next_incarnation = self.authority_incarnation.saturating_add(1);

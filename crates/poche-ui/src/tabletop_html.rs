@@ -45,6 +45,10 @@ pub struct TabletopHtmlSupplement {
     pub room_code: Option<String>,
     /// Player-facing exit from the room client.
     pub main_menu_href: Option<String>,
+    /// Adapter-owned endpoint accepting a `text` form field for typed chat.
+    pub chat_endpoint: Option<String>,
+    /// Whether this adapter implements the governance sidecar command IDs.
+    pub governance_commands: bool,
     /// Adapter-owned route prefix for switching exact-recipient projections.
     pub viewer_href_prefix: Option<String>,
     pub findings: Vec<TabletopFindingPresentation>,
@@ -98,10 +102,11 @@ pub fn render_tabletop_semantic_html(
     } else {
         render_card_zones(&mut html, live, scene, prefix);
     }
-    render_controls(&mut html, live, prefix);
+    render_controls(&mut html, live, prefix, supplement, root_id);
     html.push_str("</div><aside class=\"game-inspector\" aria-label=\"Game inspector\">");
-    render_history_and_chat(&mut html, live);
-    render_governance(&mut html, live, supplement, prefix);
+    render_activity(&mut html, live);
+    render_chat(&mut html, live, supplement, root_id);
+    render_governance(&mut html, live, supplement, prefix, root_id);
     html.push_str("<details class=\"inspector-panel diagnostics-panel\"><summary>Diagnostics and formal evidence</summary>");
     html.push_str(&render_live_diagnostics(
         live,
@@ -411,75 +416,134 @@ fn render_card_zones(
     }
 }
 
-fn render_controls(html: &mut String, live: &LiveClientPresentation, prefix: &str) {
+fn render_controls(
+    html: &mut String,
+    live: &LiveClientPresentation,
+    prefix: &str,
+    supplement: &TabletopHtmlSupplement,
+    root_id: &str,
+) {
     let primary_controls = live
         .controls
         .iter()
+        .filter(|control| is_primary_control(&control.payload))
+        .collect::<Vec<_>>();
+    let room_controls = live
+        .controls
+        .iter()
+        .filter(|control| is_dangerous_control(&control.payload))
+        .collect::<Vec<_>>();
+    let secondary_controls = live
+        .controls
+        .iter()
         .filter(|control| {
-            matches!(
-                control.payload,
-                CommandPayload::Ready
-                    | CommandPayload::Unready
-                    | CommandPayload::ArmCountdown { .. }
-                    | CommandPayload::AbortCountdown
-                    | CommandPayload::Pause
-                    | CommandPayload::Unpause
-                    | CommandPayload::ResetLobby
-                    | CommandPayload::Reconnect
-                    | CommandPayload::GameAction { .. }
-            ) && !matches!(
-                control.payload,
-                CommandPayload::GameAction {
-                    action: GameActionWire::Play { .. }
-                }
-            )
+            !(is_primary_control(&control.payload)
+                || is_dangerous_control(&control.payload)
+                || supplement.chat_endpoint.is_some()
+                    && matches!(control.payload, CommandPayload::Chat { .. }))
         })
         .collect::<Vec<_>>();
+    let chat_id = format!("{root_id}-chat");
+    let governance_id = format!("{root_id}-governance");
+
+    html.push_str("<section class=\"action-dock\" aria-labelledby=\"turn-actions-heading\"><h2 id=\"turn-actions-heading\">Choose an action</h2><div class=\"command-groups\">");
     if !primary_controls.is_empty() {
-        html.push_str("<section class=\"action-dock\" aria-labelledby=\"turn-actions-heading\"><h2 id=\"turn-actions-heading\">Choose an action</h2><div class=\"actions\">");
+        html.push_str("<section class=\"command-group primary-commands\"><h3>Available now</h3><div class=\"actions\">");
         for control in primary_controls {
-            let endpoint = format!("{prefix}/{}", control.id);
-            let _ = write!(
-                html,
-                "<form method=\"post\" action=\"{}\"><button class=\"primary-action\" type=\"submit\" data-command-id=\"{}\">{}</button></form>",
-                escape_html(&endpoint),
-                escape_html(&control.id),
-                escape_html(&control.label)
-            );
+            render_control(html, control, prefix, "primary-action", None);
         }
         html.push_str("</div></section>");
     }
 
-    html.push_str("<nav class=\"utility-bar\" aria-label=\"Room commands\">");
-    for control in &live.controls {
-        if matches!(
-            control.payload,
-            CommandPayload::Ready
-                | CommandPayload::Unready
-                | CommandPayload::ArmCountdown { .. }
-                | CommandPayload::AbortCountdown
-                | CommandPayload::Pause
-                | CommandPayload::Unpause
-                | CommandPayload::ResetLobby
-                | CommandPayload::Reconnect
-                | CommandPayload::TakeSeat { .. }
-                | CommandPayload::GameAction { .. }
-        ) {
-            continue;
-        }
-        let endpoint = format!("{prefix}/{}", control.id);
+    html.push_str(
+        "<section class=\"command-group table-commands\"><h3>Table</h3><div class=\"actions\">",
+    );
+    if supplement.chat_endpoint.is_some() {
         let _ = write!(
             html,
-            "<form method=\"post\" action=\"{}\"><button class=\"utility-action\" type=\"submit\" data-command-id=\"{}\">{}</button></form>",
-            escape_html(&endpoint),
-            escape_html(&control.id),
-            escape_html(&control.label)
+            "<button class=\"secondary-action\" type=\"button\" data-open-details=\"{}\">Chat</button>",
+            escape_html(&chat_id)
         );
     }
-    html.push_str("</nav>");
+    let _ = write!(
+        html,
+        "<button class=\"secondary-action\" type=\"button\" data-open-details=\"{}\">Rules &amp; votes</button>",
+        escape_html(&governance_id)
+    );
+    for control in secondary_controls {
+        render_control(html, control, prefix, "secondary-action", None);
+    }
+    html.push_str("</div></section>");
+
+    if !room_controls.is_empty() {
+        html.push_str(
+            "<section class=\"command-group room-commands\"><h3>Room</h3><div class=\"actions\">",
+        );
+        for control in room_controls {
+            let confirmation = match control.payload {
+                CommandPayload::CloseRoom => {
+                    Some("Close this room for everyone? This cannot be undone.")
+                }
+                CommandPayload::Leave => Some(
+                    "Leave this room? This tab will no longer control your player in this room.",
+                ),
+                CommandPayload::RemoveMember { .. } => Some("Remove this person from the room?"),
+                _ => None,
+            };
+            render_control(html, control, prefix, "danger-action", confirmation);
+        }
+        html.push_str("</div></section>");
+    }
+    html.push_str("</div></section>");
 }
 
-fn render_history_and_chat(html: &mut String, live: &LiveClientPresentation) {
+fn is_primary_control(payload: &CommandPayload) -> bool {
+    matches!(
+        payload,
+        CommandPayload::TakeSeat { .. }
+            | CommandPayload::ReleaseSeat
+            | CommandPayload::Ready
+            | CommandPayload::Unready
+            | CommandPayload::ArmCountdown { .. }
+            | CommandPayload::AbortCountdown
+            | CommandPayload::Pause
+            | CommandPayload::Unpause
+            | CommandPayload::ResetLobby
+            | CommandPayload::Reconnect
+            | CommandPayload::GameAction { .. }
+    )
+}
+
+fn is_dangerous_control(payload: &CommandPayload) -> bool {
+    matches!(
+        payload,
+        CommandPayload::Leave | CommandPayload::CloseRoom | CommandPayload::RemoveMember { .. }
+    )
+}
+
+fn render_control(
+    html: &mut String,
+    control: &crate::TypedUiControl,
+    prefix: &str,
+    class_name: &str,
+    confirmation: Option<&str>,
+) {
+    let endpoint = format!("{prefix}/{}", control.id);
+    let confirmation = confirmation.map_or_else(String::new, |message| {
+        format!(" data-confirm=\"{}\"", escape_html(message))
+    });
+    let _ = write!(
+        html,
+        "<form method=\"post\" action=\"{}\"><button class=\"{}\" type=\"submit\" data-command-id=\"{}\"{}>{}</button></form>",
+        escape_html(&endpoint),
+        class_name,
+        escape_html(&control.id),
+        confirmation,
+        escape_html(&control.label)
+    );
+}
+
+fn render_activity(html: &mut String, live: &LiveClientPresentation) {
     let _ = write!(
         html,
         "<details class=\"inspector-panel\"><summary>Activity <span>{}</span></summary><section aria-labelledby=\"history-heading\"><h2 id=\"history-heading\">Public history</h2><ol class=\"event-log\">",
@@ -488,17 +552,8 @@ fn render_history_and_chat(html: &mut String, live: &LiveClientPresentation) {
     for event in &live.projection.history {
         let _ = write!(html, "<li>{}</li>", escape_html(event));
     }
-    html.push_str("</ol></section><section aria-labelledby=\"chat-heading\"><h2 id=\"chat-heading\">Room chat</h2><ol class=\"event-log\">");
-    for message in &live.projection.chat {
-        let _ = write!(
-            html,
-            "<li><strong>{}</strong>: {}</li>",
-            escape_html(&message.principal),
-            escape_html(&message.text)
-        );
-    }
-    if live.projection.chat.is_empty() {
-        html.push_str("<li>No chat yet.</li>");
+    if live.projection.history.is_empty() {
+        html.push_str("<li>No public actions yet.</li>");
     }
     html.push_str("</ol></section>");
     if !live.projection.notices.is_empty() {
@@ -516,16 +571,58 @@ fn render_history_and_chat(html: &mut String, live: &LiveClientPresentation) {
     html.push_str("</details>");
 }
 
+fn render_chat(
+    html: &mut String,
+    live: &LiveClientPresentation,
+    supplement: &TabletopHtmlSupplement,
+    root_id: &str,
+) {
+    let chat_id = format!("{root_id}-chat");
+    let status_id = format!("{root_id}-chat-status");
+    let _ = write!(
+        html,
+        "<details id=\"{}\" class=\"inspector-panel chat-panel\"><summary>Chat <span>{}</span></summary><section aria-labelledby=\"chat-heading\"><h2 id=\"chat-heading\">Room chat</h2><ol class=\"chat-log\">",
+        escape_html(&chat_id),
+        live.projection.chat.len(),
+    );
+    for message in &live.projection.chat {
+        let _ = write!(
+            html,
+            "<li><strong>{}</strong><span>{}</span></li>",
+            escape_html(&message.principal),
+            escape_html(&message.text)
+        );
+    }
+    if live.projection.chat.is_empty() {
+        html.push_str("<li class=\"empty-chat\">No messages yet.</li>");
+    }
+    html.push_str("</ol>");
+    if let Some(endpoint) = &supplement.chat_endpoint {
+        let _ = write!(
+            html,
+            "<form class=\"chat-composer\" method=\"post\" action=\"{}\" data-chat-form><label for=\"{}-message\">Message</label><div><input id=\"{}-message\" name=\"text\" type=\"text\" maxlength=\"2048\" autocomplete=\"off\" placeholder=\"Say something to the table\" required><button type=\"submit\">Send</button></div><output id=\"{}\" data-chat-status role=\"status\" aria-live=\"polite\"></output></form>",
+            escape_html(endpoint),
+            escape_html(root_id),
+            escape_html(root_id),
+            escape_html(&status_id),
+        );
+    }
+    html.push_str("</section></details>");
+}
+
 fn render_governance(
     html: &mut String,
     live: &LiveClientPresentation,
     supplement: &TabletopHtmlSupplement,
     prefix: &str,
+    root_id: &str,
 ) {
     let evidence_count = supplement.findings.len() + supplement.proposals.len();
+    let governance_id = format!("{root_id}-governance");
     let _ = write!(
         html,
-        "<details class=\"inspector-panel\"><summary>Rules and votes <span>{evidence_count}</span></summary><section aria-labelledby=\"findings-heading\"><h2 id=\"findings-heading\">Rule findings</h2><ul>"
+        "<details id=\"{}\" class=\"inspector-panel\"><summary>Rules and votes <span>{evidence_count}</span></summary><section aria-labelledby=\"findings-heading\"><h2 id=\"findings-heading\">Rule findings</h2><ul>",
+        escape_html(&governance_id),
     );
     for finding in &supplement.findings {
         let _ = write!(
@@ -537,9 +634,10 @@ fn render_governance(
         );
     }
     html.push_str("</ul>");
-    let viewer_can_govern = live.projection.members.iter().any(|member| {
-        member.principal == live.projection.viewer && member.connected && member.seat.is_some()
-    });
+    let viewer_can_govern = supplement.governance_commands
+        && live.projection.members.iter().any(|member| {
+            member.principal == live.projection.viewer && member.connected && member.seat.is_some()
+        });
     if viewer_can_govern {
         let accuse = format!("{prefix}/accuse");
         let _ = write!(
@@ -589,6 +687,7 @@ fn render_governance(
 
 #[cfg(test)]
 mod tests {
+    use poche_protocol::{CommandPayload, GameActionWire};
     use poche_spatial::spatial_scene_hash_hex;
 
     use crate::{
@@ -618,6 +717,7 @@ mod tests {
             },
         );
         let supplement = TabletopHtmlSupplement {
+            chat_endpoint: Some("/tabletop/chat".to_owned()),
             viewer_href_prefix: Some("/tabletop".to_owned()),
             ..TabletopHtmlSupplement::default()
         };
@@ -638,7 +738,26 @@ mod tests {
         assert!(html.contains("href=\"/tabletop/alice\""));
         assert!(html.contains("What state am I in?"));
         assert!(html.contains("Copy diagnostic context"));
+        assert!(html.contains("data-chat-form"));
+        assert!(html.contains("data-open-details=\"tabletop-chat\""));
+        assert!(html.contains("data-confirm="));
         assert!(html.contains("draggable=\"true\"") || html.contains("not currently legal"));
+        for control in live.controls.iter().filter(|control| {
+            matches!(
+                control.payload,
+                CommandPayload::GameAction {
+                    action: GameActionWire::Play { .. }
+                }
+            )
+        }) {
+            assert_eq!(
+                html.matches(&format!("data-command-id=\"{}\"", control.id))
+                    .count(),
+                2,
+                "playable card must appear in both the hand and command palette"
+            );
+            assert!(control.label.contains(['♣', '♦', '♥', '♠']));
+        }
         let visible_faces = fixture
             .scene
             .cards

@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use poche_protocol::CommandPayload;
 use poche_spatial::{LayoutId, SPATIAL_SCHEMA_VERSION, SpatialScene, TableId, registered_layout};
 use poche_ui::{LiveClientPresentation, TabletopHtmlSupplement, realize_presentation_spatial};
 
@@ -20,6 +21,14 @@ const MAX_NAME_BYTES: usize = 32;
 struct PlayerSession {
     room_code: String,
     principal: String,
+    end: Option<BrowserSessionEnd>,
+}
+
+/// Player-facing terminal state retained after room membership ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrowserSessionEnd {
+    LeftRoom,
+    RoomClosed,
 }
 
 struct BrowserRoom {
@@ -57,6 +66,7 @@ impl BrowserRooms {
             PlayerSession {
                 room_code,
                 principal,
+                end: None,
             },
         );
         Ok(session_token)
@@ -83,6 +93,7 @@ impl BrowserRooms {
             PlayerSession {
                 room_code,
                 principal,
+                end: None,
             },
         );
         Ok(session_token)
@@ -91,16 +102,72 @@ impl BrowserRooms {
     /// Resolve one retained opaque control and cross the typed reducer boundary.
     pub fn command(&mut self, session_token: &str, control: &str) -> Result<String, String> {
         let session = self.session(session_token)?.clone();
+        if session.end.is_some() {
+            return Err("This player session has already ended.".to_owned());
+        }
+        let retained_payload = self
+            .rooms
+            .get(&session.room_code)
+            .ok_or_else(|| "This room is no longer active.".to_owned())?
+            .demo
+            .view(&session.principal)?
+            .command(control);
+        let outcome = self
+            .rooms
+            .get_mut(&session.room_code)
+            .ok_or_else(|| "This room is no longer active.".to_owned())?
+            .demo
+            .control(&session.principal, control)?;
+        match retained_payload {
+            Some(CommandPayload::Leave) => {
+                if let Some(current) = self.sessions.get_mut(session_token) {
+                    current.end = Some(BrowserSessionEnd::LeftRoom);
+                }
+            }
+            Some(CommandPayload::CloseRoom) => {
+                for current in self
+                    .sessions
+                    .values_mut()
+                    .filter(|current| current.room_code == session.room_code)
+                {
+                    if current.end.is_none() {
+                        current.end = Some(BrowserSessionEnd::RoomClosed);
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(outcome)
+    }
+
+    /// Submit arbitrary bounded chat text through a typed command.
+    pub fn chat(&mut self, session_token: &str, requested_text: &str) -> Result<String, String> {
+        let session = self.session(session_token)?.clone();
+        if session.end.is_some() {
+            return Err("This player session has already ended.".to_owned());
+        }
+        let text = requested_text.trim();
+        if text.is_empty() {
+            return Err("Write a message before sending it.".to_owned());
+        }
         self.rooms
             .get_mut(&session.room_code)
             .ok_or_else(|| "This room is no longer active.".to_owned())?
             .demo
-            .control(&session.principal, control)
+            .chat_as(&session.principal, text.to_owned())
+    }
+
+    /// Return the retained terminal screen for one former member, if any.
+    pub fn end_state(&self, session_token: &str) -> Result<Option<BrowserSessionEnd>, String> {
+        Ok(self.session(session_token)?.end)
     }
 
     /// Simulate transport loss for the current device without changing membership.
     pub fn disconnect(&mut self, session_token: &str) -> Result<String, String> {
         let session = self.session(session_token)?.clone();
+        if session.end.is_some() {
+            return Err("This player session has already ended.".to_owned());
+        }
         self.rooms
             .get_mut(&session.room_code)
             .ok_or_else(|| "This room is no longer active.".to_owned())?
@@ -111,11 +178,16 @@ impl BrowserRooms {
     /// Render-neutral exact-recipient state plus the registered two-seat layout.
     pub fn view(&self, session_token: &str) -> Result<BrowserRoomView, String> {
         let session = self.session(session_token)?;
+        if session.end.is_some() {
+            return Err("This player session has ended.".to_owned());
+        }
         let room = self
             .rooms
             .get(&session.room_code)
             .ok_or_else(|| "This room is no longer active.".to_owned())?;
-        let live = room.demo.view(&session.principal)?;
+        let mut live = room.demo.view(&session.principal)?;
+        live.controls
+            .retain(|control| !matches!(control.payload, CommandPayload::Chat { .. }));
         let layout = registered_layout(
             TableId::new(0x504f_4348_4557_4542),
             LayoutId::new(2, 1).ok_or_else(|| "two-player layout is unavailable".to_owned())?,
@@ -143,6 +215,8 @@ impl BrowserRooms {
                     .map(|notice| format!("{} · {}", notice.reason_code, notice.message)),
                 room_code: Some(session.room_code.clone()),
                 main_menu_href: Some("/".to_owned()),
+                chat_endpoint: Some(format!("/game/{session_token}/chat")),
+                governance_commands: false,
                 viewer_href_prefix: None,
                 findings: Vec::new(),
                 proposals: Vec::new(),
@@ -262,7 +336,7 @@ fn debug_error(error: impl std::fmt::Debug) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::BrowserRooms;
+    use super::{BrowserRooms, BrowserSessionEnd};
 
     #[test]
     fn arbitrary_named_tabs_share_one_opaque_room_without_identity_bound_codes() {
@@ -289,6 +363,73 @@ mod tests {
         let mut rooms = BrowserRooms::default();
         assert!(rooms.create("   ").is_err());
         assert!(rooms.join("Bob", "PCH-0000-0000-0000-0000-0000").is_err());
+    }
+
+    #[test]
+    fn chat_is_typed_and_leaving_retains_an_explicit_terminal_state() {
+        let mut rooms = BrowserRooms::default();
+        let creator = rooms.create("Creator").expect("create room");
+        let code = rooms
+            .view(&creator)
+            .expect("creator view")
+            .supplement
+            .room_code
+            .expect("room code");
+        let guest = rooms.join("Guest", &code).expect("join room");
+
+        rooms.chat(&guest, "  hello <table>  ").expect("typed chat");
+        let creator_view = rooms.view(&creator).expect("chat projection");
+        let message = creator_view
+            .live
+            .projection
+            .chat
+            .last()
+            .expect("chat message");
+        assert_eq!(message.principal, "Guest");
+        assert_eq!(message.text, "hello <table>");
+
+        rooms.command(&guest, "leave-room").expect("guest leaves");
+        assert_eq!(
+            rooms.end_state(&guest).expect("guest end state"),
+            Some(BrowserSessionEnd::LeftRoom)
+        );
+        assert_eq!(rooms.end_state(&creator).expect("creator active"), None);
+        assert!(rooms.view(&guest).is_err());
+        assert_eq!(
+            rooms
+                .view(&creator)
+                .expect("creator remains")
+                .live
+                .projection
+                .members
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn closing_a_room_ends_every_connected_tab_without_stale_controls() {
+        let mut rooms = BrowserRooms::default();
+        let creator = rooms.create("Creator").expect("create room");
+        let code = rooms
+            .view(&creator)
+            .expect("creator view")
+            .supplement
+            .room_code
+            .expect("room code");
+        let guest = rooms.join("Guest", &code).expect("join room");
+
+        rooms.command(&creator, "close-room").expect("close room");
+        assert_eq!(
+            rooms.end_state(&creator).expect("creator end state"),
+            Some(BrowserSessionEnd::RoomClosed)
+        );
+        assert_eq!(
+            rooms.end_state(&guest).expect("guest end state"),
+            Some(BrowserSessionEnd::RoomClosed)
+        );
+        assert!(rooms.command(&guest, "take-seat-0").is_err());
+        assert!(rooms.chat(&guest, "too late").is_err());
     }
 
     #[test]

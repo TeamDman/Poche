@@ -112,7 +112,7 @@ cargo test --workspace --locked --offline --no-run
 cargo build --locked -p poche-web-spike --offline
 ```
 
-The focused run passes 15 `poche-ui` and 26 `poche-web-spike` tests. The new
+The final focused run passes 15 `poche-ui` and 30 `poche-web-spike` tests. The new
 acceptance uses the controls presented to two independent sessions to take
 seats, ready, count down, and reach running gameplay; it confirms exactly the
 eligible actor receives a game action. The rendered-document test requires
@@ -162,6 +162,40 @@ terminal remains the environment-specific manual acceptance path.
   browsers; coordinator is not advertised as decentralized consensus; and the
   managed-shell loader failure is disclosed rather than hidden. No active user
   intent was omitted or silently weakened.
+
+## Contact-hardening follow-up — 2026-08-08
+
+The first ordinary two-tab play session added six requirements without
+superseding the original phase guidance:
+
+| ID | Observed intent | Implemented consequence |
+|---|---|---|
+| P4-U12 | `3C` is unnecessarily opaque to a player; use suit glyphs. | Human-facing card, trump, hand, and action labels use `♣ ♦ ♥ ♠`; canonical event history remains untouched. |
+| P4-U13 | `Choose an action` should be a command-palette entry point for everything, including a button for each playable card. | Every retained typed control appears exactly once in a partitioned palette; legal plays additionally remain clickable/draggable in the hand. |
+| P4-U14 | Chat should be a complete accordion surface rather than a canned send button. | Added attributed history, arbitrary text composer, typed chat endpoint, escaping, and visible denial status. |
+| P4-U15 | Leave/close are serious and need confirmation plus explicit intermediate states. | Danger group carries confirmation prompts; sessions retain `LeftRoom` or `RoomClosed` screens with a main-menu action. |
+| P4-U16 | Diagnostic copying stopped working after the native SSE rewrite. | Player script now delegates diagnostic and room-code copying across fragment replacements with a textarea fallback and visible status. |
+| P4-U17 | A closed room left another tab in stale Running state producing repeated `D-CLOSED`. | Adapter marks every still-active session closed immediately; terminal fragments contain no stale controls and close their SSE stream. |
+
+The command-palette audit also found that ordinary rooms displayed governance
+sidecar buttons whose IDs only exist in `TabletopLab`. Governance command
+availability is now explicit: the ordinary player page keeps its explanatory
+rules/votes surface but does not advertise commands its adapter cannot execute.
+
+Focused regression evidence covers human suit labels, duplicate spatial/palette
+access to each legal play, typed and escaped chat, close-all versus leave-one
+terminal behavior, confirmation attributes, terminal documents without command
+IDs, and the delegated diagnostic clipboard path. The browser server was not
+running during the final in-app inspection attempt (`ERR_CONNECTION_REFUSED`),
+so live visual acceptance remains qualified; source-level JavaScript syntax,
+Rust renderer tests, strict Clippy, and the built server binary are the
+repeatable gates.
+
+The three-pass intent audit was rerun for P4-U12 through P4-U17: each sentence
+in the follow-up was mapped to code and tests; each material new mechanism was
+mapped back to an observed defect; and an adversarial pass checked that room
+closure, chat privacy, action completeness, destructive confirmation, copy
+fallback, and canonical/history notation were not silently conflated.
 
 ## Explicitly deferred
 

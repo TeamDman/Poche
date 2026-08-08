@@ -252,13 +252,13 @@ pub fn action_label(action: &GameActionWire) -> String {
     }
 }
 
-/// Convert a canonical card code in `0..52` to rank/suit notation.
+/// Convert a canonical card code in `0..52` to human-facing rank/suit notation.
 #[must_use]
 pub fn card_label(card: u8) -> String {
     const RANKS: [&str; 13] = [
         "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A",
     ];
-    const SUITS: [&str; 4] = ["C", "D", "H", "S"];
+    const SUITS: [&str; 4] = ["♣", "♦", "♥", "♠"];
     let rank = RANKS.get(usize::from(card % 13)).copied().unwrap_or("?");
     let suit = SUITS.get(usize::from(card / 13)).copied().unwrap_or("?");
     format!("{rank}{suit}")
@@ -279,10 +279,10 @@ mod tests {
 
     #[test]
     fn card_labels_cover_the_dense_standard_deck() {
-        assert_eq!(card_label(0), "2C");
-        assert_eq!(card_label(12), "AC");
-        assert_eq!(card_label(13), "2D");
-        assert_eq!(card_label(51), "AS");
+        assert_eq!(card_label(0), "2♣");
+        assert_eq!(card_label(12), "A♣");
+        assert_eq!(card_label(13), "2♦");
+        assert_eq!(card_label(51), "A♠");
     }
 
     #[test]
@@ -341,7 +341,7 @@ mod tests {
 
         assert_eq!(
             model.own_hand.as_ref().expect("own hand").cards,
-            ["2C", "AC"]
+            ["2♣", "A♣"]
         );
         assert!(model.granted_hands.is_empty());
         assert!(!format!("{model:?}").contains("bob-hand"));
