@@ -12,7 +12,7 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, Query, State},
+    extract::{DefaultBodyLimit, Form, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{
         Html, IntoResponse, Redirect, Response, Sse,
@@ -33,17 +33,19 @@ use poche_runtime::{
 use poche_session::SessionState;
 use poche_ui::{
     ConnectionPresentation, EMBEDDED_REPLAY, PresentationInput, PresentationModel, ReplayDeck,
-    embedded_spatial_fixture, render_live_semantic_html, render_semantic_html,
+    embedded_spatial_fixture, escape_html, render_live_semantic_html, render_semantic_html,
     render_semantic_html_with_root_id, render_tabletop_semantic_html,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
 
 mod demo;
+mod game;
 mod gateway;
 mod tabletop;
 
 use demo::LiveDemo;
+use game::BrowserRooms;
 use gateway::{
     CommandDecision, GatewayAction, GatewayDeviceRegistration, GatewayLab, GatewayProjectionEvent,
     SignedGatewayCommand,
@@ -51,6 +53,7 @@ use gateway::{
 use tabletop::TabletopLab;
 
 const INDEX: &str = include_str!("../web/index.html");
+const MENU: &str = include_str!("../web/menu.html");
 const GATEWAY_INDEX: &str = include_str!("../web/gateway.html");
 const TABLETOP_CSS: &str = include_str!("../web/tabletop.css");
 const LIVE_UPDATE_CAPACITY: usize = 64;
@@ -62,6 +65,8 @@ struct AppState {
     authority: Arc<Mutex<AuthorityHost>>,
     live: Arc<Mutex<LiveDemo>>,
     live_updates: broadcast::Sender<()>,
+    rooms: Arc<Mutex<BrowserRooms>>,
+    room_updates: broadcast::Sender<()>,
     gateway: GatewayLab,
     gateway_live: Arc<Mutex<LiveDemo>>,
     tabletop: Arc<Mutex<TabletopLab>>,
@@ -157,6 +162,13 @@ fn room(value: &str) -> Result<RoomId, String> {
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
+        .route("/lab", get(lab_index))
+        .route("/game/create", post(game_create))
+        .route("/game/join", post(game_join))
+        .route("/game/{session}", get(game_view))
+        .route("/game/{session}/events", get(game_events))
+        .route("/game/{session}/command/{control}", post(game_command))
+        .route("/game/{session}/disconnect", post(game_disconnect))
         .route("/client/{viewer}", get(client_view))
         .route("/view/{viewer}/{ordinal}", get(view_checkpoint))
         .route("/rl/replay", get(rl_replay))
@@ -435,8 +447,162 @@ fn load_rl_episode(path: &std::path::Path) -> Result<poche_rl::EpisodeTranscript
     Ok(episode)
 }
 
-async fn index(State(state): State<AppState>) -> Response {
+async fn index() -> Html<String> {
+    Html(MENU.replace("__MENU_NOTICE__", ""))
+}
+
+async fn lab_index(State(state): State<AppState>) -> Response {
     live_client_document(&state, "alice")
+}
+
+#[derive(Deserialize)]
+struct RoomEntryForm {
+    player_name: String,
+    #[serde(default)]
+    room_code: String,
+}
+
+async fn game_create(State(state): State<AppState>, Form(entry): Form<RoomEntryForm>) -> Response {
+    let result = state
+        .rooms
+        .lock()
+        .map_err(|_| "room registry lock poisoned".to_owned())
+        .and_then(|mut rooms| rooms.create(&entry.player_name));
+    match result {
+        Ok(session) => {
+            let _ = state.room_updates.send(());
+            Redirect::to(&format!("/game/{session}")).into_response()
+        }
+        Err(error) => menu_error(&error),
+    }
+}
+
+async fn game_join(State(state): State<AppState>, Form(entry): Form<RoomEntryForm>) -> Response {
+    let result = state
+        .rooms
+        .lock()
+        .map_err(|_| "room registry lock poisoned".to_owned())
+        .and_then(|mut rooms| rooms.join(&entry.player_name, &entry.room_code));
+    match result {
+        Ok(session) => {
+            let _ = state.room_updates.send(());
+            Redirect::to(&format!("/game/{session}")).into_response()
+        }
+        Err(error) => menu_error(&error),
+    }
+}
+
+fn menu_error(error: &str) -> Response {
+    let notice = format!(
+        "<p class=\"menu-notice\" role=\"alert\">{}</p>",
+        escape_html(error)
+    );
+    (
+        StatusCode::BAD_REQUEST,
+        Html(MENU.replace("__MENU_NOTICE__", &notice)),
+    )
+        .into_response()
+}
+
+async fn game_view(State(state): State<AppState>, Path(session): Path<String>) -> Response {
+    match game_document(&state.rooms, &session) {
+        Ok(document) => Html(document).into_response(),
+        Err(error) => (StatusCode::NOT_FOUND, error).into_response(),
+    }
+}
+
+async fn game_events(State(state): State<AppState>, Path(session): Path<String>) -> Response {
+    let receiver = state.room_updates.subscribe();
+    let initial = match game_sse_event(&state.rooms, &session) {
+        Ok(event) => event,
+        Err(error) => return (StatusCode::NOT_FOUND, error).into_response(),
+    };
+    let rooms = Arc::clone(&state.rooms);
+    let updates = stream::unfold(
+        (receiver, rooms, session),
+        |(mut receiver, rooms, session)| async move {
+            loop {
+                match receiver.recv().await {
+                    Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {
+                        if let Ok(event) = game_sse_event(&rooms, &session) {
+                            return Some((Ok::<_, Infallible>(event), (receiver, rooms, session)));
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return None,
+                }
+            }
+        },
+    );
+    Sse::new(stream::once(async move { Ok::<_, Infallible>(initial) }).chain(updates))
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(10))
+                .text("poche-room-keep-alive"),
+        )
+        .into_response()
+}
+
+async fn game_command(
+    State(state): State<AppState>,
+    Path((session, control)): Path<(String, String)>,
+) -> Response {
+    let result = state
+        .rooms
+        .lock()
+        .map_err(|_| "room registry lock poisoned".to_owned())
+        .and_then(|mut rooms| rooms.command(&session, &control));
+    let _ = state.room_updates.send(());
+    match result {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => (StatusCode::CONFLICT, error).into_response(),
+    }
+}
+
+async fn game_disconnect(State(state): State<AppState>, Path(session): Path<String>) -> Response {
+    let result = state
+        .rooms
+        .lock()
+        .map_err(|_| "room registry lock poisoned".to_owned())
+        .and_then(|mut rooms| rooms.disconnect(&session));
+    let _ = state.room_updates.send(());
+    match result {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => (StatusCode::CONFLICT, error).into_response(),
+    }
+}
+
+fn game_document(rooms: &Arc<Mutex<BrowserRooms>>, session: &str) -> Result<String, String> {
+    let fragment = game_fragment(rooms, session)?;
+    let session = escape_html(session);
+    Ok(format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Poche room</title><style>{TABLETOP_CSS}</style></head><body>{fragment}<script>
+const roomEvents=new EventSource('/game/{session}/events');roomEvents.addEventListener('room',event=>{{const template=document.createElement('template');template.innerHTML=event.data;const next=template.content.firstElementChild;const current=document.getElementById('game-shell');if(next&&current)current.replaceWith(next)}});
+document.addEventListener('submit',event=>{{const form=event.target.closest('#game-shell form');if(!form)return;event.preventDefault();void fetch(form.action,{{method:'POST'}})}});
+document.addEventListener('click',event=>{{const command=event.target.closest('#game-shell [data-command-id]');if(command){{const form=command.closest('form');if(form){{event.preventDefault();void fetch(form.action,{{method:'POST'}})}}return}}const button=event.target.closest('[data-copy-text]');if(!button)return;const target=document.getElementById(button.dataset.copyText);if(!target)return;const previous=button.textContent;navigator.clipboard.writeText(target.textContent).then(()=>{{button.textContent='Copied';setTimeout(()=>button.textContent=previous,1400)}})}});
+let dragged=null;document.addEventListener('dragstart',event=>{{dragged=event.target.closest('[data-command-id]')?.dataset.commandId||null}});document.addEventListener('drop',event=>{{const target=event.target.closest('#play-target');if(!target||!dragged)return;event.preventDefault();void fetch('/game/{session}/command/'+encodeURIComponent(dragged),{{method:'POST'}})}});document.addEventListener('dragover',event=>{{if(event.target.closest('#play-target'))event.preventDefault()}});
+</script></body></html>"#
+    ))
+}
+
+fn game_fragment(rooms: &Arc<Mutex<BrowserRooms>>, session: &str) -> Result<String, String> {
+    let view = rooms
+        .lock()
+        .map_err(|_| "room registry lock poisoned".to_owned())?
+        .view(session)?;
+    render_tabletop_semantic_html(
+        &view.live,
+        &view.scene,
+        "game-shell",
+        &format!("/game/{session}/command"),
+        &view.supplement,
+    )
+    .map_err(|error| format!("player table rendering failed: {error:?}"))
+}
+
+fn game_sse_event(rooms: &Arc<Mutex<BrowserRooms>>, session: &str) -> Result<Event, String> {
+    Ok(Event::default()
+        .event("room")
+        .data(game_fragment(rooms, session)?))
 }
 
 async fn client_view(State(state): State<AppState>, Path(viewer): Path<String>) -> Response {
@@ -747,23 +913,51 @@ fn spawn_live_clock(
     })
 }
 
+fn spawn_room_clock(
+    rooms: Arc<Mutex<BrowserRooms>>,
+    updates: broadcast::Sender<()>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let result = rooms
+                .lock()
+                .map_err(|_| "room registry lock poisoned".to_owned())
+                .and_then(|mut rooms| rooms.tick_countdowns());
+            match result {
+                Ok(true) => {
+                    let _ = updates.send(());
+                }
+                Ok(false) => {}
+                Err(error) => eprintln!("poche-web-spike player room clock failed: {error}"),
+            }
+        }
+    })
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let address = std::env::var("POCHE_WEB_SPIKE_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:4174".to_owned())
         .parse::<SocketAddr>()?;
     let (live_updates, _) = broadcast::channel(LIVE_UPDATE_CAPACITY);
+    let (room_updates, _) = broadcast::channel(LIVE_UPDATE_CAPACITY);
     let state = AppState {
         replay: Arc::new(ReplayDeck::from_json(EMBEDDED_REPLAY)?),
         rl_episode: Arc::new(selected_rl_episode()?),
         authority: Arc::new(Mutex::new(AuthorityHost::new()?)),
         live: Arc::new(Mutex::new(LiveDemo::named("main-live")?)),
         live_updates,
+        rooms: Arc::new(Mutex::new(BrowserRooms::default())),
+        room_updates,
         gateway: GatewayLab::new()?,
         gateway_live: Arc::new(Mutex::new(gateway_demo()?)),
         tabletop: Arc::new(Mutex::new(TabletopLab::new()?)),
     };
     let _clock_task = spawn_live_clock(Arc::clone(&state.live), state.live_updates.clone());
+    let _room_clock_task = spawn_room_clock(Arc::clone(&state.rooms), state.room_updates.clone());
     let listener = tokio::net::TcpListener::bind(address).await?;
     println!(
         "poche-web-spike listening on http://{}",
@@ -783,9 +977,9 @@ fn gateway_demo() -> Result<LiveDemo, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AuthorityHost, EMBEDDED_REPLAY, GATEWAY_INDEX, INDEX, LiveDemo, ReplayDeck, gateway_demo,
-        live_client_html, live_html, load_rl_episode, rl_replay_html, selected_rl_episode,
-        spawn_live_clock,
+        AuthorityHost, BrowserRooms, EMBEDDED_REPLAY, GATEWAY_INDEX, INDEX, LiveDemo, MENU,
+        ReplayDeck, game_document, gateway_demo, live_client_html, live_html, load_rl_episode,
+        rl_replay_html, selected_rl_episode, spawn_live_clock,
     };
     use poche_protocol::RoomPhase;
     use poche_ui::render_semantic_html;
@@ -871,6 +1065,36 @@ mod tests {
         assert!(INDEX.contains("aria-live=\"polite\""));
         assert!(INDEX.contains("__LIVE_CLIENT__"));
         assert!(INDEX.contains("__CLIENT_NAME__"));
+    }
+
+    #[test]
+    fn player_menu_is_not_the_fixed_identity_developer_fixture() {
+        assert!(MENU.contains("Player name"));
+        assert!(MENU.contains("Create lobby"));
+        assert!(MENU.contains("Join lobby"));
+        assert!(MENU.contains("sessionStorage"));
+        assert!(MENU.contains("/lab"));
+        assert!(!MENU.contains("POCHE-LAB-ALICE"));
+        assert!(!MENU.contains("POCHE-LAB-BOB"));
+        assert!(!MENU.contains("Deterministic scenario"));
+    }
+
+    #[test]
+    fn player_room_document_is_self_contained_and_exact_recipient() {
+        let mut registry = BrowserRooms::default();
+        let session = registry.create("Teamy").expect("player room");
+        let rooms = Arc::new(Mutex::new(registry));
+        let document = game_document(&rooms, &session).expect("player room document");
+
+        assert!(document.contains("Teamy"));
+        assert!(document.contains("PCH-"));
+        assert!(document.contains("new EventSource('/game/"));
+        assert!(document.contains("fetch(form.action,{method:'POST'})"));
+        assert!(document.contains("data-copy-text"));
+        assert!(!document.contains("POCHE-LAB"));
+        assert!(!document.contains("datastar@"));
+        assert!(!document.contains("Alice"));
+        assert!(!document.contains("Bob"));
     }
 
     #[test]

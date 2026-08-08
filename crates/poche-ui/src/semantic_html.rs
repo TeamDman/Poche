@@ -28,7 +28,7 @@ pub fn render_semantic_html_with_root_id(model: &PresentationModel, root_id: &st
     let _ = write!(
         html,
         "<h2>{} · {:?}</h2><p>Transport: {:?}</p>",
-        escape_html(&model.viewer),
+        escape_html(&model.viewer_display_name),
         model.room_phase,
         model.connection
     );
@@ -37,7 +37,7 @@ pub fn render_semantic_html_with_root_id(model: &PresentationModel, root_id: &st
         let _ = write!(
             html,
             "<li>{} — {} — seat {} — {} — {}</li>",
-            escape_html(&member.principal),
+            escape_html(&member.display_name),
             member.role,
             member
                 .seat
@@ -155,7 +155,7 @@ pub fn render_live_semantic_html(
     let _ = write!(
         html,
         "<header><h2>Live room client</h2><dl><dt>Identity</dt><dd>{}</dd><dt>Room label</dt><dd>{}</dd><dt>Authority instance</dt><dd><code>{}</code></dd><dt>Authority revision</dt><dd>{}</dd></dl>",
-        escape_html(&live.projection.viewer),
+        escape_html(&live.projection.viewer_display_name),
         escape_html(&live.room_id),
         escape_html(&live.authority_instance),
         live.authority_revision,
@@ -307,7 +307,8 @@ fn render_hand(html: &mut String, heading: &str, hand: &HandPresentation) {
     html.push_str("</p></section>");
 }
 
-pub(crate) fn escape_html(value: &str) -> String {
+#[must_use]
+pub fn escape_html(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for character in value.chars() {
         match character {

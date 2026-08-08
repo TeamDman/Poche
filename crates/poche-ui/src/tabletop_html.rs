@@ -6,7 +6,7 @@
 
 use core::fmt::Write as _;
 
-use poche_protocol::{CommandPayload, GameActionWire, PublicGamePhase};
+use poche_protocol::{CommandPayload, GameActionWire, PublicGamePhase, RoomPhase};
 use poche_spatial::{CardLocation, SpatialScene, spatial_scene_hash_hex};
 
 use crate::{LiveClientPresentation, escape_html, render_live_diagnostics};
@@ -41,6 +41,10 @@ pub struct TabletopProposalPresentation {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TabletopHtmlSupplement {
     pub status: Option<String>,
+    /// Opaque adapter-level room code, shown only to an admitted room member.
+    pub room_code: Option<String>,
+    /// Player-facing exit from the room client.
+    pub main_menu_href: Option<String>,
     /// Adapter-owned route prefix for switching exact-recipient projections.
     pub viewer_href_prefix: Option<String>,
     pub findings: Vec<TabletopFindingPresentation>,
@@ -65,10 +69,11 @@ pub fn render_tabletop_semantic_html(
     let scene_hash = spatial_scene_hash_hex(scene)?;
     let prefix = command_endpoint.trim_end_matches('/');
     let mut html = format!(
-        "<main id=\"{}\" class=\"game-shell\" data-scene-hash=\"{}\"><header class=\"game-hud\"><div class=\"game-title\"><span>POCHE</span><small>command table</small></div>{}<div class=\"authority-chip\"><span>{:?}</span><small>{:?} · rev {}</small></div><output data-role=\"scene-hash\" hidden>{}</output></header>",
+        "<main id=\"{}\" class=\"game-shell\" data-scene-hash=\"{}\"><header class=\"game-hud\"><div class=\"game-title\"><span>POCHE</span><small>card table</small></div>{}{}<div class=\"authority-chip\"><span>{:?}</span><small>{:?} · rev {}</small></div><output data-role=\"scene-hash\" hidden>{}</output></header>",
         escape_html(root_id),
         scene_hash,
         render_viewer_switcher(live, supplement),
+        render_room_code(supplement, root_id),
         live.projection.room_phase,
         live.projection.connection,
         live.authority_revision,
@@ -85,7 +90,14 @@ pub fn render_tabletop_semantic_html(
     html.push_str("<div class=\"game-layout\"><div class=\"tabletop-primary\">");
     render_score_sheet(&mut html, live);
     render_turn_banner(&mut html, live);
-    render_card_zones(&mut html, live, scene, prefix);
+    if matches!(
+        live.projection.room_phase,
+        RoomPhase::Lobby | RoomPhase::Countdown
+    ) {
+        render_lobby_table(&mut html, live, prefix);
+    } else {
+        render_card_zones(&mut html, live, scene, prefix);
+    }
     render_controls(&mut html, live, prefix);
     html.push_str("</div><aside class=\"game-inspector\" aria-label=\"Game inspector\">");
     render_history_and_chat(&mut html, live);
@@ -99,6 +111,19 @@ pub fn render_tabletop_semantic_html(
     Ok(html)
 }
 
+fn render_room_code(supplement: &TabletopHtmlSupplement, root_id: &str) -> String {
+    let Some(code) = &supplement.room_code else {
+        return String::new();
+    };
+    let code_id = format!("{root_id}-room-code");
+    format!(
+        "<div class=\"room-code-chip\"><span>Room code</span><strong id=\"{}\">{}</strong><button type=\"button\" data-copy-text=\"{}\">Copy</button></div>",
+        escape_html(&code_id),
+        escape_html(code),
+        escape_html(&code_id),
+    )
+}
+
 fn render_viewer_switcher(
     live: &LiveClientPresentation,
     supplement: &TabletopHtmlSupplement,
@@ -106,8 +131,8 @@ fn render_viewer_switcher(
     let viewer = &live.projection.viewer;
     let mut html = format!(
         "<details class=\"viewer-switcher\"><summary aria-label=\"Current projection: {}. Open player switcher\"><span>Viewing</span><strong>{}</strong></summary><nav aria-label=\"Switch viewer projection\">",
-        escape_html(viewer),
-        escape_html(viewer),
+        escape_html(&live.projection.viewer_display_name),
+        escape_html(&live.projection.viewer_display_name),
     );
     if let Some(prefix) = &supplement.viewer_href_prefix {
         for member in &live.projection.members {
@@ -121,14 +146,14 @@ fn render_viewer_switcher(
                 html,
                 "<a href=\"{}\"{current}>{} <small>{}</small></a>",
                 escape_html(&href),
-                escape_html(&member.principal),
+                escape_html(&member.display_name),
                 member.role,
             );
         }
         let refresh = format!("{prefix}/{viewer}");
         let _ = write!(
             html,
-            "<a href=\"{}\">Refresh projection</a><a href=\"/\">Experiment console</a>",
+            "<a href=\"{}\">Refresh projection</a>",
             escape_html(&refresh),
         );
     } else {
@@ -136,13 +161,69 @@ fn render_viewer_switcher(
             let _ = write!(
                 html,
                 "<span>{} <small>{}</small></span>",
-                escape_html(&member.principal),
+                escape_html(&member.display_name),
                 member.role,
             );
         }
     }
+    if let Some(href) = &supplement.main_menu_href {
+        let _ = write!(html, "<a href=\"{}\">Main menu</a>", escape_html(href));
+    }
     html.push_str("</nav></details>");
     html
+}
+
+fn render_lobby_table(html: &mut String, live: &LiveClientPresentation, prefix: &str) {
+    html.push_str("<section class=\"table-surface lobby-surface\" aria-labelledby=\"lobby-heading\"><div class=\"lobby-center\"><span>LOBBY</span><h2 id=\"lobby-heading\">Choose a seat</h2><p>Take a seat, mark ready, then the coordinator starts the countdown.</p><p class=\"connected-players\"><strong>At the table:</strong> ");
+    for (index, member) in live.projection.members.iter().enumerate() {
+        if index > 0 {
+            html.push_str(", ");
+        }
+        let _ = write!(html, "{}", escape_html(&member.display_name));
+    }
+    html.push_str("</p></div><ol class=\"seat-ring\">");
+    for seat in 0..2_u8 {
+        let occupant = live
+            .projection
+            .members
+            .iter()
+            .find(|member| member.seat == Some(seat));
+        let _ = write!(
+            html,
+            "<li class=\"seat seat-{seat}\"><span>Seat {}</span>",
+            seat + 1
+        );
+        if let Some(member) = occupant {
+            let _ = write!(
+                html,
+                "<strong>{}</strong><small>{}</small>",
+                escape_html(&member.display_name),
+                if member.ready { "ready" } else { "not ready" }
+            );
+        } else if let Some(control) = live.controls.iter().find(|control| {
+            matches!(control.payload, CommandPayload::TakeSeat { seat: candidate } if candidate == seat)
+        }) {
+            let endpoint = format!("{prefix}/{}", control.id);
+            let _ = write!(
+                html,
+                "<form method=\"post\" action=\"{}\"><button class=\"seat-action\" type=\"submit\" data-command-id=\"{}\">Sit here</button></form>",
+                escape_html(&endpoint),
+                escape_html(&control.id),
+            );
+        } else {
+            html.push_str("<strong>Open</strong>");
+        }
+        html.push_str("</li>");
+    }
+    html.push_str("</ol>");
+    if let Some(countdown) = live.projection.countdown {
+        let _ = write!(
+            html,
+            "<div class=\"countdown-orb\"><strong>{}</strong><span>starting</span></div>",
+            countdown.remaining()
+        );
+    }
+    html.push_str("</section>");
 }
 
 fn render_score_sheet(html: &mut String, live: &LiveClientPresentation) {
@@ -175,7 +256,7 @@ fn render_score_sheet(html: &mut String, live: &LiveClientPresentation) {
             if current_turn { " current-turn" } else { "" },
             if viewer { " current-viewer" } else { "" },
             member.seat.unwrap_or_default(),
-            escape_html(&member.principal),
+            escape_html(&member.display_name),
         );
     }
     html.push_str("</ol></section>");
@@ -234,7 +315,7 @@ fn actor_name(live: &LiveClientPresentation, actor: &str) -> String {
         .members
         .iter()
         .find(|member| member.seat == Some(seat))
-        .map_or_else(|| actor.to_owned(), |member| member.principal.clone())
+        .map_or_else(|| actor.to_owned(), |member| member.display_name.clone())
 }
 
 fn render_card_zones(
@@ -283,7 +364,7 @@ fn render_card_zones(
         let _ = write!(
             html,
             "<section class=\"hand-dock\" aria-labelledby=\"own-hand-heading\"><div><h2 id=\"own-hand-heading\">{}'s hand</h2><p id=\"hand-help\">Legal cards lift forward. Click or drag one to PLAY.</p></div><ul class=\"hand\">",
-            escape_html(&hand.player)
+            escape_html(&live.projection.viewer_display_name)
         );
         for (index, (code, label)) in hand.card_codes.iter().zip(&hand.cards).enumerate() {
             let offset = i32::try_from(index).unwrap_or_default() * 2
@@ -331,22 +412,32 @@ fn render_card_zones(
 }
 
 fn render_controls(html: &mut String, live: &LiveClientPresentation, prefix: &str) {
-    let turn_controls = live
+    let primary_controls = live
         .controls
         .iter()
         .filter(|control| {
-            matches!(control.payload, CommandPayload::GameAction { .. })
-                && !matches!(
-                    control.payload,
-                    CommandPayload::GameAction {
-                        action: GameActionWire::Play { .. }
-                    }
-                )
+            matches!(
+                control.payload,
+                CommandPayload::Ready
+                    | CommandPayload::Unready
+                    | CommandPayload::ArmCountdown { .. }
+                    | CommandPayload::AbortCountdown
+                    | CommandPayload::Pause
+                    | CommandPayload::Unpause
+                    | CommandPayload::ResetLobby
+                    | CommandPayload::Reconnect
+                    | CommandPayload::GameAction { .. }
+            ) && !matches!(
+                control.payload,
+                CommandPayload::GameAction {
+                    action: GameActionWire::Play { .. }
+                }
+            )
         })
         .collect::<Vec<_>>();
-    if !turn_controls.is_empty() {
+    if !primary_controls.is_empty() {
         html.push_str("<section class=\"action-dock\" aria-labelledby=\"turn-actions-heading\"><h2 id=\"turn-actions-heading\">Choose an action</h2><div class=\"actions\">");
-        for control in turn_controls {
+        for control in primary_controls {
             let endpoint = format!("{prefix}/{}", control.id);
             let _ = write!(
                 html,
@@ -361,7 +452,19 @@ fn render_controls(html: &mut String, live: &LiveClientPresentation, prefix: &st
 
     html.push_str("<nav class=\"utility-bar\" aria-label=\"Room commands\">");
     for control in &live.controls {
-        if matches!(control.payload, CommandPayload::GameAction { .. }) {
+        if matches!(
+            control.payload,
+            CommandPayload::Ready
+                | CommandPayload::Unready
+                | CommandPayload::ArmCountdown { .. }
+                | CommandPayload::AbortCountdown
+                | CommandPayload::Pause
+                | CommandPayload::Unpause
+                | CommandPayload::ResetLobby
+                | CommandPayload::Reconnect
+                | CommandPayload::TakeSeat { .. }
+                | CommandPayload::GameAction { .. }
+        ) {
             continue;
         }
         let endpoint = format!("{prefix}/{}", control.id);
@@ -379,7 +482,7 @@ fn render_controls(html: &mut String, live: &LiveClientPresentation, prefix: &st
 fn render_history_and_chat(html: &mut String, live: &LiveClientPresentation) {
     let _ = write!(
         html,
-        "<details class=\"inspector-panel\" open><summary>Activity <span>{}</span></summary><section aria-labelledby=\"history-heading\"><h2 id=\"history-heading\">Public history</h2><ol class=\"event-log\">",
+        "<details class=\"inspector-panel\"><summary>Activity <span>{}</span></summary><section aria-labelledby=\"history-heading\"><h2 id=\"history-heading\">Public history</h2><ol class=\"event-log\">",
         live.projection.history.len(),
     );
     for event in &live.projection.history {

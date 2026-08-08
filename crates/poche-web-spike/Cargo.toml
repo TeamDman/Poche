@@ -9,11 +9,12 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-axum.workspace = true
+axum = { workspace = true, features = ["form"] }
 datastar.workspace = true
 ed25519-dalek.workspace = true
 flate2.workspace = true
 futures-util.workspace = true
+getrandom.workspace = true
 poche-protocol = { path = "../poche-protocol" }
 poche-rl = { path = "../poche-rl" }
 poche-runtime = { path = "../poche-runtime" }

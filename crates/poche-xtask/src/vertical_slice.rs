@@ -258,6 +258,8 @@ pub fn build_vertical_slice(root: &Path) -> Result<VerticalSliceBuildReport, Sli
                 "static checked projection; controls are illustrative and have no live authority"
                     .to_owned(),
             ),
+            room_code: None,
+            main_menu_href: None,
             viewer_href_prefix: None,
             findings: Vec::new(),
             proposals: Vec::new(),

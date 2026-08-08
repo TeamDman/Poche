@@ -195,7 +195,7 @@ fn render_rl_episode(
 fn render_projection(ui: &mut egui::Ui, model: &PresentationModel) {
     ui.heading(format!(
         "{} · {} · {}",
-        model.viewer,
+        model.viewer_display_name,
         phase_label(model.room_phase),
         connection_label(model.connection)
     ));
@@ -209,7 +209,7 @@ fn render_projection(ui: &mut egui::Ui, model: &PresentationModel) {
             ui.strong("Connected");
             ui.end_row();
             for member in &model.members {
-                ui.label(&member.principal);
+                ui.label(&member.display_name);
                 ui.label(member.role);
                 ui.label(
                     member
@@ -308,7 +308,7 @@ pub fn render_live_client(
     live: &LiveClientPresentation,
 ) -> Option<CommandPayload> {
     ui.heading("Live room client");
-    ui.label(format!("identity: {}", live.projection.viewer));
+    ui.label(format!("identity: {}", live.projection.viewer_display_name));
     ui.label(format!("room: {}", live.room_id));
     for invite in &live.room_invites {
         ui.horizontal(|ui| {

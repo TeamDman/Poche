@@ -31,14 +31,13 @@ const ROOM: &str = "datastar-live-room";
 const ALICE_CODE: &str = "POCHE-LAB-ALICE";
 const BOB_CODE: &str = "POCHE-LAB-BOB";
 const SPECTATOR_CODE: &str = "POCHE-LAB-SPECTATOR";
-const UI_VIEWERS: [&str; 3] = [ALICE, BOB, SPECTATOR];
-
 /// Stateful local authority used to exercise every live-client surface.
 pub struct LiveDemo {
     authority: InProcessAuthority<OracleSessionGame<2>>,
     authority_surface: String,
     authority_incarnation: u64,
     clients: BTreeMap<String, ScriptedClient>,
+    display_names: BTreeMap<String, String>,
     latest: BTreeMap<String, ProjectionPayload>,
     projection_history: BTreeMap<String, Vec<ProjectionPayload>>,
     frame_history: BTreeMap<String, Vec<String>>,
@@ -65,11 +64,19 @@ impl LiveDemo {
             let client = transport.connect(principal(name)?).map_err(debug_error)?;
             clients.insert(name.to_owned(), client);
         }
+        let display_names = [
+            (ALICE.to_owned(), "Alice".to_owned()),
+            (BOB.to_owned(), "Bob".to_owned()),
+            (SPECTATOR.to_owned(), "Spectator".to_owned()),
+        ]
+        .into_iter()
+        .collect();
         Ok(Self {
             authority: InProcessAuthority::new(state, transport),
             authority_surface: surface.to_owned(),
             authority_incarnation: incarnation,
             clients,
+            display_names,
             latest: BTreeMap::new(),
             projection_history: BTreeMap::new(),
             frame_history: BTreeMap::new(),
@@ -78,9 +85,64 @@ impl LiveDemo {
         })
     }
 
+    /// Construct an empty player-facing room. Peers are registered dynamically.
+    pub fn dynamic(surface: &str) -> Result<Self, String> {
+        let state = SessionState::pending(room(ROOM)?, principal(CLOCK)?, principal(GAME)?);
+        let mut transport = InProcessTransport::new(LoopbackCodec::CanonicalNdjson);
+        let game = transport.connect(principal(GAME)?).map_err(debug_error)?;
+        Ok(Self {
+            authority: InProcessAuthority::new(state, transport),
+            authority_surface: surface.to_owned(),
+            authority_incarnation: 0,
+            clients: [(GAME.to_owned(), game)].into_iter().collect(),
+            display_names: BTreeMap::new(),
+            latest: BTreeMap::new(),
+            projection_history: BTreeMap::new(),
+            frame_history: BTreeMap::new(),
+            notices: BTreeMap::new(),
+            next_command: 0,
+        })
+    }
+
+    /// Register a new opaque principal and human-facing player name.
+    pub fn register_peer(&mut self, viewer: &str, display_name: &str) -> Result<(), String> {
+        if self.clients.contains_key(viewer) || matches!(viewer, GAME | CLOCK) {
+            return Err("player principal is already registered".to_owned());
+        }
+        let client = self
+            .authority
+            .transport
+            .connect(principal(viewer)?)
+            .map_err(debug_error)?;
+        self.clients.insert(viewer.to_owned(), client);
+        self.display_names
+            .insert(viewer.to_owned(), display_name.to_owned());
+        Ok(())
+    }
+
+    /// Create this room as a dynamically registered peer.
+    pub fn create_room_as(&mut self, viewer: &str) -> Result<String, String> {
+        self.submit_payload(viewer, CommandPayload::CreateRoom, false)
+    }
+
+    /// Mint and consume a one-use reducer invite behind an adapter-level room code.
+    pub fn join_room_as(&mut self, viewer: &str, invite: &str) -> Result<String, String> {
+        self.authority
+            .state
+            .invites
+            .push(InviteRecord::new(invite, u64::MAX).map_err(debug_error)?);
+        self.submit_payload(
+            viewer,
+            CommandPayload::RedeemInvite {
+                invite: InviteProof::new(invite).map_err(debug_error)?,
+            },
+            false,
+        )
+    }
+
     /// Build the exact current live presentation for one browser identity.
     pub fn view(&self, viewer: &str) -> Result<LiveClientPresentation, String> {
-        if !UI_VIEWERS.contains(&viewer) {
+        if !self.clients.contains_key(viewer) || viewer == GAME {
             return Err("unknown live demo viewer".to_owned());
         }
         let viewer_id = principal(viewer)?;
@@ -115,11 +177,11 @@ impl LiveDemo {
             .chat_tail()
             .entries()
             .map(|entry| ChatPresentation {
-                principal: entry.principal_id.as_str().to_owned(),
+                principal: self.display_name(entry.principal_id.as_str()).to_owned(),
                 text: entry.text.clone(),
             })
             .collect();
-        let presentation = PresentationModel::from_input(PresentationInput {
+        let mut presentation = PresentationModel::from_input(PresentationInput {
             viewer: viewer.to_owned(),
             projection: payload,
             legal_actions,
@@ -128,6 +190,7 @@ impl LiveDemo {
             chat,
             notices: self.notices.get(viewer).cloned().unwrap_or_default(),
         });
+        self.decorate_names(&mut presentation);
         let involved = member.is_some_and(|member| member.connection == ConnectionState::Connected);
         let (hand_requests, hand_grants) = self.hand_access(&viewer_id, involved);
         let (room_invites, join_proof) = room_access(
@@ -159,6 +222,19 @@ impl LiveDemo {
                 replay_href: Some(format!("/live/{viewer}/replay")),
             },
         ))
+    }
+
+    fn display_name<'a>(&'a self, principal: &'a str) -> &'a str {
+        self.display_names
+            .get(principal)
+            .map_or(principal, String::as_str)
+    }
+
+    fn decorate_names(&self, presentation: &mut PresentationModel) {
+        presentation.viewer_display_name = self.display_name(&presentation.viewer).to_owned();
+        for member in &mut presentation.members {
+            member.display_name = self.display_name(&member.principal).to_owned();
+        }
     }
 
     fn hand_access(
@@ -345,7 +421,7 @@ impl LiveDemo {
 
     /// Simulate loss, then bind a fresh transport so the typed reconnect can run.
     pub fn disconnect(&mut self, viewer: &str) -> Result<String, String> {
-        if !UI_VIEWERS.contains(&viewer) {
+        if !self.clients.contains_key(viewer) || viewer == GAME {
             return Err("unknown live demo viewer".to_owned());
         }
         let old = self
@@ -386,7 +462,7 @@ impl LiveDemo {
 
     /// Deterministically render every exact projection retained for one viewer.
     pub fn replay_html(&self, viewer: &str) -> Result<String, String> {
-        if !UI_VIEWERS.contains(&viewer) {
+        if !self.clients.contains_key(viewer) || viewer == GAME {
             return Err("unknown live demo viewer".to_owned());
         }
         let mut html = String::from(
@@ -400,7 +476,7 @@ impl LiveDemo {
             .enumerate()
         {
             let _ = write!(html, "<h2>Checkpoint {}</h2>", index + 1);
-            let model = PresentationModel::from_input(PresentationInput {
+            let mut model = PresentationModel::from_input(PresentationInput {
                 viewer: viewer.to_owned(),
                 projection: projection.clone(),
                 legal_actions: Vec::new(),
@@ -409,6 +485,7 @@ impl LiveDemo {
                 chat: Vec::new(),
                 notices: Vec::new(),
             });
+            self.decorate_names(&mut model);
             html.push_str(&render_semantic_html_with_root_id(
                 &model,
                 &format!("checkpoint-{index}"),
@@ -502,7 +579,7 @@ impl LiveDemo {
         let clients = self
             .clients
             .iter()
-            .filter(|(name, _)| UI_VIEWERS.contains(&name.as_str()))
+            .filter(|(name, _)| name.as_str() != GAME)
             .map(|(name, client)| (name.clone(), client.clone()))
             .collect::<Vec<_>>();
         for (viewer, client) in clients {

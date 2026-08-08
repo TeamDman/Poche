@@ -45,6 +45,8 @@ symbolic, queried, sampled, experimental, or merely empirical.
 - [Secure-browser Veilid feasibility re-evaluation](docs/veilid-browser-feasibility.md)
 - [Replicated runtime convergence scenario](docs/replicated-runtime.md)
 - [Replicated consensus formal evidence and coverage](docs/consensus-coverage.md)
+- [Player-facing web client](docs/player-web-client.md) — dynamic names,
+  per-tab sessions, opaque shared room codes, and the game-like tabletop
 
 Automatic target-language generation, a security-reviewed dropout-tolerant
 hidden-card protocol, a packaged replicated player client, production account/
@@ -131,6 +133,29 @@ cargo run -p poche-cli --offline -- --output json command parse '/startvote "/sc
 cargo run -p poche-xtask -- multiplayer smoke --transport in-process
 cargo run -p poche-cli -- --output text transcript replay tests/fixtures/protocol/session-micro-v1.script.ndjson
 ```
+
+## Play in two browser tabs
+
+Run the local server, then open `http://127.0.0.1:4174/`:
+
+```powershell
+cargo run --locked -p poche-web-spike --offline
+```
+
+Enter any display name and create a lobby. Copy the generated `PCH-…` room
+code, open the main menu in a second tab, choose another name, and join with
+that code. Each tab stores its name in tab-scoped `sessionStorage` and receives
+a different secret session URL, so tabs do not collapse into one hard-coded
+Alice/Bob identity. Take different seats, ready both players, and let the
+creator start the countdown. Phase-appropriate bid/play controls then drive the
+same typed reducer used by the formal and transcript checks.
+
+The normal player path is intentionally full-viewport and game-like. Deep
+diagnostics are collapsed, and the old deterministic Alice/Bob harness now
+lives at `/lab`. The current room registry is process-local development state;
+the browser-device gateway, Veilid, replicated authority, and production invite
+semantics remain separately scoped experiments. See
+[player-web-client.md](docs/player-web-client.md).
 
 The CLI schema includes `room`, `game`, `chat`, `spectator`, `transcript`, and
 `identity` commands with text/JSON/NDJSON output. Transcript commands execute

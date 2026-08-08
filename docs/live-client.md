@@ -1,4 +1,11 @@
-# Deterministic live client
+# Player web client and deterministic developer lab
+
+The ordinary player starts at `/`, chooses a name, and creates or joins a room
+using an opaque shared code. Each tab receives an independent exact-recipient
+session path and renders the full-viewport semantic tabletop documented in
+[`player-web-client.md`](player-web-client.md). The original fixed-identity
+client described below remains at `/lab` as a development and evidence harness;
+it no longer defines the product entry flow.
 
 Task 6.2 attaches the renderer-neutral `poche-ui::LiveClientPresentation` to a
 real two-seat `InProcessAuthority<OracleSessionGame<2>>`. The executable
@@ -21,7 +28,7 @@ The authority remains the only component that changes game/session semantics:
 5. policy/reducer results produce new exact-recipient projections.
 
 The HTML never serializes `CommandPayload`, `InviteProof`, or an invitation
-secret into a command endpoint. The deliberately visible demo join code is
+secret into a command endpoint. The deliberately visible `/lab` join code is
 display data for the current candidate/coordinator. Invitation values never enter the
 canonical projection transcript. A stale or invented control ID fails closed.
 Removing a button is not an authorization mechanism: the focused test submits
@@ -44,8 +51,9 @@ Run the checked release server from the repository root:
 cargo run --release -p poche-web-spike
 ```
 
-Then open `http://127.0.0.1:4174/`, which is Alice's ordinary peer client. Bob
-is at `/client/bob`, and the spectator is at `/client/spectator`. Alice or Bob
+Then open `http://127.0.0.1:4174/` for the player main menu. Open `/lab` for the
+deterministic fixture: Bob is at `/client/bob`, and the spectator is at
+`/client/spectator`. Alice or Bob
 may select `Create room`; the first accepted creator becomes the room's current
 lifecycle coordinator and may also take a player seat. The other peer then
 receives its own invite and `Join this room` command through the live stream.
@@ -67,7 +75,9 @@ is logical rather than wall time. While the executable is running, a one-second
 adapter timer advances an active countdown by one logical tick. Reducer tests
 can still advance the same clock directly without waiting for wall time.
 
-Each client opens a long-lived Datastar SSE request. An accepted command,
+Each player room opens a native long-lived `EventSource` SSE request and sends
+commands with ordinary HTTP `POST`; the player path has no CDN runtime
+dependency. Each `/lab` client opens the original Datastar SSE request. An accepted command,
 denied stale control, scenario change, disconnect, or countdown tick publishes
 a fresh exact-recipient patch to every open client. The server renders each
 patch independently for that viewer. It does not broadcast one player's
@@ -79,8 +89,8 @@ adapter rejects it before constructing a typed command. It then refreshes the
 client and shows a `STALE-CONTROL` status. Authority denials use the same
 visible client-event surface.
 
-The three interactive identities are Alice, Bob, and spectator. Static one-use
-demo codes are intentionally unsuitable for deployment. Before a room exists,
+The `/lab` identities are Alice, Bob, and spectator. Its static one-use demo
+codes are intentionally unsuitable for deployment. Before a lab room exists,
 peers see only `Create room`, not a meaningless join command or code. After
 creation, the coordinator sees codes for the other identities and each
 nonmember sees only its own join code. A real room must issue fresh protected

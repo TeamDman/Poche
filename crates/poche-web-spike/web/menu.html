@@ -1,0 +1,81 @@
+<!doctype html>
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Poche</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #06100a; color: #f2f8f3; --green:#4de189; --line:#375844; --muted:#a9b8ae; }
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; }
+      body { margin: 0; min-height: 100svh; display: grid; place-items: center; background: radial-gradient(circle at 50% 38%, #195f38 0, #0b2918 32%, #06100a 72%); overflow-x: hidden; }
+      body::before { content:""; position:fixed; inset:0; pointer-events:none; opacity:.2; background:linear-gradient(#fff1 1px,transparent 1px),linear-gradient(90deg,#fff1 1px,transparent 1px); background-size:2.5rem 2.5rem; mask-image:radial-gradient(circle,#000,transparent 72%); }
+      main { width: min(34rem, calc(100% - 2rem)); display:grid; gap:1rem; text-align:center; position:relative; }
+      .brand { display:grid; gap:.2rem; filter:drop-shadow(0 .6rem 1.5rem #0008); }
+      .brand h1 { margin:0; font-size:clamp(4rem,16vw,8rem); line-height:.8; letter-spacing:.13em; text-indent:.13em; font-weight:950; }
+      .brand p { margin:.6rem 0; color:#d4e7d9; letter-spacing:.18em; text-transform:uppercase; font-size:.76rem; }
+      .menu-card { display:grid; gap:.8rem; padding:clamp(1rem,4vw,1.6rem); border:1px solid var(--line); border-radius:.8rem; background:#0b1710e8; box-shadow:0 1.2rem 4rem #0009,inset 0 1px #ffffff12; backdrop-filter:blur(.6rem); text-align:left; }
+      label { display:grid; gap:.35rem; color:var(--muted); font-size:.78rem; font-weight:750; text-transform:uppercase; letter-spacing:.09em; }
+      input { width:100%; min-height:3.25rem; padding:.7rem .85rem; border:1px solid #54705e; border-radius:.45rem; background:#08110c; color:#fff; font:1.1rem inherit; outline:none; }
+      input:focus { border-color:var(--green); box-shadow:0 0 0 .18rem #4de18933; }
+      button, summary { min-height:3.35rem; display:grid; place-items:center; border:1px solid #5a7864; border-radius:.45rem; cursor:pointer; font:800 1rem inherit; }
+      .create { border-color:var(--green); background:#18743c; color:#fff; box-shadow:inset 0 1px #ffffff25; }
+      .create:hover, .create:focus-visible { background:#21944d; }
+      details { display:grid; gap:.7rem; }
+      summary { list-style:none; background:#16241b; }
+      summary::-webkit-details-marker { display:none; }
+      details[open] summary { border-color:var(--green); }
+      .join-fields { display:grid; gap:.7rem; padding-top:.7rem; }
+      .join { background:#26382d; color:#fff; }
+      .join:hover, .join:focus-visible { background:#344b3c; }
+      .menu-notice { margin:0; padding:.75rem; border-left:.25rem solid #ffca66; background:#322711; color:#fff3ce; text-align:left; }
+      .secondary { display:flex; justify-content:center; gap:1.2rem; font-size:.78rem; }
+      a { color:#b8efcb; }
+      .privacy { margin:0; color:var(--muted); font-size:.7rem; line-height:1.45; }
+      @media (max-height: 650px) and (min-width: 560px) { body { place-items:start center; } main { margin-block:1.2rem; } .brand h1 { font-size:4rem; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="brand">
+        <h1>POCHE</h1>
+        <p>A small game with sharp edges</p>
+      </header>
+      __MENU_NOTICE__
+      <form class="menu-card" method="post">
+        <label for="player-name">Player name
+          <input id="player-name" name="player_name" maxlength="32" autocomplete="nickname" placeholder="What should the table call you?" required autofocus>
+        </label>
+        <button class="create" type="submit" formaction="/game/create">Create lobby</button>
+        <details>
+          <summary>Join lobby</summary>
+          <div class="join-fields">
+            <label for="room-code">Room code
+              <input id="room-code" name="room_code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="PCH-••••-••••-••••-••••-••••">
+            </label>
+            <button class="join" type="submit" formaction="/game/join">Join table</button>
+          </div>
+        </details>
+        <p class="privacy">Names are display data. This local vertical slice generates a separate opaque principal and device-session token; the shared room code is not tied to a predetermined player.</p>
+      </form>
+      <nav class="secondary" aria-label="Secondary pages">
+        <a href="https://teamdman.github.io/Poche/">Rulebook</a>
+        <a href="/lab">Developer lab</a>
+        <a href="/rl/replay">RL replay</a>
+      </nav>
+    </main>
+    <script>
+      const nameInput = document.getElementById('player-name');
+      const rememberedName = sessionStorage.getItem('poche.playerName');
+      if (rememberedName) nameInput.value = rememberedName;
+      document.querySelector('.menu-card').addEventListener('submit', () => {
+        sessionStorage.setItem('poche.playerName', nameInput.value.trim());
+      });
+    </script>
+  </body>
+</html>

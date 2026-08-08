@@ -66,6 +66,8 @@ pub struct PresentationInput {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemberPresentation {
     pub principal: String,
+    /// Human-facing name; authorization continues to use `principal`.
+    pub display_name: String,
     pub role: &'static str,
     pub seat: Option<u8>,
     pub ready: bool,
@@ -106,6 +108,8 @@ pub struct HandPresentation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PresentationModel {
     pub viewer: String,
+    /// Human-facing name for the exact recipient.
+    pub viewer_display_name: String,
     pub room_phase: RoomPhase,
     pub connection: ConnectionPresentation,
     pub members: Vec<MemberPresentation>,
@@ -124,8 +128,10 @@ impl PresentationModel {
     #[must_use]
     pub fn from_input(input: PresentationInput) -> Self {
         let projection = input.projection;
+        let viewer_display_name = input.viewer.clone();
         Self {
             viewer: input.viewer,
+            viewer_display_name,
             room_phase: projection.phase,
             connection: input.connection,
             members: projection
@@ -133,6 +139,7 @@ impl PresentationModel {
                 .into_iter()
                 .map(|member| MemberPresentation {
                     principal: member.principal_id.as_str().to_owned(),
+                    display_name: member.principal_id.as_str().to_owned(),
                     role: if member.host {
                         "coordinator"
                     } else if member.seat.is_some() {

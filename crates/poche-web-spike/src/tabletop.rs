@@ -228,6 +228,8 @@ impl TabletopLab {
     fn supplement(&self) -> TabletopHtmlSupplement {
         TabletopHtmlSupplement {
             status: Some(self.status.clone()),
+            room_code: None,
+            main_menu_href: Some("/".to_owned()),
             viewer_href_prefix: Some("/tabletop".to_owned()),
             findings: self
                 .audit

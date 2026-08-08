@@ -181,7 +181,7 @@ pub fn realize_presentation_spatial(
             .transpose()?;
         players.push(PlayerSpatialProjection {
             seat,
-            display_name: member.principal.clone(),
+            display_name: member.display_name.clone(),
             score: scores[usize::from(ordinal)],
             hand_count: hand_counts[usize::from(ordinal)],
             visible_hand,

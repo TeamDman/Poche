@@ -150,7 +150,8 @@ pub fn live_diagnostic_context(live: &LiveClientPresentation) -> String {
     );
     let _ = writeln!(context, "authority_revision: {}", live.authority_revision);
     let _ = writeln!(context, "room_label: {}", one_line(&live.room_id));
-    let _ = writeln!(context, "viewer: {}", one_line(&model.viewer));
+    let _ = writeln!(context, "viewer: {}", one_line(&model.viewer_display_name));
+    let _ = writeln!(context, "viewer_principal: {}", one_line(&model.viewer));
     let _ = writeln!(context, "room_state: {:?}", model.room_phase);
     let _ = writeln!(context, "transport_state: {:?}", model.connection);
     let game_state = model.table.as_ref().map_or_else(
@@ -178,7 +179,8 @@ fn write_members(context: &mut String, live: &LiveClientPresentation) {
     for member in &model.members {
         let _ = writeln!(
             context,
-            "- {} | role={} | seat={} | ready={} | connected={}",
+            "- {} | principal={} | role={} | seat={} | ready={} | connected={}",
+            one_line(&member.display_name),
             one_line(&member.principal),
             member.role,
             member
