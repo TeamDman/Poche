@@ -1,0 +1,1 @@
+cargo run --locked -p poche-web-spike --offline
