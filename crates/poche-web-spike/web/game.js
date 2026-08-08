@@ -27,7 +27,10 @@ async function postForm(form, submitter) {
 
   const chat = form.matches("[data-chat-form]");
   const options = { method: "POST" };
-  if (chat) options.body = new FormData(form);
+  if (chat) {
+    options.headers = { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" };
+    options.body = new URLSearchParams(new FormData(form)).toString();
+  }
   const response = await fetch(form.action, options);
   if (chat) {
     const status = form.querySelector("[data-chat-status]");

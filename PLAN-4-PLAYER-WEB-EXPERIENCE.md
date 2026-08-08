@@ -88,8 +88,9 @@ player experience.
 - Compact HUD includes viewer, copyable room code, lifecycle, transport, and
   revision.
 - Lobby includes connected names, two spatial seats, ready state, and countdown.
-- Running view includes score strip, actor banner, CSS table/cards, hand fan,
-  and phase-appropriate primary actions.
+- Running view includes a viewer-relative circular table, player avatars,
+  opaque opponent hands, dealer-relative deck/trump, integrated private hand,
+  actor cue, paper-style score sheet, and phase-appropriate primary actions.
 - Developer evidence is collapsed and the inspector width is subordinate to
   the table.
 
@@ -112,7 +113,7 @@ cargo test --workspace --locked --offline --no-run
 cargo build --locked -p poche-web-spike --offline
 ```
 
-The final focused run passes 15 `poche-ui` and 30 `poche-web-spike` tests. The new
+The final focused run passes 17 `poche-ui` and 30 `poche-web-spike` tests. The new
 acceptance uses the controls presented to two independent sessions to take
 seats, ready, count down, and reach running gameplay; it confirms exactly the
 eligible actor receives a game action. The rendered-document test requires
@@ -196,6 +197,58 @@ in the follow-up was mapped to code and tests; each material new mechanism was
 mapped back to an observed defect; and an adversarial pass checked that room
 closure, chat privacy, action completeness, destructive confirmation, copy
 fallback, and canonical/history notation were not silently conflated.
+
+## Tabletop and action-loop follow-up — 2026-08-08
+
+A second ordinary play pass added seven presentation and operability
+requirements:
+
+| ID | Observed intent | Implemented consequence |
+|---|---|---|
+| P4-U18 | The phase/turn banner belongs next to the available actions rather than above the play area. | The DOM and renderer regression now require table → turn banner → action palette order. |
+| P4-U19 | Bid actions should read as complete game actions. | Typed action labels render `Bid 0 Tricks`, singular `Bid 1 Trick`, and plural higher bids. |
+| P4-U20 | The visible score sheet should follow the rulebook's round/dealer/cards/player layout and notation. | The presentation retains typed dealer and completed round-score rows; the inspector renders active bids, `●` failures, scored cells, rotating dealer, scheduled hand size, and totals. |
+| P4-U21 | The play area should look like a top-down projection with the viewer at the bottom, opponent card quantities, dealer-local deck, and an animated actor cue. | The renderer computes a viewer-relative orbit, shows only opaque opponent backs/counts, integrates the authorized hand, locates deck/trump beside the dealer, and labels bidding/playing decisions with reduced-motion support. |
+| P4-U22 | Narrow screens should reserve more room for the action surface and avoid requiring horizontal command scrolling. | Below 900px the table height is bounded, command groups wrap, and compact cards/avatars preserve the table projection; a 640×800 browser pass fit every action group without a horizontal action scrollbar. |
+| P4-U23 | Adapter result text such as `COMMAND · applied` is diagnostic activity, not HUD-level game information. | The latest client result moved into the collapsed Activity panel while retaining its live status semantics. |
+| P4-U24 | Arbitrary chat text must submit successfully from the enhanced browser form. | The delegated client now URL-encodes `FormData` and sends the exact `application/x-www-form-urlencoded;charset=UTF-8` media type required by Axum's `Form` extractor. |
+
+Verification for this follow-up:
+
+```powershell
+cargo test --locked -p poche-ui -p poche-web-spike --offline
+cargo build --locked -p poche-web-spike --offline
+```
+
+The focused tests pass 17/17 and 30/30. A live in-app browser acceptance then:
+
+- created and joined one opaque room from independent named tabs;
+- seated/readied both players and reached Running through the real countdown;
+- completed a round entirely through presented `Bid … Trick(s)` and `Play …`
+  buttons;
+- observed the score sheet advance from active bids to `●` / `10`, rotate the
+  dealer, and create the two-card round;
+- submitted `hello from the browser form` through Room chat and observed the
+  attributed message with no content-type denial;
+- visually checked the active-player desktop view and a 640×800 layout.
+
+The earlier managed-shell qualification remains part of the historical record,
+but it no longer describes the current acceptance boundary: the local server
+launched successfully in this pass and the browser exercised the real player
+adapter. The workspace-wide suite was also started; its existing
+`poche-conformance` binary outlived the shell window and the user interrupted
+that run. This is recorded as incomplete, not as a test failure or pass.
+
+The three-pass audit was rerun for P4-U18 through P4-U24. Pass one mapped each
+requested layout, wording, sheet, projection, responsive, activity, and chat
+detail above. Pass two traced every row to typed presentation data, renderer
+markup/CSS, delegated browser code, and executable evidence. Pass three checked
+the main failure risks: viewer-relative layout does not alter canonical seat
+order; opponent card faces remain private; score rows are built from typed
+events rather than parsed labels; active bids are not misrepresented as scored
+cells; `Content-Type` matches the body encoding; and visual browser acceptance
+is not inflated into a claim that the interrupted workspace conformance run
+passed. No active user intent was omitted or silently weakened.
 
 ## Explicitly deferred
 

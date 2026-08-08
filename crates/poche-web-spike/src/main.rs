@@ -1133,6 +1133,8 @@ mod tests {
         );
         assert!(document.contains("fetch(form.action, options)"));
         assert!(document.contains("new FormData(form)"));
+        assert!(document.contains("application/x-www-form-urlencoded;charset=UTF-8"));
+        assert!(document.contains("new URLSearchParams(new FormData(form)).toString()"));
         assert!(document.contains("data-copy-text"));
         assert!(document.contains("data-copy-context"));
         assert!(document.contains("writeClipboard(target.value)"));

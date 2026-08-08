@@ -78,6 +78,7 @@ pub struct MemberPresentation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TablePresentation {
     pub phase: PublicGamePhase,
+    pub dealer: Option<u8>,
     pub actor: String,
     pub round_index: u16,
     pub hand_size: u8,
@@ -117,6 +118,8 @@ pub struct PresentationModel {
     pub own_hand: Option<HandPresentation>,
     pub granted_hands: Vec<HandPresentation>,
     pub legal_actions: Vec<GameActionWire>,
+    /// Completed per-round score rows retained for the visible paper-style sheet.
+    pub round_scores: Vec<Vec<i32>>,
     pub history: Vec<String>,
     pub countdown: Option<CountdownPresentation>,
     pub chat: Vec<ChatPresentation>,
@@ -161,6 +164,7 @@ impl PresentationModel {
                     .collect::<Vec<_>>();
                 TablePresentation {
                     phase: game.phase,
+                    dealer: game.dealer,
                     actor: actor_label(game.actor),
                     round_index: game.round_index,
                     hand_size: game.hand_size,
@@ -185,6 +189,14 @@ impl PresentationModel {
                 .map(hand_presentation)
                 .collect(),
             legal_actions: input.legal_actions,
+            round_scores: projection
+                .public_history
+                .iter()
+                .filter_map(|event| match event {
+                    PublicGameEventWire::RoundScored { scores, .. } => Some(scores.clone()),
+                    _ => None,
+                })
+                .collect(),
             history: projection
                 .public_history
                 .iter()
@@ -247,8 +259,11 @@ fn history_label(event: &PublicGameEventWire) -> String {
 #[must_use]
 pub fn action_label(action: &GameActionWire) -> String {
     match action {
-        GameActionWire::Bid { tricks } => format!("bid {tricks}"),
-        GameActionWire::Play { card } => format!("play {}", card_label(*card)),
+        GameActionWire::Bid { tricks } => format!(
+            "Bid {tricks} {}",
+            if *tricks == 1 { "Trick" } else { "Tricks" }
+        ),
+        GameActionWire::Play { card } => format!("Play {}", card_label(*card)),
     }
 }
 
@@ -267,11 +282,13 @@ pub fn card_label(card: u8) -> String {
 #[cfg(test)]
 mod tests {
     use poche_protocol::{
-        GamePublicStateWire, HandProjection, MemberProjection, PrincipalId, ProjectionPayload,
-        PublicGamePhase, PublicTurnWire, RoomPhase,
+        GameActionWire, GamePublicStateWire, HandProjection, MemberProjection, PrincipalId,
+        ProjectionPayload, PublicGamePhase, PublicTurnWire, RoomPhase,
     };
 
-    use super::{ConnectionPresentation, PresentationInput, PresentationModel, card_label};
+    use super::{
+        ConnectionPresentation, PresentationInput, PresentationModel, action_label, card_label,
+    };
 
     fn principal(value: &str) -> PrincipalId {
         PrincipalId::new(value).expect("test principal")
@@ -283,6 +300,22 @@ mod tests {
         assert_eq!(card_label(12), "A♣");
         assert_eq!(card_label(13), "2♦");
         assert_eq!(card_label(51), "A♠");
+    }
+
+    #[test]
+    fn bid_labels_name_the_unit_and_pluralize_it() {
+        assert_eq!(
+            action_label(&GameActionWire::Bid { tricks: 0 }),
+            "Bid 0 Tricks"
+        );
+        assert_eq!(
+            action_label(&GameActionWire::Bid { tricks: 1 }),
+            "Bid 1 Trick"
+        );
+        assert_eq!(
+            action_label(&GameActionWire::Bid { tricks: 2 }),
+            "Bid 2 Tricks"
+        );
     }
 
     #[test]
