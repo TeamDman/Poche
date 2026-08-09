@@ -8,7 +8,10 @@ use std::collections::BTreeMap;
 
 use poche_protocol::CommandPayload;
 use poche_spatial::{LayoutId, SPATIAL_SCHEMA_VERSION, SpatialScene, TableId, registered_layout};
-use poche_ui::{LiveClientPresentation, TabletopHtmlSupplement, realize_presentation_spatial};
+use poche_ui::{
+    ConnectionPresentation, LiveClientPresentation, TabletopHtmlSupplement,
+    realize_presentation_spatial,
+};
 
 use crate::demo::LiveDemo;
 
@@ -119,7 +122,7 @@ impl BrowserRooms {
             .demo
             .control(&session.principal, control)?;
         match retained_payload {
-            Some(CommandPayload::Leave) => {
+            Some(CommandPayload::Leave) if outcome.starts_with("applied;") => {
                 if let Some(current) = self.sessions.get_mut(session_token) {
                     current.end = Some(BrowserSessionEnd::LeftRoom);
                 }
@@ -206,6 +209,7 @@ impl BrowserRooms {
         } else {
             realize_presentation_spatial(&layout, 1, &live.projection).map_err(debug_error)?
         };
+        let connected = live.projection.connection == ConnectionPresentation::Connected;
         Ok(BrowserRoomView {
             supplement: TabletopHtmlSupplement {
                 status: live
@@ -214,8 +218,9 @@ impl BrowserRooms {
                     .last()
                     .map(|notice| format!("{} · {}", notice.reason_code, notice.message)),
                 room_code: Some(session.room_code.clone()),
-                main_menu_href: Some("/".to_owned()),
-                chat_endpoint: Some(format!("/game/{session_token}/chat")),
+                main_menu_href: None,
+                exit_endpoint: connected.then(|| format!("/game/{session_token}/disconnect")),
+                chat_endpoint: connected.then(|| format!("/game/{session_token}/chat")),
                 governance_commands: false,
                 viewer_href_prefix: None,
                 findings: Vec::new(),
@@ -474,6 +479,11 @@ mod tests {
         );
         assert!(first_running.live.projection.table.is_some());
         assert!(second_running.live.projection.table.is_some());
+        assert_eq!(
+            second_running.supplement.exit_endpoint.as_deref(),
+            Some(format!("/game/{second}/disconnect").as_str())
+        );
+        assert!(second_running.live.command("leave-room").is_none());
         let first_can_act = first_running.live.controls.iter().any(|control| {
             matches!(
                 control.payload,
@@ -487,5 +497,25 @@ mod tests {
             )
         });
         assert_ne!(first_can_act, second_can_act);
+
+        rooms
+            .disconnect(&second)
+            .expect("recoverable browser exit disconnects transport");
+        assert_eq!(rooms.end_state(&second).expect("session retained"), None);
+        let disconnected = rooms.view(&second).expect("session remains viewable");
+        assert!(disconnected.live.command("reconnect").is_some());
+        assert!(disconnected.supplement.exit_endpoint.is_none());
+        assert!(disconnected.supplement.chat_endpoint.is_none());
+        rooms
+            .command(&second, "reconnect")
+            .expect("same device session reconnects stable principal");
+        assert!(
+            rooms
+                .view(&second)
+                .expect("reconnected view")
+                .live
+                .command("reconnect")
+                .is_none()
+        );
     }
 }

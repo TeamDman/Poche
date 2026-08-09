@@ -34,6 +34,8 @@
       .join { background:#26382d; color:#fff; }
       .join:hover, .join:focus-visible { background:#344b3c; }
       .menu-notice { margin:0; padding:.75rem; border-left:.25rem solid #ffca66; background:#322711; color:#fff3ce; text-align:left; }
+      .resume { display:none; min-height:3.15rem; place-items:center; border:1px solid #7ecb9a; border-radius:.45rem; background:#173b25; color:#fff; text-decoration:none; font-weight:850; }
+      .resume[data-available="true"] { display:grid; }
       .secondary { display:flex; justify-content:center; gap:1.2rem; font-size:.78rem; }
       a { color:#b8efcb; }
       .privacy { margin:0; color:var(--muted); font-size:.7rem; line-height:1.45; }
@@ -47,6 +49,7 @@
         <p>A small game with sharp edges</p>
       </header>
       __MENU_NOTICE__
+      <a class="resume" id="resume-table" href="/">Resume recent table</a>
       <form class="menu-card" method="post">
         <label for="player-name">Player name
           <input id="player-name" name="player_name" maxlength="32" autocomplete="nickname" placeholder="What should the table call you?" required autofocus>
@@ -71,6 +74,16 @@
     </main>
     <script>
       const nameInput = document.getElementById('player-name');
+      const resumeTable = document.getElementById('resume-table');
+      if (new URLSearchParams(window.location.search).has('forget')) {
+        sessionStorage.removeItem('poche.recentSession');
+        history.replaceState({}, '', '/');
+      }
+      const recentSession = sessionStorage.getItem('poche.recentSession');
+      if (recentSession) {
+        resumeTable.href = `/game/${encodeURIComponent(recentSession)}`;
+        resumeTable.dataset.available = 'true';
+      }
       const rememberedName = sessionStorage.getItem('poche.playerName');
       if (rememberedName) nameInput.value = rememberedName;
       document.querySelector('.menu-card').addEventListener('submit', () => {

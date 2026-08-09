@@ -3,6 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 const session = document.body.dataset.gameSession;
+sessionStorage.setItem("poche.recentSession", session);
 const roomEvents = new EventSource(`/game/${encodeURIComponent(session)}/events`);
 
 roomEvents.addEventListener("room", (event) => {
@@ -18,6 +19,7 @@ roomEvents.addEventListener("room", (event) => {
     const detail = document.getElementById(id);
     if (detail) detail.open = true;
   }
+  requestAnimationFrame(auditLayout);
   if (next.dataset.sessionEnded === "true") roomEvents.close();
 });
 
@@ -68,6 +70,15 @@ async function writeClipboard(text) {
 }
 
 document.addEventListener("click", (event) => {
+  const exit = event.target.closest("[data-exit-table]");
+  if (exit) {
+    exit.disabled = true;
+    void fetch(exit.dataset.exitTable, { method: "POST" }).finally(() => {
+      window.location.assign("/");
+    });
+    return;
+  }
+
   const opener = event.target.closest("[data-open-details]");
   if (opener) {
     const detail = document.getElementById(opener.dataset.openDetails);
@@ -102,6 +113,43 @@ document.addEventListener("click", (event) => {
     setTimeout(() => { copy.textContent = previous; }, 1400);
   });
 });
+
+function visibleFootprintCollisions(root = document.getElementById("game-shell")) {
+  if (!root) return [];
+  const elements = [...root.querySelectorAll(".table-surface [data-layout-footprint]")]
+    .filter((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+  const collisions = [];
+  for (let left = 0; left < elements.length; left += 1) {
+    const a = elements[left];
+    const ar = a.getBoundingClientRect();
+    for (let right = left + 1; right < elements.length; right += 1) {
+      const b = elements[right];
+      if (a.contains(b) || b.contains(a)) continue;
+      const br = b.getBoundingClientRect();
+      const width = Math.min(ar.right, br.right) - Math.max(ar.left, br.left);
+      const height = Math.min(ar.bottom, br.bottom) - Math.max(ar.top, br.top);
+      if (width > 2 && height > 2) {
+        collisions.push(`${a.dataset.layoutFootprint}:${b.dataset.layoutFootprint}`);
+      }
+    }
+  }
+  return collisions;
+}
+
+function auditLayout() {
+  const root = document.getElementById("game-shell");
+  const table = root?.querySelector(".table-surface");
+  if (!table) return;
+  const collisions = visibleFootprintCollisions(root);
+  table.dataset.layoutCollisionCount = String(collisions.length);
+  table.dataset.layoutCollisions = collisions.join(",");
+}
+
+new ResizeObserver(auditLayout).observe(document.body);
+document.addEventListener("DOMContentLoaded", auditLayout);
 
 let dragged = null;
 document.addEventListener("dragstart", (event) => {

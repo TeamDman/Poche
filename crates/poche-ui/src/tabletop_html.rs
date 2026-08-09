@@ -45,6 +45,8 @@ pub struct TabletopHtmlSupplement {
     pub room_code: Option<String>,
     /// Player-facing exit from the room client.
     pub main_menu_href: Option<String>,
+    /// Adapter-owned recoverable transport exit; membership is retained.
+    pub exit_endpoint: Option<String>,
     /// Adapter-owned endpoint accepting a `text` form field for typed chat.
     pub chat_endpoint: Option<String>,
     /// Whether this adapter implements the governance sidecar command IDs.
@@ -88,9 +90,9 @@ pub fn render_tabletop_semantic_html(
         live.projection.room_phase,
         RoomPhase::Lobby | RoomPhase::Countdown
     ) {
-        render_lobby_table(&mut html, live, prefix);
+        render_lobby_table(&mut html, live, prefix, supplement, root_id);
     } else {
-        render_card_zones(&mut html, live, scene, prefix);
+        render_card_zones(&mut html, live, scene, prefix, supplement, root_id);
     }
     render_turn_banner(&mut html, live);
     render_controls(&mut html, live, prefix, supplement, root_id);
@@ -170,7 +172,13 @@ fn render_viewer_switcher(
     html
 }
 
-fn render_lobby_table(html: &mut String, live: &LiveClientPresentation, prefix: &str) {
+fn render_lobby_table(
+    html: &mut String,
+    live: &LiveClientPresentation,
+    prefix: &str,
+    supplement: &TabletopHtmlSupplement,
+    root_id: &str,
+) {
     html.push_str("<section class=\"table-surface lobby-surface\" aria-labelledby=\"lobby-heading\"><div class=\"lobby-center\"><span>LOBBY</span><h2 id=\"lobby-heading\">Choose a seat</h2><p>Take a seat, mark ready, then the coordinator starts the countdown.</p><p class=\"connected-players\"><strong>At the table:</strong> ");
     for (index, member) in live.projection.members.iter().enumerate() {
         if index > 0 {
@@ -187,7 +195,7 @@ fn render_lobby_table(html: &mut String, live: &LiveClientPresentation, prefix: 
             .find(|member| member.seat == Some(seat));
         let _ = write!(
             html,
-            "<li class=\"seat seat-{seat}\"><span>Seat {}</span>",
+            "<li class=\"seat seat-{seat}\" data-layout-footprint=\"seat-{seat}\"><span>Seat {}</span>",
             seat + 1
         );
         if let Some(member) = occupant {
@@ -197,6 +205,21 @@ fn render_lobby_table(html: &mut String, live: &LiveClientPresentation, prefix: 
                 escape_html(&member.display_name),
                 if member.ready { "ready" } else { "not ready" }
             );
+            if member.principal == live.projection.viewer
+                && let Some(control) = live.controls.iter().find(|control| {
+                    matches!(control.payload, CommandPayload::Ready | CommandPayload::Unready)
+                })
+            {
+                render_control(html, control, prefix, "seat-action ready-action", None);
+            }
+            if member.principal == live.projection.viewer
+                && let Some(control) = live
+                    .controls
+                    .iter()
+                    .find(|control| matches!(control.payload, CommandPayload::ReleaseSeat))
+            {
+                render_control(html, control, prefix, "seat-action stand-action", None);
+            }
         } else if let Some(control) = live.controls.iter().find(|control| {
             matches!(control.payload, CommandPayload::TakeSeat { seat: candidate } if candidate == seat)
         }) {
@@ -213,13 +236,31 @@ fn render_lobby_table(html: &mut String, live: &LiveClientPresentation, prefix: 
         html.push_str("</li>");
     }
     html.push_str("</ol>");
+    if let Some(control) = live
+        .controls
+        .iter()
+        .find(|control| matches!(control.payload, CommandPayload::ArmCountdown { .. }))
+    {
+        html.push_str("<div class=\"lobby-start\" data-layout-footprint=\"countdown-control\">");
+        render_control(html, control, prefix, "seat-action", None);
+        html.push_str("</div>");
+    }
     if let Some(countdown) = live.projection.countdown {
         let _ = write!(
             html,
-            "<div class=\"countdown-orb\"><strong>{}</strong><span>starting</span></div>",
+            "<div class=\"countdown-orb\" data-layout-footprint=\"countdown\"><strong>{}</strong><span>starting</span>",
             countdown.remaining()
         );
+        if let Some(control) = live
+            .controls
+            .iter()
+            .find(|control| matches!(control.payload, CommandPayload::AbortCountdown))
+        {
+            render_control(html, control, prefix, "countdown-action", None);
+        }
+        html.push_str("</div>");
     }
+    render_table_props(html, live, prefix, supplement, root_id);
     html.push_str("</section>");
 }
 
@@ -418,6 +459,8 @@ fn render_card_zones(
     live: &LiveClientPresentation,
     scene: &SpatialScene,
     prefix: &str,
+    supplement: &TabletopHtmlSupplement,
+    root_id: &str,
 ) {
     let deck_count = scene
         .cards
@@ -442,9 +485,10 @@ fn render_card_zones(
 
     html.push_str("<section class=\"table-surface round-table\" aria-labelledby=\"table-heading\"><h2 id=\"table-heading\">Table and players</h2><div class=\"table-rim\" aria-hidden=\"true\"></div>");
     render_table_players(html, live, table, &players, actor_seat);
-    render_actor_cue(html, table, &players, actor_seat);
+    render_actor_cue(html, live, table, &players, actor_seat, prefix);
     render_deck_and_trick(html, table, &players, deck_count);
     render_private_hand(html, live, prefix);
+    render_table_props(html, live, prefix, supplement, root_id);
     html.push_str("</section>");
     for hand in &live.projection.granted_hands {
         let _ = write!(
@@ -487,7 +531,7 @@ fn render_table_players(
         let dealer = table.and_then(|value| value.dealer) == Some(seat);
         let _ = write!(
             html,
-            "<article class=\"table-player{}{}{}\" style=\"--seat-left:{left:.2}%;--seat-top:{top:.2}%\" data-seat=\"{seat}\"><span class=\"player-avatar\" aria-hidden=\"true\">{}</span><span class=\"player-identity\"><strong>{}{}</strong><small>{score} points · {cards} cards · {tricks} tricks</small></span>",
+            "<article class=\"table-player{}{}{}\" style=\"--seat-left:{left:.2}%;--seat-top:{top:.2}%\" data-seat=\"{seat}\" data-layout-footprint=\"player-{seat}\"><span class=\"player-avatar\" aria-hidden=\"true\">{}</span><span class=\"player-identity\"><strong>{}{}</strong><small>{score} points · {cards} cards · {tricks} tricks</small></span>",
             if viewer { " current-viewer" } else { "" },
             if actor { " current-actor" } else { "" },
             if dealer { " dealer" } else { "" },
@@ -521,9 +565,11 @@ fn render_table_players(
 
 fn render_actor_cue(
     html: &mut String,
+    live: &LiveClientPresentation,
     table: Option<&crate::TablePresentation>,
     players: &[&crate::MemberPresentation],
     actor_seat: Option<u8>,
+    prefix: &str,
 ) {
     if let (Some(table), Some(seat)) = (table, actor_seat)
         && let Some((orbit_index, _)) = players
@@ -536,17 +582,59 @@ fn render_actor_cue(
         )
     {
         let (player_left, player_top) = orbit_position(orbit_index, players.len());
-        let cue_left =
-            f64::midpoint(player_left, 50.0) + if player_top > 50.0 { -12.0 } else { 12.0 };
-        let cue_top = f64::midpoint(player_top, 50.0);
+        let (cue_left, cue_top) = if table.phase == PublicGamePhase::Bidding {
+            (50.0, 38.0)
+        } else {
+            (
+                f64::midpoint(player_left, 50.0) + if player_top > 50.0 { -12.0 } else { 12.0 },
+                if player_top > 50.0 {
+                    player_top - 10.0
+                } else {
+                    player_top + 10.0
+                },
+            )
+        };
         let cue = if table.phase == PublicGamePhase::Bidding {
             "Placing bid"
         } else {
             "Choosing card"
         };
+        let viewer_is_actor = players
+            .iter()
+            .any(|member| member.seat == Some(seat) && member.principal == live.projection.viewer);
+        if viewer_is_actor && table.phase == PublicGamePhase::Playing {
+            // The actionable private hand is the viewer's diegetic choosing
+            // surface; a second floating cue would only obscure those cards.
+            return;
+        }
+        if viewer_is_actor && table.phase == PublicGamePhase::Bidding {
+            let bids = live
+                .controls
+                .iter()
+                .filter(|control| {
+                    matches!(
+                        control.payload,
+                        CommandPayload::GameAction {
+                            action: GameActionWire::Bid { .. }
+                        }
+                    )
+                })
+                .collect::<Vec<_>>();
+            if !bids.is_empty() {
+                let _ = write!(
+                    html,
+                    "<div class=\"actor-cue bid-console\" data-layout-footprint=\"actor-cue\" style=\"--cue-left:{cue_left:.2}%;--cue-top:{cue_top:.2}%\" role=\"group\" aria-label=\"Place your bid at the table\"><span>Say your bid</span><div>"
+                );
+                for control in bids {
+                    render_control(html, control, prefix, "diegetic-bid", None);
+                }
+                html.push_str("</div></div>");
+                return;
+            }
+        }
         let _ = write!(
             html,
-            "<div class=\"actor-cue\" style=\"--cue-left:{cue_left:.2}%;--cue-top:{cue_top:.2}%\" role=\"status\" aria-label=\"{}\"><span aria-hidden=\"true\">",
+            "<div class=\"actor-cue\" data-layout-footprint=\"actor-cue\" style=\"--cue-left:{cue_left:.2}%;--cue-top:{cue_top:.2}%\" role=\"status\" aria-label=\"{}\"><span aria-hidden=\"true\">",
             escape_html(cue)
         );
         for (index, character) in cue.chars().enumerate() {
@@ -562,6 +650,93 @@ fn render_actor_cue(
         }
         html.push_str("</span></div>");
     }
+}
+
+fn render_table_props(
+    html: &mut String,
+    live: &LiveClientPresentation,
+    prefix: &str,
+    supplement: &TabletopHtmlSupplement,
+    root_id: &str,
+) {
+    let score_sheet_id = format!("{root_id}-score-sheet");
+    let governance_id = format!("{root_id}-governance");
+    let chat_id = format!("{root_id}-chat");
+    let _ = write!(
+        html,
+        "<div class=\"table-props\" aria-label=\"Objects on the table\"><button type=\"button\" class=\"table-paper score-paper\" data-open-details=\"{}\" data-layout-footprint=\"score-sheet\">Scores</button><button type=\"button\" class=\"table-paper rules-paper\" data-open-details=\"{}\" data-layout-footprint=\"rules\">Rules</button>",
+        escape_html(&score_sheet_id),
+        escape_html(&governance_id),
+    );
+    if supplement.chat_endpoint.is_some() {
+        let _ = write!(
+            html,
+            "<button type=\"button\" class=\"table-chat\" data-open-details=\"{}\" data-layout-footprint=\"chat\" aria-label=\"Open table chat\">Chat</button>",
+            escape_html(&chat_id),
+        );
+    }
+    if let Some(endpoint) = &supplement.exit_endpoint {
+        let _ = write!(
+            html,
+            "<button type=\"button\" class=\"table-door\" data-exit-table=\"{}\" data-layout-footprint=\"door\"><span aria-hidden=\"true\">↪</span> Exit</button>",
+            escape_html(endpoint),
+        );
+    }
+    if let Some(control) = live.controls.iter().find(|control| {
+        matches!(
+            control.payload,
+            CommandPayload::Pause | CommandPayload::Unpause | CommandPayload::ResetLobby
+        )
+    }) {
+        render_diegetic_control(html, control, prefix, "table-clock", "table-clock", None);
+    }
+    if let Some(control) = live.controls.iter().find(|control| {
+        matches!(
+            control.payload,
+            CommandPayload::Leave | CommandPayload::CloseRoom
+        )
+    }) {
+        let confirmation = match control.payload {
+            CommandPayload::CloseRoom => "Close this room for everyone? This cannot be undone.",
+            CommandPayload::Leave => {
+                "Permanently leave this membership? Exit the table instead if you want to return later."
+            }
+            _ => unreachable!("filtered room control"),
+        };
+        render_diegetic_control(
+            html,
+            control,
+            prefix,
+            "table-room-danger",
+            "room-danger",
+            Some(confirmation),
+        );
+    }
+    html.push_str("</div>");
+}
+
+fn render_diegetic_control(
+    html: &mut String,
+    control: &crate::TypedUiControl,
+    prefix: &str,
+    class_name: &str,
+    footprint: &str,
+    confirmation: Option<&str>,
+) {
+    let endpoint = format!("{prefix}/{}", control.id);
+    let confirmation = confirmation.map_or_else(String::new, |message| {
+        format!(" data-confirm=\"{}\"", escape_html(message))
+    });
+    let _ = write!(
+        html,
+        "<form method=\"post\" action=\"{}\"><button class=\"{}\" type=\"submit\" data-command-id=\"{}\" data-layout-footprint=\"{}\"{}>{}</button></form>",
+        escape_html(&endpoint),
+        class_name,
+        escape_html(&control.id),
+        escape_html(footprint),
+        confirmation,
+        escape_html(&control.label),
+    );
 }
 
 fn render_deck_and_trick(
@@ -588,7 +763,7 @@ fn render_deck_and_trick(
         });
     let _ = write!(
         html,
-        "<div class=\"deck-zone\" style=\"--deck-left:{deck_left:.2}%;--deck-top:{deck_top:.2}%\" aria-label=\"Deck near the dealer\">"
+        "<div class=\"deck-zone\" data-layout-footprint=\"deck\" style=\"--deck-left:{deck_left:.2}%;--deck-top:{deck_top:.2}%\" aria-label=\"Deck near the dealer\">"
     );
     let _ = write!(
         html,
@@ -603,7 +778,17 @@ fn render_deck_and_trick(
     } else {
         html.push_str("<span class=\"playing-card card-back\">?</span>");
     }
-    html.push_str("<small>trump</small></div></div><div class=\"trick-zone\" id=\"play-target\" tabindex=\"0\" aria-label=\"Current trick play target\"><span>PLAY</span><ol>");
+    let bidding = table.is_some_and(|value| value.phase == PublicGamePhase::Bidding);
+    let _ = write!(
+        html,
+        "<small>trump</small></div></div><div class=\"trick-zone{}\" id=\"play-target\"{} tabindex=\"0\" aria-label=\"Current trick play target\"><span>PLAY</span><ol>",
+        if bidding { " bidding-stage" } else { "" },
+        if bidding {
+            ""
+        } else {
+            " data-layout-footprint=\"current-trick\""
+        },
+    );
     if let Some(table) = table {
         for (seat, card) in &table.trick {
             let _ = write!(
@@ -638,7 +823,7 @@ fn render_private_hand(html: &mut String, live: &LiveClientPresentation, prefix:
                 let endpoint = format!("{prefix}/{}", control.id);
                 let _ = write!(
                     html,
-                    "<li style=\"--card-offset:{offset}\"><form method=\"post\" action=\"{}\"><button class=\"playing-card legal-card\" type=\"submit\" draggable=\"true\" data-card-code=\"{}\" data-command-id=\"{}\" aria-describedby=\"hand-help\"><strong>{}</strong><small>play</small></button></form></li>",
+                    "<li style=\"--card-offset:{offset}\" data-layout-footprint=\"hand-card-{index}\"><form method=\"post\" action=\"{}\"><button class=\"playing-card legal-card\" type=\"submit\" draggable=\"true\" data-card-code=\"{}\" data-command-id=\"{}\" aria-describedby=\"hand-help\"><strong>{}</strong><small>play</small></button></form></li>",
                     escape_html(&endpoint),
                     code,
                     escape_html(&control.id),
@@ -647,7 +832,7 @@ fn render_private_hand(html: &mut String, live: &LiveClientPresentation, prefix:
             } else {
                 let _ = write!(
                     html,
-                    "<li style=\"--card-offset:{offset}\"><span class=\"playing-card held-card\" aria-label=\"{}; not currently legal\"><strong>{}</strong></span></li>",
+                    "<li style=\"--card-offset:{offset}\" data-layout-footprint=\"hand-card-{index}\"><span class=\"playing-card held-card\" aria-label=\"{}; not currently legal\"><strong>{}</strong></span></li>",
                     escape_html(label),
                     escape_html(label)
                 );
@@ -752,17 +937,24 @@ fn render_controls(
     }
     html.push_str("</div></section>");
 
-    if !room_controls.is_empty() {
+    if !room_controls.is_empty() || supplement.exit_endpoint.is_some() {
         html.push_str(
             "<section class=\"command-group room-commands\"><h3>Room</h3><div class=\"actions\">",
         );
+        if let Some(endpoint) = &supplement.exit_endpoint {
+            let _ = write!(
+                html,
+                "<button class=\"secondary-action\" type=\"button\" data-exit-table=\"{}\">Exit table</button>",
+                escape_html(endpoint),
+            );
+        }
         for control in room_controls {
             let confirmation = match control.payload {
                 CommandPayload::CloseRoom => {
                     Some("Close this room for everyone? This cannot be undone.")
                 }
                 CommandPayload::Leave => Some(
-                    "Leave this room? This tab will no longer control your player in this room.",
+                    "Permanently leave this membership? Use Exit table if you only want to return to the menu and come back later.",
                 ),
                 CommandPayload::RemoveMember { .. } => Some("Remove this person from the room?"),
                 _ => None,
@@ -1036,7 +1228,7 @@ mod tests {
         assert!(html.contains("Copy diagnostic context"));
         assert!(html.contains("data-chat-form"));
         assert!(html.contains("data-open-details=\"tabletop-chat\""));
-        assert!(html.contains("data-confirm="));
+        assert!(!html.contains("Leave membership permanently"));
         assert!(!html.contains("class=\"command-status\""));
         assert!(html.contains("Latest client result"));
         let table_position = html.find("class=\"table-surface").expect("table surface");

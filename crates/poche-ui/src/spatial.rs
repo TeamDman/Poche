@@ -84,7 +84,7 @@ pub fn embedded_spatial_fixture() -> Result<EmbeddedSpatialFixture, String> {
 pub enum PresentationSpatialError {
     /// Public table arrays disagree with the selected layout cardinality.
     TableCardinality,
-    /// A required seat is absent or duplicated in public membership data.
+    /// A public member names an invalid or duplicate seat.
     SeatMap,
     /// A hand projection names no seated player or duplicates another hand.
     VisibleHandMap,
@@ -166,9 +166,14 @@ pub fn realize_presentation_spatial(
     let mut players = Vec::with_capacity(player_count);
     for ordinal in 0..layout.id().players() {
         let seat = SeatId::new(ordinal, layout.id()).ok_or(PresentationSpatialError::SeatMap)?;
-        let member = member_by_seat
-            .get(&seat)
-            .ok_or(PresentationSpatialError::SeatMap)?;
+        // Seat slots belong to the game layout, not to room membership. A
+        // departed or not-yet-admitted player must not make the exact-viewer
+        // scene impossible to realize: the public game arrays still retain
+        // that seat until a game-level dropout/recovery transition resolves it.
+        let display_name = member_by_seat.get(&seat).map_or_else(
+            || format!("Vacant seat {}", ordinal.saturating_add(1)),
+            |member| member.display_name.clone(),
+        );
         let visible_hand = visible_by_seat
             .get(&seat)
             .map(|hand| {
@@ -181,7 +186,7 @@ pub fn realize_presentation_spatial(
             .transpose()?;
         players.push(PlayerSpatialProjection {
             seat,
-            display_name: member.display_name.clone(),
+            display_name,
             score: scores[usize::from(ordinal)],
             hand_count: hand_counts[usize::from(ordinal)],
             visible_hand,
@@ -323,5 +328,19 @@ mod tests {
                 || text.text == "A♠"
                 || text.text == "A♦"
         }));
+    }
+
+    #[test]
+    fn departed_member_does_not_make_retained_game_seat_unrenderable() {
+        let layout = registered_layout(TableId::new(13), LayoutId::new(2, 1).expect("layout ID"))
+            .expect("layout");
+        let mut projection = model("alice", None, Vec::new());
+        projection.members.retain(|member| member.seat == Some(0));
+
+        let scene = realize_presentation_spatial(&layout, 5, &projection)
+            .expect("retained game seat should realize as vacant");
+
+        assert!(scene.text.iter().any(|text| text.text == "Vacant seat 2"));
+        assert_eq!(scene.cards.len(), 52);
     }
 }

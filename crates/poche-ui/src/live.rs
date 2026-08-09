@@ -365,8 +365,13 @@ fn add_common_controls(
             "Close room",
             CommandPayload::CloseRoom,
         );
-    } else {
-        push_control(controls, "leave-room", "Leave room", CommandPayload::Leave);
+    } else if matches!(model.room_phase, RoomPhase::Lobby | RoomPhase::Countdown) {
+        push_control(
+            controls,
+            "leave-room",
+            "Leave membership permanently",
+            CommandPayload::Leave,
+        );
     }
 }
 
@@ -525,6 +530,14 @@ mod tests {
                 ..
             })
         ));
+        assert!(lobby.command("leave-room").is_none());
+        let mut guest_lobby = model("spectator", false);
+        guest_lobby.room_phase = RoomPhase::Lobby;
+        let guest_lobby = LiveClientPresentation::from_input(guest_lobby, live_input());
+        assert_eq!(
+            guest_lobby.command("leave-room"),
+            Some(CommandPayload::Leave)
+        );
 
         let mut countdown = model("spectator", true);
         countdown.room_phase = RoomPhase::Countdown;
@@ -538,6 +551,7 @@ mod tests {
         paused.room_phase = RoomPhase::Paused;
         let paused = LiveClientPresentation::from_input(paused, live_input());
         assert_eq!(paused.command("unpause"), Some(CommandPayload::Unpause));
+        assert!(paused.command("leave-room").is_none());
 
         let mut postgame = model("alice", true);
         postgame.room_phase = RoomPhase::PostGame;
@@ -546,6 +560,7 @@ mod tests {
             postgame.command("reset-lobby"),
             Some(CommandPayload::ResetLobby)
         );
+        assert!(postgame.command("leave-room").is_none());
 
         let mut closed = model("alice", true);
         closed.room_phase = RoomPhase::Closed;

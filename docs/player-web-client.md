@@ -51,10 +51,14 @@ do not become game authority and cannot invent cards or scores.
 
 Human-facing ranks use suit glyphs (`3♣`, `Q♦`, `A♥`, `10♠`). Compact protocol
 and historical event codes remain machine-oriented where they are canonical.
-Every retained typed control appears in the `Choose an action` palette. A legal
-card is therefore available both as the spatial card itself and as a `Play …`
-button. Table/chat links are separated from infrequent room actions; destructive
-leave, close, and remove controls carry an explicit confirmation prompt.
+Every retained typed control appears in the `Choose an action` palette. The
+ordinary player flow also gives it a table-world affordance: cards can be
+played from the hand, bids from the actor's speech bubble, readiness and
+standing from the seat, countdown from the table centre, pause/reset from the
+table clock, chat from a speech bubble, scores/rules from paper props, and room
+exit/closure from the door area. These are multiple input affordances for the
+same retained typed command, not separate game logic. Destructive leave, close,
+and remove controls carry an explicit confirmation prompt.
 
 Chat is its own inspector accordion with attributed history and a real text
 composer. The adapter accepts a form field, trims empty edges, constructs a
@@ -69,12 +73,33 @@ countdown tick publish an update; the server independently re-renders the
 exact-recipient fragment for each session. The browser replaces only
 `#game-shell`. No player-facing command requires the external Datastar script.
 
-Leaving and closing are retained adapter states rather than inferred from a
-missing projection. A leaver sees `You have left this room`; every still-active
-session sees `This room has been closed` after a close. Both terminal screens
-remove command controls and offer `Return to main menu`. This prevents a removed
-member's last Running projection from surviving as a misleading page whose
-buttons only return `D-CLOSED`.
+`Exit table` is recoverable transport loss: it returns to the main menu, keeps
+the opaque tab session in `sessionStorage`, and offers `Resume recent table`.
+Resuming initially exposes only the typed `Reconnect` command for the same
+stable principal. `Leave membership permanently` is a different, destructive
+Lobby/Countdown action. It is denied once play is active until the game has an
+explicit dropout/substitution recovery transition. Closing remains terminal
+for every session. Terminal screens remove stale controls and unknown/expired
+session URLs render an explanatory screen with HTTP 200 rather than a raw 404.
+
+The process-local player registry is not backed by Veilid. The separate native
+Veilid transport and signed browser-device gateway prove application identity,
+route loss, and reconnect mechanisms, but do not persist this in-memory room
+when the Axum process stops. Direct secure-origin browser Veilid remains
+unsupported; production composition must deliberately connect this adapter to
+the gateway/native/replicated tracks rather than implying that it already has.
+
+## Layout evidence and formal boundary
+
+The registered spatial layouts and Alloy spatial oracle check canonical
+integer-zone separation independently of CSS. The page additionally names the
+visible DOM footprints of players, cards, deck, trick, cues, and table props.
+A `ResizeObserver` measures their actual browser bounding rectangles after SSE
+replacement and at viewport changes, exposing `data-layout-collision-count`
+and the colliding semantic names on `.table-surface`. This is executable CSS
+evidence, not a theorem about every browser/font combination. A release browser
+matrix should exercise representative widths; the bounded Alloy result remains
+the abstract layout/refinement evidence.
 
 Clipboard handling is delegated across SSE replacements and has a selectable
 textarea fallback, so both room-code and copy-safe diagnostic controls continue
@@ -94,6 +119,10 @@ The focused tests check both semantic layers:
 - only controls actually presented to each tab drive seat, ready, countdown,
   and transition to a running game;
 - after game start exactly the current actor receives a game action;
+- ready and bid controls occur both in the complete command palette and in the
+  table-world projection;
+- recoverable exit retains the player session, resume exposes reconnect, and
+  permanent leave is not available during active play;
 - the rendered player document contains native SSE/HTTP wiring and no fixed
   Alice/Bob codes or CDN dependency;
 - playable cards occur in both the hand and command palette, with suit glyphs;

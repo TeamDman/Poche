@@ -353,6 +353,21 @@ fn lifecycle_countdown_pause_game_and_reset_are_phase_typed() {
     state = execute(&state, &expire).0;
     assert!(matches!(state.phase, SessionPhase::Running { .. }));
 
+    let leave_while_running = signed(
+        &state,
+        principal("alice"),
+        "leave-while-running",
+        CommandPayload::Leave,
+    );
+    let leave_decision = authorize(&state, &leave_while_running);
+    let authorized_leave =
+        AuthorizedCommand::from_decision(leave_while_running, leave_decision).unwrap();
+    assert_eq!(
+        decide(&state, &authorized_leave),
+        Err(SessionError::Denied(DenyReason::WrongPhase))
+    );
+    assert!(state.member(&principal("alice")).is_some());
+
     let pause = signed(
         &state,
         principal("alice"),

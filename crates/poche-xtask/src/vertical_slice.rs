@@ -260,6 +260,7 @@ pub fn build_vertical_slice(root: &Path) -> Result<VerticalSliceBuildReport, Sli
             ),
             room_code: None,
             main_menu_href: None,
+            exit_endpoint: None,
             chat_endpoint: None,
             governance_commands: false,
             viewer_href_prefix: None,

@@ -509,7 +509,7 @@ fn menu_error(error: &str) -> Response {
 async fn game_view(State(state): State<AppState>, Path(session): Path<String>) -> Response {
     match game_document(&state.rooms, &session) {
         Ok(document) => Html(document).into_response(),
-        Err(error) => (StatusCode::NOT_FOUND, error).into_response(),
+        Err(error) => Html(render_session_unavailable_document(&error)).into_response(),
     }
 }
 
@@ -517,7 +517,13 @@ async fn game_events(State(state): State<AppState>, Path(session): Path<String>)
     let receiver = state.room_updates.subscribe();
     let initial = match game_sse_event(&state.rooms, &session) {
         Ok(event) => event,
-        Err(error) => return (StatusCode::NOT_FOUND, error).into_response(),
+        Err(error) => {
+            let event = Event::default()
+                .event("room")
+                .data(render_session_unavailable(&error));
+            return Sse::new(stream::once(async move { Ok::<_, Infallible>(event) }))
+                .into_response();
+        }
     };
     let rooms = Arc::clone(&state.rooms);
     let updates = stream::unfold(
@@ -636,6 +642,20 @@ fn render_session_end(end: BrowserSessionEnd) -> String {
     };
     format!(
         "<main id=\"game-shell\" class=\"game-shell session-end-shell\" data-session-ended=\"true\"><section class=\"session-end-card\"><span>{eyebrow}</span><h1>{heading}</h1><p>{explanation}</p><a class=\"primary-action\" href=\"/\">Return to main menu</a></section></main>"
+    )
+}
+
+fn render_session_unavailable(error: &str) -> String {
+    format!(
+        "<main id=\"game-shell\" class=\"game-shell session-end-shell\" data-session-ended=\"true\"><section class=\"session-end-card\"><span>SESSION UNAVAILABLE</span><h1>This table cannot be resumed here.</h1><p>The room server may have restarted, or this device-session address is not known by this process.</p><details><summary>Technical detail</summary><p>{}</p></details><a class=\"primary-action\" href=\"/?forget=1\">Return to main menu</a></section></main>",
+        escape_html(error),
+    )
+}
+
+fn render_session_unavailable_document(error: &str) -> String {
+    format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Poche session unavailable</title><style>{TABLETOP_CSS}</style></head><body>{}</body></html>"#,
+        render_session_unavailable(error),
     )
 }
 
@@ -1019,9 +1039,9 @@ mod tests {
     use super::{
         AuthorityHost, BrowserRooms, EMBEDDED_REPLAY, GATEWAY_INDEX, INDEX, LiveDemo, MENU,
         ReplayDeck, game_document, gateway_demo, live_client_html, live_html, load_rl_episode,
-        rl_replay_html, selected_rl_episode, spawn_live_clock,
+        render_session_unavailable_document, rl_replay_html, selected_rl_episode, spawn_live_clock,
     };
-    use poche_protocol::RoomPhase;
+    use poche_protocol::{CommandPayload, GameActionWire, RoomPhase};
     use poche_ui::render_semantic_html;
     use std::{
         sync::{Arc, Mutex},
@@ -1123,6 +1143,9 @@ mod tests {
     fn player_room_document_is_self_contained_and_exact_recipient() {
         let mut registry = BrowserRooms::default();
         let session = registry.create("Teamy").expect("player room");
+        registry
+            .command(&session, "take-seat-0")
+            .expect("take a seat");
         let rooms = Arc::new(Mutex::new(registry));
         let document = game_document(&rooms, &session).expect("player room document");
 
@@ -1141,10 +1164,96 @@ mod tests {
         assert!(document.contains("data-confirm="));
         assert!(document.contains("window.confirm(confirmation)"));
         assert!(document.contains("data-chat-form"));
+        assert_eq!(document.matches("data-command-id=\"ready\"").count(), 2);
+        assert_eq!(
+            document.matches("data-command-id=\"release-seat\"").count(),
+            2
+        );
         assert!(!document.contains("POCHE-LAB"));
         assert!(!document.contains("datastar@"));
         assert!(!document.contains("Alice"));
         assert!(!document.contains("Bob"));
+    }
+
+    #[test]
+    fn current_bidder_has_the_same_typed_bids_in_table_and_palette() {
+        let mut registry = BrowserRooms::default();
+        let first = registry.create("First").expect("create room");
+        let room_code = registry
+            .view(&first)
+            .expect("room view")
+            .supplement
+            .room_code
+            .expect("room code");
+        let second = registry.join("Second", &room_code).expect("join room");
+        for (session, command) in [
+            (&first, "take-seat-0"),
+            (&second, "take-seat-1"),
+            (&first, "ready"),
+            (&second, "ready"),
+            (&first, "arm-countdown"),
+        ] {
+            registry.command(session, command).expect(command);
+        }
+        for _ in 0..3 {
+            registry.tick_countdowns().expect("countdown tick");
+        }
+        let actor = [&first, &second]
+            .into_iter()
+            .find(|session| {
+                registry
+                    .view(session)
+                    .expect("actor candidate")
+                    .live
+                    .controls
+                    .iter()
+                    .any(|control| {
+                        matches!(
+                            control.payload,
+                            CommandPayload::GameAction {
+                                action: GameActionWire::Bid { .. }
+                            }
+                        )
+                    })
+            })
+            .expect("one bidder");
+        let controls = registry
+            .view(actor)
+            .expect("actor view")
+            .live
+            .controls
+            .into_iter()
+            .filter(|control| {
+                matches!(
+                    control.payload,
+                    CommandPayload::GameAction {
+                        action: GameActionWire::Bid { .. }
+                    }
+                )
+            })
+            .collect::<Vec<_>>();
+        let rooms = Arc::new(Mutex::new(registry));
+        let document = game_document(&rooms, actor).expect("bidder document");
+        assert!(document.contains("Place your bid at the table"));
+        for control in controls {
+            assert_eq!(
+                document
+                    .matches(&format!("data-command-id=\"{}\"", control.id))
+                    .count(),
+                2,
+                "bid must exist in the table speech control and complete palette"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_session_has_an_explanatory_non_game_document() {
+        let document =
+            render_session_unavailable_document("This player session is unknown or expired.");
+        assert!(document.contains("SESSION UNAVAILABLE"));
+        assert!(document.contains("The room server may have restarted"));
+        assert!(document.contains("/?forget=1"));
+        assert!(!document.contains("data-command-id="));
     }
 
     #[test]

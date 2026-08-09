@@ -3,7 +3,7 @@
 **Plan ID:** `poche-phase-4-player-web`
 **Plan status:** Execution complete
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
-**Last updated:** 2026-08-08 (America/Toronto)
+**Last updated:** 2026-08-09 (America/Toronto)
 **Intent audit:** Final three-pass audit passed 2026-08-08 against the web-player discussion and the completed phase-three plan
 **Current implementation focus:** Complete; future production networking remains separately scoped
 
@@ -260,3 +260,39 @@ passed. No active user intent was omitted or silently weakened.
 - production multi-device key custody and Veilid/gateway routing.
 
 These remain future work; none is implied by the local player vertical slice.
+
+## Grounded lifecycle and diegetic-projection follow-up — 2026-08-09
+
+| ID | Observed intent | Implemented consequence |
+|---|---|---|
+| P4-U25 | Bidding must be performable in the play area as well as the complete action palette. | The current bidder receives typed `Bid … Trick(s)` controls in a speech/gesture console between player and table; non-actors see the animated status cue. |
+| P4-U26 | Returning to a session after leaving must not expose raw `SeatMap` or 404 failures. | Vacant retained game seats realize safely; unknown sessions get a terminal explanatory page; recoverable exit now preserves membership and a recent-session address. |
+| P4-U27 | Formal and Veilid support for leave/rejoin must be stated exactly. | Documentation distinguishes Rust and NuSMV/Prolog durable reconnect evidence, Alloy's current abstraction, destructive leave, process-local `BrowserRooms`, and the separate Veilid/gateway prototypes. |
+| P4-U28 | The action palette is complete, but actions should also be grounded in the table world. | Seat, countdown, bid, play, pause/reset clock, chat, score/rules paper, exit, and destructive room controls have semantic HTML table affordances that retain the same opaque command IDs. |
+| P4-U29 | Ready must be available in the play area. | The viewer's occupied seat contains Ready/Not ready and Stand up controls in addition to the palette. |
+| P4-U30 | Browser-native HTML should be a projection of semantic 3D objects, not a rasterized replacement for them. | `docs/diegetic-semantic-projection.md` fixes canonical semantics → spatial scene → renderer-native projection as the direction of authority. |
+| P4-U31 | Responsive layouts need an executable non-intersection constraint. | Visible semantic DOM objects expose named footprints; runtime AABB auditing publishes exact collision count/pairs and browser acceptance exercises representative viewports. |
+| P4-U32 | Shared cursors and speech/chat/voice/gesture may later communicate player intent. | The design note separates ephemeral presence/communication from canonical game history while retaining a path to optional replay evidence. |
+| P4-U33 | A spoken/gestured bid and the scorekeeper's written bid are distinct, challengeable acts. | The design note preserves this future two-step proposal/acknowledgement model; the present typed bid remains an explicitly simplified atomic action. |
+
+The three-pass audit for this follow-up checked the user's concrete failures,
+the requested affordances, and the longer-term grounding discussion separately.
+It then traced each implemented claim to reducer, projection, DOM, browser, or
+documentation evidence and checked the reverse direction for accidental new
+authority. Finally it adversarially checked the likely omissions: exit is not
+leave; disconnected sessions do not retain chat/exit controls; restarting the
+memory-only server is not called reconnect; a vacant seat does not disclose a
+departed hand; DOM collision checks are not inflated into arbitrary CSS proof;
+and future cursors, voice, gestures, scorekeeper acknowledgement, and challenges
+remain recorded requirements rather than falsely completed features.
+
+Verification on 2026-08-09 passed 26 `poche-session`, 18 `poche-ui`, and 32
+`poche-web-spike` tests plus strict Clippy for session/UI/web/xtask. Independent
+Alloy (13 bounded results), NuSMV (16 named properties), and Prolog (all seven
+pinned answer sets) session gates passed. A real two-tab browser flow used the
+diegetic seat, Ready, countdown, and bid controls, then checked actual named DOM
+footprints in Bidding and both exact-recipient Playing views at 1280×720,
+1280×650, 900×700, 640×800, and 390×844: all 15 phase/view/viewport samples
+reported zero unexpected intersections. Recoverable exit exposed a recent-table
+link; resume showed one Reconnect and no Chat/Exit controls. An unknown session
+rendered the explanatory terminal page with no browser-console error.

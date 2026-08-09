@@ -870,6 +870,16 @@ fn decide_leave<G: SessionGame>(
     if member.host {
         return denied(DenyReason::DenyPolicy);
     }
+    // Membership destruction during an active game is not the same operation
+    // as closing a browser or losing transport. Until the game has an explicit
+    // dropout/substitution transition, retain the player and let Disconnect /
+    // Reconnect model a recoverable exit from the table client.
+    if matches!(
+        state.phase,
+        SessionPhase::Running { .. } | SessionPhase::Paused { .. } | SessionPhase::PostGame { .. }
+    ) {
+        return denied(DenyReason::WrongPhase);
+    }
     let mut events = if member.seat.is_some() {
         cancel_countdown_first(state)
     } else {

@@ -47,6 +47,8 @@ symbolic, queried, sampled, experimental, or merely empirical.
 - [Replicated consensus formal evidence and coverage](docs/consensus-coverage.md)
 - [Player-facing web client](docs/player-web-client.md) — dynamic names,
   per-tab sessions, opaque shared room codes, and the game-like tabletop
+- [Diegetic semantic projection](docs/diegetic-semantic-projection.md) — one
+  typed action space projected into native 3D, HTML/CSS, text, and future views
 
 Automatic target-language generation, a security-reviewed dropout-tolerant
 hidden-card protocol, a packaged replicated player client, production account/
@@ -153,9 +155,9 @@ same typed reducer used by the formal and transcript checks.
 Human-facing cards use `♣ ♦ ♥ ♠`. Clicking or dragging a card and choosing its
 matching `Play …` command are equivalent typed actions. The command palette also
 links to full room chat and separates ordinary table actions from confirmed
-leave/close actions. Leaving or closing retains an explicit terminal screen
-with a return-to-menu action instead of silently navigating or leaving stale
-controls behind.
+leave/close actions. `Exit table` retains membership and a resumable tab
+session; permanent leave and close retain explicit terminal screens instead of
+silently navigating or leaving stale controls behind.
 
 The normal player path is intentionally full-viewport and game-like. Deep
 diagnostics are collapsed, and the old deterministic Alice/Bob harness now
