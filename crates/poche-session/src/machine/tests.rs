@@ -1386,6 +1386,24 @@ fn running_with_spectators() -> SessionState<TestGame> {
     state
 }
 
+#[test]
+fn active_spectator_can_end_membership_without_stranding_a_game_seat() {
+    let state = running_with_spectators();
+    assert_eq!(state.member(&principal("bob")).unwrap().seat, None);
+    let leave = signed(
+        &state,
+        principal("bob"),
+        "active-spectator-leave",
+        CommandPayload::Leave,
+    );
+    let (after, events) = execute(&state, &leave);
+    assert!(after.member(&principal("bob")).is_none());
+    assert!(events.iter().any(|event| matches!(
+        event.kind,
+        SessionEventKind::MemberLeft { ref principal } if principal.as_str() == "bob"
+    )));
+}
+
 fn grant_host_hand_to(
     state: &SessionState<TestGame>,
     spectator: &str,

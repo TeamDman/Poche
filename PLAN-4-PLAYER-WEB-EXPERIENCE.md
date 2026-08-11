@@ -255,7 +255,7 @@ passed. No active user intent was omitted or silently weakened.
 - durable rooms and accounts;
 - public deployment, rate limiting, and production room-code security;
 - replacing host-authoritative ordering with the experimental replicated log;
-- spectator entry from the player main menu;
+- automatic restoration or seat takeover for a returning former membership;
 - polished animation, sound, settings, and native/web visual parity;
 - production multi-device key custody and Veilid/gateway routing.
 
@@ -266,21 +266,23 @@ These remain future work; none is implied by the local player vertical slice.
 | ID | Observed intent | Implemented consequence |
 |---|---|---|
 | P4-U25 | Bidding must be performable in the play area as well as the complete action palette. | The current bidder receives typed `Bid … Trick(s)` controls in a speech/gesture console between player and table; non-actors see the animated status cue. |
-| P4-U26 | Returning to a session after leaving must not expose raw `SeatMap` or 404 failures. | Vacant retained game seats realize safely; unknown sessions get a terminal explanatory page; recoverable exit now preserves membership and a recent-session address. |
-| P4-U27 | Formal and Veilid support for leave/rejoin must be stated exactly. | Documentation distinguishes Rust and NuSMV/Prolog durable reconnect evidence, Alloy's current abstraction, destructive leave, process-local `BrowserRooms`, and the separate Veilid/gateway prototypes. |
+| P4-U26 | Returning to a session after exiting must not expose raw `SeatMap` or 404 failures. | Vacant retained game seats realize safely; unknown sessions get a terminal explanatory page; recoverable exit now preserves membership and a recent-session address. |
+| P4-U27 | Formal and Veilid support for leave/rejoin must be stated exactly. | Documentation distinguishes Rust and NuSMV/Prolog durable reconnect evidence, Alloy's current abstraction, current-membership leave, process-local `BrowserRooms`, and the separate Veilid/gateway prototypes. |
 | P4-U28 | The action palette is complete, but actions should also be grounded in the table world. | Seat, countdown, bid, play, pause/reset clock, chat, score/rules paper, exit, and destructive room controls have semantic HTML table affordances that retain the same opaque command IDs. |
 | P4-U29 | Ready must be available in the play area. | The viewer's occupied seat contains Ready/Not ready and Stand up controls in addition to the palette. |
 | P4-U30 | Browser-native HTML should be a projection of semantic 3D objects, not a rasterized replacement for them. | `docs/diegetic-semantic-projection.md` fixes canonical semantics → spatial scene → renderer-native projection as the direction of authority. |
 | P4-U31 | Responsive layouts need an executable non-intersection constraint. | Visible semantic DOM objects expose named footprints; runtime AABB auditing publishes exact collision count/pairs and browser acceptance exercises representative viewports. |
 | P4-U32 | Shared cursors and speech/chat/voice/gesture may later communicate player intent. | The design note separates ephemeral presence/communication from canonical game history while retaining a path to optional replay evidence. |
 | P4-U33 | A spoken/gestured bid and the scorekeeper's written bid are distinct, challengeable acts. | The design note preserves this future two-step proposal/acknowledgement model; the present typed bid remains an explicitly simplified atomic action. |
+| P4-U34 | Leaving is not a permanent person-level ban: a room-code holder may rejoin an active game as a spectator and claim a seat only in an allowed pre-deal phase. | Removed the permanent-leave wording; open rooms admit fresh unseated principals in any phase; unseated spectators may leave during play; reducer/UI tests cover leave and same-code re-admission; seat claims remain Lobby-only. A seated active player still uses recoverable exit until dropout/substitution is modeled. |
 
 The three-pass audit for this follow-up checked the user's concrete failures,
 the requested affordances, and the longer-term grounding discussion separately.
 It then traced each implemented claim to reducer, projection, DOM, browser, or
 documentation evidence and checked the reverse direction for accidental new
-authority. Finally it adversarially checked the likely omissions: exit is not
-leave; disconnected sessions do not retain chat/exit controls; restarting the
+authority. Finally it adversarially checked the likely omissions: exit retains
+the same membership while leave ends only the current membership and does not
+ban later room-code redemption; disconnected sessions do not retain chat/exit controls; restarting the
 memory-only server is not called reconnect; a vacant seat does not disclose a
 departed hand; DOM collision checks are not inflated into arbitrary CSS proof;
 and future cursors, voice, gestures, scorekeeper acknowledgement, and challenges
@@ -296,3 +298,11 @@ footprints in Bidding and both exact-recipient Playing views at 1280×720,
 reported zero unexpected intersections. Recoverable exit exposed a recent-table
 link; resume showed one Reconnect and no Chat/Exit controls. An unknown session
 rendered the explanatory terminal page with no browser-console error.
+
+The P4-U34 correction was verified on 2026-08-11 by 27 `poche-session`, 18
+`poche-ui`, and 33 `poche-web-spike` tests plus strict Clippy with warnings
+denied. The named browser-room test starts a real two-player game, admits a
+late spectator with the shared room code, ends that spectator membership, and
+uses the same code to admit a different spectator principal while the game is
+still running. It also proves that neither active spectator view receives a
+seat-taking command.

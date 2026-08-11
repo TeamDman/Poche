@@ -156,8 +156,10 @@ Human-facing cards use `♣ ♦ ♥ ♠`. Clicking or dragging a card and choosi
 matching `Play …` command are equivalent typed actions. The command palette also
 links to full room chat and separates ordinary table actions from confirmed
 leave/close actions. `Exit table` retains membership and a resumable tab
-session; permanent leave and close retain explicit terminal screens instead of
-silently navigating or leaving stale controls behind.
+session. `Leave room` ends only that membership: the same room code can later
+admit a fresh spectator principal, including while play is active. Closing the
+room remains terminal for everyone. Both leave and close use explicit terminal
+screens instead of silently navigating or leaving stale controls behind.
 
 The normal player path is intentionally full-viewport and game-like. Deep
 diagnostics are collapsed, and the old deterministic Alice/Bob harness now

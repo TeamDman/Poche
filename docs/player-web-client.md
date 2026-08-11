@@ -76,11 +76,16 @@ exact-recipient fragment for each session. The browser replaces only
 `Exit table` is recoverable transport loss: it returns to the main menu, keeps
 the opaque tab session in `sessionStorage`, and offers `Resume recent table`.
 Resuming initially exposes only the typed `Reconnect` command for the same
-stable principal. `Leave membership permanently` is a different, destructive
-Lobby/Countdown action. It is denied once play is active until the game has an
-explicit dropout/substitution recovery transition. Closing remains terminal
-for every session. Terminal screens remove stale controls and unknown/expired
-session URLs render an explanatory screen with HTTP 200 rather than a raw 404.
+stable principal. `Leave room` instead ends that tab's current membership; it
+does not ban the person or invalidate the shared room code. Redeeming the code
+again creates a fresh unseated spectator principal in any open room, including
+during active play. An unseated spectator may leave at any open phase. A seated
+player cannot abandon an active hand/turn until the game has an explicit
+dropout/substitution recovery transition, so that player uses `Exit table` and
+later resumes the same membership. Taking a seat remains reducer-gated to the
+lobby before dealing. Closing remains terminal for every session. Terminal
+screens remove stale controls and unknown/expired session URLs render an
+explanatory screen with HTTP 200 rather than a raw 404.
 
 The process-local player registry is not backed by Veilid. The separate native
 Veilid transport and signed browser-device gateway prove application identity,
@@ -121,14 +126,14 @@ The focused tests check both semantic layers:
 - after game start exactly the current actor receives a game action;
 - ready and bid controls occur both in the complete command palette and in the
   table-world projection;
-- recoverable exit retains the player session, resume exposes reconnect, and
-  permanent leave is not available during active play;
+- recoverable exit retains the player session, resume exposes reconnect, and a
+  late/rejoining room-code holder enters active play as a fresh spectator;
 - the rendered player document contains native SSE/HTTP wiring and no fixed
   Alice/Bob codes or CDN dependency;
 - playable cards occur in both the hand and command palette, with suit glyphs;
 - typed chat is attributed, escaped, and projected to other room members;
-- close ends every active tab, leave ends only that device session, and neither
-  terminal page contains stale command controls;
+- close ends every active tab, leave ends only the current membership, and
+  neither terminal page contains stale command controls;
 - destructive controls expose confirmation prompts and diagnostic copying uses
   the SSE-safe delegated clipboard handler;
 - projection/privacy tests continue to exclude ungranted hands and hidden card

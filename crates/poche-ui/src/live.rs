@@ -167,7 +167,14 @@ fn derive_typed_controls(
         member.ready,
     );
     add_hand_controls(&mut controls, input, viewer);
-    add_common_controls(&mut controls, model, input, connected, is_coordinator);
+    add_common_controls(
+        &mut controls,
+        model,
+        input,
+        connected,
+        seated,
+        is_coordinator,
+    );
     controls
 }
 
@@ -345,6 +352,7 @@ fn add_common_controls(
     model: &PresentationModel,
     input: &LiveClientInput,
     connected: bool,
+    seated: bool,
     is_coordinator: bool,
 ) {
     if !connected || model.room_phase == RoomPhase::Closed {
@@ -365,13 +373,8 @@ fn add_common_controls(
             "Close room",
             CommandPayload::CloseRoom,
         );
-    } else if matches!(model.room_phase, RoomPhase::Lobby | RoomPhase::Countdown) {
-        push_control(
-            controls,
-            "leave-room",
-            "Leave membership permanently",
-            CommandPayload::Leave,
-        );
+    } else if !seated || matches!(model.room_phase, RoomPhase::Lobby | RoomPhase::Countdown) {
+        push_control(controls, "leave-room", "Leave room", CommandPayload::Leave);
     }
 }
 
@@ -480,6 +483,7 @@ mod tests {
             control.payload,
             CommandPayload::Pause | CommandPayload::GameAction { .. }
         )));
+        assert_eq!(live.command("leave-room"), Some(CommandPayload::Leave));
     }
 
     #[test]
@@ -552,6 +556,14 @@ mod tests {
         let paused = LiveClientPresentation::from_input(paused, live_input());
         assert_eq!(paused.command("unpause"), Some(CommandPayload::Unpause));
         assert!(paused.command("leave-room").is_none());
+
+        let mut paused_spectator = model("spectator", false);
+        paused_spectator.room_phase = RoomPhase::Paused;
+        let paused_spectator = LiveClientPresentation::from_input(paused_spectator, live_input());
+        assert_eq!(
+            paused_spectator.command("leave-room"),
+            Some(CommandPayload::Leave)
+        );
 
         let mut postgame = model("alice", true);
         postgame.room_phase = RoomPhase::PostGame;

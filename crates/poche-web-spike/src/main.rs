@@ -632,7 +632,7 @@ fn render_session_end(end: BrowserSessionEnd) -> String {
         BrowserSessionEnd::LeftRoom => (
             "ROOM LEFT",
             "You have left this room.",
-            "Your former player session cannot issue more room commands from this tab.",
+            "This tab's former membership cannot issue more commands. Return to the main menu and use the room code to rejoin as a new spectator.",
         ),
         BrowserSessionEnd::RoomClosed => (
             "ROOM CLOSED",

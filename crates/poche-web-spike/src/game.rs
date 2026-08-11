@@ -518,4 +518,60 @@ mod tests {
                 .is_none()
         );
     }
+
+    #[test]
+    fn room_code_readmits_a_leaver_as_a_fresh_spectator_during_play() {
+        let mut rooms = BrowserRooms::default();
+        let first = rooms.create("First player").expect("create room");
+        let code = rooms
+            .view(&first)
+            .expect("creator view")
+            .supplement
+            .room_code
+            .expect("room code");
+        let second = rooms.join("Second player", &code).expect("join room");
+        rooms.command(&first, "take-seat-0").expect("first seat");
+        rooms.command(&second, "take-seat-1").expect("second seat");
+        rooms.command(&first, "ready").expect("first ready");
+        rooms.command(&second, "ready").expect("second ready");
+        rooms
+            .command(&first, "arm-countdown")
+            .expect("start countdown");
+        for _ in 0..3 {
+            assert!(rooms.tick_countdowns().expect("countdown tick"));
+        }
+
+        let spectator = rooms
+            .join("Late spectator", &code)
+            .expect("room code admits a spectator during play");
+        let spectator_view = rooms.view(&spectator).expect("late spectator view");
+        assert_eq!(
+            spectator_view.live.projection.room_phase,
+            poche_protocol::RoomPhase::Running
+        );
+        let first_principal = spectator_view.live.projection.viewer.clone();
+        assert!(spectator_view.live.command("take-seat-0").is_none());
+        assert!(spectator_view.live.command("take-seat-1").is_none());
+        assert!(spectator_view.live.command("leave-room").is_some());
+
+        rooms
+            .command(&spectator, "leave-room")
+            .expect("active spectator leaves");
+        assert_eq!(
+            rooms.end_state(&spectator).expect("ended session"),
+            Some(BrowserSessionEnd::LeftRoom)
+        );
+
+        let rejoined = rooms
+            .join("Late spectator", &code)
+            .expect("the same room code permits fresh re-admission");
+        let rejoined_view = rooms.view(&rejoined).expect("rejoined spectator view");
+        assert_eq!(
+            rejoined_view.live.projection.room_phase,
+            poche_protocol::RoomPhase::Running
+        );
+        assert_ne!(rejoined_view.live.projection.viewer, first_principal);
+        assert!(rejoined_view.live.command("take-seat-0").is_none());
+        assert!(rejoined_view.live.command("take-seat-1").is_none());
+    }
 }

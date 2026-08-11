@@ -74,9 +74,13 @@ zero unexpected intersections.
 
 Closing a tab or choosing `Exit table` means transport loss and retains durable
 membership. `Reconnect` authenticates the same principal and restores only its
-current exact-recipient projection. Permanent leave destroys membership and is
-not currently allowed during an active game because no dropout/substitution
-transition yet resolves the abandoned hand and turn.
+current exact-recipient projection. `Leave room` ends the current membership,
+not the person's future access: a valid room code can admit a newly generated
+spectator principal during any open phase. Unseated spectators may leave during
+active play. A seated membership cannot leave during an active game because no
+dropout/substitution transition yet resolves its abandoned hand and turn;
+recoverable exit is the supported operation there. Seat claims are currently
+restricted to the lobby before dealing.
 
 The player web registry is currently process-local Axum state. NuSMV and Prolog
 have explicit durable disconnect/reconnect abstractions; the Rust reducer and

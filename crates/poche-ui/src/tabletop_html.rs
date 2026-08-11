@@ -699,7 +699,7 @@ fn render_table_props(
         let confirmation = match control.payload {
             CommandPayload::CloseRoom => "Close this room for everyone? This cannot be undone.",
             CommandPayload::Leave => {
-                "Permanently leave this membership? Exit the table instead if you want to return later."
+                "Leave this room? This tab's current membership will end. You can use the room code later to rejoin as a new spectator."
             }
             _ => unreachable!("filtered room control"),
         };
@@ -954,7 +954,7 @@ fn render_controls(
                     Some("Close this room for everyone? This cannot be undone.")
                 }
                 CommandPayload::Leave => Some(
-                    "Permanently leave this membership? Use Exit table if you only want to return to the menu and come back later.",
+                    "Leave this room? This tab's current membership will end. You can use the room code later to rejoin as a new spectator.",
                 ),
                 CommandPayload::RemoveMember { .. } => Some("Remove this person from the room?"),
                 _ => None,
