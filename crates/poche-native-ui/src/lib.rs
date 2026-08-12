@@ -22,6 +22,7 @@ use std::{
 use bevy::{
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     input::mouse::AccumulatedMouseMotion,
+    log::LogPlugin,
     prelude::*,
     render::view::screenshot::{Screenshot, save_to_disk},
     window::{CursorIcon, PrimaryWindow, SystemCursorIcon, WindowPlugin},
@@ -504,54 +505,55 @@ struct AcceptanceReport {
     qualification: &'static str,
 }
 
+/// Typed launch options shared by the standalone development binary and the
+/// unified `poche desktop` command.
+#[derive(Clone, Debug, Default)]
+pub struct NativeUiLaunchOptions {
+    pub play_card: Option<String>,
+    pub screenshot: Option<PathBuf>,
+    pub acceptance_report: Option<PathBuf>,
+    pub exit_after_seconds: Option<f64>,
+    pub debug_overlay: bool,
+    /// The caller already installed the process tracing subscriber.
+    pub external_tracing: bool,
+}
+
 /// Run the real Bevy window with arguments from the current process.
 ///
 /// # Errors
 ///
 /// Returns argument or fixture failures before the event loop starts.
 pub fn run_from_env() -> Result<(), String> {
-    let mut controller = replay_fixture_controller()?;
-    let mut acceptance = AcceptanceOptions::default();
+    let mut options = NativeUiLaunchOptions::default();
     let mut args = std::env::args().skip(1);
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--play-card" => {
-                let value = args
-                    .next()
-                    .ok_or_else(|| "--play-card requires a face".to_owned())?;
-                let face = if value == "first" {
-                    controller
-                        .first_owned_face()
-                        .ok_or_else(|| "exact-recipient fixture has no owned face".to_owned())?
-                } else {
-                    parse_card_face(&value)
-                        .ok_or_else(|| format!("unrecognized card face {value:?}"))?
-                };
-                controller.commit_named(face)?;
+                options.play_card = Some(
+                    args.next()
+                        .ok_or_else(|| "--play-card requires a face".to_owned())?,
+                );
             }
-            "--debug-overlay" => acceptance.debug_overlay = true,
+            "--debug-overlay" => options.debug_overlay = true,
             "--screenshot" => {
-                acceptance.screenshot =
+                options.screenshot =
                     Some(PathBuf::from(args.next().ok_or_else(|| {
                         "--screenshot requires an output path".to_owned()
                     })?));
             }
             "--acceptance-report" => {
-                acceptance.report =
+                options.acceptance_report =
                     Some(PathBuf::from(args.next().ok_or_else(|| {
                         "--acceptance-report requires an output path".to_owned()
                     })?));
             }
             "--exit-after-seconds" => {
-                let seconds = args
-                    .next()
-                    .ok_or_else(|| "--exit-after-seconds requires a number".to_owned())?
-                    .parse::<f64>()
-                    .map_err(|error| format!("invalid exit duration: {error}"))?;
-                if !seconds.is_finite() || seconds < 1.0 {
-                    return Err("exit duration must be finite and at least one second".to_owned());
-                }
-                acceptance.exit_after = Some(Duration::from_secs_f64(seconds));
+                options.exit_after_seconds = Some(
+                    args.next()
+                        .ok_or_else(|| "--exit-after-seconds requires a number".to_owned())?
+                        .parse::<f64>()
+                        .map_err(|error| format!("invalid exit duration: {error}"))?,
+                );
             }
             "--help" | "-h" => {
                 println!(
@@ -566,24 +568,67 @@ pub fn run_from_env() -> Result<(), String> {
         }
     }
 
+    run(options)
+}
+
+/// Run the Bevy leaf adapter from typed unified-executable options.
+///
+/// # Errors
+///
+/// Returns invalid launch options or fixture failures before the event loop.
+pub fn run(options: NativeUiLaunchOptions) -> Result<(), String> {
+    let external_tracing = options.external_tracing;
+    let mut controller = replay_fixture_controller()?;
+    if let Some(value) = options.play_card {
+        let face = if value == "first" {
+            controller
+                .first_owned_face()
+                .ok_or_else(|| "exact-recipient fixture has no owned face".to_owned())?
+        } else {
+            parse_card_face(&value).ok_or_else(|| format!("unrecognized card face {value:?}"))?
+        };
+        controller.commit_named(face)?;
+    }
+    let exit_after = options
+        .exit_after_seconds
+        .map(|seconds| {
+            if !seconds.is_finite() || seconds < 1.0 {
+                Err("exit duration must be finite and at least one second".to_owned())
+            } else {
+                Ok(Duration::from_secs_f64(seconds))
+            }
+        })
+        .transpose()?;
+    let acceptance = AcceptanceOptions {
+        screenshot: options.screenshot,
+        report: options.acceptance_report,
+        exit_after,
+        debug_overlay: options.debug_overlay,
+    };
+
     let debug_overlay = DebugOverlay {
         enabled: acceptance.debug_overlay,
     };
-    App::new()
-        .insert_resource(controller)
+    let default_plugins = DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: "Poche — canonical spatial mirror".to_owned(),
+            resolution: (1280, 800).into(),
+            ..default()
+        }),
+        ..default()
+    });
+    let mut app = App::new();
+    if external_tracing {
+        app.add_plugins(default_plugins.disable::<LogPlugin>());
+    } else {
+        app.add_plugins(default_plugins);
+    }
+    app.insert_resource(controller)
         .insert_resource(debug_overlay)
         .insert_resource(acceptance)
         .init_resource::<TweenClock>()
         .init_resource::<CameraRig>()
         .init_resource::<LaunchClock>()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Poche — canonical spatial mirror".to_owned(),
-                resolution: (1280, 800).into(),
-                ..default()
-            }),
-            ..default()
-        }))
         .add_plugins((MeshPickingPlugin, FrameTimeDiagnosticsPlugin::default()))
         .add_systems(Startup, setup_native_scene)
         .add_systems(

@@ -1,54 +1,62 @@
-use poche_domain::{CardId, parse_card_name};
+use facet::Facet;
+use figue as args;
+use poche_domain::parse_card_name;
 use poche_protocol::GameActionWire;
 
-use super::super::{ParseError, exact};
+use super::super::ParseError;
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum GameArgs {
-    Observe { room: String },
-    Actions { room: String },
-    PlayCard { room: String, card: CardId },
+#[derive(Facet, PartialEq, Eq)]
+pub struct GameArgs {
+    #[facet(args::subcommand)]
+    pub command: GameCommand,
+}
+
+#[derive(Facet, PartialEq, Eq)]
+#[facet(rename_all = "kebab-case")]
+#[repr(u8)]
+pub enum GameCommand {
+    Observe {
+        #[facet(args::positional)]
+        room: String,
+    },
+    Actions {
+        #[facet(args::positional)]
+        room: String,
+    },
+    PlayCard {
+        #[facet(args::positional)]
+        room: String,
+        #[facet(args::positional)]
+        card: String,
+    },
 }
 
 impl GameArgs {
-    pub(crate) fn parse(arguments: &[String]) -> Result<Self, ParseError> {
-        let (command, arguments) = arguments
-            .split_first()
-            .ok_or_else(|| ParseError::new("game command is required; use game --help"))?;
-        match command.as_str() {
-            "observe" => Ok(Self::Observe {
-                room: exact(arguments, 1)?[0].clone(),
-            }),
-            "actions" => Ok(Self::Actions {
-                room: exact(arguments, 1)?[0].clone(),
-            }),
-            "play-card" => {
-                let arguments = exact(arguments, 2)?;
-                Ok(Self::PlayCard {
-                    room: arguments[0].clone(),
-                    card: parse_card_name(&arguments[1])
-                        .map_err(|_| ParseError::new("card must be rank-suit; use game --help"))?,
-                })
-            }
-            _ => Err(ParseError::new("unknown game command; use game --help")),
+    pub(crate) fn validate(&self) -> Result<(), ParseError> {
+        if let GameCommand::PlayCard { card, .. } = &self.command {
+            parse_card_name(card)
+                .map_err(|_| ParseError::new("card must be rank-suit; use game --help"))?;
         }
+        Ok(())
     }
 
     #[must_use]
     pub const fn name(&self) -> &'static str {
-        match self {
-            Self::Observe { .. } => "observe",
-            Self::Actions { .. } => "actions",
-            Self::PlayCard { .. } => "play-card",
+        match self.command {
+            GameCommand::Observe { .. } => "observe",
+            GameCommand::Actions { .. } => "actions",
+            GameCommand::PlayCard { .. } => "play-card",
         }
     }
 
     /// Return the typed game action carried by a dedicated action command.
     #[must_use]
-    pub const fn game_action(&self) -> Option<GameActionWire> {
-        match self {
-            Self::PlayCard { card, .. } => Some(GameActionWire::Play { card: card.code() }),
-            Self::Observe { .. } | Self::Actions { .. } => None,
+    pub fn game_action(&self) -> Option<GameActionWire> {
+        match &self.command {
+            GameCommand::PlayCard { card, .. } => parse_card_name(card)
+                .ok()
+                .map(|card| GameActionWire::Play { card: card.code() }),
+            GameCommand::Observe { .. } | GameCommand::Actions { .. } => None,
         }
     }
 }
@@ -57,27 +65,27 @@ impl GameArgs {
 mod tests {
     use poche_protocol::GameActionWire;
 
-    use super::GameArgs;
+    use super::{GameArgs, GameCommand};
 
     #[test]
-    fn play_card_parses_canonical_name_to_typed_wire_action() {
-        let parsed = GameArgs::parse(&[
-            "play-card".to_owned(),
-            "room-1".to_owned(),
-            "jack-spades".to_owned(),
-        ])
-        .expect("canonical card command");
+    fn play_card_validates_canonical_name_to_typed_wire_action() {
+        let parsed = GameArgs {
+            command: GameCommand::PlayCard {
+                room: "room-1".to_owned(),
+                card: "jack-spades".to_owned(),
+            },
+        };
+        parsed.validate().expect("canonical card command");
         assert_eq!(
             parsed.game_action(),
             Some(GameActionWire::Play { card: 48 })
         );
-        assert!(
-            GameArgs::parse(&[
-                "play-card".to_owned(),
-                "room-1".to_owned(),
-                "J-spades".to_owned(),
-            ])
-            .is_err()
-        );
+        let invalid = GameArgs {
+            command: GameCommand::PlayCard {
+                room: "room-1".to_owned(),
+                card: "J-spades".to_owned(),
+            },
+        };
+        assert!(invalid.validate().is_err());
     }
 }

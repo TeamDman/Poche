@@ -87,6 +87,10 @@ pub enum DeviceCapabilityWire {
     Vote,
     ReceivePrivateProjection,
     RequestDeviceChange,
+    /// Request an exact-target artifact from another device of this player.
+    RequestCapture,
+    /// Produce captures only after local provider policy/consent accepts.
+    ProvideCapture,
 }
 
 /// Signature intent whose key is a device rather than a player root.
@@ -865,7 +869,7 @@ fn validate_capabilities(
     capabilities: &[DeviceCapabilityWire],
 ) -> Result<(), ReplicationWireError> {
     if capabilities.is_empty()
-        || capabilities.len() > 4
+        || capabilities.len() > 6
         || !capabilities.windows(2).all(|pair| pair[0] < pair[1])
     {
         Err(ReplicationWireError::InvalidCapabilities)

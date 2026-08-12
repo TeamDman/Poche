@@ -11,6 +11,7 @@
 use facet::Facet;
 use poche_protocol::{CommandEnvelope, DenyReason, PolicyId};
 
+mod device_cooperation;
 mod governance;
 mod machine;
 mod projection;
@@ -18,6 +19,7 @@ mod replicated;
 mod retrospective;
 mod state;
 
+pub use device_cooperation::*;
 pub use governance::*;
 pub use machine::{SessionMachine, apply, authorize, decide, decide_transport_disconnect};
 pub use projection::*;

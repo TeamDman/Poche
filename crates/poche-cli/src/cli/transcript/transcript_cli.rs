@@ -1,4 +1,6 @@
 use eyre::{Context, Result};
+use facet::Facet;
+use figue as args;
 use poche_runtime::{
     GoldenTranscript, render_transcript_output_ndjson, render_transcript_text,
     replay_fixture_script_ndjson,
@@ -6,37 +8,38 @@ use poche_runtime::{
 use serde::Serialize;
 
 use super::super::output::{OutputFormat, write_stdout};
-use super::super::{ParseError, exact};
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum TranscriptArgs {
-    Record { path: String },
-    Replay { path: String },
-    Inspect { path: String },
+#[derive(Facet, PartialEq, Eq)]
+pub struct TranscriptArgs {
+    #[facet(args::subcommand)]
+    pub command: TranscriptCommand,
+}
+
+#[derive(Facet, PartialEq, Eq)]
+#[facet(rename_all = "kebab-case")]
+#[repr(u8)]
+pub enum TranscriptCommand {
+    Record {
+        #[facet(args::positional)]
+        path: String,
+    },
+    Replay {
+        #[facet(args::positional)]
+        path: String,
+    },
+    Inspect {
+        #[facet(args::positional)]
+        path: String,
+    },
 }
 
 impl TranscriptArgs {
-    pub(crate) fn parse(arguments: &[String]) -> Result<Self, ParseError> {
-        let (command, arguments) = arguments.split_first().ok_or_else(|| {
-            ParseError::new("transcript command is required; use transcript --help")
-        })?;
-        let path = exact(arguments, 1)?[0].clone();
-        match command.as_str() {
-            "record" => Ok(Self::Record { path }),
-            "replay" => Ok(Self::Replay { path }),
-            "inspect" => Ok(Self::Inspect { path }),
-            _ => Err(ParseError::new(
-                "unknown transcript command; use transcript --help",
-            )),
-        }
-    }
-
     #[must_use]
     pub const fn name(&self) -> &'static str {
-        match self {
-            Self::Record { .. } => "record",
-            Self::Replay { .. } => "replay",
-            Self::Inspect { .. } => "inspect",
+        match self.command {
+            TranscriptCommand::Record { .. } => "record",
+            TranscriptCommand::Replay { .. } => "replay",
+            TranscriptCommand::Inspect { .. } => "inspect",
         }
     }
 
@@ -47,11 +50,11 @@ impl TranscriptArgs {
     ///
     /// # Errors
     ///
-    /// Returns a file, script, serialization, or stdout failure.
+    /// Returns a file, replay, serialization, or stdout failure.
     pub fn invoke(self, format: OutputFormat) -> Result<bool> {
-        match self {
-            Self::Record { .. } => Ok(false),
-            Self::Replay { path } => {
+        match self.command {
+            TranscriptCommand::Record { .. } => Ok(false),
+            TranscriptCommand::Replay { path } => {
                 let script = std::fs::read_to_string(&path)
                     .wrap_err_with(|| format!("failed to read transcript script {path}"))?;
                 let replay = replay_fixture_script_ndjson(&script)
@@ -67,7 +70,7 @@ impl TranscriptArgs {
                 }
                 Ok(true)
             }
-            Self::Inspect { path } => {
+            TranscriptCommand::Inspect { path } => {
                 let transcript = std::fs::read_to_string(&path)
                     .wrap_err_with(|| format!("failed to read transcript {path}"))?;
                 let transcript: GoldenTranscript = serde_json::from_str(&transcript)

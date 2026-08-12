@@ -5,6 +5,8 @@
 //! Small deterministic slash parser for the Facet-reflected protocol AST.
 
 use eyre::{Context, Result};
+use facet::Facet;
+use figue as args;
 use poche_domain::parse_card_name;
 use poche_protocol::{
     EventId, GameActionWire, GovernanceCapabilityWire, GovernanceCommandV1, GovernanceCommandWire,
@@ -12,7 +14,7 @@ use poche_protocol::{
     VoteChoiceWire,
 };
 
-use super::super::{ParseError, exact};
+use super::super::ParseError;
 use crate::cli::output::{OutputFormat, write_stdout};
 
 const COMMAND_NAMES: [&str; 8] = [
@@ -43,24 +45,26 @@ const COMMAND_FORMS: [&str; 13] = [
 ];
 
 /// Top-level client command for inspecting one typed slash-command parse.
-#[derive(Debug, PartialEq, Eq)]
-pub enum CommandArgs {
-    Parse { command: GovernanceCommandV1 },
+#[derive(Facet, PartialEq, Eq)]
+pub struct CommandArgs {
+    #[facet(args::subcommand)]
+    pub command: CommandCommand,
+}
+
+#[derive(Facet, PartialEq, Eq)]
+#[facet(rename_all = "kebab-case")]
+#[repr(u8)]
+pub enum CommandCommand {
+    Parse {
+        #[facet(args::positional, sensitive)]
+        command: String,
+    },
 }
 
 impl CommandArgs {
-    pub(crate) fn parse(arguments: &[String]) -> Result<Self, ParseError> {
-        let (command, arguments) = arguments
-            .split_first()
-            .ok_or_else(|| ParseError::new("command action is required; use command --help"))?;
-        match command.as_str() {
-            "parse" => Ok(Self::Parse {
-                command: parse_slash_command(&exact(arguments, 1)?[0])?,
-            }),
-            _ => Err(ParseError::new(
-                "unknown command action; use command --help",
-            )),
-        }
+    pub(crate) fn validate(&self) -> Result<(), ParseError> {
+        let CommandCommand::Parse { command } = &self.command;
+        parse_slash_command(command).map(|_| ())
     }
 
     #[must_use]
@@ -68,12 +72,15 @@ impl CommandArgs {
         "parse"
     }
 
-    /// Borrow the validated typed command. The source text is not retained.
-    #[must_use]
-    pub const fn typed_command(&self) -> &GovernanceCommandV1 {
-        match self {
-            Self::Parse { command } => command,
-        }
+    /// Parse and return the validated typed command without retaining source
+    /// text in the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted parse error for an invalid typed slash command.
+    pub fn typed_command(&self) -> Result<GovernanceCommandV1, ParseError> {
+        let CommandCommand::Parse { command } = &self.command;
+        parse_slash_command(command)
     }
 
     /// Print the validated AST without retaining or executing its source text.
@@ -82,7 +89,8 @@ impl CommandArgs {
     ///
     /// Returns a JSON serialization or stdout error.
     pub fn invoke(self, format: OutputFormat) -> Result<bool> {
-        let Self::Parse { command } = self;
+        let CommandCommand::Parse { command } = self.command;
+        let command = parse_slash_command(&command).map_err(|error| eyre::eyre!(error))?;
         let encoded = match format {
             OutputFormat::Text | OutputFormat::Json => {
                 serde_json::to_string_pretty(&command).wrap_err("failed to encode typed command")?

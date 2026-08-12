@@ -90,7 +90,14 @@ fn debug_and_ndjson_logs_never_copy_invite_material() {
 #[test]
 fn invalid_input_fails_with_diagnostics_only() {
     let output = poche(&["room", "join"]);
-    assert!(!output.status.success());
+    assert!(
+        !output.status.success(),
+        "unexpected success: status={:?} stdout={:?} stderr={:?} binary={}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        env!("CARGO_BIN_EXE_poche")
+    );
     assert!(output.stdout.is_empty());
     assert!(!output.stderr.is_empty());
 }

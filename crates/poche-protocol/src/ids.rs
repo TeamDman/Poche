@@ -117,6 +117,18 @@ text_identifier!(
     /// Stable manual-accusation attempt identifier.
     AccusationId
 );
+text_identifier!(
+    /// Stable identifier for one exact-target graphical capture request.
+    CaptureRequestId
+);
+text_identifier!(
+    /// Content-addressed capture artifact identifier.
+    CaptureArtifactId
+);
+text_identifier!(
+    /// Identifier for one bounded private artifact transfer.
+    CaptureTransferId
+);
 
 #[cfg(test)]
 mod tests {

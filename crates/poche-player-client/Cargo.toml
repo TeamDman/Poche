@@ -1,0 +1,18 @@
+[package]
+name = "poche-player-client"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Transport-neutral exact-recipient Poche device client"
+
+[dependencies]
+facet.workspace = true
+poche-protocol = { path = "../poche-protocol" }
+serde.workspace = true
+
+[lints]
+workspace = true

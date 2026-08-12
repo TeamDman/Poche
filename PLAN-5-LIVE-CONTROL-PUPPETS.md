@@ -1,14 +1,14 @@
 # Poche phase 5: unified executable, device orchestration, captures, and puppets
 
 **Plan ID:** `poche-phase-5-live-control-puppets`
-**Plan status:** Active
+**Plan status:** Execution in progress
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-12 (America/Toronto)
 **Intent audit:** Passed 2026-08-12 against the available original Poche/SFM,
 desktop, browser, CLI, computer-player, multi-device, capture, puppet, Figue,
 Veilid, and planning instructions in this task
-**Current implementation focus:** Phase 1; freeze the shared device, capture,
-artifact, and one-executable contracts before changing the existing CLI
+**Current implementation focus:** Task 2.1; connect the new reusable exact-
+recipient player-device client to loopback, gateway, and native Veilid adapters
 
 ## How to update this plan
 
@@ -348,12 +348,12 @@ The requesting process saves the result through shared artifact code.
 
 | Gate | Status | Required decision | Acceptance consequence |
 | --- | --- | --- | --- |
-| G1 | Open | **Figue/dependency alignment:** Select exact Facet/Figue versions compatible with Rust 1.96 and Poche's Phon/Weavy pins. Confirm no Vox dependency is needed. Dirty sibling worktrees are evidence only. | Clean-lockfile offline build, parser prototype, duplicate-version and license report. |
-| G2 | Provisional | **One executable:** Freeze no-argument/`desktop`, CLI, `agent`, `device capture`, and `puppet` entry behavior, Windows console subsystem/terminal attachment, output, exit codes, and crash diagnostics. Working assumption: no arguments and `desktop` launch the GUI; explicit subcommands remain terminal programs. | Explorer, interactive PowerShell, redirected JSON/NDJSON, and graphical-launch acceptance from one built `poche.exe`. |
-| G3 | Open | **Common device client and profile:** Freeze player-root/device certificate/profile selection, room membership, observe/actions/invoke/wait APIs, certificate onboarding/revocation, and replicated vote-lock ownership across in-process, gateway, and Veilid adapters. | Same test vectors and device behavior across transports; revoked/wrong devices denied; one player vote. |
-| G4 | Open | **Capture authorization/schema:** Freeze request, target, room/session/revision binding, capabilities, policy/consent, denial, expiry, cancellation, semantic metadata, and privacy rules. | Signed same-player positive path plus cross-player, revoked, stale, replay, wrong-room, and non-capable negatives. |
-| G5 | Open | **Artifact transfer:** Select bounded private transfer for image-sized payloads: transport chunks/stream, end-to-end encrypted content-addressed blob, or a measured hybrid. Do not put PNG bytes in ordinary AppCall command replies. | Interrupted/resumed, reordered, duplicate, oversize, hash mismatch, expiry, cleanup, and public-Veilid qualification tests. |
-| G6 | Provisional | **Common artifact contract:** Freeze renderer-provider output, normalized image format, caption ownership, manifest schema, file layout, privacy scan, retention, CI upload, Pages contact sheets, and curated-baseline policy. Working assumption: shared pipeline persists under ignored `target/poche-puppets`; CI/Pages publish without Git churn. | Bevy/browser providers produce artifacts accepted by one validator and readable through ordinary image tooling. |
+| G1 | Closed | **Figue/dependency alignment:** Exact `figue = 5.0.0-rc.5` shares Facet `0.50.0-rc.5`, compiles with Rust 1.96 and the existing Phon/Weavy pins, and introduces no Vox or sibling path dependency. | Lockfile, offline workspace build, reflected parser suite, duplicate tree, and metadata license/path audit passed. |
+| G2 | Closed | **One executable:** No arguments and `desktop` launch the GUI; explicit CLI, `agent`, `device capture`, and `puppet` commands remain console-subsystem terminal modes with preserved structured output and diagnostics. | ADR 0010; parser/contract evidence exists, while graphical dispatch acceptance remains Task 1.3. |
+| G3 | Closed | **Common device client and profile:** Profiles bind one root-certified device; observe/actions/invoke/wait/cooperate cross transport adapters; vote capability/lock remains one-player authority. | ADR 0010; implementation and cross-adapter evidence remain phases 2-3. |
+| G4 | Closed | **Capture authorization/schema:** Requests are signed, exact-target, same-player, room/epoch/revision/expiry/privacy/capability bound; providers retain consent and may sign a denial. | ADR 0010 plus protocol/session positive and fail-closed authorization tests. |
+| G5 | Closed | **Artifact transfer:** Use content-addressed resumable private chunks, maximum 24 KiB each, 64 MiB per artifact, never a whole PNG in an ordinary command/AppCall reply. | ADR 0010 and descriptor bounds; interruption/resume/cleanup and public-Veilid qualification remain Task 2.4. |
+| G6 | Closed | **Common artifact contract:** Providers return raw representations; `poche-capture` alone validates, captions, hashes, manifests, persists under ignored `target/poche-puppets`, cleans, and publishes via CI/Pages. | ADR 0010; shared pipeline/provider acceptance remains phases 2 and 4. |
 | G7 | Open | **Browser provider and puppet process topology:** Compare Playwright/CDP harness capture, explicitly consented browser capture, and unavailable production capability. Freeze how one harness launches/enrolls external native/browser devices without leaking secrets through process arguments. | Two-player/two-context real-browser round, consent/capability behavior, console/network/DOM/a11y/layout evidence, and secure temporary-profile cleanup. |
 
 ## Source and implementation references
@@ -419,9 +419,17 @@ device/capture/artifact design gates
 
 ## Phase 1 — freeze dependency, executable, and authority contracts
 
-### [ ] 1.1 Prove the Figue/Facet dependency set and absence of Vox
+### [x] 1.1 Prove the Figue/Facet dependency set and absence of Vox
 
-**Completion notes:** Not started.
+**Completion notes:** Completed 2026-08-12. Added exact published
+`figue = 5.0.0-rc.5`, sharing Facet `0.50.0-rc.5`, with no sibling path or Vox
+dependency. The reflected Poche schema and all CLI contract tests pass; the
+locked workspace compiles offline on Rust 1.96. `cargo tree -p figue -d`
+records its expected `smallvec`, `supports-color`, and `syn` version pairs.
+`cargo-deny` is unavailable, so the repository metadata audit was used and
+reported 1,024 packages, zero missing licenses, and zero external local paths;
+Figue is MIT OR Apache-2.0. The source/dependency search reported zero Vox,
+named-pipe, or local-instance matches under Cargo/crate sources.
 
 **Work:**
 
@@ -450,9 +458,17 @@ actual license audit instead of claiming the illustrative command passed.
 prototypes pass, licensing is recorded, and neither Vox nor a sibling path is
 introduced.
 
-### [ ] 1.2 Freeze device cooperation and capture in an ADR
+### [x] 1.2 Freeze device cooperation and capture in an ADR
 
-**Completion notes:** Not started.
+**Completion notes:** Completed 2026-08-12. ADR 0010 closes G2-G6 and names
+the identity, key, certificate, capability, signature, transport, revision,
+privacy, consent, transfer, pipeline, retention, and evidence owner at every
+boundary. The implementation adds separate capture request/response/cancel
+domains, exact-target descriptors, `RequestCapture`/`ProvideCapture`, and pure
+same-player session authorization. Full protocol/session suites pass including
+cross-player, stale, revoked, malformed, oversize, and substitution-sensitive
+cases. Existing PNGs measured about 58-596 KiB, validating the separate
+24-KiB-chunk transfer decision against the 30,000-byte command-frame bound.
 
 **Work:**
 
@@ -476,9 +492,23 @@ cargo test --locked -p poche-protocol -p poche-session --offline replicated
 transport, authorization, state revision, privacy scope, and persistence owner
 for every game and capture message.
 
-### [ ] 1.3 Migrate the public `poche.exe` command surface to Figue
+### [x] 1.3 Migrate the public `poche.exe` command surface to Figue
 
-**Completion notes:** Not started.
+**Completion notes:** Completed 2026-08-12. Existing room/game/chat/governance/
+spectator/transcript/identity commands now parse through Facet/Figue with
+generated ANSI-clean help and completions, redacted failures, unchanged
+text/JSON/NDJSON behavior, logging, cancellation, and transcript execution.
+No arguments maps to `desktop`; reflected `agent`, `device capture`, and
+`puppet` groups exist in Teamy-style modules. The CLI contract and 10,000-case
+arbitrary token corpus pass. `poche.exe desktop` now calls the Bevy library
+through typed options rather than reparsing or launching a child, while the
+standalone development binary remains compatible. A real unified-executable
+run produced a 53,941-byte PNG and acceptance JSON with 52 cards, 124 sampled
+frames, exact scene hash, private-face counts, and clean exit. Visual inspection
+confirmed the requested debug-overlay surface. The run also exposed a Vulkan
+validation-layer warning in this host configuration; it did not prevent the
+artifact, report, or clean exit and remains renderer qualification evidence,
+not a hidden success claim.
 
 **Work:**
 
@@ -506,9 +536,16 @@ entry points with correct Windows/redirected-output behavior.
 
 ## Phase 2 — implement the shared device and capture protocols
 
-### [ ] 2.1 Extract a reusable exact-recipient device client
+### [~] 2.1 Extract a reusable exact-recipient device client
 
-**Completion notes:** Not started.
+**Completion notes:** In progress. Added `poche-player-client` with validated
+public profile/certificate bindings, opaque protected-key handles and signing
+port, exact-recipient observations, sorted advertised actions, revision and
+projection-hash-bound invocation, wait progress checks, cooperation requests,
+stable redacted errors, and no renderer dependency. Tests prove an
+unadvertised action cannot reach the adapter and that a non-progressing wait
+fails closed. ADR 0010 and protocol/session types carry the cooperation half.
+Concrete loopback, gateway, and native Veilid adapter connections remain.
 
 **Work:**
 
@@ -533,7 +570,13 @@ the supported non-rendering adapters and exposes only exact-recipient state.
 
 ### [ ] 2.2 Define signed device cooperation and capture schemas
 
-**Completion notes:** Not started.
+**Completion notes:** Protocol foundation completed ahead of activation because
+Task 2.1 needs the shared cooperation type: separate canonical request,
+response, and cancellation domains; exact device/room/epoch/revision/expiry/
+privacy bindings; request/provide certificate capabilities; hash-bound bounded
+artifact transfer descriptors; and pure same-player authorization. Remaining
+before `[x]`: provider advertisement, consent/progress/completion messages,
+cryptographic golden vectors, and explicit replay corpus.
 
 **Work:**
 

@@ -2,11 +2,14 @@ use core::str::FromStr;
 use std::io::Write;
 
 use eyre::{Context, Result};
+use facet::Facet;
 use serde::Serialize;
 
 use super::ParseError;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Facet)]
+#[facet(rename_all = "kebab-case")]
+#[repr(u8)]
 pub enum OutputFormat {
     #[default]
     Text,

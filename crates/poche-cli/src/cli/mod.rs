@@ -1,58 +1,93 @@
-//! Strict typed CLI schema and parser.
+//! Facet-reflected, strict Poche CLI schema.
 
+pub mod agent;
 pub mod chat;
 pub mod command;
+pub mod desktop;
+pub mod device;
 pub mod game;
 pub mod identity;
 pub mod output;
+pub mod puppet;
 pub mod room;
 pub mod spectator;
 pub mod transcript;
 
 use core::fmt;
 
+use agent::AgentArgs;
 use chat::ChatArgs;
 use command::CommandArgs;
+use desktop::DesktopArgs;
+use device::DeviceArgs;
+use facet::Facet;
+use figue::{self as args, Driver, DriverError, FigueBuiltins};
 use game::GameArgs;
 use identity::IdentityArgs;
 use output::OutputFormat;
+use puppet::PuppetArgs;
 use room::RoomArgs;
 use spectator::SpectatorArgs;
 use transcript::TranscriptArgs;
 
 /// Global process controls. Values are never logged as a whole.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Facet, Default, PartialEq, Eq)]
+#[facet(rename_all = "kebab-case")]
 pub struct GlobalArgs {
+    #[facet(args::named, default)]
     pub debug: bool,
+    #[facet(args::named)]
     pub log_filter: Option<String>,
+    #[facet(args::named)]
     pub log_file: Option<String>,
+    #[facet(args::named, default)]
     pub output: OutputFormat,
+    #[facet(args::named)]
     pub stop_after_ms: Option<u64>,
 }
 
 /// Fully parsed invocation.
-#[derive(PartialEq, Eq)]
+#[derive(Facet)]
+#[facet(rename_all = "kebab-case")]
 pub struct Cli {
+    #[facet(flatten)]
     pub global: GlobalArgs,
+    #[facet(flatten)]
+    pub builtins: FigueBuiltins,
+    #[facet(args::subcommand)]
     pub command: Command,
 }
 
-/// Top-level Poche command groups.
-#[derive(PartialEq, Eq)]
+impl PartialEq for Cli {
+    fn eq(&self, other: &Self) -> bool {
+        self.global == other.global && self.command == other.command
+    }
+}
+
+/// Top-level Poche command groups exposed by the one executable.
+#[derive(Facet, PartialEq)]
+#[facet(rename_all = "kebab-case")]
+#[repr(u8)]
 pub enum Command {
+    Desktop(DesktopArgs),
     Room(RoomArgs),
     Game(GameArgs),
     Chat(ChatArgs),
+    #[facet(rename = "command")]
     Governance(CommandArgs),
     Spectator(SpectatorArgs),
     Transcript(TranscriptArgs),
     Identity(IdentityArgs),
+    Agent(AgentArgs),
+    Device(DeviceArgs),
+    Puppet(PuppetArgs),
 }
 
 impl Command {
     #[must_use]
     pub const fn name(&self) -> (&'static str, &'static str) {
         match self {
+            Self::Desktop(command) => ("desktop", command.name()),
             Self::Room(command) => ("room", command.name()),
             Self::Game(command) => ("game", command.name()),
             Self::Chat(command) => ("chat", command.name()),
@@ -60,15 +95,44 @@ impl Command {
             Self::Spectator(command) => ("spectator", command.name()),
             Self::Transcript(command) => ("transcript", command.name()),
             Self::Identity(command) => ("identity", command.name()),
+            Self::Agent(command) => ("agent", command.name()),
+            Self::Device(command) => ("device", command.name()),
+            Self::Puppet(command) => ("puppet", command.name()),
+        }
+    }
+
+    fn validate(&self) -> Result<(), ParseError> {
+        match self {
+            Self::Game(command) => command.validate(),
+            Self::Governance(command) => command.validate(),
+            Self::Desktop(command) => {
+                if command
+                    .exit_after_seconds
+                    .is_some_and(|seconds| !seconds.is_finite() || seconds < 1.0)
+                {
+                    Err(ParseError::new(
+                        "--exit-after-seconds must be finite and at least one second",
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            Self::Room(_)
+            | Self::Chat(_)
+            | Self::Spectator(_)
+            | Self::Transcript(_)
+            | Self::Identity(_)
+            | Self::Agent(_)
+            | Self::Device(_)
+            | Self::Puppet(_) => Ok(()),
         }
     }
 }
 
 /// Non-executing outcomes handled before runtime/log initialization.
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq)]
 pub enum ParseOutcome {
-    Help(Vec<String>),
-    Version,
+    Write(String),
     Run(Cli),
 }
 
@@ -89,116 +153,69 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/// Parse strict Unicode arguments without exiting the process.
+/// Parse strict Unicode arguments through Figue without exiting the process.
 ///
-/// Raw values are intentionally absent from parse errors so invite material is
-/// not copied into diagnostics.
+/// Raw values are intentionally absent from returned parse errors so invite
+/// and command material cannot be copied into diagnostics. No arguments is an
+/// explicit alias for `desktop`.
 ///
 /// # Errors
 ///
-/// Returns a value-free diagnostic for malformed or unsupported arguments.
+/// Returns a value-free error for an invalid schema, command line, typed card,
+/// or typed governance command.
 pub fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<ParseOutcome, ParseError> {
-    let arguments = arguments.into_iter().collect::<Vec<_>>();
-    let mut index = 0;
-    let mut global = GlobalArgs::default();
-    while let Some(argument) = arguments.get(index) {
-        match argument.as_str() {
-            "--debug" => global.debug = true,
-            "--log-filter" => {
-                index += 1;
-                global.log_filter = Some(
-                    arguments
-                        .get(index)
-                        .ok_or_else(|| ParseError::new("--log-filter requires a value"))?
-                        .clone(),
-                );
-            }
-            "--log-file" => {
-                index += 1;
-                global.log_file = Some(
-                    arguments
-                        .get(index)
-                        .ok_or_else(|| ParseError::new("--log-file requires a path"))?
-                        .clone(),
-                );
-            }
-            "--output" => {
-                index += 1;
-                global.output = arguments
-                    .get(index)
-                    .ok_or_else(|| ParseError::new("--output requires text, json, or ndjson"))?
-                    .parse()?;
-            }
-            "--stop-after-ms" => {
-                index += 1;
-                global.stop_after_ms = Some(
-                    arguments
-                        .get(index)
-                        .ok_or_else(|| ParseError::new("--stop-after-ms requires milliseconds"))?
-                        .parse()
-                        .map_err(|_| ParseError::new("--stop-after-ms must be an integer"))?,
-                );
-            }
-            "--help" | "-h" => return Ok(ParseOutcome::Help(Vec::new())),
-            "--version" | "-V" => return Ok(ParseOutcome::Version),
-            value if value.starts_with('-') => {
-                return Err(ParseError::new("unknown global option"));
-            }
-            _ => break,
-        }
-        index += 1;
+    let mut arguments = arguments.into_iter().collect::<Vec<_>>();
+    if arguments.is_empty() {
+        arguments.push("desktop".to_owned());
     }
-
-    let command_arguments = &arguments[index..];
-    if let Some(help_index) = command_arguments
+    let requested_help = arguments
         .iter()
-        .position(|argument| matches!(argument.as_str(), "--help" | "-h"))
-    {
-        return Ok(ParseOutcome::Help(
-            command_arguments[..help_index]
-                .iter()
-                .take(2)
-                .cloned()
-                .collect(),
-        ));
+        .any(|argument| matches!(argument.as_str(), "--help" | "-h"));
+    let version = crate::version();
+    let config = figue::builder::<Cli>()
+        .map_err(|_| ParseError::new("invalid CLI schema"))?
+        .cli(|cli| cli.args(arguments).strict())
+        .help(|help| help.program_name("poche").version(version))
+        .build();
+    match Driver::new(config).run().into_result() {
+        Ok(output) => {
+            let cli = output.get();
+            cli.command.validate()?;
+            Ok(ParseOutcome::Run(cli))
+        }
+        Err(DriverError::Help { text, .. }) if requested_help => {
+            Ok(ParseOutcome::Write(format!("{}\n", strip_ansi(&text))))
+        }
+        Err(DriverError::Version { text }) => {
+            Ok(ParseOutcome::Write(format!("{}\n", strip_ansi(&text))))
+        }
+        Err(DriverError::Completions { script }) => {
+            Ok(ParseOutcome::Write(format!("{}\n", strip_ansi(&script))))
+        }
+        Err(_) => Err(ParseError::new("invalid command line; use --help")),
     }
-
-    let (group, rest) = command_arguments
-        .split_first()
-        .ok_or_else(|| ParseError::new("a command group is required; use --help"))?;
-    let command = match group.as_str() {
-        "room" => Command::Room(RoomArgs::parse(rest)?),
-        "game" => Command::Game(GameArgs::parse(rest)?),
-        "chat" => Command::Chat(ChatArgs::parse(rest)?),
-        "command" => Command::Governance(CommandArgs::parse(rest)?),
-        "spectator" => Command::Spectator(SpectatorArgs::parse(rest)?),
-        "transcript" => Command::Transcript(TranscriptArgs::parse(rest)?),
-        "identity" => Command::Identity(IdentityArgs::parse(rest)?),
-        _ => return Err(ParseError::new("unknown command group; use --help")),
-    };
-    Ok(ParseOutcome::Run(Cli { global, command }))
 }
 
-#[must_use]
-pub fn help(path: &[String]) -> String {
-    let heading = if path.is_empty() {
-        "Poche multiplayer and model-inspection CLI".to_owned()
-    } else {
-        format!("Poche help for {}", path.join(" "))
-    };
-    format!(
-        "{heading}\n\nUSAGE:\n  poche [GLOBAL OPTIONS] <GROUP> <COMMAND> [ARGS]\n\nGLOBAL OPTIONS:\n  --debug\n  --log-filter <DIRECTIVES>\n  --log-file <NDJSON-PATH>\n  --output <text|json|ndjson>\n  --stop-after-ms <MILLISECONDS>\n  --help\n  --version\n\nCOMMANDS:\n  room host|join|show|ready|unready|countdown|abort|pause|resume|leave|close\n  game observe|actions|play-card\n  command parse <SLASH-COMMAND>\n  chat send|tail\n  spectator request-hand|grant-hand|revoke-hand\n  transcript record|replay|inspect\n  identity show|create\n"
-    )
-}
-
-pub(crate) fn exact(arguments: &[String], count: usize) -> Result<&[String], ParseError> {
-    if arguments.len() == count {
-        Ok(arguments)
-    } else {
-        Err(ParseError::new(
-            "wrong number of command arguments; use --help",
-        ))
+fn strip_ansi(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == 0x1b && bytes.get(index + 1) == Some(&b'[') {
+            index += 2;
+            while index < bytes.len() {
+                let byte = bytes[index];
+                index += 1;
+                if (0x40..=0x7e).contains(&byte) {
+                    break;
+                }
+            }
+        } else {
+            output.push(bytes[index]);
+            index += 1;
+        }
     }
+    String::from_utf8(output).unwrap_or_else(|_| text.to_owned())
 }
 
 #[cfg(test)]
@@ -240,6 +257,7 @@ mod tests {
     #[test]
     fn every_declared_command_round_trips_through_the_schema() {
         let cases: &[(&[&str], (&str, &str))] = &[
+            (&["desktop"], ("desktop", "launch")),
             (&["room", "host"], ("room", "host")),
             (&["room", "join", "invite"], ("room", "join")),
             (&["room", "show", "r"], ("room", "show")),
@@ -289,6 +307,24 @@ mod tests {
             ),
             (&["identity", "show"], ("identity", "show")),
             (&["identity", "create", "alice"], ("identity", "create")),
+            (
+                &["agent", "run", "alice-cli", "r", "legal-random"],
+                ("agent", "run"),
+            ),
+            (&["device", "list"], ("device", "list")),
+            (
+                &[
+                    "device",
+                    "capture",
+                    "request",
+                    "alice-cli",
+                    "r",
+                    "device-renderer",
+                    "bidding",
+                ],
+                ("device", "capture"),
+            ),
+            (&["puppet", "run", "full-round"], ("puppet", "run")),
         ];
         for (arguments, expected) in cases {
             let outcome = parse_args(arguments.iter().map(ToString::to_string))
@@ -297,6 +333,20 @@ mod tests {
                 panic!("{arguments:?}: expected runnable command");
             };
             assert_eq!(&cli.command.name(), expected, "{arguments:?}");
+        }
+    }
+
+    #[test]
+    fn no_arguments_means_desktop_and_help_is_generated_from_the_schema() {
+        let ParseOutcome::Run(cli) = parse_args(Vec::<String>::new()).unwrap() else {
+            panic!("expected default graphical command");
+        };
+        assert_eq!(cli.command.name(), ("desktop", "launch"));
+        let ParseOutcome::Write(help) = parse_args(["--help".to_owned()]).unwrap() else {
+            panic!("expected generated help");
+        };
+        for command in ["desktop", "device", "agent", "puppet", "transcript"] {
+            assert!(help.contains(command), "help omitted {command}");
         }
     }
 
@@ -321,6 +371,9 @@ mod tests {
             "transcript",
             "replay",
             "identity",
+            "device",
+            "capture",
+            "puppet",
             "show",
             "\0",
             "秘密",

@@ -38,8 +38,7 @@ pub fn run_from(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
 
     match parse_args(arguments).map_err(|error| eyre::eyre!(error))? {
-        ParseOutcome::Help(path) => cli::output::write_stdout(&cli::help(&path)),
-        ParseOutcome::Version => cli::output::write_stdout(&format!("{}\n", version())),
+        ParseOutcome::Write(output) => cli::output::write_stdout(&output),
         ParseOutcome::Run(parsed) => {
             let cancellation = CtrlCHandler::default()
                 .install()
@@ -65,6 +64,7 @@ pub fn run_from(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
                 "command parsed"
             );
             let emitted = match parsed.command {
+                cli::Command::Desktop(command) => command.invoke()?,
                 cli::Command::Transcript(command) => command.invoke(parsed.global.output)?,
                 cli::Command::Governance(command) => command.invoke(parsed.global.output)?,
                 _ => false,
