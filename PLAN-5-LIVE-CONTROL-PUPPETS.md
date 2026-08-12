@@ -7,8 +7,8 @@
 **Intent audit:** Passed 2026-08-12 against the available original Poche/SFM,
 desktop, browser, CLI, computer-player, multi-device, capture, puppet, Figue,
 Veilid, and planning instructions in this task
-**Current implementation focus:** Task 2.3; implement the one common capture
-artifact validation, captioning, privacy, persistence, and manifest pipeline
+**Current implementation focus:** Task 3.1; turn Bevy into a live certified
+player device and common-contract graphical capture provider
 
 ## How to update this plan
 
@@ -620,9 +620,23 @@ cargo test --locked -p poche-session --offline device_cooperation
 **Completion criteria:** Golden vectors and positive/negative tests prove
 signed exact-target same-player capture authorization and replay resistance.
 
-### [~] 2.3 Implement the common capture artifact pipeline
+### [x] 2.3 Implement the common capture artifact pipeline
 
-**Completion notes:** Not started.
+**Completion notes:** Completed 2026-08-12. Added renderer-neutral
+`poche-capture`. Providers return raw image/HTML/JSON bytes plus exact surface,
+framebuffer/scale, optional integer camera, revision, projection/scene hashes,
+and evidence qualification; they never choose persistence paths. The one
+pipeline validates safe stable IDs/media/types/bounds, checks optional source
+hashes and aggregate size, normalizes JSON and PNG, adds a deterministic
+48-pixel caption band outside (without changing) the source viewport, records
+source/output geometry and content hashes, scans caller-supplied private
+markers before and after normalization, and atomically renames a complete
+figure directory containing artifacts and `manifest.json`. The manifest is
+also the renderer-neutral contact-sheet input. Synthetic native Bevy and
+browser payloads yield identical normalized entry semantics. Tests cover
+invalid images, traversal-shaped IDs, hash mismatch, duplicate IDs/publication,
+caption geometry, private markers, cancellation, atomic cleanup, and manifest
+reread; crate tests and Clippy pass offline.
 
 **Work:**
 
@@ -648,9 +662,26 @@ cargo clippy --locked -p poche-capture --all-targets --offline -- -D warnings
 **Completion criteria:** Synthetic Bevy/browser provider payloads pass through
 one validator/persistence path and yield identical manifest semantics.
 
-### [ ] 2.4 Implement bounded private artifact transfer
+### [x] 2.4 Implement bounded private artifact transfer
 
-**Completion notes:** Not started.
+**Completion notes:** Completed 2026-08-12 for the transport-neutral contract
+and deterministic loopback evidence. `poche-capture` derives a bounded
+descriptor (measured 24-KiB plaintext chunks, 64-MiB artifact ceiling), then
+encrypts each chunk with XChaCha20-Poly1305 under a protected zero-on-drop
+per-transfer key. AEAD associated data binds the signed request hash (which
+contains exact player/source/target device IDs) plus transfer ID, complete
+content hash/length, chunk geometry, and index; deterministic per-transfer/
+index nonces are safe under the required unique transfer key. Sender credit
+requires acknowledgements and receiver state enforces order, encrypted-chunk
+deduplication/conflict rejection, expiry, cancellation, bounded resume, and
+verification of complete length/hash before returning publishable bytes.
+Cancellation erases buffered content and keys/partial bytes never enter files.
+A 3+ MiB encrypted transfer test proves backpressure, deduplication, resume,
+premature-finish refusal, exact recovery, and publication through the common
+pipeline only after verification. Wrong keys, tampering, expiry, cancellation,
+and partial cleanup fail closed. Gateway/native Veilid transport qualification
+remains explicitly owned by Tasks 5.1 and 5.3 rather than being inferred from
+loopback evidence.
 
 **Work:**
 

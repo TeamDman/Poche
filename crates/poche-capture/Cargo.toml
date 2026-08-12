@@ -1,0 +1,23 @@
+[package]
+name = "poche-capture"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Renderer-neutral validation and persistence for Poche capture evidence"
+
+[dependencies]
+blake3.workspace = true
+chacha20poly1305.workspace = true
+image.workspace = true
+poche-protocol = { path = "../poche-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

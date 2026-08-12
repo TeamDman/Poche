@@ -8679,6 +8679,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "poche-capture"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chacha20poly1305",
+ "image",
+ "poche-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "zeroize",
+]
+
+[[package]]
 name = "poche-check"
 version = "0.1.0"
 dependencies = [

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/poche-burn", "crates/poche-check", "crates/poche-cli", "crates/poche-conformance", "crates/poche-crypto-prototype", "crates/poche-domain", "crates/poche-environment", "crates/poche-formal", "crates/poche-interchange", "crates/poche-model", "crates/poche-native-tools", "crates/poche-native-ui", "crates/poche-oracle-rust", "crates/poche-player-client", "crates/poche-protocol", "crates/poche-rl", "crates/poche-runtime", "crates/poche-session", "crates/poche-slug", "crates/poche-spatial", "crates/poche-ui", "crates/poche-veilid", "crates/poche-web-spike", "crates/poche-xtask"]
+members = ["crates/poche-burn", "crates/poche-capture", "crates/poche-check", "crates/poche-cli", "crates/poche-conformance", "crates/poche-crypto-prototype", "crates/poche-domain", "crates/poche-environment", "crates/poche-formal", "crates/poche-interchange", "crates/poche-model", "crates/poche-native-tools", "crates/poche-native-ui", "crates/poche-oracle-rust", "crates/poche-player-client", "crates/poche-protocol", "crates/poche-rl", "crates/poche-runtime", "crates/poche-session", "crates/poche-slug", "crates/poche-spatial", "crates/poche-ui", "crates/poche-veilid", "crates/poche-web-spike", "crates/poche-xtask"]
 resolver = "3"
 
 [workspace.package]
@@ -14,6 +14,7 @@ repository = "https://github.com/TeamDman/Poche"
 ark-serialize = { version = "=0.5.0", default-features = false }
 bevy = { version = "=0.19.0", default-features = false, features = ["3d"] }
 blake3 = "=1.8.5"
+chacha20poly1305 = "=0.11.0"
 burn = { version = "=0.21.0", default-features = false, features = ["std", "autodiff", "flex", "wgpu", "store"] }
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 curve25519-dalek = { version = "=5.0.0", default-features = false, features = ["precomputed-tables", "zeroize"] }
@@ -26,6 +27,7 @@ figue = "=5.0.0-rc.5"
 flate2 = "=1.1.9"
 futures-util = "=0.3.33"
 getrandom = "=0.3.4"
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 num-traits = "=0.2.19"
 phon = "=0.2.0-rc.5"
 rand = "=0.8.7"
@@ -42,6 +44,7 @@ veilid-core = { version = "=0.5.7", default-features = false, features = ["rt-to
 wasm-bindgen = "=0.2.126"
 wasm-bindgen-futures = "=0.4.76"
 web-sys = { version = "=0.3.103", features = ["HtmlCanvasElement"] }
+zeroize = { version = "=1.9.0", features = ["derive"] }
 ziffle = "=0.1.0"
 
 [workspace.lints.rust]
