@@ -75,6 +75,7 @@ and inputs through which humans experience it.
 | P5-U14 | Agreed: remove Vox/local-instance control from the foundation and leverage Poche's existing/planned multi-device and Veilid architecture. | No Vox dependency, instance descriptor, named-pipe server, resident-window proxy, or local-control authority belongs in this phase. CLI/agents are certified room devices. | — |
 | P5-U15 | A player's device should be able to request a graphical capture from another one of that player's devices; Bevy and browser capture and saving should follow one design. | Add signed, exact-target, same-player capture requests, advertised provider capabilities, a common capture payload/artifact pipeline, and bounded private transfer. | — |
 | P5-U16 | Puppets should be one harness invocation that fans out and acts as devices for multiple players; Bevy is only an intermediary between game state and human interaction. | One harness owns explicit test player/device profiles, drives the shared device API, and asks rendering devices for evidence; Bevy remains a replaceable projection/input adapter. | — |
+| P5-U17 | Puppet graphical capture should use a windowless draw target or equivalent so automation does not visibly pop windows onto the user's desktop. | Native puppet/capture workers render hidden or offscreen by default; showing a window is an explicit debugging option, and real people launching `poche desktop` still receive a visible interactive window. | — |
 
 ## Guidance traceability
 
@@ -96,6 +97,7 @@ and inputs through which humans experience it.
 | P5-U14 | F8; C1-C5; architecture table; all phases | Device-native CLI/agent path; explicit absence of Vox and local discovery |
 | P5-U15 | C8-C11; G4-G6; 2.2-2.4; 4.2-4.4; 5.1-5.3 | Cross-device capture request, common artifact bytes/manifest/transfer tests |
 | P5-U16 | C1; C15; 4.1-4.4; 5.1-5.2 | One invocation drives distinct player devices and all three evidence surfaces |
+| P5-U17 | C17; 3.1; 4.2; 5.1-5.2 | Native puppet acceptance completes with no visible automation window and a real render-target artifact |
 
 ## Intent audit evidence
 
@@ -103,10 +105,10 @@ and inputs through which humans experience it.
   computer-player, visual evidence, `teamy-rust-cli`, Figue, one-executable,
   multi-device, Veilid, planning, and latest capture/harness instructions.
   Retained prior guidance as P5-U1 through P5-U13, marked corrected IPC
-  expectations as superseded, and added P5-U14 through P5-U16 for the explicit
+  expectations as superseded, and added P5-U14 through P5-U17 for the explicit
   architecture correction, cross-device capture, common artifact pipeline,
-  single fan-out harness, and Bevy boundary.
-- **Pass 2 — traceability:** Mapped all sixteen guidance rows to constraints,
+  single fan-out harness, Bevy boundary, and hidden/offscreen puppet rendering.
+- **Pass 2 — traceability:** Mapped all seventeen guidance rows to constraints,
   design gates, tasks, validation, and release evidence. Removed every required
   Vox dependency, descriptor, named-pipe, resident-window proxy, and local-
   instance selection task. Replaced them with device enrollment/discovery,
@@ -119,7 +121,9 @@ and inputs through which humans experience it.
   and still accounts for “multi-device player-vote equivocation.” It also
   preserves browser capture consent/capability limits, large-payload transfer,
   exact-recipient privacy, offline CI, one executable, Figue, MPL-2.0, and
-  release-evidence qualifications.
+  release-evidence qualifications. It additionally requires that automation
+  must not visibly pop native windows unless an explicit debug option asks it
+  to do so.
 - **Known source limitation:** None for the current phase request. Completed
   phase-one through phase-four intent remains authoritative through `PLAN.md`
   and `PLAN-2` through `PLAN-4`; those plans are referenced rather than copied
@@ -284,6 +288,9 @@ References: `G:\Programming\Repos\teamy-rust-cli\`,
 - **C16 — Bevy is a leaf adapter:** Bevy maps typed projections to visuals and
   human input back to advertised actions. Its ECS, camera, screenshot API, and
   animation state are not canonical game or device authority.
+- **C17 — non-interactive native automation:** Puppet and capture-worker native
+  surfaces are hidden or offscreen by default. Only an explicit debug/show
+  option may open them; ordinary human `poche desktop` launches remain visible.
 
 ## Device and capture architecture
 
@@ -293,7 +300,7 @@ References: `G:\Programming\Repos\teamy-rust-cli\`,
 | Browser client | Browser-local or disclosed gateway-custodied device | Existing HTTP/SSE or future supported direct adapter | Advertises unavailable, explicit-consent capture, or harness/CDP provider; returns browser screenshot plus DOM/a11y/layout metadata |
 | CLI invocation | Loads its own protected device profile and room membership | Same device API as GUI; other devices observe committed result | May request capture from a same-player target and receive/save through common artifact pipeline |
 | Persistent computer player | Its own certified device and policy | Same exact observation/action API; no renderer dependency | Usually requester-only or unavailable provider |
-| Puppet harness | Owns explicit test roots and multiple distinct devices | Fans out player devices and drives only advertised actions | Requests captures from enrolled rendering devices, verifies replies, builds one run manifest/contact sheet |
+| Puppet harness | Owns explicit test roots and multiple distinct devices | Fans out player devices and drives only advertised actions | Requests captures from enrolled rendering devices, verifies replies, builds one run manifest/contact sheet; native workers stay hidden/offscreen unless explicitly shown |
 | Headless simulation | Explicit in-process test devices | Same reducers and typed device client without network/rendering | Emits semantic snapshot only; no fake pixels |
 
 The graphical process is not being puppeted as a privileged local object. It is
@@ -707,9 +714,24 @@ oversize, expiry, tampering, and cancellation as specified.
 
 ## Phase 3 — connect graphical, CLI, and policy devices
 
-### [ ] 3.1 Turn Bevy into a live Poche device and capture provider
+### [~] 3.1 Turn Bevy into a live Poche device and capture provider
 
-**Completion notes:** Not started.
+**Completion notes:** In progress. `poche-native-ui` now converts an exact
+`DeviceObservation` into the shared presentation/spatial scene, admits only
+advertised game actions, and maps a spatial click/drag result back to the
+opaque advertised action ID. `NativeCaptureProvider` implements nonblocking
+consent/queue/cancel/result state and returns real Bevy render-target bytes,
+camera/viewport/revision/projection/scene metadata to `poche-capture`; it never
+selects artifact paths. `poche desktop --capture-artifact-root ...` exercises
+the provider and shared persistence pipeline through the unified executable.
+Automation surfaces are hidden by default while normal desktop launch remains
+visible. Unit, Clippy, and manual hidden-surface artifact acceptance pass.
+Remaining before completion: connect the running window to a persistent/live
+transport profile, prove another enrolled device observes its human action,
+and compose session-authorized sibling capture. Visual inspection also retains
+an existing native-render gap: current/earlier unified screenshots show Slug
+and debug geometry but omit solid PBR meshes, so capture structure is accepted
+but visual completeness is not yet claimed.
 
 **Work:**
 
@@ -837,6 +859,10 @@ actions, without sleeps or a second semantic engine.
 
 - Launch/enroll a Bevy rendering device and one or more CLI/harness devices
   through secure temporary automation profiles rather than local discovery.
+- Render native puppet workers to a hidden/offscreen surface by default so no
+  automation window appears on the user's desktop. Retain an explicit
+  `--show-window`-style debugging option; do not change ordinary interactive
+  `poche desktop` visibility.
 - Have harness devices play ordinary actions and wait until the Bevy device's
   advertised observation revision matches the expected committed state.
 - Send signed capture requests to the Bevy device at main menu/lobby where

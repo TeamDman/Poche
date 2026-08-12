@@ -8801,6 +8801,13 @@ name = "poche-native-ui"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "blake3",
+ "image",
+ "poche-capture",
+ "poche-player-client",
+ "poche-protocol",
+ "poche-runtime",
+ "poche-session",
  "poche-slug",
  "poche-spatial",
  "poche-ui",

@@ -13,8 +13,9 @@
 #![allow(clippy::cast_precision_loss, clippy::needless_pass_by_value)]
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     f32::consts::PI,
+    io::Cursor,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -24,21 +25,42 @@ use bevy::{
     input::mouse::AccumulatedMouseMotion,
     log::LogPlugin,
     prelude::*,
-    render::view::screenshot::{Screenshot, save_to_disk},
+    render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk},
     window::{CursorIcon, PrimaryWindow, SystemCursorIcon, WindowPlugin},
+};
+use poche_capture::{
+    CaptureCameraMetadata, CapturePipeline, CaptureProvider, CaptureProviderPoll,
+    CaptureQualification, CaptureSurfaceMetadata, PersistedCapture, RawCaptureArtifact,
+    RawCaptureBundle,
+};
+use poche_player_client::{AdvertisedAction, DeviceObservation};
+use poche_protocol::{
+    CaptureArtifactId, CaptureConsentPolicyWire, CaptureDenialReasonWire, CapturePrivacyWire,
+    CaptureProviderKindWire, CaptureRepresentationWire, CaptureRequestId, CommandPayload,
+    DEVICE_COOPERATION_SCHEMA_VERSION_V1, DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1, DeviceId,
+    DeviceSignatureIntentWire, GameActionWire, PrincipalId, RoomId, SemanticHash,
+    SignatureAlgorithm, SignatureBytes, UnsignedCaptureProviderAdvertisementWire,
+    UnsignedCaptureRequestWire,
 };
 use poche_slug::{
     DEFAULT_BAND_SIZE_FONT_UNITS, GlyphGeometry, SlugError, SlugFont, build_directional_bands,
     build_gpu_glyph_metadata,
 };
 use poche_spatial::{
-    AabbMm, AnimationEndpoint, CardFace, CardLocation, CardObjectId, HalfExtentsMm, ObjectId,
-    Point3Mm, PoseMm, ResolvedCardPlay, SeatId, SpatialLayout, SpatialScene, TextBinding,
-    YawMilliDegrees, ZoneId, reconstruct_animation_endpoint, resolve_card_play, resolve_drag_play,
-    spatial_scene_hash_hex,
+    AabbMm, AnimationEndpoint, CardFace, CardLocation, CardObjectId, HalfExtentsMm, LayoutId,
+    ObjectId, Point3Mm, PoseMm, ResolvedCardPlay, SeatId, SpatialLayout, SpatialScene, TableId,
+    TextBinding, YawMilliDegrees, ZoneId, reconstruct_animation_endpoint, registered_layout,
+    resolve_card_play, resolve_drag_play, spatial_scene_hash, spatial_scene_hash_hex,
 };
-use poche_ui::embedded_spatial_fixture;
+use poche_ui::{
+    ConnectionPresentation, PresentationInput, PresentationModel, embedded_spatial_fixture,
+    realize_presentation_spatial,
+};
 use serde::Serialize;
+
+mod native_capture;
+
+pub use native_capture::*;
 
 /// Explicit OFL-licensed font consumed by Slug and native UI text.
 pub const FONT_BYTES: &[u8] = include_bytes!("../assets/CaskaydiaCove-Regular.ttf");
@@ -135,6 +157,7 @@ pub struct NativeController {
     layout: SpatialLayout,
     scene: SpatialScene,
     issuing_seat: SeatId,
+    legal_plays: Option<BTreeSet<u8>>,
     committed: Option<CommittedPresentation>,
     last_finding: String,
     generation: u64,
@@ -165,6 +188,7 @@ impl NativeController {
             layout,
             scene,
             issuing_seat,
+            legal_plays: None,
             committed: None,
             last_finding: "ready: drag an owned card to PLAY, press P, or use --play-card"
                 .to_owned(),
@@ -255,6 +279,16 @@ impl NativeController {
         play: ResolvedCardPlay,
         started: Instant,
     ) -> Result<CommittedPresentation, String> {
+        if self
+            .legal_plays
+            .as_ref()
+            .is_some_and(|legal| !legal.contains(&play.face.code()))
+        {
+            return Err(format!(
+                "{} was not advertised for this exact projection",
+                play.face.label()
+            ));
+        }
         let endpoint = reconstruct_animation_endpoint(&self.layout, play.record)
             .map_err(|finding| format!("{finding:?}"))?;
         self.generation = self.generation.saturating_add(1);
@@ -284,6 +318,100 @@ impl NativeController {
 pub fn replay_fixture_controller() -> Result<NativeController, String> {
     let fixture = embedded_spatial_fixture()?;
     NativeController::try_new(fixture.layout, fixture.scene, fixture.issuing_seat)
+}
+
+/// Build the native leaf adapter from one exact-recipient device observation.
+/// Only game actions advertised beside that exact projection are admitted to
+/// the presentation model; no renderer-specific action graph is synthesized.
+///
+/// # Errors
+///
+/// Returns a stable projection/layout/seat realization failure.
+pub fn native_controller_from_observation(
+    observation: &DeviceObservation,
+) -> Result<NativeController, String> {
+    let payload = &observation.projection.payload;
+    let players = payload
+        .public_game_state
+        .as_ref()
+        .and_then(|game| u8::try_from(game.hand_counts.len()).ok())
+        .or_else(|| {
+            payload
+                .members
+                .iter()
+                .filter_map(|member| member.seat)
+                .max()
+                .map(|seat| seat.saturating_add(1).max(2))
+        })
+        .unwrap_or(2);
+    let layout_id = LayoutId::new(players, 1)
+        .ok_or_else(|| format!("unsupported live player count {players}"))?;
+    let table_hash = blake3::hash(observation.projection.room_id.as_str().as_bytes());
+    let mut table_bytes = [0_u8; 8];
+    table_bytes.copy_from_slice(&table_hash.as_bytes()[..8]);
+    let layout = registered_layout(TableId::new(u64::from_be_bytes(table_bytes)), layout_id)
+        .map_err(|error| format!("live layout failed: {error:?}"))?;
+    let legal_actions = observation
+        .actions
+        .iter()
+        .filter_map(|action| match &action.payload {
+            CommandPayload::GameAction { action } => Some(action.clone()),
+            _ => None,
+        })
+        .collect();
+    let presentation = PresentationModel::from_input(PresentationInput {
+        viewer: observation.projection.principal_id.as_str().to_owned(),
+        projection: payload.clone(),
+        legal_actions,
+        connection: ConnectionPresentation::Connected,
+        countdown: None,
+        chat: Vec::new(),
+        notices: Vec::new(),
+    });
+    let scene = realize_presentation_spatial(
+        &layout,
+        observation.projection.projection_epoch,
+        &presentation,
+    )
+    .map_err(|error| format!("live spatial projection failed: {error:?}"))?;
+    let issuing_ordinal = payload
+        .members
+        .iter()
+        .find(|member| member.principal_id == observation.projection.principal_id)
+        .and_then(|member| member.seat)
+        .ok_or_else(|| "live viewer does not occupy a seat".to_owned())?;
+    let issuing_seat = SeatId::new(issuing_ordinal, layout_id)
+        .ok_or_else(|| "live viewer seat is outside the selected layout".to_owned())?;
+    let legal_plays = observation
+        .actions
+        .iter()
+        .filter_map(|action| match &action.payload {
+            CommandPayload::GameAction {
+                action: GameActionWire::Play { card },
+            } => Some(*card),
+            _ => None,
+        })
+        .collect();
+    let mut controller = NativeController::try_new(layout, scene, issuing_seat)?;
+    controller.legal_plays = Some(legal_plays);
+    Ok(controller)
+}
+
+/// Resolve a spatially accepted play back to the opaque action advertised for
+/// the exact observation that produced the scene.
+#[must_use]
+pub fn advertised_action_for_play<'a>(
+    observation: &'a DeviceObservation,
+    committed: &CommittedPresentation,
+) -> Option<&'a AdvertisedAction> {
+    observation.actions.iter().find(|action| {
+        matches!(
+            action.payload,
+            CommandPayload::GameAction {
+                action: GameActionWire::Play { card }
+            } if card == committed.play.face.code()
+        )
+    })
 }
 
 /// Parse a dense, compact Unicode, or CLI-word card spelling.
@@ -514,6 +642,12 @@ pub struct NativeUiLaunchOptions {
     pub acceptance_report: Option<PathBuf>,
     pub exit_after_seconds: Option<f64>,
     pub debug_overlay: bool,
+    /// Keep the native surface hidden for automation/capture workers.
+    pub hidden_window: bool,
+    /// Optional exact-target provider handle owned by this graphical device.
+    pub capture_provider: Option<NativeCaptureProvider>,
+    /// Exact live projection identity rendered by this window.
+    pub capture_context: Option<NativeCaptureContext>,
     /// The caller already installed the process tracing subscriber.
     pub external_tracing: bool,
 }
@@ -577,9 +711,19 @@ pub fn run_from_env() -> Result<(), String> {
 ///
 /// Returns invalid launch options or fixture failures before the event loop.
 pub fn run(options: NativeUiLaunchOptions) -> Result<(), String> {
-    let external_tracing = options.external_tracing;
+    let NativeUiLaunchOptions {
+        play_card,
+        screenshot,
+        acceptance_report,
+        exit_after_seconds,
+        debug_overlay,
+        hidden_window,
+        capture_provider,
+        capture_context,
+        external_tracing,
+    } = options;
     let mut controller = replay_fixture_controller()?;
-    if let Some(value) = options.play_card {
+    if let Some(value) = play_card {
         let face = if value == "first" {
             controller
                 .first_owned_face()
@@ -589,8 +733,7 @@ pub fn run(options: NativeUiLaunchOptions) -> Result<(), String> {
         };
         controller.commit_named(face)?;
     }
-    let exit_after = options
-        .exit_after_seconds
+    let exit_after = exit_after_seconds
         .map(|seconds| {
             if !seconds.is_finite() || seconds < 1.0 {
                 Err("exit duration must be finite and at least one second".to_owned())
@@ -600,10 +743,10 @@ pub fn run(options: NativeUiLaunchOptions) -> Result<(), String> {
         })
         .transpose()?;
     let acceptance = AcceptanceOptions {
-        screenshot: options.screenshot,
-        report: options.acceptance_report,
+        screenshot,
+        report: acceptance_report,
         exit_after,
-        debug_overlay: options.debug_overlay,
+        debug_overlay,
     };
 
     let debug_overlay = DebugOverlay {
@@ -613,6 +756,8 @@ pub fn run(options: NativeUiLaunchOptions) -> Result<(), String> {
         primary_window: Some(Window {
             title: "Poche — canonical spatial mirror".to_owned(),
             resolution: (1280, 800).into(),
+            visible: !hidden_window,
+            focused: !hidden_window,
             ..default()
         }),
         ..default()
@@ -643,9 +788,122 @@ pub fn run(options: NativeUiLaunchOptions) -> Result<(), String> {
                 acceptance_driver,
             )
                 .chain(),
-        )
-        .run();
+        );
+    if capture_provider.is_some() != capture_context.is_some() {
+        return Err(
+            "native capture provider and projection context must be supplied together".to_owned(),
+        );
+    }
+    if let Some(provider) = capture_provider {
+        app.insert_resource(provider);
+        app.add_systems(Update, native_capture_driver.after(update_status));
+    }
+    if let Some(context) = capture_context {
+        app.insert_resource(context);
+    }
+    app.run();
     Ok(())
+}
+
+/// Exercise the real Bevy render target through the common provider and
+/// persistence contracts. This deterministic fixture acceptance is a local
+/// renderer prerequisite; certification/authorization is proved separately by
+/// the session/device tests and composed by the multi-device puppet.
+///
+/// # Errors
+///
+/// Returns launch, provider, render, or shared-pipeline failures.
+pub fn run_fixture_capture_acceptance(
+    mut options: NativeUiLaunchOptions,
+    artifact_root: impl Into<PathBuf>,
+) -> Result<PersistedCapture, String> {
+    let provider_device = DeviceId::new("native-fixture-renderer")
+        .map_err(|_| "invalid fixture provider device".to_owned())?;
+    let requester_device = DeviceId::new("native-fixture-requester")
+        .map_err(|_| "invalid fixture requester device".to_owned())?;
+    let player = PrincipalId::new("native-fixture-player")
+        .map_err(|_| "invalid fixture player".to_owned())?;
+    let room = RoomId::new("native-fixture-room").map_err(|_| "invalid fixture room".to_owned())?;
+    let signature =
+        || SignatureBytes::new("55".repeat(64)).map_err(|_| "invalid fixture signature".to_owned());
+    let advertisement = UnsignedCaptureProviderAdvertisementWire {
+        schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+        room_id: room.clone(),
+        membership_epoch: 1,
+        player_id: player.clone(),
+        provider_device_id: provider_device.clone(),
+        provider_kind: CaptureProviderKindWire::NativeBevy,
+        representations: vec![CaptureRepresentationWire::Png],
+        privacy_scopes: vec![CapturePrivacyWire::ExactPlayerView],
+        consent_policy: CaptureConsentPolicyWire::HarnessOnly,
+        max_total_bytes: 8 * 1024 * 1024,
+        advertisement_sequence: 1,
+        expires_at_unix_ms: 2_000_000_000_000,
+        signature_intent: DeviceSignatureIntentWire {
+            domain_version: DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+            algorithm: SignatureAlgorithm::Ed25519,
+            key_id: provider_device.clone(),
+        },
+    }
+    .attach_signature(signature()?)
+    .map_err(|_| "invalid fixture capture advertisement".to_owned())?;
+    let request = UnsignedCaptureRequestWire {
+        schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+        request_id: CaptureRequestId::new("native-fixture-capture")
+            .map_err(|_| "invalid fixture capture request ID".to_owned())?,
+        room_id: room,
+        membership_epoch: 1,
+        player_id: player,
+        requester_device_id: requester_device.clone(),
+        provider_device_id: provider_device,
+        observed_revision: 1,
+        expires_at_unix_ms: 2_000_000_000_000,
+        replay_nonce: "native-fixture-capture-nonce".to_owned(),
+        privacy: CapturePrivacyWire::ExactPlayerView,
+        provider_kind: CaptureProviderKindWire::NativeBevy,
+        representations: vec![CaptureRepresentationWire::Png],
+        // Let the provider report the actual physical render-target extent.
+        // A 1280x800 logical Windows window can have different physical
+        // dimensions under DPI scaling.
+        viewport: None,
+        label: "native fixture acceptance".to_owned(),
+        max_total_bytes: 8 * 1024 * 1024,
+        signature_intent: DeviceSignatureIntentWire {
+            domain_version: DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+            algorithm: SignatureAlgorithm::Ed25519,
+            key_id: requester_device,
+        },
+    }
+    .attach_signature(signature()?)
+    .map_err(|_| "invalid fixture capture request".to_owned())?;
+    let mut provider = NativeCaptureProvider::new(advertisement);
+    provider
+        .begin_capture(request.clone())
+        .map_err(|error| error.to_string())?;
+    let mut result_handle = provider.clone();
+    options.capture_provider = Some(provider);
+    options.capture_context = Some(NativeCaptureContext {
+        current_revision: request.observed_revision,
+        projection_hash: SemanticHash([1; 32]),
+    });
+    options.exit_after_seconds.get_or_insert(3.0);
+    options.hidden_window = true;
+    run(options)?;
+    let bundle = match result_handle
+        .poll_capture(&request.request_id)
+        .map_err(|error| error.to_string())?
+    {
+        CaptureProviderPoll::Ready(bundle) => bundle,
+        CaptureProviderPoll::Denied(reason) => {
+            return Err(format!("native capture denied: {reason:?}"));
+        }
+        CaptureProviderPoll::Pending(stage) => {
+            return Err(format!("native capture still pending: {stage:?}"));
+        }
+    };
+    CapturePipeline::new(artifact_root)
+        .persist(&bundle)
+        .map_err(|error| error.to_string())
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1053,6 +1311,156 @@ fn update_status(
     );
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "validated camera and window values are intentionally quantized into bounded integer evidence metadata"
+)]
+fn native_capture_driver(
+    mut commands: Commands,
+    provider: Option<Res<NativeCaptureProvider>>,
+    context: Option<Res<NativeCaptureContext>>,
+    controller: Res<NativeController>,
+    camera: Res<CameraRig>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    mut provider_started: Local<Option<Instant>>,
+) {
+    let (Some(provider), Some(context)) = (provider, context) else {
+        return;
+    };
+    // The startup update can run before the primary swapchain has presented a
+    // fully rendered scene. Keep the first request queued for the same warm-up
+    // used by the established native screenshot acceptance path.
+    let started = provider_started.get_or_insert_with(Instant::now);
+    if started.elapsed() < Duration::from_millis(900) {
+        return;
+    }
+    let Ok(Some(request)) = provider.take_queued() else {
+        return;
+    };
+    if request.observed_revision != context.current_revision {
+        let _ = provider.deny(&request.request_id, CaptureDenialReasonWire::StaleRevision);
+        return;
+    }
+    let viewport = poche_protocol::CaptureViewportWire {
+        width_pixels: window.resolution.physical_width(),
+        height_pixels: window.resolution.physical_height(),
+    };
+    if request
+        .viewport
+        .is_some_and(|requested| requested != viewport)
+    {
+        let _ = provider.deny(
+            &request.request_id,
+            CaptureDenialReasonWire::UnsupportedFormat,
+        );
+        return;
+    }
+    let Ok(scene_hash) = spatial_scene_hash(&controller.scene) else {
+        let _ = provider.deny(
+            &request.request_id,
+            CaptureDenialReasonWire::IntegrityFailure,
+        );
+        return;
+    };
+    let eye = camera.view.eye();
+    let camera_metadata = CaptureCameraMetadata {
+        position_millimetres: [
+            (eye.x * 1_000.0).round() as i64,
+            (eye.y * 1_000.0).round() as i64,
+            (eye.z * 1_000.0).round() as i64,
+        ],
+        rotation_milliradians: [
+            (camera.view.pitch * 1_000.0).round() as i32,
+            (camera.view.yaw * 1_000.0).round() as i32,
+            0,
+        ],
+        vertical_fov_millidegrees: 45_000,
+    };
+    let surface = CaptureSurfaceMetadata {
+        provider_kind: CaptureProviderKindWire::NativeBevy,
+        viewport,
+        framebuffer_width: viewport.width_pixels,
+        framebuffer_height: viewport.height_pixels,
+        scale_milli: (window.resolution.scale_factor() * 1_000.0).round() as u32,
+        camera: Some(camera_metadata),
+    };
+    let provider = provider.clone();
+    let projection_hash = context.projection_hash;
+    commands.spawn(Screenshot::primary_window()).observe(
+        move |captured: On<ScreenshotCaptured>| {
+            let request_id = request.request_id.clone();
+            match native_capture_bundle(
+                &request,
+                projection_hash,
+                SemanticHash(scene_hash),
+                surface.clone(),
+                &captured.image,
+            ) {
+                Ok(bundle) => {
+                    let _ = provider.complete(&request_id, bundle);
+                }
+                Err(reason) => {
+                    let _ = provider.deny(&request_id, reason);
+                }
+            }
+        },
+    );
+}
+
+fn native_capture_bundle(
+    request: &poche_protocol::CaptureRequestWire,
+    projection_hash: poche_protocol::SemanticHash,
+    scene_hash: poche_protocol::SemanticHash,
+    surface: CaptureSurfaceMetadata,
+    image: &Image,
+) -> Result<RawCaptureBundle, CaptureDenialReasonWire> {
+    let dynamic = image
+        .clone()
+        .try_into_dynamic()
+        .map_err(|_| CaptureDenialReasonWire::ProviderUnavailable)?;
+    let mut cursor = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(dynamic.to_rgba8())
+        .write_to(&mut cursor, image::ImageFormat::Png)
+        .map_err(|_| CaptureDenialReasonWire::ProviderUnavailable)?;
+    let bytes = cursor.into_inner();
+    if u64::try_from(bytes.len()).map_or(true, |length| length > request.max_total_bytes) {
+        return Err(CaptureDenialReasonWire::Oversize);
+    }
+    let token = capture_token(&request.request_id);
+    let source_hash = poche_protocol::SemanticHash(*blake3::hash(&bytes).as_bytes());
+    Ok(RawCaptureBundle {
+        figure_id: format!("native-{token}"),
+        caption: request.label.clone(),
+        captured_revision: request.observed_revision,
+        projection_hash,
+        scene_hash: Some(scene_hash),
+        surface,
+        qualification: CaptureQualification::RuntimeGenerated,
+        cancelled: false,
+        artifacts: vec![RawCaptureArtifact {
+            artifact_id: CaptureArtifactId::new(format!("native-{token}-png"))
+                .map_err(|_| CaptureDenialReasonWire::ProviderUnavailable)?,
+            representation: CaptureRepresentationWire::Png,
+            media_type: "image/png".to_owned(),
+            bytes,
+            expected_source_hash: Some(source_hash),
+        }],
+    })
+}
+
+fn capture_token(request_id: &poche_protocol::CaptureRequestId) -> String {
+    let hash = blake3::hash(request_id.as_str().as_bytes());
+    hash.as_bytes()[..8]
+        .iter()
+        .fold(String::with_capacity(16), |mut output, byte| {
+            use std::fmt::Write;
+
+            write!(output, "{byte:02x}").expect("writing to String cannot fail");
+            output
+        })
+}
+
 fn acceptance_driver(
     mut commands: Commands,
     time: Res<Time>,
@@ -1200,6 +1608,13 @@ fn zone_center_card_bounds(layout: &SpatialLayout, id: ZoneId) -> Result<AabbMm,
 
 #[cfg(test)]
 mod tests {
+    use poche_player_client::{AdvertisedAction, DeviceObservation};
+    use poche_protocol::{
+        CommandPayload, CorrelationId, EventId, GameActionWire, GamePublicStateWire,
+        HandProjection, MemberProjection, PrincipalId, ProjectionEnvelope, ProjectionId,
+        ProjectionPayload, PublicGamePhase, PublicTurnWire, RoomId, RoomPhase, SIGNATURE_DOMAIN_V1,
+        SemanticHash, SignatureAlgorithm, SignatureBytes, SignatureMetadata,
+    };
     use poche_slug::{
         DEFAULT_BAND_SIZE_FONT_UNITS, Point, SlugFont, build_directional_bands,
         coverage_all_curves, coverage_banded,
@@ -1207,9 +1622,83 @@ mod tests {
     use poche_spatial::{CardFace, CardLocation, ObjectId, TextBinding, ZoneId};
 
     use super::{
-        CAMERA_RESET_SECONDS, CameraRig, CameraView, FONT_BYTES, NativeController, parse_card_face,
+        CAMERA_RESET_SECONDS, CameraRig, CameraView, FONT_BYTES, NativeController,
+        advertised_action_for_play, native_controller_from_observation, parse_card_face,
         replay_fixture_controller, slug_packet_for_text, zone_center_card_bounds,
     };
+
+    fn live_play_observation() -> DeviceObservation {
+        let alice = PrincipalId::new("alice").expect("alice");
+        let bob = PrincipalId::new("bob").expect("bob");
+        DeviceObservation {
+            projection: ProjectionEnvelope {
+                protocol_version: 1,
+                room_id: RoomId::new("native-live-room").expect("room"),
+                session_epoch: 1,
+                projection_id: ProjectionId::new("native-projection-9").expect("projection"),
+                principal_id: alice.clone(),
+                current_revision: 9,
+                projection_epoch: 3,
+                correlation_id: CorrelationId::new("native-correlation-9").expect("correlation"),
+                causation_id: EventId::new("native-event-9").expect("event"),
+                payload: ProjectionPayload {
+                    phase: RoomPhase::Running,
+                    members: vec![
+                        MemberProjection {
+                            principal_id: alice.clone(),
+                            connected: true,
+                            seat: Some(0),
+                            ready: false,
+                            host: true,
+                        },
+                        MemberProjection {
+                            principal_id: bob,
+                            connected: true,
+                            seat: Some(1),
+                            ready: false,
+                            host: false,
+                        },
+                    ],
+                    public_game_state: Some(GamePublicStateWire {
+                        schema_version: 1,
+                        phase: PublicGamePhase::Playing,
+                        dealer: Some(1),
+                        actor: PublicTurnWire::Player(0),
+                        round_index: 0,
+                        hand_size: 2,
+                        hand_counts: vec![2, 2],
+                        trump: Some(51),
+                        current_trick: Vec::new(),
+                        bids: vec![Some(1), Some(1)],
+                        tricks_won: vec![0, 0],
+                        scores: vec![0, 0],
+                        pot_cents: 50,
+                    }),
+                    own_hand: Some(HandProjection {
+                        player: alice.clone(),
+                        grant_epoch: 3,
+                        cards: vec![0, 12],
+                    }),
+                    granted_hands: Vec::new(),
+                    public_history: Vec::new(),
+                },
+                signature: SignatureMetadata {
+                    domain_version: SIGNATURE_DOMAIN_V1,
+                    algorithm: SignatureAlgorithm::Ed25519,
+                    key_id: alice,
+                    signature: SignatureBytes::new("00".repeat(64)).expect("signature"),
+                },
+            },
+            projection_hash: SemanticHash([9; 32]),
+            actions: vec![AdvertisedAction {
+                id: "play-2-clubs".to_owned(),
+                label: "Play 2♣".to_owned(),
+                payload: CommandPayload::GameAction {
+                    action: GameActionWire::Play { card: 0 },
+                },
+            }],
+        }
+    }
 
     #[test]
     fn camera_reset_tweens_back_to_the_registered_home_view() {
@@ -1311,6 +1800,34 @@ mod tests {
         let dragged = dragged.commit_drag(object, bounds).expect("drag play");
         assert_eq!(named.play, dragged.play);
         assert_eq!(named.endpoint, dragged.endpoint);
+    }
+
+    #[test]
+    fn live_click_and_drag_resolve_only_to_the_exact_advertised_action() {
+        let observation = live_play_observation();
+        let mut controller =
+            native_controller_from_observation(&observation).expect("live native controller");
+        let legal = controller
+            .scene()
+            .cards
+            .iter()
+            .find(|card| card.face == CardFace::new(0))
+            .expect("legal card")
+            .id;
+        let bounds =
+            zone_center_card_bounds(controller.layout(), ZoneId::Play).expect("play bounds");
+        let committed = controller.commit_drag(legal, bounds).expect("drag play");
+        assert_eq!(
+            advertised_action_for_play(&observation, &committed).map(|action| action.id.as_str()),
+            Some("play-2-clubs")
+        );
+
+        let mut controller =
+            native_controller_from_observation(&observation).expect("fresh live controller");
+        assert_eq!(
+            controller.commit_named(CardFace::new(12).expect("ace clubs")),
+            Err("A♣ was not advertised for this exact projection".to_owned())
+        );
     }
 
     #[test]

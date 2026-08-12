@@ -7,8 +7,10 @@ use std::{
 
 use image::{ColorType, ImageEncoder, ImageFormat, Rgba, RgbaImage, codecs::png::PngEncoder};
 use poche_protocol::{
-    CaptureArtifactId, CaptureProviderKindWire, CaptureRepresentationWire, CaptureViewportWire,
-    MAX_CAPTURE_ARTIFACT_BYTES, MAX_CAPTURE_ARTIFACTS, SemanticHash,
+    CaptureArtifactId, CaptureDenialReasonWire, CaptureProgressStageWire,
+    CaptureProviderAdvertisementWire, CaptureProviderKindWire, CaptureRepresentationWire,
+    CaptureRequestId, CaptureRequestWire, CaptureViewportWire, MAX_CAPTURE_ARTIFACT_BYTES,
+    MAX_CAPTURE_ARTIFACTS, SemanticHash,
 };
 use serde::{Deserialize, Serialize};
 
@@ -66,6 +68,31 @@ pub struct RawCaptureBundle {
     pub qualification: CaptureQualification,
     pub cancelled: bool,
     pub artifacts: Vec<RawCaptureArtifact>,
+}
+
+/// Asynchronous provider result polled without blocking a renderer loop.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CaptureProviderPoll {
+    Pending(CaptureProgressStageWire),
+    Ready(Box<RawCaptureBundle>),
+    Denied(CaptureDenialReasonWire),
+}
+
+/// Renderer-neutral provider port. The caller verifies signatures and session
+/// authorization before `begin_capture`; implementations only capture their
+/// own exact device surface and never persist final evidence paths.
+pub trait CaptureProvider {
+    fn advertisement(&self) -> &CaptureProviderAdvertisementWire;
+
+    fn begin_capture(&mut self, request: CaptureRequestWire) -> Result<(), CapturePipelineError>;
+
+    fn poll_capture(
+        &mut self,
+        request_id: &CaptureRequestId,
+    ) -> Result<CaptureProviderPoll, CapturePipelineError>;
+
+    fn cancel_capture(&mut self, request_id: &CaptureRequestId)
+    -> Result<(), CapturePipelineError>;
 }
 
 /// One normalized persisted artifact.

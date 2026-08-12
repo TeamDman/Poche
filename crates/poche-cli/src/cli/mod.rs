@@ -133,7 +133,7 @@ impl Command {
 #[derive(PartialEq)]
 pub enum ParseOutcome {
     Write(String),
-    Run(Cli),
+    Run(Box<Cli>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,7 +181,7 @@ pub fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<ParseOu
         Ok(output) => {
             let cli = output.get();
             cli.command.validate()?;
-            Ok(ParseOutcome::Run(cli))
+            Ok(ParseOutcome::Run(Box::new(cli)))
         }
         Err(DriverError::Help { text, .. }) if requested_help => {
             Ok(ParseOutcome::Write(format!("{}\n", strip_ansi(&text))))
