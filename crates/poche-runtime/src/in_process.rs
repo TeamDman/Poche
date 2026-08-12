@@ -146,9 +146,8 @@ pub enum AuthenticatedIngress {
 pub enum InProcessTransportError {
     UnknownConnection,
     ConnectionClosed,
-    PrincipalAlreadyConnected,
     PrincipalBindingMismatch,
-    AmbiguousRecipient,
+    NoConnectedRecipient,
     InvalidIdentifier,
     Codec(CodecError),
     DisconnectedByFault,
@@ -190,18 +189,12 @@ impl InProcessTransport {
     ///
     /// # Errors
     ///
-    /// Rejects a second simultaneously connected route for the same principal.
+    /// Each call creates an independent route. Multiple routes may represent
+    /// independently certified devices acting for the same player.
     pub fn connect(
         &mut self,
         principal_id: PrincipalId,
     ) -> Result<ScriptedClient, InProcessTransportError> {
-        if self
-            .connections
-            .values()
-            .any(|connection| connection.connected && connection.principal_id == principal_id)
-        {
-            return Err(InProcessTransportError::PrincipalAlreadyConnected);
-        }
         let id = ConnectionId(self.next_connection);
         self.next_connection = self.next_connection.saturating_add(1);
         self.connections.insert(
@@ -239,14 +232,21 @@ impl InProcessTransport {
             return Err(InProcessTransportError::ConnectionClosed);
         }
         connection.connected = false;
-        let observation_id = CommandId::new(format!("disconnect-{}", self.next_observation))
-            .map_err(|_| InProcessTransportError::InvalidIdentifier)?;
-        self.next_observation = self.next_observation.saturating_add(1);
-        self.ingress.push_back(AuthenticatedIngress::Disconnected {
-            connection_id,
-            principal_id: connection.principal_id.clone(),
-            observation_id,
-        });
+        let principal_id = connection.principal_id.clone();
+        if !self
+            .connections
+            .values()
+            .any(|candidate| candidate.connected && candidate.principal_id == principal_id)
+        {
+            let observation_id = CommandId::new(format!("disconnect-{}", self.next_observation))
+                .map_err(|_| InProcessTransportError::InvalidIdentifier)?;
+            self.next_observation = self.next_observation.saturating_add(1);
+            self.ingress.push_back(AuthenticatedIngress::Disconnected {
+                connection_id,
+                principal_id,
+                observation_id,
+            });
+        }
         Ok(())
     }
 
@@ -351,15 +351,17 @@ impl TransportPort for InProcessTransport {
             .filter(|(_, connection)| connection.connected && connection.principal_id == *principal)
             .map(|(id, _)| *id)
             .collect::<Vec<_>>();
-        let [recipient] = recipients.as_slice() else {
-            return Err(InProcessTransportError::AmbiguousRecipient);
-        };
+        if recipients.is_empty() {
+            return Err(InProcessTransportError::NoConnectedRecipient);
+        }
         let frame = self.round_trip_frame(frame.clone())?;
-        self.connections
-            .get_mut(recipient)
-            .expect("recipient came from the connection map")
-            .outbox
-            .push_back(frame);
+        for recipient in recipients {
+            self.connections
+                .get_mut(&recipient)
+                .expect("recipient came from the connection map")
+                .outbox
+                .push_back(frame.clone());
+        }
         Ok(())
     }
 }
@@ -1010,6 +1012,23 @@ mod tests {
             Err(InProcessTransportError::PrincipalBindingMismatch)
         );
         assert!(transport.receive().is_none());
+    }
+
+    #[test]
+    fn one_player_may_have_multiple_routes_and_disconnects_only_with_the_last() {
+        let mut transport = InProcessTransport::default();
+        let first = transport.connect(principal("alice")).unwrap();
+        let second = transport.connect(principal("alice")).unwrap();
+
+        transport.disconnect(first.connection_id()).unwrap();
+        assert!(transport.receive().is_none());
+
+        transport.disconnect(second.connection_id()).unwrap();
+        assert!(matches!(
+            transport.receive(),
+            Some(AuthenticatedIngress::Disconnected { principal_id, .. })
+                if principal_id.as_str() == "alice"
+        ));
     }
 
     #[test]

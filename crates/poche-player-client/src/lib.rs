@@ -26,6 +26,10 @@ use poche_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
+mod loopback;
+
+pub use loopback::*;
+
 /// Public, persistable portion of a protected device profile.
 ///
 /// The profile label is a local selector. Player/device authority comes only
@@ -355,7 +359,7 @@ mod tests {
         invoked: Vec<DeviceActionRequest>,
     }
 
-    impl DeviceTransport for FixtureTransport {
+    impl LoopbackDeviceAuthority for FixtureTransport {
         fn observe(
             &mut self,
             _profile: &DeviceProfile,
@@ -474,10 +478,11 @@ mod tests {
     #[test]
     fn client_invokes_only_an_action_advertised_for_exact_revision() {
         let (profile, observation) = fixture();
-        let transport = FixtureTransport {
+        let authority = FixtureTransport {
             observation,
             invoked: Vec::new(),
         };
+        let transport = LoopbackDeviceTransport::new(authority);
         let mut client = PlayerDeviceClient::new(profile, transport).unwrap();
         let room = RoomId::new("room-1").unwrap();
         let observed = client.observe(&room).unwrap();
@@ -499,7 +504,7 @@ mod tests {
                 revision: 8,
             }
         );
-        let transport = client.into_transport();
+        let transport = client.into_transport().into_authority();
         assert_eq!(transport.invoked.len(), 1);
         assert_eq!(transport.invoked[0].expected_revision, 7);
         assert_eq!(
@@ -512,10 +517,11 @@ mod tests {
     #[test]
     fn wait_refuses_an_adapter_that_returns_no_progress() {
         let (profile, observation) = fixture();
-        let transport = FixtureTransport {
+        let authority = FixtureTransport {
             observation,
             invoked: Vec::new(),
         };
+        let transport = LoopbackDeviceTransport::new(authority);
         let mut client = PlayerDeviceClient::new(profile, transport).unwrap();
         assert_eq!(
             client.wait(&RoomId::new("room-1").unwrap(), 7),

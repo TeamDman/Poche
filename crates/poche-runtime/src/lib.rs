@@ -16,6 +16,7 @@ use poche_session::PureSessionMachine;
 
 mod accusation;
 mod chat;
+mod device_client;
 mod in_process;
 mod oracle_session;
 mod replicated;
@@ -27,6 +28,7 @@ mod trustless;
 
 pub use accusation::*;
 pub use chat::*;
+pub use device_client::*;
 pub use in_process::*;
 pub use oracle_session::{OracleSessionGame, OracleSessionGameError};
 pub use replicated::*;

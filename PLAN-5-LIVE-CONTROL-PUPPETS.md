@@ -544,8 +544,16 @@ port, exact-recipient observations, sorted advertised actions, revision and
 projection-hash-bound invocation, wait progress checks, cooperation requests,
 stable redacted errors, and no renderer dependency. Tests prove an
 unadvertised action cannot reach the adapter and that a non-progressing wait
-fails closed. ADR 0010 and protocol/session types carry the cooperation half.
-Concrete loopback, gateway, and native Veilid adapter connections remain.
+fails closed. Added a cloneable canonical-NDJSON loopback adapter over the
+actual `InProcessAuthority` reducer: observations have stable semantic hashes
+despite changing delivery envelopes, advertised invocations enter the real
+command path, and queued recipient frames are drained. The in-process
+transport now permits multiple independently routed devices for one player,
+fans projections out to all of them, and emits a semantic disconnect only when
+the player's last device disconnects. Focused tests prove a desktop-shaped and
+CLI-shaped device for the same player observe the same committed revision.
+ADR 0010 and protocol/session types carry the cooperation half. Gateway and
+native Veilid adapter connections remain.
 
 **Work:**
 

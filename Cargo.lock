@@ -8837,6 +8837,7 @@ dependencies = [
  "poche-crypto-prototype",
  "poche-environment",
  "poche-oracle-rust",
+ "poche-player-client",
  "poche-protocol",
  "poche-session",
  "poche-spatial",
