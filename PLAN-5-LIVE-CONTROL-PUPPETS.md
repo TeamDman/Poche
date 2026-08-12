@@ -7,8 +7,8 @@
 **Intent audit:** Passed 2026-08-12 against the available original Poche/SFM,
 desktop, browser, CLI, computer-player, multi-device, capture, puppet, Figue,
 Veilid, and planning instructions in this task
-**Current implementation focus:** Task 2.1; connect the new reusable exact-
-recipient player-device client to loopback, gateway, and native Veilid adapters
+**Current implementation focus:** Task 2.3; implement the one common capture
+artifact validation, captioning, privacy, persistence, and manifest pipeline
 
 ## How to update this plan
 
@@ -536,9 +536,9 @@ entry points with correct Windows/redirected-output behavior.
 
 ## Phase 2 — implement the shared device and capture protocols
 
-### [~] 2.1 Extract a reusable exact-recipient device client
+### [x] 2.1 Extract a reusable exact-recipient device client
 
-**Completion notes:** In progress. Added `poche-player-client` with validated
+**Completion notes:** Completed 2026-08-12. Added `poche-player-client` with validated
 public profile/certificate bindings, opaque protected-key handles and signing
 port, exact-recipient observations, sorted advertised actions, revision and
 projection-hash-bound invocation, wait progress checks, cooperation requests,
@@ -553,15 +553,18 @@ fans projections out to all of them, and emits a semantic disconnect only when
 the player's last device disconnects. Focused tests prove a desktop-shaped and
 CLI-shaped device for the same player observe the same committed revision.
 ADR 0010 and protocol/session types carry the cooperation half. Gateway and
-native Veilid adapter connections remain.
+native Veilid adapter connections remain explicitly assigned to Tasks 3.1,
+3.2, and 5.1; the plan moved those process integrations after the capture wire
+contract rather than letting each adapter invent incompatible cooperation.
 
 **Work:**
 
 - Add a reusable `poche-player-client` that owns a protected device profile,
   membership locator, exact-recipient observation, advertised action set,
   expected revision, idempotency/retry state, and transport adapter.
-- Support in-process/loopback first, existing gateway/native Veilid adapters
-  next, without renderer dependencies.
+- Support the in-process/loopback foundation without renderer dependencies;
+  use this client from the gateway/native Veilid process integrations in
+  Tasks 3.1, 3.2, and 5.1.
 - Define observe/actions/invoke/wait semantics and stable typed errors.
 - Keep device key material non-cloneable, non-serializable outside protected
   storage, redacted, and absent from diagnostics.
@@ -573,18 +576,25 @@ cargo test --locked -p poche-player-client -p poche-protocol -p poche-session --
 cargo clippy --locked -p poche-player-client --all-targets --offline -- -D warnings
 ```
 
-**Completion criteria:** One client API performs the same device behavior over
-the supported non-rendering adapters and exposes only exact-recipient state.
+**Completion criteria:** One client API performs real reducer-backed behavior
+over the canonical non-rendering loopback adapter, exposes only exact-recipient
+state, and is the mandatory API for later gateway/native Veilid adapters.
 
-### [ ] 2.2 Define signed device cooperation and capture schemas
+### [x] 2.2 Define signed device cooperation and capture schemas
 
-**Completion notes:** Protocol foundation completed ahead of activation because
-Task 2.1 needs the shared cooperation type: separate canonical request,
-response, and cancellation domains; exact device/room/epoch/revision/expiry/
-privacy bindings; request/provide certificate capabilities; hash-bound bounded
-artifact transfer descriptors; and pure same-player authorization. Remaining
-before `[x]`: provider advertisement, consent/progress/completion messages,
-cryptographic golden vectors, and explicit replay corpus.
+**Completion notes:** Completed 2026-08-12. The contract now has separately
+domain-signed provider advertisements, exact-target requests, consent
+decisions, monotonic progress, artifact offers, terminal completion receipts,
+and cancellations. Requests bind a replay nonce, expiry, exact provider kind,
+privacy scope, requested representations, room/membership/current revision,
+player root, and both certified device IDs. Pure authorization enforces same-
+player active/non-revoked request/provide capabilities, advertisement bounds,
+artifact kind/revision/size integrity, and completion receipts matching the
+offered transfer hashes without changing `SessionState`. A bounded replay
+window rejects exact duplicates, same-ID conflicts, and overflow. Distinct
+canonical domains, a fixed Ed25519 request hash/signature golden vector, the
+explicit replay corpus, cross-player/stale/revoked negatives, lifecycle tests,
+and Clippy all pass.
 
 **Work:**
 
@@ -610,7 +620,7 @@ cargo test --locked -p poche-session --offline device_cooperation
 **Completion criteria:** Golden vectors and positive/negative tests prove
 signed exact-target same-player capture authorization and replay resistance.
 
-### [ ] 2.3 Implement the common capture artifact pipeline
+### [~] 2.3 Implement the common capture artifact pipeline
 
 **Completion notes:** Not started.
 
