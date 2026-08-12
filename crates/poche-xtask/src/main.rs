@@ -39,6 +39,7 @@ const PLAN_AUDIT_CONTRACTS: &[&str] = &[
     include_str!("../../../tools/plan-audit/poche-foundation.conf"),
     include_str!("../../../tools/plan-audit/poche-phase-2.conf"),
     include_str!("../../../tools/plan-audit/poche-phase-3.conf"),
+    include_str!("../../../tools/plan-audit/poche-phase-5.conf"),
 ];
 const REQUIRED_TRIPLE_AUDIT_MARKERS: &[&str] = &[
     "**Pass 1 — extraction:**",
@@ -3625,6 +3626,20 @@ mod tests {
         assert_eq!(report.gates, 12);
         assert_eq!(report.tasks, 28);
         assert_eq!(report.overall_criteria, 13);
+        assert_eq!(report.deferred_sections, 1);
+    }
+
+    #[test]
+    fn active_phase_five_profile_passes_audit() {
+        let profiles = load_audit_profiles().unwrap();
+        let profile = profile(&profiles, "poche-phase-5-live-control-puppets");
+        let report = audit_guidance_plan(&plan_fixture(profile, "Active")).unwrap();
+        assert_eq!(report.plan_id, "poche-phase-5-live-control-puppets");
+        assert_eq!(report.guidance, 16);
+        assert_eq!(report.traceability, 16);
+        assert_eq!(report.gates, 7);
+        assert_eq!(report.tasks, 19);
+        assert_eq!(report.overall_criteria, 11);
         assert_eq!(report.deferred_sections, 1);
     }
 
