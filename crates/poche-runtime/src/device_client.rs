@@ -15,11 +15,11 @@ use poche_player_client::{
     LoopbackDeviceAuthority,
 };
 use poche_protocol::{
-    CorrelationId, DeviceId, EventId, PROTOCOL_VERSION_V1, ProjectionEnvelope, ProjectionId,
-    ProjectionPayload, RoomId, RoomPhase, SIGNATURE_DOMAIN_V1, SemanticHash, SignatureAlgorithm,
-    SignatureBytes, SignatureMetadata,
+    CommandPayload, CorrelationId, DeviceId, EventId, GameActionWire, MemberProjection,
+    PROTOCOL_VERSION_V1, ProjectionEnvelope, ProjectionId, ProjectionPayload, RoomId, RoomPhase,
+    SIGNATURE_DOMAIN_V1, SemanticHash, SignatureAlgorithm, SignatureBytes, SignatureMetadata,
 };
-use poche_session::{SessionGame, SessionState, project_viewer};
+use poche_session::{GameTurn, SessionGame, SessionPhase, SessionState, project_viewer};
 
 use crate::{
     AuthorityDisposition, ClientPort, InProcessAuthority, InProcessTransport, LoopbackCodec,
@@ -41,6 +41,98 @@ pub trait AdvertisedActionSource<G: SessionGame>: Send + Sync + 'static {
         state: &SessionState<G>,
         projection: &ProjectionEnvelope,
     ) -> Result<Vec<AdvertisedAction>, DeviceClientError>;
+}
+
+/// Complete player/environment game-action derivation for the Rust Poche
+/// oracle. Room, chat, and governance controls remain separate action-source
+/// layers. Chance uses an explicit deterministic seed retained on the source.
+#[derive(Clone, Copy, Debug)]
+pub struct OracleGameActionSource {
+    seed: u64,
+}
+
+impl OracleGameActionSource {
+    #[must_use]
+    pub const fn new(seed: u64) -> Self {
+        Self { seed }
+    }
+}
+
+impl Default for OracleGameActionSource {
+    fn default() -> Self {
+        Self::new(0x5eed)
+    }
+}
+
+impl<const PLAYERS: usize> AdvertisedActionSource<crate::OracleSessionGame<PLAYERS>>
+    for OracleGameActionSource
+{
+    fn actions(
+        &self,
+        state: &SessionState<crate::OracleSessionGame<PLAYERS>>,
+        projection: &ProjectionEnvelope,
+    ) -> Result<Vec<AdvertisedAction>, DeviceClientError> {
+        let SessionPhase::Running { game } = &state.phase else {
+            return Ok(Vec::new());
+        };
+        if projection.principal_id == state.game_environment {
+            return match game.turn() {
+                GameTurn::Chance => {
+                    let round = game
+                        .public_projection()
+                        .map_err(|_| DeviceClientError::ProtocolViolation)?
+                        .round_index;
+                    Ok(vec![AdvertisedAction {
+                        id: format!("game-deal-{round}"),
+                        label: format!("Deal round {round}"),
+                        payload: CommandPayload::ApplyChance {
+                            chance: crate::OracleSessionGame::<PLAYERS>::seeded_chance(
+                                self.seed,
+                                u32::from(round),
+                            )
+                            .map_err(|_| DeviceClientError::ProtocolViolation)?,
+                        },
+                    }])
+                }
+                GameTurn::Environment => Ok(vec![AdvertisedAction {
+                    id: "game-settle".to_owned(),
+                    label: "Settle round".to_owned(),
+                    payload: CommandPayload::Settle,
+                }]),
+                GameTurn::Player(_) | GameTurn::Finished => Ok(Vec::new()),
+            };
+        }
+        let Some(member) = state.member(&projection.principal_id) else {
+            return Ok(Vec::new());
+        };
+        let (Some(viewer_seat), GameTurn::Player(actor)) = (member.seat, game.turn()) else {
+            return Ok(Vec::new());
+        };
+        if viewer_seat != actor {
+            return Ok(Vec::new());
+        }
+        Ok(game
+            .legal_player_actions()
+            .into_iter()
+            .map(|action| {
+                let (id, label) = game_action_identity(&action);
+                AdvertisedAction {
+                    id,
+                    label,
+                    payload: CommandPayload::GameAction { action },
+                }
+            })
+            .collect())
+    }
+}
+
+fn game_action_identity(action: &GameActionWire) -> (String, String) {
+    match action {
+        GameActionWire::Bid { tricks } => {
+            (format!("game-bid-{tricks}"), format!("Bid {tricks} tricks"))
+        }
+        GameActionWire::Play { card } => (format!("game-play-{card}"), format!("Play card {card}")),
+    }
 }
 
 struct SharedLoopbackState<G: SessionGame, A> {
@@ -241,7 +333,9 @@ where
         .map_err(|_| DeviceClientError::TransportUnavailable)?
         .is_some()
     {}
-    let payload = if shared.authority.state.members.is_empty() {
+    let payload = if profile.player_id == shared.authority.state.game_environment {
+        environment_projection(&shared.authority.state)?
+    } else if shared.authority.state.members.is_empty() {
         ProjectionPayload {
             phase: RoomPhase::Lobby,
             members: Vec::new(),
@@ -310,6 +404,48 @@ where
         projection,
         projection_hash,
         actions,
+    })
+}
+
+fn environment_projection<G: SessionGame>(
+    state: &SessionState<G>,
+) -> Result<ProjectionPayload, DeviceClientError> {
+    let public_game_state = match &state.phase {
+        SessionPhase::Running { game }
+        | SessionPhase::Paused { game }
+        | SessionPhase::PostGame { game } => Some(
+            game.public_projection()
+                .map_err(|_| DeviceClientError::InvalidObservation)?,
+        ),
+        SessionPhase::Uninitialized
+        | SessionPhase::Lobby
+        | SessionPhase::Countdown { .. }
+        | SessionPhase::Closed => None,
+    };
+    Ok(ProjectionPayload {
+        phase: match &state.phase {
+            SessionPhase::Uninitialized | SessionPhase::Lobby => RoomPhase::Lobby,
+            SessionPhase::Countdown { .. } => RoomPhase::Countdown,
+            SessionPhase::Running { .. } => RoomPhase::Running,
+            SessionPhase::Paused { .. } => RoomPhase::Paused,
+            SessionPhase::PostGame { .. } => RoomPhase::PostGame,
+            SessionPhase::Closed => RoomPhase::Closed,
+        },
+        members: state
+            .members
+            .iter()
+            .map(|member| MemberProjection {
+                principal_id: member.principal_id.clone(),
+                connected: member.connection == poche_session::ConnectionState::Connected,
+                seat: member.seat,
+                ready: member.ready,
+                host: member.host,
+            })
+            .collect(),
+        public_game_state,
+        own_hand: None,
+        granted_hands: Vec::new(),
+        public_history: state.public_history.clone(),
     })
 }
 

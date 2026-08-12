@@ -48,6 +48,31 @@ impl<const PLAYERS: usize> OracleSessionGame<PLAYERS> {
             })
             .collect()
     }
+
+    /// Materialize one replayable seeded chance input for a device or puppet
+    /// acting as the game environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable conversion failure if an oracle card cannot be mapped
+    /// to the canonical 52-card wire code.
+    pub fn seeded_chance(
+        seed: u64,
+        deal_ordinal: u32,
+    ) -> Result<ChanceWire, OracleSessionGameError> {
+        let chance = OracleChanceAction::seeded(seed, deal_ordinal);
+        Ok(ChanceWire {
+            cards: chance
+                .deck
+                .cards()
+                .iter()
+                .copied()
+                .map(card_code)
+                .collect::<Result<Vec<_>, _>>()?,
+            seed: Some(seed),
+            deal_ordinal: Some(deal_ordinal),
+        })
+    }
 }
 
 impl<const PLAYERS: usize> SessionGame for OracleSessionGame<PLAYERS> {

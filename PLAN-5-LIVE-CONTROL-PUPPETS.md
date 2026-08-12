@@ -726,12 +726,20 @@ selects artifact paths. `poche desktop --capture-artifact-root ...` exercises
 the provider and shared persistence pipeline through the unified executable.
 Automation surfaces are hidden by default while normal desktop launch remains
 visible. Unit, Clippy, and manual hidden-surface artifact acceptance pass.
-Remaining before completion: connect the running window to a persistent/live
-transport profile, prove another enrolled device observes its human action,
-and compose session-authorized sibling capture. Visual inspection also retains
-an existing native-render gap: current/earlier unified screenshots show Slug
-and debug geometry but omit solid PBR meshes, so capture structure is accepted
-but visual completeness is not yet claimed.
+The native update loop now has a bounded, nonblocking `NativeLiveDevice` bridge:
+its worker owns an ordinary configured device transport, spatial input resolves
+against the exact rendered observation, and accepted input returns through the
+normal authority result and refreshed observation. A full room-lifecycle test
+proves this path commits a native drag/play through the real reducer and that an
+independently certified sibling device for the same player observes the next
+revision and public-history entry. The deterministic action source now also
+models player turns plus seeded chance/environment turns without exposing
+private hands to the environment device. Remaining before completion: supply
+and manually exercise a persistent/live transport profile, and compose
+session-authorized sibling capture. Visual inspection also retains an existing
+native-render gap: current/earlier unified screenshots show Slug and debug
+geometry but omit solid PBR meshes, so capture structure is accepted but visual
+completeness is not yet claimed.
 
 **Work:**
 

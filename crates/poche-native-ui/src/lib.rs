@@ -59,8 +59,10 @@ use poche_ui::{
 use serde::Serialize;
 
 mod native_capture;
+mod native_live;
 
 pub use native_capture::*;
+pub use native_live::*;
 
 /// Explicit OFL-licensed font consumed by Slug and native UI text.
 pub const FONT_BYTES: &[u8] = include_bytes!("../assets/CaskaydiaCove-Regular.ttf");
@@ -711,6 +713,26 @@ pub fn run_from_env() -> Result<(), String> {
 ///
 /// Returns invalid launch options or fixture failures before the event loop.
 pub fn run(options: NativeUiLaunchOptions) -> Result<(), String> {
+    run_with_live_device(options, None)
+}
+
+/// Run the Bevy leaf adapter from one certified device's exact observation.
+/// Human input is queued back through that device's configured transport.
+///
+/// # Errors
+///
+/// Returns invalid launch options or an invalid first live projection.
+pub fn run_live(
+    options: NativeUiLaunchOptions,
+    live_device: NativeLiveDevice,
+) -> Result<(), String> {
+    run_with_live_device(options, Some(live_device))
+}
+
+fn run_with_live_device(
+    options: NativeUiLaunchOptions,
+    live_device: Option<NativeLiveDevice>,
+) -> Result<(), String> {
     let NativeUiLaunchOptions {
         play_card,
         screenshot,
@@ -722,7 +744,11 @@ pub fn run(options: NativeUiLaunchOptions) -> Result<(), String> {
         capture_context,
         external_tracing,
     } = options;
-    let mut controller = replay_fixture_controller()?;
+    let mut controller = if let Some(live) = &live_device {
+        native_controller_from_observation(live.observation())?
+    } else {
+        replay_fixture_controller()?
+    };
     if let Some(value) = play_card {
         let face = if value == "first" {
             controller
@@ -785,6 +811,7 @@ pub fn run(options: NativeUiLaunchOptions) -> Result<(), String> {
                 draw_slug_text,
                 draw_spatial_debug,
                 update_status,
+                poll_live_device,
                 acceptance_driver,
             )
                 .chain(),
@@ -800,6 +827,9 @@ pub fn run(options: NativeUiLaunchOptions) -> Result<(), String> {
     }
     if let Some(context) = capture_context {
         app.insert_resource(context);
+    }
+    if let Some(live_device) = live_device {
+        app.insert_resource(live_device);
     }
     app.run();
     Ok(())
@@ -1099,14 +1129,25 @@ fn on_drag_drop(
     mut event: On<Pointer<DragDrop>>,
     cards: Query<&DraggableCard>,
     mut controller: ResMut<NativeController>,
+    live: Option<ResMut<NativeLiveDevice>>,
 ) {
     let Ok(card) = cards.get(event.dropped) else {
         return;
     };
     let result = zone_center_card_bounds(controller.layout(), ZoneId::Play)
         .and_then(|bounds| controller.commit_drag(card.0, bounds).map_err(|_| ()));
-    if result.is_err() {
-        "drag release did not classify as a legal PLAY".clone_into(&mut controller.last_finding);
+    match result {
+        Ok(committed) => {
+            if let Some(mut live) = live
+                && let Err(error) = live.submit_play(&committed)
+            {
+                controller.last_finding = format!("live play queue rejected: {error}");
+            }
+        }
+        Err(()) => {
+            "drag release did not classify as a legal PLAY"
+                .clone_into(&mut controller.last_finding);
+        }
     }
     event.propagate(false);
 }
@@ -1115,19 +1156,52 @@ fn keyboard_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut controller: ResMut<NativeController>,
     mut debug: ResMut<DebugOverlay>,
+    live: Option<ResMut<NativeLiveDevice>>,
 ) {
     if keys.just_pressed(KeyCode::F3) {
         debug.enabled = !debug.enabled;
     }
     if keys.just_pressed(KeyCode::KeyP) {
         if let Some(face) = controller.first_owned_face() {
-            if let Err(finding) = controller.commit_named(face) {
-                controller.last_finding = format!("keyboard play rejected: {finding}");
+            match controller.commit_named(face) {
+                Ok(committed) => {
+                    if let Some(mut live) = live
+                        && let Err(error) = live.submit_play(&committed)
+                    {
+                        controller.last_finding = format!("live play queue rejected: {error}");
+                    }
+                }
+                Err(finding) => {
+                    controller.last_finding = format!("keyboard play rejected: {finding}");
+                }
             }
         } else {
             "keyboard play rejected: no visible owned card"
                 .clone_into(&mut controller.last_finding);
         }
+    }
+}
+
+fn poll_live_device(
+    live: Option<ResMut<NativeLiveDevice>>,
+    mut controller: ResMut<NativeController>,
+) {
+    let Some(mut live) = live else {
+        return;
+    };
+    match live.poll() {
+        Ok(true) => match native_controller_from_observation(live.observation()) {
+            Ok(mut next) => {
+                next.last_finding = format!(
+                    "live device synchronized authority revision {}",
+                    live.observation().projection.current_revision
+                );
+                *controller = next;
+            }
+            Err(error) => controller.last_finding = format!("live projection rejected: {error}"),
+        },
+        Ok(false) => {}
+        Err(error) => controller.last_finding = format!("live device error: {error}"),
     }
 }
 
@@ -1195,7 +1269,22 @@ fn apply_mirrored_transforms(
         }
     }
     for (mirror, preview, mut transform) in &mut mirrors {
-        let mut pose = pose_transform(mirror.pose);
+        let base_pose = controller
+            .scene
+            .objects
+            .iter()
+            .find(|object| object.id == mirror.id)
+            .map(|object| object.pose)
+            .or_else(|| {
+                controller
+                    .scene
+                    .cards
+                    .iter()
+                    .find(|card| ObjectId::Card(card.id) == mirror.id)
+                    .map(|card| card.pose)
+            })
+            .unwrap_or(mirror.pose);
+        let mut pose = pose_transform(base_pose);
         if let Some(committed) = controller.committed
             && committed.endpoint.object == mirror.id
         {
@@ -1608,13 +1697,24 @@ fn zone_center_card_bounds(layout: &SpatialLayout, id: ZoneId) -> Result<AabbMm,
 
 #[cfg(test)]
 mod tests {
-    use poche_player_client::{AdvertisedAction, DeviceObservation};
-    use poche_protocol::{
-        CommandPayload, CorrelationId, EventId, GameActionWire, GamePublicStateWire,
-        HandProjection, MemberProjection, PrincipalId, ProjectionEnvelope, ProjectionId,
-        ProjectionPayload, PublicGamePhase, PublicTurnWire, RoomId, RoomPhase, SIGNATURE_DOMAIN_V1,
-        SemanticHash, SignatureAlgorithm, SignatureBytes, SignatureMetadata,
+    use poche_player_client::{
+        AdvertisedAction, DeviceObservation, DeviceProfile, LoopbackDeviceTransport,
+        PlayerDeviceClient,
     };
+    use poche_protocol::{
+        CertificateId, ChanceWire, CommandPayload, CorrelationId, CountdownToken,
+        DeviceCapabilityWire, DeviceCustodyWire, DeviceId, EventId, GameActionWire,
+        GamePublicStateWire, HandProjection, InviteProof, MemberProjection, PrincipalId,
+        ProjectionEnvelope, ProjectionId, ProjectionPayload, PublicGamePhase, PublicTurnWire,
+        REPLICATION_SCHEMA_VERSION_V1, REPLICATION_SIGNATURE_DOMAIN_V1, RoomId, RoomPhase,
+        SIGNATURE_DOMAIN_V1, SemanticHash, SignatureAlgorithm, SignatureBytes, SignatureIntent,
+        SignatureMetadata, UnsignedDeviceCertificateWire,
+    };
+    use poche_runtime::{
+        AuthorityDisposition, ClientPort, InProcessAuthority, InProcessTransport, LoopbackCodec,
+        OracleGameActionSource, OracleSessionGame, RuntimeLoopbackDeviceAdapter, ScriptedClient,
+    };
+    use poche_session::{GameTurn, InviteRecord, SessionGame, SessionPhase, SessionState};
     use poche_slug::{
         DEFAULT_BAND_SIZE_FONT_UNITS, Point, SlugFont, build_directional_bands,
         coverage_all_curves, coverage_banded,
@@ -1623,8 +1723,8 @@ mod tests {
 
     use super::{
         CAMERA_RESET_SECONDS, CameraRig, CameraView, FONT_BYTES, NativeController,
-        advertised_action_for_play, native_controller_from_observation, parse_card_face,
-        replay_fixture_controller, slug_packet_for_text, zone_center_card_bounds,
+        NativeLiveDevice, advertised_action_for_play, native_controller_from_observation,
+        parse_card_face, replay_fixture_controller, slug_packet_for_text, zone_center_card_bounds,
     };
 
     fn live_play_observation() -> DeviceObservation {
@@ -1698,6 +1798,190 @@ mod tests {
                 },
             }],
         }
+    }
+
+    fn certified_profile(player: &PrincipalId, label: &str, device_byte: &str) -> DeviceProfile {
+        let device_key = device_byte.repeat(32);
+        let device_id = DeviceId::new(device_key.clone()).expect("device ID");
+        let certificate = UnsignedDeviceCertificateWire {
+            schema_version: REPLICATION_SCHEMA_VERSION_V1,
+            certificate_id: CertificateId::new(format!("certificate-{label}"))
+                .expect("certificate ID"),
+            player_id: player.clone(),
+            device_id: device_id.clone(),
+            device_signing_public_key: device_key,
+            sequence: 1,
+            valid_from_membership_epoch: 1,
+            valid_through_membership_epoch: None,
+            capabilities: vec![
+                DeviceCapabilityWire::Propose,
+                DeviceCapabilityWire::ReceivePrivateProjection,
+            ],
+            custody: DeviceCustodyWire::NativeLocal,
+            signature_intent: SignatureIntent {
+                domain_version: REPLICATION_SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: player.clone(),
+            },
+        }
+        .attach_signature(SignatureBytes::new("00".repeat(64)).expect("signature"))
+        .expect("certificate");
+        DeviceProfile {
+            schema_version: DeviceProfile::SCHEMA_VERSION_V1,
+            label: label.to_owned(),
+            player_id: player.clone(),
+            device_id,
+            certificate,
+            signing_key_handle: format!("test-key-store:{label}"),
+        }
+    }
+
+    fn submit_fixture_command(
+        authority: &mut InProcessAuthority<OracleSessionGame<2>>,
+        client: &ScriptedClient,
+        command_id: &str,
+        payload: CommandPayload,
+    ) {
+        let command = client
+            .command(&authority.state, command_id, payload)
+            .expect("fixture command");
+        client
+            .submit(&mut authority.transport, command)
+            .expect("fixture transport");
+        let outcome = authority.drive_all().expect("fixture authority");
+        assert_eq!(outcome.len(), 1);
+        assert_eq!(outcome[0].disposition, AuthorityDisposition::Applied);
+    }
+
+    fn running_play_state() -> (SessionState<OracleSessionGame<2>>, PrincipalId) {
+        let alice = PrincipalId::new("11".repeat(32)).expect("alice");
+        let bob = PrincipalId::new("22".repeat(32)).expect("bob");
+        let room_id = RoomId::new("native-device-room").expect("room");
+        let clock = PrincipalId::new("authority-clock").expect("clock");
+        let environment = PrincipalId::new("game-environment").expect("environment");
+        let mut state = SessionState::pending(room_id, clock, environment.clone());
+        state
+            .invites
+            .push(InviteRecord::new("bob-fixture-invite", u64::MAX).expect("invite"));
+        let mut transport = InProcessTransport::new(LoopbackCodec::Typed);
+        let alice_client = transport.connect(alice.clone()).expect("Alice connection");
+        let bob_client = transport.connect(bob.clone()).expect("Bob connection");
+        let environment_client = transport
+            .connect(environment)
+            .expect("environment connection");
+        let mut authority = InProcessAuthority::new(state, transport);
+        submit_fixture_command(
+            &mut authority,
+            &alice_client,
+            "create-native-room",
+            CommandPayload::CreateRoom,
+        );
+        submit_fixture_command(
+            &mut authority,
+            &bob_client,
+            "join-bob",
+            CommandPayload::RedeemInvite {
+                invite: InviteProof::new("bob-fixture-invite").expect("invite proof"),
+            },
+        );
+        submit_fixture_command(
+            &mut authority,
+            &alice_client,
+            "seat-alice",
+            CommandPayload::TakeSeat { seat: 0 },
+        );
+        submit_fixture_command(
+            &mut authority,
+            &bob_client,
+            "seat-bob",
+            CommandPayload::TakeSeat { seat: 1 },
+        );
+        submit_fixture_command(
+            &mut authority,
+            &alice_client,
+            "ready-alice",
+            CommandPayload::Ready,
+        );
+        submit_fixture_command(
+            &mut authority,
+            &bob_client,
+            "ready-bob",
+            CommandPayload::Ready,
+        );
+        submit_fixture_command(
+            &mut authority,
+            &alice_client,
+            "arm-native-countdown",
+            CommandPayload::ArmCountdown {
+                deadline_tick: 1,
+                countdown_token: CountdownToken::new("native-start-token").expect("token"),
+            },
+        );
+        assert_eq!(
+            authority
+                .advance_clock_to(1)
+                .expect("countdown expiry")
+                .len(),
+            1
+        );
+        submit_fixture_command(
+            &mut authority,
+            &environment_client,
+            "native-deal",
+            CommandPayload::ApplyChance {
+                chance: ChanceWire {
+                    cards: (0_u8..52).collect(),
+                    seed: None,
+                    deal_ordinal: None,
+                },
+            },
+        );
+        let actor_principal =
+            finish_fixture_bidding(&mut authority, &alice_client, &bob_client, alice, bob);
+        (authority.state, actor_principal)
+    }
+
+    fn finish_fixture_bidding(
+        authority: &mut InProcessAuthority<OracleSessionGame<2>>,
+        alice_client: &ScriptedClient,
+        bob_client: &ScriptedClient,
+        alice: PrincipalId,
+        bob: PrincipalId,
+    ) -> PrincipalId {
+        let mut bid_sequence = 0_u8;
+        loop {
+            let SessionPhase::Running { game } = &authority.state.phase else {
+                panic!("fixture must be running");
+            };
+            if game.public_projection().expect("public projection").phase
+                != PublicGamePhase::Bidding
+            {
+                break;
+            }
+            let GameTurn::Player(seat) = game.turn() else {
+                panic!("bidding must belong to a player");
+            };
+            let action = game
+                .legal_player_actions()
+                .into_iter()
+                .next()
+                .expect("legal bid");
+            let client = if seat == 0 { alice_client } else { bob_client };
+            submit_fixture_command(
+                authority,
+                client,
+                &format!("native-bid-{bid_sequence}"),
+                CommandPayload::GameAction { action },
+            );
+            bid_sequence = bid_sequence.saturating_add(1);
+        }
+        let SessionPhase::Running { game } = &authority.state.phase else {
+            panic!("fixture must remain running");
+        };
+        let GameTurn::Player(actor) = game.turn() else {
+            panic!("playing must belong to a player");
+        };
+        if actor == 0 { alice } else { bob }
     }
 
     #[test]
@@ -1827,6 +2111,111 @@ mod tests {
         assert_eq!(
             controller.commit_named(CardFace::new(12).expect("ace clubs")),
             Err("A♣ was not advertised for this exact projection".to_owned())
+        );
+    }
+
+    #[test]
+    fn native_spatial_action_commits_through_device_client_and_reaches_sibling() {
+        let (state, actor) = running_play_state();
+        let room_id = state.room_id.clone();
+        let other_player = state
+            .members
+            .iter()
+            .find(|member| member.principal_id != actor)
+            .expect("other player")
+            .principal_id
+            .clone();
+        {
+            let SessionPhase::Running { game } = &state.phase else {
+                panic!("running state");
+            };
+            let direct_action = game
+                .legal_player_actions()
+                .into_iter()
+                .next()
+                .expect("direct legal play");
+            let mut direct_transport = InProcessTransport::new(LoopbackCodec::Typed);
+            let direct_client = direct_transport
+                .connect(actor.clone())
+                .expect("direct connection");
+            let _other_client = direct_transport
+                .connect(other_player.clone())
+                .expect("other player connection");
+            let mut direct_authority = InProcessAuthority::new(state.clone(), direct_transport);
+            submit_fixture_command(
+                &mut direct_authority,
+                &direct_client,
+                "direct-precondition-play",
+                CommandPayload::GameAction {
+                    action: direct_action,
+                },
+            );
+        }
+        let native_profile = certified_profile(&actor, "native-renderer", "33");
+        let sibling_profile = certified_profile(&actor, "sibling-cli", "44");
+        let other_profile = certified_profile(&other_player, "other-player", "55");
+        let adapter = RuntimeLoopbackDeviceAdapter::new(
+            state,
+            OracleGameActionSource::default(),
+            LoopbackCodec::Typed,
+        );
+        adapter.enroll(&native_profile).expect("enroll native");
+        adapter.enroll(&sibling_profile).expect("enroll sibling");
+        adapter.enroll(&other_profile).expect("enroll other player");
+        let native = PlayerDeviceClient::new(
+            native_profile,
+            LoopbackDeviceTransport::new(adapter.clone()),
+        )
+        .expect("native client");
+        let mut sibling =
+            PlayerDeviceClient::new(sibling_profile, LoopbackDeviceTransport::new(adapter))
+                .expect("sibling client");
+
+        let mut live = NativeLiveDevice::connect(native, room_id.clone()).expect("live device");
+        let observation = live.observation().clone();
+        let (action_id, face) = observation
+            .actions
+            .iter()
+            .find_map(|action| match action.payload {
+                CommandPayload::GameAction {
+                    action: GameActionWire::Play { card },
+                } => Some((action.id.clone(), CardFace::new(card).expect("card face"))),
+                _ => None,
+            })
+            .expect("advertised play");
+        let mut controller =
+            native_controller_from_observation(&observation).expect("native controller");
+        let committed = controller
+            .commit_named(face)
+            .expect("native spatial action");
+        assert_eq!(
+            advertised_action_for_play(&observation, &committed).map(|action| action.id.as_str()),
+            Some(action_id.as_str())
+        );
+        let starting_revision = observation.projection.current_revision;
+        let starting_history = observation.projection.payload.public_history.len();
+        live.submit_play(&committed).expect("queue device action");
+        let mut synchronized = false;
+        for _ in 0..10_000 {
+            synchronized = live.poll().expect("poll live device");
+            if synchronized {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(
+            synchronized,
+            "native device worker must make bounded progress"
+        );
+        let observed_elsewhere = sibling.observe(&room_id).expect("sibling observation");
+        assert_eq!(
+            observed_elsewhere.projection.current_revision,
+            starting_revision + 1
+        );
+        assert_eq!(
+            observed_elsewhere.projection.payload.public_history.len(),
+            starting_history + 1,
+            "the sibling must observe the ordinary committed game history"
         );
     }
 
