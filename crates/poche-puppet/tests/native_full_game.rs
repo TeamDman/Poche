@@ -28,7 +28,7 @@ fn authorized_windowless_native_capture_survives_the_full_game() {
 
     assert_eq!(report.status, "complete");
     assert_eq!(report.final_room_phase, "post_game");
-    assert_eq!(report.devices.len(), 7);
+    assert_eq!(report.devices.len(), 8);
     let expected_labels = BTreeSet::from([
         "bidding",
         "card-selection",

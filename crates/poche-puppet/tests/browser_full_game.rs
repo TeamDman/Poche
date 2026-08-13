@@ -5,7 +5,9 @@
 use std::collections::BTreeSet;
 
 use poche_capture::CapturePipeline;
-use poche_puppet::browser::run_browser_game;
+use poche_puppet::{
+    PuppetRunOptions, PuppetSurface, PuppetTransport, browser::run_browser_game, run,
+};
 
 /// External browser qualification is explicit so ordinary offline tests do
 /// not require Edge/Chrome. The harness itself remains headless and creates no
@@ -44,5 +46,44 @@ fn isolated_real_browsers_complete_the_game_and_emit_structural_evidence() {
             .persist(&bundle)
             .expect("shared browser capture pipeline");
         assert_eq!(persisted.manifest.entries.len(), 4);
+    }
+}
+
+#[test]
+#[ignore = "requires an installed Edge or Chrome browser"]
+fn unified_web_surface_authorizes_transfers_and_persists_every_representation() {
+    let temporary = tempfile::tempdir().expect("temporary signed browser artifacts");
+    let report = run(&PuppetRunOptions {
+        surface: PuppetSurface::Web,
+        transport: PuppetTransport::LoopbackNdjson,
+        seed: 41,
+        artifact_root: temporary.path().to_path_buf(),
+        ..PuppetRunOptions::default()
+    })
+    .expect("unified signed browser surface");
+    assert_eq!(report.status, "complete");
+    assert_eq!(report.final_revision, 159);
+    assert_eq!(report.public_history_events, 138);
+    assert_eq!(report.captures.len(), 6);
+    assert!(
+        report
+            .evidence_boundary
+            .contains("parallel real-browser UI")
+    );
+    for capture in report.captures {
+        assert_eq!(capture.status, "complete");
+        assert_eq!(capture.provider_kind, "browser_harness");
+        assert_eq!(
+            capture.representation,
+            "png,semantic_html,accessibility_tree_json,layout_json"
+        );
+        assert_ne!(capture.requester_device_id, capture.provider_device_id);
+        assert!(capture.transferred_bytes > 0);
+        assert!(capture.transfer_chunks >= 4);
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&capture.manifest_path).expect("browser capture manifest"),
+        )
+        .expect("valid browser capture manifest");
+        assert_eq!(manifest["entries"].as_array().map(Vec::len), Some(4));
     }
 }

@@ -361,7 +361,7 @@ The requesting process saves the result through shared artifact code.
 | G4 | Closed | **Capture authorization/schema:** Requests are signed, exact-target, same-player, room/epoch/revision/expiry/privacy/capability bound; providers retain consent and may sign a denial. | ADR 0010 plus protocol/session positive and fail-closed authorization tests. |
 | G5 | Closed | **Artifact transfer:** Use content-addressed resumable private chunks, maximum 24 KiB each, 64 MiB per artifact, never a whole PNG in an ordinary command/AppCall reply. | ADR 0010 and descriptor bounds; interruption/resume/cleanup and public-Veilid qualification remain Task 2.4. |
 | G6 | Closed | **Common artifact contract:** Providers return raw representations; `poche-capture` alone validates, captions, hashes, manifests, persists under ignored `target/poche-puppets`, cleans, and publishes via CI/Pages. | ADR 0010; shared pipeline/provider acceptance remains phases 2 and 4. |
-| G7 | Open | **Browser provider and puppet process topology:** Compare Playwright/CDP harness capture, explicitly consented browser capture, and unavailable production capability. Freeze how one harness launches/enrolls external native/browser devices without leaking secrets through process arguments. | Two-player/two-context real-browser round, consent/capability behavior, console/network/DOM/a11y/layout evidence, and secure temporary-profile cleanup. |
+| G7 | Closed | **Browser provider and puppet process topology:** Use a hidden CDP/Edge-or-Chrome harness with a fresh temporary profile and isolated participant contexts; only its separately certified BrowserLocal provider advertises `HarnessOnly` capture, while ordinary production pages advertise no silent provider. Provider keys remain in process memory rather than arguments/logs. | Complete ordinary-control game, signed same-player request/response, encrypted transfer, console/network/DOM/a11y/layout evidence, responsive collision audit, and temporary-profile cleanup passed. |
 
 ## Source and implementation references
 
@@ -403,8 +403,8 @@ The requesting process saves the result through shared artifact code.
 | --- | --- | --- | --- |
 | Windows native `poche.exe` device | Required primary | Real live room, human controls, exact projection, cross-device capture provider, clean shutdown | Pending |
 | CLI/agent device | Required primary | Protected profile, room membership, observe/actions/invoke/wait, capture request/save, revocation | Pending |
-| Headless in-process devices | Required | Deterministic full round, multiple players/devices, transcript/projection/action hashes | Pending |
-| Semantic HTML two-tab devices | Required | Real browser round, SSE/POST, responsive viewports, capability-aware capture, DOM/a11y/layout evidence | Pending |
+| Headless in-process devices | Required | Deterministic full round, multiple players/devices, transcript/projection/action hashes | Qualified: revision 159, 159 actions, eight witnesses, 138 public events across typed and NDJSON loopback |
+| Semantic HTML two-tab devices | Required | Real browser round, SSE/POST, responsive viewports, capability-aware capture, DOM/a11y/layout evidence | Qualified harness: three isolated contexts, complete UI game, six four-representation captures; shared external authority remains Phase 5 |
 | Host-authoritative Veilid v1 | Existing supported mode | Offline codec/reducer checks and guarded public full lifecycle including device cooperation qualification | Pending requalification |
 | Experimental replicated devices | Existing experimental mode | Certificate/revocation, player vote deduplication, vote-lock refusal/evidence, no stronger BFT claim | Pending |
 | Linux/macOS CLI and device protocol | Intended after Windows slice; not advertised before proof | Compile and transport-adapter tests where CI is available | Pending gate |
@@ -788,21 +788,7 @@ validated captioned capture without Bevy owning file layout or game semantics.
 
 ### [ ] 3.2 Connect CLI commands and deterministic agents as real devices
 
-**Completion notes:** In progress. `poche-web-spike` is now an embeddable
-caller-owned-listener library, and `poche-puppet::browser` launches an installed
-Edge/Chrome process headlessly with a private temporary profile and three
-isolated browser contexts. The ignored external qualification test drives
-ordinary create/join/seat/ready/countdown/bid/play/chat/exit/resume/reconnect
-controls through a complete 124-choice game (terminal revision 159; 138 public
-events) and passes with zero console/network errors. Six semantic checkpoints
-each persist PNG, semantic HTML, accessibility-tree JSON, and wide/narrow
-layout JSON through `CapturePipeline`; the layout audit discovered and fixed a
-real phone-width deck/clock collision and now distinguishes the intentional
-viewer-hand fan by an explicit overlap group. Remaining before completion:
-expose `--surface web`, route these raw bundles through a signed same-player
-device-cooperation request/transfer rather than only the common persistence
-pipeline, and make ordinary production-browser capture capability/consent
-denial explicit.
+**Completion notes:** Not started.
 
 **Work:**
 
@@ -872,7 +858,7 @@ devices), actual memberships/seats/readiness, and drives room creation through
 terminal scoring exclusively by selecting opaque advertised actions from each
 exact-recipient `PlayerDeviceClient` observation. Every completed semantic step
 retains its pending observation revision/hash, action identity, committed
-revision, and a same-revision witness from all seven devices. Bounded action and
+revision, and a same-revision witness from all eight devices. Bounded action and
 whole-run deadlines, maximum semantic steps, caller cancellation, temporary
 artifact cleanup, deterministic seeds, and explicit typed/canonical-NDJSON
 loopback transports are implemented without sleeps. Atomic ignored evidence
@@ -881,7 +867,7 @@ clear headless-only evidence boundary. Tests prove cancellation publishes no
 partial run, manifests match their bytes, and typed/NDJSON transports produce
 identical deterministic actions, scores, history hash, and terminal revision.
 A real unified-executable NDJSON run reached `post_game` at revision 159 after
-159 actions across seven devices, with 138 public-history events and inspectable
+159 actions across eight devices, with 138 public-history events and inspectable
 artifacts. This completes the headless harness, not native/browser capture or
 external transport qualification assigned to Tasks 4.2-5.3.
 
@@ -962,9 +948,30 @@ $env:WGPU_BACKEND='dx12'; cargo test --locked -p poche-puppet --offline --test n
 requested by another certified device and saved only by the shared artifact
 pipeline, with revision/projection/scene bindings.
 
-### [ ] 4.3 Implement the browser provider under the same capture contract
+### [x] 4.3 Implement the browser provider under the same capture contract
 
-**Completion notes:** Not started.
+**Completion notes:** Complete. `poche-web-spike` is an embeddable
+caller-owned-listener library, and `poche-puppet::browser` launches an installed
+Edge/Chrome process headlessly with a private temporary profile and three
+isolated browser contexts. The external qualification drives ordinary
+create/join/seat/ready/countdown/bid/play/chat/exit/resume/reconnect controls
+through a complete 124-choice game (terminal revision 159; 138 public events)
+with zero console/network errors. Six semantic checkpoints each contain PNG,
+semantic HTML, accessibility-tree JSON, and wide/narrow layout JSON; the audit
+found and fixed a real phone-width deck/clock collision and records the
+intentional viewer-hand fan as an explicit overlap group.
+
+`PuppetSurface::Web` and `poche.exe puppet ... --surface web` enroll a separate
+BrowserLocal same-player provider, advertise only `HarnessOnly` consent, sign
+exact-target requests/responses, transfer all four representations through
+bounded encrypted chunks, and persist only at the requester. The public command
+completed 159 certified-device steps, eight device witnesses, six captures,
+and 138 public events. The unified installed-browser test verifies four manifest
+entries and distinct requester/provider IDs for every checkpoint. Ordinary
+production pages advertise no silent capture provider. The evidence boundary
+states that the browser UI and certified-device run are currently deterministic
+parallel authorities matched by revision; proving one external shared authority
+remains Phase 5 work and is not overclaimed here.
 
 **Work:**
 
@@ -984,8 +991,9 @@ pipeline, with revision/projection/scene bindings.
 **Validation:**
 
 ```powershell
-target\debug\poche.exe puppet run two-player-full-round --surface web --variant declared --seed 1
+target\debug\poche.exe --output json puppet run two-player-full-round --surface web --transport loopback-ndjson --seed 1
 cargo test --locked -p poche-puppet -p poche-web-spike -p poche-capture --offline
+cargo test --locked -p poche-puppet --offline --test browser_full_game -- --ignored --nocapture
 ```
 
 **Completion criteria:** Real browsers play a full round and answer the common

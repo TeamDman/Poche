@@ -60,7 +60,7 @@ struct PreparedArtifact {
     receiver_key: CaptureTransferKey,
 }
 
-struct PreparedCapture {
+pub(crate) struct PreparedCapture {
     bundle: RawCaptureBundle,
     artifacts: Vec<PreparedArtifact>,
 }
@@ -306,7 +306,9 @@ impl NativeCaptureSession {
             label,
             &response_descriptors,
             prepared,
-            self.show_window,
+            !self.show_window,
+            "native_bevy",
+            "png",
         )
     }
 }
@@ -367,7 +369,7 @@ fn signed_advertisement(
         .map_err(|_| invalid_capture())
 }
 
-fn prepare_transfers(
+pub(crate) fn prepare_transfers(
     request: &poche_protocol::CaptureRequestWire,
     mut bundle: RawCaptureBundle,
 ) -> Result<(PreparedCapture, Vec<CaptureArtifactDescriptorWire>), DeviceClientError> {
@@ -424,12 +426,14 @@ fn prepare_transfers(
     ))
 }
 
-fn receive_prepared_capture(
+pub(crate) fn receive_prepared_capture(
     request: &poche_protocol::CaptureRequestWire,
     label: &str,
     response_descriptors: &[CaptureArtifactDescriptorWire],
     mut prepared: PreparedCapture,
-    show_window: bool,
+    windowless: bool,
+    provider_kind: &str,
+    representation: &str,
 ) -> Result<PendingPuppetCapture, PuppetError> {
     let expected = prepared
         .artifacts
@@ -486,9 +490,9 @@ fn receive_prepared_capture(
         captured_revision: prepared.bundle.captured_revision,
         projection_hash: hash_hex(prepared.bundle.projection_hash),
         scene_hash,
-        provider_kind: "native_bevy".to_owned(),
-        representation: "png".to_owned(),
-        windowless: !show_window,
+        provider_kind: provider_kind.to_owned(),
+        representation: representation.to_owned(),
+        windowless,
         transferred_bytes,
         transfer_chunks,
         artifact_directory: String::new(),
@@ -510,7 +514,7 @@ fn hash_hex(hash: poche_protocol::SemanticHash) -> String {
         })
 }
 
-fn sign(key: &SigningKey, bytes: &[u8]) -> Result<SignatureBytes, DeviceClientError> {
+pub(crate) fn sign(key: &SigningKey, bytes: &[u8]) -> Result<SignatureBytes, DeviceClientError> {
     let signature = key.sign(bytes).to_bytes();
     let encoded = signature
         .iter()
@@ -532,6 +536,6 @@ fn device_error(_: DeviceClientError) -> PuppetError {
 const fn invalid_capture() -> PuppetError {
     PuppetError::new(
         PuppetErrorCode::DeviceProtocol,
-        "native puppet capture evidence violated its protocol binding",
+        "puppet capture evidence violated its protocol binding",
     )
 }

@@ -80,9 +80,11 @@ impl PuppetArgs {
             PuppetCommand::Run { surface, .. }
                 if surface
                     .as_deref()
-                    .is_some_and(|surface| !matches!(surface, "headless" | "native")) =>
+                    .is_some_and(|surface| !matches!(surface, "headless" | "native" | "web")) =>
             {
-                Err(ParseError::new("--surface requires headless or native"))
+                Err(ParseError::new(
+                    "--surface requires headless, native, or web",
+                ))
             }
             PuppetCommand::Run {
                 surface,
@@ -160,6 +162,7 @@ impl PuppetArgs {
                     scenario,
                     surface: match surface.as_deref() {
                         Some("native") => PuppetSurface::Native,
+                        Some("web") => PuppetSurface::Web,
                         None | Some("headless") => PuppetSurface::Headless,
                         Some(_) => unreachable!("validated surface"),
                     },

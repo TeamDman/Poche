@@ -27,11 +27,11 @@ fn certified_devices_complete_and_witness_the_full_game() {
     assert_eq!(report.status, "complete");
     assert_eq!(report.final_room_phase, "post_game");
     assert!(report.step_count > 10);
-    assert_eq!(report.devices.len(), 7);
+    assert_eq!(report.devices.len(), 8);
     assert!(report.captures.is_empty());
     assert_eq!(report.steps.len(), report.step_count as usize);
     assert!(report.steps.iter().all(|step| {
-        step.observed_by.len() == 7
+        step.observed_by.len() == 8
             && step
                 .observed_by
                 .iter()

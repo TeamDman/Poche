@@ -10,9 +10,10 @@
 //! it cannot call the reducer or invent game commands.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -22,18 +23,35 @@ use async_tungstenite::{
     tungstenite::Message,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use ed25519_dalek::SigningKey;
 use futures_util::StreamExt as _;
 use poche_capture::{
     CaptureQualification, CaptureSurfaceMetadata, RawCaptureArtifact, RawCaptureBundle,
 };
-use poche_protocol::{
-    CaptureArtifactId, CaptureProviderKindWire, CaptureRepresentationWire, CaptureViewportWire,
-    SemanticHash,
+use poche_player_client::{
+    DeviceClientError, DeviceCooperationRequest, DeviceCooperationResult, DeviceProfile,
 };
+use poche_protocol::{
+    CaptureArtifactId, CaptureConsentPolicyWire, CapturePrivacyWire,
+    CaptureProviderAdvertisementWire, CaptureProviderKindWire, CaptureRepresentationWire,
+    CaptureRequestId, CaptureRequestWire, CaptureResponseOutcomeWire, CaptureViewportWire,
+    DEVICE_COOPERATION_SCHEMA_VERSION_V1, DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+    DeviceSignatureIntentWire, RoomId, SemanticHash, SignatureAlgorithm,
+    UnsignedCaptureProviderAdvertisementWire, UnsignedCaptureRequestWire,
+    UnsignedCaptureResponseWire, canonical_capture_provider_advertisement_bytes,
+    canonical_capture_request_bytes, canonical_capture_response_bytes, capture_request_hash,
+};
+use poche_runtime::RuntimeDeviceCooperationHandler;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{PuppetError, PuppetErrorCode};
+use crate::{
+    PuppetError, PuppetErrorCode,
+    native::{
+        PendingPuppetCapture, PreparedCapture, prepare_transfers, receive_prepared_capture, sign,
+    },
+    scenario::{Adapter, Client},
+};
 
 const WIDE_WIDTH: u32 = 1280;
 const WIDE_HEIGHT: u32 = 720;
@@ -41,6 +59,9 @@ const NARROW_WIDTH: u32 = 390;
 const NARROW_HEIGHT: u32 = 844;
 const CDP_TIMEOUT: Duration = Duration::from_secs(10);
 const GAME_STEP_LIMIT: u32 = 400;
+const COOPERATION_NOW_UNIX_MS: u64 = 100;
+const COOPERATION_EXPIRES_UNIX_MS: u64 = 10_000;
+const CAPTURE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Browser-visible behavior retained beside graphical artifacts.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +84,245 @@ pub struct BrowserRunSummary {
 pub struct BrowserHarnessResult {
     pub checkpoints: Vec<RawCaptureBundle>,
     pub summary: BrowserRunSummary,
+}
+
+struct BrowserCaptureHandler {
+    advertisement: CaptureProviderAdvertisementWire,
+    provider_key: SigningKey,
+    bundles: Arc<Mutex<BTreeMap<u64, RawCaptureBundle>>>,
+    mailbox: Arc<Mutex<Option<PreparedCapture>>>,
+}
+
+impl RuntimeDeviceCooperationHandler for BrowserCaptureHandler {
+    fn cooperate(
+        &mut self,
+        request: DeviceCooperationRequest,
+    ) -> Result<DeviceCooperationResult, DeviceClientError> {
+        let DeviceCooperationRequest::Capture(request) = request else {
+            return Err(DeviceClientError::ProtocolViolation);
+        };
+        validate_browser_request(&request, &self.advertisement)?;
+        let bundle = self
+            .bundles
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?
+            .remove(&request.observed_revision)
+            .ok_or(DeviceClientError::StaleRevision)?;
+        if bundle.captured_revision != request.observed_revision
+            || bundle.surface.provider_kind != CaptureProviderKindWire::BrowserHarness
+        {
+            return Err(DeviceClientError::ProtocolViolation);
+        }
+        let (prepared, descriptors) = prepare_transfers(&request, bundle)?;
+        let unsigned = UnsignedCaptureResponseWire {
+            schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+            request_id: request.request_id.clone(),
+            request_hash: capture_request_hash(&request.unsigned())
+                .map_err(|_| DeviceClientError::ProtocolViolation)?,
+            room_id: request.room_id.clone(),
+            membership_epoch: request.membership_epoch,
+            player_id: request.player_id.clone(),
+            requester_device_id: request.requester_device_id.clone(),
+            provider_device_id: request.provider_device_id.clone(),
+            outcome: CaptureResponseOutcomeWire::Accepted {
+                artifacts: descriptors,
+            },
+            signature_intent: DeviceSignatureIntentWire {
+                domain_version: DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: request.provider_device_id,
+            },
+        };
+        let signature = sign(
+            &self.provider_key,
+            &canonical_capture_response_bytes(&unsigned)
+                .map_err(|_| DeviceClientError::ProtocolViolation)?,
+        )?;
+        let response = unsigned
+            .attach_signature(signature)
+            .map_err(|_| DeviceClientError::ProtocolViolation)?;
+        if self
+            .mailbox
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?
+            .replace(prepared)
+            .is_some()
+        {
+            return Err(DeviceClientError::ProtocolViolation);
+        }
+        Ok(DeviceCooperationResult::Capture(response))
+    }
+}
+
+pub(crate) struct BrowserCaptureSession {
+    room_id: RoomId,
+    requester_key: SigningKey,
+    provider_profile: DeviceProfile,
+    labels: BTreeMap<u64, String>,
+    mailbox: Arc<Mutex<Option<PreparedCapture>>>,
+    captured_revisions: BTreeSet<u64>,
+    seed: u64,
+}
+
+impl BrowserCaptureSession {
+    pub(crate) fn register(
+        seed: u64,
+        result: BrowserHarnessResult,
+        room_id: &RoomId,
+        adapter: &Adapter,
+        requester_key: &SigningKey,
+        provider_profile: &DeviceProfile,
+        provider_key: &SigningKey,
+    ) -> Result<Self, PuppetError> {
+        if result.summary.terminal_revision != 159
+            || result.summary.public_history_events != 138
+            || result.summary.console_errors != 0
+            || result.summary.network_failures != 0
+        {
+            return Err(browser_contract(
+                "the browser provider qualification summary was incomplete",
+            ));
+        }
+        adapter
+            .set_cooperation_now_unix_ms(COOPERATION_NOW_UNIX_MS)
+            .map_err(device_error)?;
+        let advertisement = signed_browser_advertisement(room_id, provider_profile, provider_key)?;
+        let mut labels = BTreeMap::new();
+        let mut bundles = BTreeMap::new();
+        for bundle in result.checkpoints {
+            let label = bundle
+                .caption
+                .strip_suffix(" browser player view")
+                .ok_or_else(browser_protocol)?
+                .to_owned();
+            if labels.insert(bundle.captured_revision, label).is_some()
+                || bundles.insert(bundle.captured_revision, bundle).is_some()
+            {
+                return Err(browser_contract(
+                    "the browser provider emitted duplicate checkpoint revisions",
+                ));
+            }
+        }
+        if bundles.len() != 6 {
+            return Err(browser_contract(
+                "the browser provider omitted required checkpoint bundles",
+            ));
+        }
+        let bundles = Arc::new(Mutex::new(bundles));
+        let mailbox = Arc::new(Mutex::new(None));
+        adapter
+            .register_capture_provider(
+                provider_profile,
+                advertisement.clone(),
+                BrowserCaptureHandler {
+                    advertisement,
+                    provider_key: provider_key.clone(),
+                    bundles,
+                    mailbox: Arc::clone(&mailbox),
+                },
+            )
+            .map_err(device_error)?;
+        Ok(Self {
+            room_id: room_id.clone(),
+            requester_key: requester_key.clone(),
+            provider_profile: provider_profile.clone(),
+            labels,
+            mailbox,
+            captured_revisions: BTreeSet::new(),
+            seed,
+        })
+    }
+
+    pub(crate) fn capture_next_checkpoint(
+        &mut self,
+        requester: &mut Client,
+    ) -> Result<Option<PendingPuppetCapture>, PuppetError> {
+        let observation = requester.observe(&self.room_id).map_err(device_error)?;
+        let revision = observation.projection.current_revision;
+        let Some(label) = self.labels.get(&revision).cloned() else {
+            return Ok(None);
+        };
+        if !self.captured_revisions.insert(revision) {
+            return Ok(None);
+        }
+        self.capture(requester, &label, revision).map(Some)
+    }
+
+    fn capture(
+        &mut self,
+        requester: &mut Client,
+        label: &str,
+        revision: u64,
+    ) -> Result<PendingPuppetCapture, PuppetError> {
+        let unsigned = UnsignedCaptureRequestWire {
+            schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+            request_id: CaptureRequestId::new(format!(
+                "browser-{label}-seed-{}-revision-{revision}",
+                self.seed
+            ))
+            .map_err(|_| browser_protocol())?,
+            room_id: self.room_id.clone(),
+            membership_epoch: 1,
+            player_id: requester.profile().player_id.clone(),
+            requester_device_id: requester.profile().device_id.clone(),
+            provider_device_id: self.provider_profile.device_id.clone(),
+            observed_revision: revision,
+            expires_at_unix_ms: COOPERATION_EXPIRES_UNIX_MS,
+            replay_nonce: format!("browser-{label}-nonce-{}-{revision}", self.seed),
+            privacy: CapturePrivacyWire::ExactPlayerView,
+            provider_kind: CaptureProviderKindWire::BrowserHarness,
+            representations: browser_representations(),
+            viewport: None,
+            label: format!("{label} browser player view"),
+            max_total_bytes: CAPTURE_MAX_BYTES,
+            signature_intent: DeviceSignatureIntentWire {
+                domain_version: DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: requester.profile().device_id.clone(),
+            },
+        };
+        let request = unsigned
+            .clone()
+            .attach_signature(
+                sign(
+                    &self.requester_key,
+                    &canonical_capture_request_bytes(&unsigned).map_err(|_| browser_protocol())?,
+                )
+                .map_err(|_| browser_protocol())?,
+            )
+            .map_err(|_| browser_protocol())?;
+        let result = requester
+            .cooperate(
+                &self.provider_profile.device_id,
+                DeviceCooperationRequest::Capture(request.clone()),
+            )
+            .map_err(device_error)?;
+        let DeviceCooperationResult::Capture(response) = result;
+        let response_descriptors = match response.outcome {
+            CaptureResponseOutcomeWire::Accepted { artifacts } => artifacts,
+            CaptureResponseOutcomeWire::Denied { .. } => {
+                return Err(PuppetError::new(
+                    PuppetErrorCode::ActionDenied,
+                    "browser capture provider denied the authorized request",
+                ));
+            }
+        };
+        let prepared = self
+            .mailbox
+            .lock()
+            .map_err(|_| browser_protocol())?
+            .take()
+            .ok_or_else(browser_protocol)?;
+        receive_prepared_capture(
+            &request,
+            label,
+            &response_descriptors,
+            prepared,
+            true,
+            "browser_harness",
+            "png,semantic_html,accessibility_tree_json,layout_json",
+        )
+    }
 }
 
 /// Run a real, hidden browser through a complete two-player game.
@@ -964,6 +1224,70 @@ fn parse_hash(value: &str) -> Result<SemanticHash, PuppetError> {
     Ok(SemanticHash(bytes))
 }
 
+fn browser_representations() -> Vec<CaptureRepresentationWire> {
+    vec![
+        CaptureRepresentationWire::Png,
+        CaptureRepresentationWire::SemanticHtml,
+        CaptureRepresentationWire::AccessibilityTreeJson,
+        CaptureRepresentationWire::LayoutJson,
+    ]
+}
+
+fn validate_browser_request(
+    request: &CaptureRequestWire,
+    advertisement: &CaptureProviderAdvertisementWire,
+) -> Result<(), DeviceClientError> {
+    request
+        .validate()
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    if request.provider_device_id != advertisement.provider_device_id
+        || request.player_id != advertisement.player_id
+        || request.room_id != advertisement.room_id
+        || request.membership_epoch != advertisement.membership_epoch
+        || request.provider_kind != CaptureProviderKindWire::BrowserHarness
+        || request.representations != browser_representations()
+        || advertisement.consent_policy != CaptureConsentPolicyWire::HarnessOnly
+    {
+        return Err(DeviceClientError::ProtocolViolation);
+    }
+    Ok(())
+}
+
+fn signed_browser_advertisement(
+    room_id: &RoomId,
+    provider: &DeviceProfile,
+    key: &SigningKey,
+) -> Result<CaptureProviderAdvertisementWire, PuppetError> {
+    let unsigned = UnsignedCaptureProviderAdvertisementWire {
+        schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+        room_id: room_id.clone(),
+        membership_epoch: 1,
+        player_id: provider.player_id.clone(),
+        provider_device_id: provider.device_id.clone(),
+        provider_kind: CaptureProviderKindWire::BrowserHarness,
+        representations: browser_representations(),
+        privacy_scopes: vec![CapturePrivacyWire::ExactPlayerView],
+        consent_policy: CaptureConsentPolicyWire::HarnessOnly,
+        max_total_bytes: CAPTURE_MAX_BYTES,
+        advertisement_sequence: 1,
+        expires_at_unix_ms: COOPERATION_EXPIRES_UNIX_MS,
+        signature_intent: DeviceSignatureIntentWire {
+            domain_version: DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+            algorithm: SignatureAlgorithm::Ed25519,
+            key_id: provider.device_id.clone(),
+        },
+    };
+    let signature = sign(
+        key,
+        &canonical_capture_provider_advertisement_bytes(&unsigned)
+            .map_err(|_| browser_protocol())?,
+    )
+    .map_err(|_| browser_protocol())?;
+    unsigned
+        .attach_signature(signature)
+        .map_err(|_| browser_protocol())
+}
+
 fn artifact_token(value: &str) -> String {
     let hash = blake3::hash(value.as_bytes());
     hash.as_bytes()[..8]
@@ -993,4 +1317,11 @@ const fn browser_protocol() -> PuppetError {
 
 const fn browser_contract(message: &'static str) -> PuppetError {
     PuppetError::new(PuppetErrorCode::DeviceProtocol, message)
+}
+
+const fn device_error(_: DeviceClientError) -> PuppetError {
+    PuppetError::new(
+        PuppetErrorCode::DeviceProtocol,
+        "certified browser capture device rejected the puppet operation",
+    )
 }

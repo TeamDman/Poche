@@ -24,7 +24,7 @@ const SCENARIOS: [ScenarioDescriptor; 1] = [ScenarioDescriptor {
     schema: "poche.puppet.scenario.v1",
     name: TWO_PLAYER_FULL_ROUND,
     description: "Create a two-player room and complete the full deterministic Poche schedule through certified devices.",
-    surfaces: &["headless", "native"],
+    surfaces: &["headless", "native", "web"],
     transports: &["loopback-typed", "loopback-ndjson"],
     player_roots: 3,
     devices: 7,

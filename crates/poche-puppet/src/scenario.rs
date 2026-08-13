@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     PuppetError, PuppetErrorCode, PuppetRunOptions, PuppetSurface, PuppetTransport,
+    browser::{BrowserCaptureSession, run_browser_game},
     native::{NativeCaptureSession, PendingPuppetCapture},
 };
 
@@ -255,17 +256,33 @@ pub(crate) fn run_two_player_full_round(
     let adapter = fixture.adapter;
     let capture_identity = fixture.capture_identity;
     let mut devices = fixture.devices;
-    let mut native_capture = match options.surface {
-        PuppetSurface::Headless => None,
-        PuppetSurface::Native => Some(NativeCaptureSession::register(
-            options,
-            &room_id,
-            &adapter,
-            &capture_identity.requester_key,
-            &capture_identity.provider_profile,
-            &capture_identity.provider_key,
-        )?),
-    };
+    let mut native_capture = None;
+    let mut browser_capture = None;
+    match options.surface {
+        PuppetSurface::Headless => {}
+        PuppetSurface::Native => {
+            native_capture = Some(NativeCaptureSession::register(
+                options,
+                &room_id,
+                &adapter,
+                &capture_identity.requester_key,
+                &capture_identity.native_provider_profile,
+                &capture_identity.native_provider_key,
+            )?);
+        }
+        PuppetSurface::Web => {
+            let browser_result = run_browser_game(options.seed)?;
+            browser_capture = Some(BrowserCaptureSession::register(
+                options.seed,
+                browser_result,
+                &room_id,
+                &adapter,
+                &capture_identity.requester_key,
+                &capture_identity.browser_provider_profile,
+                &capture_identity.browser_provider_key,
+            )?);
+        }
+    }
     let started = Instant::now();
     let mut steps = Vec::new();
     let mut captures = Vec::new();
@@ -274,6 +291,15 @@ pub(crate) fn run_two_player_full_round(
         ensure_running(options, started, cancelled, steps.len())?;
         let terminal = perform_next_action(options, &room_id, &mut devices, &mut steps)?;
         if let Some(session) = native_capture.as_mut() {
+            let requester = devices
+                .iter_mut()
+                .find(|device| device.label == "alice-agent")
+                .ok_or_else(invalid_fixture)?;
+            if let Some(capture) = session.capture_next_checkpoint(&mut requester.client)? {
+                captures.push(capture);
+            }
+        }
+        if let Some(session) = browser_capture.as_mut() {
             let requester = devices
                 .iter_mut()
                 .find(|device| device.label == "alice-agent")
@@ -292,9 +318,16 @@ pub(crate) fn run_two_player_full_round(
         .iter()
         .map(|capture| capture.evidence.clone())
         .collect();
-    if !captures.is_empty() {
-        "The full game is proved by exact certified-device observations and reducer commits. Semantically named native checkpoints are additionally bound to authorized same-player capture requests, real windowless Bevy render targets, encrypted bounded transfers, and requester-side shared artifact persistence; main-menu/reconnect and external-network transport are not claimed."
-            .clone_into(&mut report.evidence_boundary);
+    match options.surface {
+        PuppetSurface::Native if !captures.is_empty() => {
+            "The full game is proved by exact certified-device observations and reducer commits. Semantically named native checkpoints are additionally bound to authorized same-player capture requests, real windowless Bevy render targets, encrypted bounded transfers, and requester-side shared artifact persistence; main-menu/reconnect and external-network transport are not claimed."
+                .clone_into(&mut report.evidence_boundary);
+        }
+        PuppetSurface::Web if !captures.is_empty() => {
+            "The full game is proved by exact certified-device observations and reducer commits. A complete parallel real-browser UI run proves ordinary controls, isolated contexts, chat/reconnect, and PNG/HTML/a11y/layout capture; its bundles are matched by revision to signed same-player requests, encrypted bounded transfer, and requester-side shared persistence. This slice does not yet claim that the browser room and certified fixture share one authority/projection identity."
+                .clone_into(&mut report.evidence_boundary);
+        }
+        PuppetSurface::Headless | PuppetSurface::Native | PuppetSurface::Web => {}
     }
     Ok(PuppetExecution { report, captures })
 }
@@ -553,19 +586,22 @@ struct Fixture {
 
 struct CaptureIdentity {
     requester_key: SigningKey,
-    provider_profile: DeviceProfile,
-    provider_key: SigningKey,
+    native_provider_profile: DeviceProfile,
+    native_provider_key: SigningKey,
+    browser_provider_profile: DeviceProfile,
+    browser_provider_key: SigningKey,
 }
 
 impl Fixture {
     #[allow(
         clippy::too_many_lines,
-        reason = "the deterministic seven-device fixture keeps every player, sibling, spectator, clock, and environment identity visibly enumerated"
+        reason = "the deterministic eight-device fixture keeps every player, sibling renderer, spectator, clock, and environment identity visibly enumerated"
     )]
     fn new(seed: u64, transport: PuppetTransport) -> Result<Self, PuppetError> {
         let alice_root = deterministic_key("alice-root", seed);
         let alice_requester_key = deterministic_key("alice-agent", seed);
         let alice_provider_key = deterministic_key("alice-native", seed);
+        let alice_browser_key = deterministic_key("alice-browser", seed);
         let bob_root = deterministic_key("bob-root", seed);
         let bob_agent_key = deterministic_key("bob-agent", seed);
         let bob_native_key = deterministic_key("bob-native", seed);
@@ -629,9 +665,24 @@ impl Fixture {
             ],
             DeviceCustodyWire::NativeLocal,
         )?;
+        let browser_provider_profile = signed_profile(
+            "alice-browser",
+            &alice_root,
+            &alice_browser_key,
+            vec![
+                DeviceCapabilityWire::ReceivePrivateProjection,
+                DeviceCapabilityWire::ProvideCapture,
+            ],
+            DeviceCustodyWire::BrowserLocal,
+        )?;
         let profiles = vec![
             ("alice-agent", "player-policy", requester_profile),
             ("alice-native", "player-sibling", provider_profile.clone()),
+            (
+                "alice-browser",
+                "player-sibling",
+                browser_provider_profile.clone(),
+            ),
             (
                 "bob-agent",
                 "player-policy",
@@ -715,8 +766,10 @@ impl Fixture {
             devices,
             capture_identity: CaptureIdentity {
                 requester_key: alice_requester_key,
-                provider_profile,
-                provider_key: alice_provider_key,
+                native_provider_profile: provider_profile,
+                native_provider_key: alice_provider_key,
+                browser_provider_profile,
+                browser_provider_key: alice_browser_key,
             },
         })
     }

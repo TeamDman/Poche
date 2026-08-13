@@ -28,6 +28,7 @@ pub use scenario::{
 pub enum PuppetSurface {
     Headless,
     Native,
+    Web,
 }
 
 /// Runtime transport selected by the scenario. Both loopback variants enter
@@ -54,6 +55,7 @@ impl PuppetSurface {
         match self {
             Self::Headless => "headless",
             Self::Native => "native",
+            Self::Web => "web",
         }
     }
 }
