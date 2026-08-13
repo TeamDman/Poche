@@ -16,12 +16,13 @@ use poche_player_client::{
     LoopbackDeviceAuthority,
 };
 use poche_protocol::{
-    CaptureProviderAdvertisementWire, CommandPayload, CorrelationId, DeviceCertificateWire,
-    DeviceId, EventId, GameActionWire, MemberProjection, PROTOCOL_VERSION_V1, ProjectionEnvelope,
-    ProjectionId, ProjectionPayload, RoomId, RoomPhase, SIGNATURE_DOMAIN_V1, SemanticHash,
-    SignatureAlgorithm, SignatureBytes, SignatureMetadata,
+    CaptureProviderAdvertisementWire, CommandPayload, CorrelationId, DeviceActionWire,
+    DeviceCertificateWire, DeviceId, EventId, GameActionWire, MemberProjection,
+    PROTOCOL_VERSION_V1, ProjectionEnvelope, ProjectionId, ProjectionPayload, RoomId, RoomPhase,
+    SIGNATURE_DOMAIN_V1, SemanticHash, SignatureAlgorithm, SignatureBytes, SignatureMetadata,
     canonical_capture_provider_advertisement_bytes, canonical_capture_request_bytes,
-    canonical_capture_response_bytes, canonical_device_certificate_bytes,
+    canonical_capture_response_bytes, canonical_device_action_bytes,
+    canonical_device_certificate_bytes,
 };
 use poche_session::{
     CaptureAuthorizationContext, CaptureReplayWindow, GameTurn, SessionGame, SessionPhase,
@@ -531,6 +532,46 @@ fn verify_device_certificate(certificate: &DeviceCertificateWire) -> Result<(), 
     .ok_or(DeviceClientError::InvalidProfile)
 }
 
+/// Verify a root-certified, device-signed external action and recover the
+/// transport-neutral request consumed by an ordinary device adapter.
+///
+/// Structural validation covers capability, epoch, identity, action ID, and
+/// signature intent. This function additionally verifies both Ed25519 layers;
+/// stale revision/action-set checks remain the receiving authority's job.
+///
+/// # Errors
+///
+/// Returns a stable authorization or protocol category without retaining
+/// rejected bytes or signature material.
+pub fn verify_signed_device_action(
+    action: &DeviceActionWire,
+) -> Result<DeviceActionRequest, DeviceClientError> {
+    action
+        .validate()
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    verify_device_certificate(&action.certificate)?;
+    let bytes = canonical_device_action_bytes(&action.unsigned())
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    if !verify_ed25519(
+        &action.certificate.device_signing_public_key,
+        action.signature.signature.as_str(),
+        &bytes,
+    ) {
+        return Err(DeviceClientError::AuthorizationDenied);
+    }
+    Ok(DeviceActionRequest {
+        room_id: action.room_id.clone(),
+        session_epoch: action.session_epoch,
+        command_id: action.command_id.clone(),
+        player_id: action.player_id.clone(),
+        device_id: action.device_id.clone(),
+        expected_revision: action.expected_revision,
+        expected_projection_hash: action.expected_projection_hash,
+        action_id: action.action_id.clone(),
+        payload: action.payload.clone(),
+    })
+}
+
 fn verify_capture_advertisement(
     advertisement: &CaptureProviderAdvertisementWire,
     certificate: &DeviceCertificateWire,
@@ -751,7 +792,9 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use ed25519_dalek::{Signer, SigningKey};
-    use poche_player_client::{DeviceProfile, LoopbackDeviceTransport, PlayerDeviceClient};
+    use poche_player_client::{
+        DeviceProfile, DeviceSigner, LoopbackDeviceTransport, PlayerDeviceClient,
+    };
     use poche_protocol::{
         CaptureArtifactDescriptorWire, CaptureArtifactId, CaptureConsentPolicyWire,
         CapturePrivacyWire, CaptureProviderKindWire, CaptureRepresentationWire, CaptureRequestId,
@@ -831,6 +874,18 @@ mod tests {
 
     fn wire_signature(bytes: &[u8], key: &SigningKey) -> SignatureBytes {
         SignatureBytes::new(hex(&key.sign(bytes).to_bytes())).unwrap()
+    }
+
+    struct TestDeviceSigner(SigningKey);
+
+    impl DeviceSigner for TestDeviceSigner {
+        fn sign_device_bytes(
+            &self,
+            _profile: &DeviceProfile,
+            canonical_bytes: &[u8],
+        ) -> Result<SignatureBytes, DeviceClientError> {
+            Ok(wire_signature(canonical_bytes, &self.0))
+        }
     }
 
     fn signed_profile(
@@ -994,6 +1049,50 @@ mod tests {
                 .projection
                 .current_revision,
             1
+        );
+    }
+
+    #[test]
+    fn external_device_action_verifies_both_root_and_device_signatures() {
+        let root_key = SigningKey::from_bytes(&[21; 32]);
+        let device_key = SigningKey::from_bytes(&[22; 32]);
+        let profile = signed_profile(
+            "external-cli",
+            &root_key,
+            &device_key,
+            vec![DeviceCapabilityWire::Propose],
+        );
+        let request = DeviceActionRequest {
+            room_id: RoomId::new("external-room").unwrap(),
+            session_epoch: 1,
+            command_id: CommandId::new("external-command").unwrap(),
+            player_id: profile.player_id.clone(),
+            device_id: profile.device_id.clone(),
+            expected_revision: 7,
+            expected_projection_hash: SemanticHash([7; 32]),
+            action_id: "game-bid-1".to_owned(),
+            payload: CommandPayload::GameAction {
+                action: GameActionWire::Bid { tricks: 1 },
+            },
+        };
+        let signed = request
+            .sign(&profile, &TestDeviceSigner(device_key))
+            .unwrap();
+        assert_eq!(verify_signed_device_action(&signed).unwrap(), request);
+
+        let mut changed_revision = signed.clone();
+        changed_revision.expected_revision += 1;
+        assert_eq!(
+            verify_signed_device_action(&changed_revision),
+            Err(DeviceClientError::AuthorizationDenied)
+        );
+
+        let mut changed_certificate = signed;
+        changed_certificate.certificate.signature.signature =
+            SignatureBytes::new("0".repeat(128)).unwrap();
+        assert_eq!(
+            verify_signed_device_action(&changed_certificate),
+            Err(DeviceClientError::InvalidProfile)
         );
     }
 

@@ -21,8 +21,10 @@ use core::fmt;
 use facet::Facet;
 use poche_protocol::{
     CaptureCancelWire, CaptureRequestWire, CaptureResponseWire, CommandId, CommandPayload,
-    DeviceCertificateWire, DeviceId, PrincipalId, ProjectionEnvelope, RoomId, SemanticHash,
-    SignatureBytes,
+    DEVICE_ACTION_SCHEMA_VERSION_V1, DEVICE_ACTION_SIGNATURE_DOMAIN_V1, DeviceActionWire,
+    DeviceCertificateWire, DeviceId, DeviceSignatureIntentWire, PrincipalId, ProjectionEnvelope,
+    RoomId, SemanticHash, SignatureAlgorithm, SignatureBytes, UnsignedDeviceActionWire,
+    canonical_device_action_bytes,
 };
 use serde::{Deserialize, Serialize};
 
@@ -176,6 +178,44 @@ pub struct DeviceActionRequest {
     pub expected_projection_hash: SemanticHash,
     pub action_id: String,
     pub payload: CommandPayload,
+}
+
+impl DeviceActionRequest {
+    /// Bind this prepared action to the profile certificate and sign every
+    /// semantic field through the profile's protected device-key handle.
+    pub fn sign(
+        &self,
+        profile: &DeviceProfile,
+        signer: &impl DeviceSigner,
+    ) -> Result<DeviceActionWire, DeviceClientError> {
+        profile.validate()?;
+        if self.player_id != profile.player_id || self.device_id != profile.device_id {
+            return Err(DeviceClientError::InvalidProfile);
+        }
+        let unsigned = UnsignedDeviceActionWire {
+            schema_version: DEVICE_ACTION_SCHEMA_VERSION_V1,
+            certificate: profile.certificate.clone(),
+            room_id: self.room_id.clone(),
+            session_epoch: self.session_epoch,
+            command_id: self.command_id.clone(),
+            player_id: self.player_id.clone(),
+            device_id: self.device_id.clone(),
+            expected_revision: self.expected_revision,
+            expected_projection_hash: self.expected_projection_hash,
+            action_id: self.action_id.clone(),
+            payload: self.payload.clone(),
+            signature_intent: DeviceSignatureIntentWire {
+                domain_version: DEVICE_ACTION_SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: self.device_id.clone(),
+            },
+        };
+        let bytes = canonical_device_action_bytes(&unsigned)
+            .map_err(|_| DeviceClientError::ProtocolViolation)?;
+        unsigned
+            .attach_signature(signer.sign_device_bytes(profile, &bytes)?)
+            .map_err(|_| DeviceClientError::SigningFailed)
+    }
 }
 
 /// Result of invoking an advertised action through an ordinary room adapter.

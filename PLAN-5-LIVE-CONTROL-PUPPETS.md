@@ -563,6 +563,14 @@ ADR 0010 and protocol/session types carry the cooperation half. Gateway and
 native Veilid adapter connections remain explicitly assigned to Tasks 3.1,
 3.2, and 5.1; the plan moved those process integrations after the capture wire
 contract rather than letting each adapter invent incompatible cooperation.
+The external action half is now explicit as well: a canonical
+`DeviceActionWire` binds the root-signed device certificate, propose
+capability, room/session, command ID, expected revision/projection hash,
+advertised action ID, and exact typed payload under a distinct device
+signature. `DeviceActionRequest::sign` crosses only the opaque protected-key
+port, and the runtime verifier checks both root and device Ed25519 signatures
+before recovering the transport-neutral request. Mutation and wrong-root tests
+fail closed; gateway/Veilid carriage remains Phase 3/5 work.
 
 **Work:**
 
