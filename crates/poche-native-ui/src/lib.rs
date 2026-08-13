@@ -1716,6 +1716,7 @@ fn acceptance_driver(
     controller: Res<NativeController>,
     debug: Res<DebugOverlay>,
     surface: Res<NativeRenderSurface>,
+    provider: Option<Res<NativeCaptureProvider>>,
     mut clock: ResMut<LaunchClock>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -1742,7 +1743,16 @@ fn acceptance_driver(
     let Some(exit_after) = options.exit_after else {
         return;
     };
-    if elapsed < exit_after || clock.report_written {
+    let should_exit = if let Some(provider) = provider {
+        // GPU readback completion, rather than an arbitrary duration, is the
+        // semantic wait for capture workers. Retain a bounded fail-safe so a
+        // broken backend cannot leave automation alive indefinitely.
+        provider.terminal_result_available().unwrap_or(false)
+            || elapsed >= exit_after.saturating_add(Duration::from_secs(10))
+    } else {
+        elapsed >= exit_after
+    };
+    if !should_exit || clock.report_written {
         return;
     }
     if let Some(path) = &options.report {

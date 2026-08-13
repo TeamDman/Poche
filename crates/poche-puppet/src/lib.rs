@@ -10,6 +10,7 @@
 
 mod artifacts;
 mod catalog;
+mod native;
 mod scenario;
 
 use core::fmt;
@@ -17,13 +18,15 @@ use std::{path::PathBuf, time::Duration};
 
 pub use catalog::{ScenarioDescriptor, TWO_PLAYER_FULL_ROUND, scenario, scenarios};
 pub use scenario::{
-    DeviceRevisionEvidence, PuppetDeviceEvidence, PuppetRunReport, PuppetStepEvidence,
+    DeviceRevisionEvidence, PuppetCaptureEvidence, PuppetDeviceEvidence, PuppetRunReport,
+    PuppetStepEvidence,
 };
 
 /// Supported renderer/presentation targets for a puppet scenario.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PuppetSurface {
     Headless,
+    Native,
 }
 
 /// Runtime transport selected by the scenario. Both loopback variants enter
@@ -49,6 +52,7 @@ impl PuppetSurface {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Headless => "headless",
+            Self::Native => "native",
         }
     }
 }
@@ -65,6 +69,8 @@ pub struct PuppetRunOptions {
     pub per_action_timeout: Duration,
     pub whole_run_timeout: Duration,
     pub artifact_root: PathBuf,
+    /// Open a visible Bevy window only for interactive puppet debugging.
+    pub show_native_window: bool,
 }
 
 impl Default for PuppetRunOptions {
@@ -78,6 +84,7 @@ impl Default for PuppetRunOptions {
             per_action_timeout: Duration::from_secs(5),
             whole_run_timeout: Duration::from_secs(30),
             artifact_root: default_artifact_root(),
+            show_native_window: false,
         }
     }
 }
@@ -104,14 +111,8 @@ pub fn run_with_cancel(
             "puppet scenario is not in the static catalog",
         ));
     }
-    if options.surface != PuppetSurface::Headless {
-        return Err(PuppetError::new(
-            PuppetErrorCode::UnsupportedSurface,
-            "puppet surface is not implemented for this scenario",
-        ));
-    }
-    let report = scenario::run_two_player_full_round(options, &mut cancelled)?;
-    artifacts::persist_run(options, report)
+    let execution = scenario::run_two_player_full_round(options, &mut cancelled)?;
+    artifacts::persist_run(options, execution)
 }
 
 /// Run a catalog scenario without external cancellation.

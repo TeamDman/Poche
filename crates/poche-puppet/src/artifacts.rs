@@ -10,7 +10,12 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{PuppetError, PuppetErrorCode, PuppetRunOptions, PuppetRunReport};
+use poche_capture::{CapturePipeline, PersistedCapture};
+
+use crate::{
+    PuppetError, PuppetErrorCode, PuppetRunOptions,
+    scenario::{PuppetExecution, PuppetRunReport},
+};
 
 #[derive(Serialize, Deserialize)]
 struct PuppetArtifactManifest {
@@ -46,8 +51,12 @@ impl Drop for TemporaryRunDirectory {
 
 pub(crate) fn persist_run(
     options: &PuppetRunOptions,
-    mut report: PuppetRunReport,
+    execution: PuppetExecution,
 ) -> Result<PuppetRunReport, PuppetError> {
+    let PuppetExecution {
+        mut report,
+        captures,
+    } = execution;
     fs::create_dir_all(&options.artifact_root).map_err(evidence_error)?;
     let final_path = unique_run_path(&options.artifact_root, &report.run_id)?;
     let temporary_path = unique_temporary_path(&options.artifact_root, &report.run_id)?;
@@ -58,27 +67,90 @@ pub(crate) fn persist_run(
     };
     report.artifact_directory = final_path.to_string_lossy().into_owned();
 
+    report.captures.clear();
+    let mut capture_files = Vec::new();
+    for mut capture in captures {
+        let persisted = CapturePipeline::new(temporary_path.join("captures"))
+            .persist(&capture.bundle)
+            .map_err(capture_error)?;
+        let relative_directory = persisted
+            .directory
+            .strip_prefix(&temporary_path)
+            .map_err(|_| capture_error(poche_capture::CapturePipelineError::Storage))?;
+        let relative_manifest = persisted
+            .manifest_path
+            .strip_prefix(&temporary_path)
+            .map_err(|_| capture_error(poche_capture::CapturePipelineError::Storage))?;
+        capture.evidence.artifact_directory = final_path
+            .join(relative_directory)
+            .to_string_lossy()
+            .into_owned();
+        capture.evidence.manifest_path = final_path
+            .join(relative_manifest)
+            .to_string_lossy()
+            .into_owned();
+        capture_files.extend(describe_capture_files(&temporary_path, &persisted)?);
+        report.captures.push(capture.evidence);
+    }
+
     let report_path = temporary_path.join("run.json");
     write_json(&report_path, &report)?;
     let steps_path = temporary_path.join("steps.ndjson");
     write_steps(&steps_path, &report)?;
-    let files = vec![
+    let mut files = vec![
         describe_file(&report_path, "run.json", "application/json")?,
         describe_file(&steps_path, "steps.ndjson", "application/x-ndjson")?,
     ];
+    files.extend(capture_files);
     let manifest = PuppetArtifactManifest {
         schema: "poche.puppet.artifact-manifest.v1".to_owned(),
         run_id: report.run_id.clone(),
         scenario: report.scenario.clone(),
         surface: report.surface.clone(),
         status: report.status.clone(),
-        qualification: "Headless semantic evidence only; graphical surfaces and cross-device capture require separately qualified manifest entries.".to_owned(),
+        qualification: if report.captures.is_empty() {
+            "Headless semantic evidence only; no graphical-capture claim.".to_owned()
+        } else {
+            "Certified full-game semantic evidence plus one authorized terminal native render-target capture transferred privately and persisted by the requester; no intermediate-native or external-network claim.".to_owned()
+        },
         files,
     };
     write_json(&temporary_path.join("manifest.json"), &manifest)?;
     fs::rename(&temporary_path, &final_path).map_err(evidence_error)?;
     temporary.published = true;
     Ok(report)
+}
+
+fn describe_capture_files(
+    run_root: &Path,
+    persisted: &PersistedCapture,
+) -> Result<Vec<PuppetArtifactFile>, PuppetError> {
+    let mut files = Vec::with_capacity(persisted.manifest.entries.len() + 1);
+    let manifest_relative = persisted
+        .manifest_path
+        .strip_prefix(run_root)
+        .map_err(|_| capture_error(poche_capture::CapturePipelineError::Storage))?;
+    files.push(describe_file(
+        &persisted.manifest_path,
+        &portable_relative(manifest_relative),
+        "application/json",
+    )?);
+    for entry in &persisted.manifest.entries {
+        let path = persisted.directory.join(&entry.relative_path);
+        let relative = path
+            .strip_prefix(run_root)
+            .map_err(|_| capture_error(poche_capture::CapturePipelineError::Storage))?;
+        files.push(describe_file(
+            &path,
+            &portable_relative(relative),
+            &entry.media_type,
+        )?);
+    }
+    Ok(files)
+}
+
+fn portable_relative(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn unique_run_path(root: &Path, run_id: &str) -> Result<PathBuf, PuppetError> {
@@ -172,5 +244,12 @@ fn evidence_error(_: std::io::Error) -> PuppetError {
     PuppetError::new(
         PuppetErrorCode::EvidenceIo,
         "puppet evidence filesystem operation failed",
+    )
+}
+
+fn capture_error(_: poche_capture::CapturePipelineError) -> PuppetError {
+    PuppetError::new(
+        PuppetErrorCode::EvidenceIo,
+        "puppet capture artifact pipeline failed",
     )
 }

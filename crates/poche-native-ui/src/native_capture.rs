@@ -139,6 +139,21 @@ impl NativeCaptureProvider {
         *state = NativeCaptureState::Denied(reason);
         Ok(())
     }
+
+    /// Report whether the render loop has produced a terminal provider result
+    /// without consuming it from the requester-owned handle.
+    pub(crate) fn terminal_result_available(&self) -> Result<bool, CapturePipelineError> {
+        let shared = self
+            .shared
+            .lock()
+            .map_err(|_| CapturePipelineError::Storage)?;
+        Ok(shared.jobs.values().any(|state| {
+            matches!(
+                state,
+                NativeCaptureState::Ready(_) | NativeCaptureState::Denied(_)
+            )
+        }))
+    }
 }
 
 impl CaptureProvider for NativeCaptureProvider {

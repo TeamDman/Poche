@@ -28,6 +28,7 @@ fn certified_devices_complete_and_witness_the_full_game() {
     assert_eq!(report.final_room_phase, "post_game");
     assert!(report.step_count > 10);
     assert_eq!(report.devices.len(), 7);
+    assert!(report.captures.is_empty());
     assert_eq!(report.steps.len(), report.step_count as usize);
     assert!(report.steps.iter().all(|step| {
         step.observed_by.len() == 7

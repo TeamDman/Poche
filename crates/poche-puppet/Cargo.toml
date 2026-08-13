@@ -10,6 +10,10 @@ publish = false
 
 [dependencies]
 blake3.workspace = true
+ed25519-dalek.workspace = true
+getrandom.workspace = true
+poche-capture = { path = "../poche-capture" }
+poche-native-ui = { path = "../poche-native-ui" }
 poche-player-client = { path = "../poche-player-client" }
 poche-protocol = { path = "../poche-protocol" }
 poche-runtime = { path = "../poche-runtime" }

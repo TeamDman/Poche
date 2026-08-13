@@ -43,6 +43,10 @@ pub enum PuppetCommand {
         max_steps: Option<u32>,
         #[facet(args::named)]
         output_dir: Option<String>,
+        /// Open the native puppet renderer for interactive debugging. Native
+        /// automation is windowless unless this is explicitly supplied.
+        #[facet(args::named, default)]
+        show_window: bool,
     },
     Artifacts(PuppetArtifactsArgs),
 }
@@ -76,9 +80,16 @@ impl PuppetArgs {
             PuppetCommand::Run { surface, .. }
                 if surface
                     .as_deref()
-                    .is_some_and(|surface| surface != "headless") =>
+                    .is_some_and(|surface| !matches!(surface, "headless" | "native")) =>
             {
-                Err(ParseError::new("--surface currently requires headless"))
+                Err(ParseError::new("--surface requires headless or native"))
+            }
+            PuppetCommand::Run {
+                surface,
+                show_window: true,
+                ..
+            } if surface.as_deref() != Some("native") => {
+                Err(ParseError::new("--show-window requires --surface native"))
             }
             PuppetCommand::Run { transport, .. }
                 if transport.as_deref().is_some_and(|transport| {
@@ -138,21 +149,27 @@ impl PuppetArgs {
             }
             PuppetCommand::Run {
                 scenario,
-                surface: _,
+                surface,
                 transport,
                 seed,
                 max_steps,
                 output_dir,
+                show_window,
             } => {
                 let mut options = PuppetRunOptions {
                     scenario,
-                    surface: PuppetSurface::Headless,
+                    surface: match surface.as_deref() {
+                        Some("native") => PuppetSurface::Native,
+                        None | Some("headless") => PuppetSurface::Headless,
+                        Some(_) => unreachable!("validated surface"),
+                    },
                     transport: match transport.as_deref() {
                         Some("loopback-ndjson") => PuppetTransport::LoopbackNdjson,
                         None | Some("loopback-typed") => PuppetTransport::LoopbackTyped,
                         Some(_) => unreachable!("validated transport"),
                     },
                     seed: seed.unwrap_or(1),
+                    show_native_window: show_window,
                     ..PuppetRunOptions::default()
                 };
                 if let Some(max_steps) = max_steps {
@@ -167,11 +184,12 @@ impl PuppetArgs {
                 emit_serializable(
                     &summary,
                     &format!(
-                        "scenario: {}\nstatus: {}\nsurface: {}\nsteps: {}\nfinal revision: {}\nfinal scores: {:?}\nartifacts: {}",
+                        "scenario: {}\nstatus: {}\nsurface: {}\nsteps: {}\ncaptures: {}\nfinal revision: {}\nfinal scores: {:?}\nartifacts: {}",
                         report.scenario,
                         report.status,
                         report.surface,
                         report.step_count,
+                        report.captures.len(),
                         report.final_revision,
                         report.final_scores,
                         report.artifact_directory
@@ -213,6 +231,7 @@ struct PuppetRunSummary<'a> {
     final_scores: &'a [u16],
     step_count: u32,
     devices: usize,
+    captures: usize,
     public_history_events: usize,
     public_history_hash: &'a str,
     artifact_directory: &'a str,
@@ -234,6 +253,7 @@ impl<'a> From<&'a poche_puppet::PuppetRunReport> for PuppetRunSummary<'a> {
             final_scores: &report.final_scores,
             step_count: report.step_count,
             devices: report.devices.len(),
+            captures: report.captures.len(),
             public_history_events: report.public_history_events,
             public_history_hash: &report.public_history_hash,
             artifact_directory: &report.artifact_directory,

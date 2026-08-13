@@ -4,6 +4,7 @@
 
 use std::{fmt::Write as _, time::Instant};
 
+use ed25519_dalek::{Signer, SigningKey};
 use poche_player_client::{
     AdvertisedAction, DeviceActionResult, DeviceObservation, DeviceProfile,
     LoopbackDeviceTransport, PlayerDeviceClient,
@@ -13,6 +14,7 @@ use poche_protocol::{
     DeviceCustodyWire, DeviceId, InviteProof, PrincipalId, ProjectionEnvelope,
     REPLICATION_SCHEMA_VERSION_V1, REPLICATION_SIGNATURE_DOMAIN_V1, RoomId, RoomPhase,
     SignatureAlgorithm, SignatureBytes, SignatureIntent, UnsignedDeviceCertificateWire,
+    canonical_device_certificate_bytes,
 };
 use poche_runtime::{
     AdvertisedActionSource, LoopbackCodec, OracleGameActionSource, OracleSessionGame,
@@ -21,13 +23,16 @@ use poche_runtime::{
 use poche_session::{InviteRecord, SessionPhase, SessionState};
 use serde::{Deserialize, Serialize};
 
-use crate::{PuppetError, PuppetErrorCode, PuppetRunOptions, PuppetTransport};
+use crate::{
+    PuppetError, PuppetErrorCode, PuppetRunOptions, PuppetSurface, PuppetTransport,
+    native::{PendingPuppetCapture, capture_terminal_projection},
+};
 
-type Adapter = RuntimeLoopbackDeviceAdapter<OracleSessionGame<2>, PuppetActionSource>;
-type Client = PlayerDeviceClient<LoopbackDeviceTransport<Adapter>>;
+pub(crate) type Adapter = RuntimeLoopbackDeviceAdapter<OracleSessionGame<2>, PuppetActionSource>;
+pub(crate) type Client = PlayerDeviceClient<LoopbackDeviceTransport<Adapter>>;
 
 #[derive(Clone)]
-struct PuppetActionSource {
+pub(crate) struct PuppetActionSource {
     game: OracleGameActionSource,
     creator: PrincipalId,
     authority_clock: PrincipalId,
@@ -185,6 +190,28 @@ pub struct PuppetDeviceEvidence {
     pub final_room_phase: String,
 }
 
+/// Inspectable binding between one signed cross-device request, its bounded
+/// private transfer, and the artifact later persisted by the requester.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PuppetCaptureEvidence {
+    pub status: String,
+    pub label: String,
+    pub request_id: String,
+    pub requester_device_id: String,
+    pub provider_device_id: String,
+    pub requested_revision: u64,
+    pub captured_revision: u64,
+    pub projection_hash: String,
+    pub scene_hash: Option<String>,
+    pub provider_kind: String,
+    pub representation: String,
+    pub windowless: bool,
+    pub transferred_bytes: u64,
+    pub transfer_chunks: u32,
+    pub artifact_directory: String,
+    pub manifest_path: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PuppetRunReport {
     pub schema: String,
@@ -203,14 +230,20 @@ pub struct PuppetRunReport {
     pub step_count: u32,
     pub devices: Vec<PuppetDeviceEvidence>,
     pub steps: Vec<PuppetStepEvidence>,
+    pub captures: Vec<PuppetCaptureEvidence>,
     pub artifact_directory: String,
     pub evidence_boundary: String,
+}
+
+pub(crate) struct PuppetExecution {
+    pub report: PuppetRunReport,
+    pub captures: Vec<PendingPuppetCapture>,
 }
 
 pub(crate) fn run_two_player_full_round(
     options: &PuppetRunOptions,
     cancelled: &mut impl FnMut() -> bool,
-) -> Result<PuppetRunReport, PuppetError> {
+) -> Result<PuppetExecution, PuppetError> {
     if cancelled() {
         return Err(PuppetError::new(
             PuppetErrorCode::Cancelled,
@@ -219,6 +252,8 @@ pub(crate) fn run_two_player_full_round(
     }
     let fixture = Fixture::new(options.seed, options.transport)?;
     let room_id = fixture.room_id.clone();
+    let adapter = fixture.adapter;
+    let capture_identity = fixture.capture_identity;
     let mut devices = fixture.devices;
     let started = Instant::now();
     let mut steps = Vec::new();
@@ -292,7 +327,45 @@ pub(crate) fn run_two_player_full_round(
         }
     }
 
-    build_report(options, &room_id, &mut devices, steps)
+    let captures =
+        capture_for_surface(options, &room_id, &adapter, &mut devices, &capture_identity)?;
+    let mut report = build_report(options, &room_id, &mut devices, steps)?;
+    report.captures = captures
+        .iter()
+        .map(|capture| capture.evidence.clone())
+        .collect();
+    if !captures.is_empty() {
+        "The full game is proved by exact certified-device observations and reducer commits. One terminal native view is additionally bound to an authorized same-player capture request, real windowless Bevy render target, encrypted bounded transfer, and requester-side shared artifact pipeline; intermediate native checkpoints and external-network transport are not claimed."
+            .clone_into(&mut report.evidence_boundary);
+    }
+    Ok(PuppetExecution { report, captures })
+}
+
+fn capture_for_surface(
+    options: &PuppetRunOptions,
+    room_id: &RoomId,
+    adapter: &Adapter,
+    devices: &mut [HarnessDevice],
+    identity: &CaptureIdentity,
+) -> Result<Vec<PendingPuppetCapture>, PuppetError> {
+    match options.surface {
+        PuppetSurface::Headless => Ok(Vec::new()),
+        PuppetSurface::Native => {
+            let requester = devices
+                .iter_mut()
+                .find(|device| device.label == "alice-agent")
+                .ok_or_else(invalid_fixture)?;
+            Ok(vec![capture_terminal_projection(
+                options,
+                room_id,
+                adapter,
+                &mut requester.client,
+                &identity.requester_key,
+                &identity.provider_profile,
+                &identity.provider_key,
+            )?])
+        }
+    }
 }
 
 fn ensure_running(
@@ -437,6 +510,7 @@ fn build_report(
         step_count,
         devices,
         steps,
+        captures: Vec::new(),
         artifact_directory: String::new(),
         evidence_boundary: "Headless evidence proves exact observations, advertised actions, reducer commits, and cross-device revision convergence; it contains no graphical-capture claim.".to_owned(),
     })
@@ -470,16 +544,40 @@ fn device_error(_: poche_player_client::DeviceClientError) -> PuppetError {
 
 struct Fixture {
     room_id: RoomId,
+    adapter: Adapter,
     devices: Vec<HarnessDevice>,
+    capture_identity: CaptureIdentity,
+}
+
+struct CaptureIdentity {
+    requester_key: SigningKey,
+    provider_profile: DeviceProfile,
+    provider_key: SigningKey,
 }
 
 impl Fixture {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the deterministic seven-device fixture keeps every player, sibling, spectator, clock, and environment identity visibly enumerated"
+    )]
     fn new(seed: u64, transport: PuppetTransport) -> Result<Self, PuppetError> {
-        let alice = principal("11")?;
-        let bob = principal("22")?;
-        let spectator = principal("33")?;
-        let authority_clock = principal("44")?;
-        let game_environment = principal("55")?;
+        let alice_root = deterministic_key("alice-root", seed);
+        let alice_requester_key = deterministic_key("alice-agent", seed);
+        let alice_provider_key = deterministic_key("alice-native", seed);
+        let bob_root = deterministic_key("bob-root", seed);
+        let bob_agent_key = deterministic_key("bob-agent", seed);
+        let bob_native_key = deterministic_key("bob-native", seed);
+        let spectator_root = deterministic_key("spectator-root", seed);
+        let spectator_key = deterministic_key("spectator-browser", seed);
+        let clock_root = deterministic_key("authority-clock-root", seed);
+        let clock_key = deterministic_key("authority-clock", seed);
+        let environment_root = deterministic_key("game-environment-root", seed);
+        let environment_key = deterministic_key("game-environment", seed);
+        let alice = principal_for_key(&alice_root)?;
+        let bob = principal_for_key(&bob_root)?;
+        let spectator = principal_for_key(&spectator_root)?;
+        let authority_clock = principal_for_key(&clock_root)?;
+        let game_environment = principal_for_key(&environment_root)?;
         let room_id = RoomId::new(format!("puppet-room-{seed}")).map_err(|_| invalid_fixture())?;
         let mut state = SessionState::pending(
             room_id.clone(),
@@ -507,60 +605,98 @@ impl Fixture {
             PuppetTransport::LoopbackNdjson => LoopbackCodec::CanonicalNdjson,
         };
         let adapter = RuntimeLoopbackDeviceAdapter::new(state, source, codec);
-        let profiles = [
-            (
-                "alice-agent",
-                "player-policy",
-                alice,
-                "a1",
-                DeviceCustodyWire::NativeLocal,
-            ),
-            (
-                "alice-browser",
-                "player-sibling",
-                principal("11")?,
-                "a2",
-                DeviceCustodyWire::BrowserLocal,
-            ),
+        let requester_profile = signed_profile(
+            "alice-agent",
+            &alice_root,
+            &alice_requester_key,
+            vec![
+                DeviceCapabilityWire::Propose,
+                DeviceCapabilityWire::ReceivePrivateProjection,
+                DeviceCapabilityWire::RequestCapture,
+            ],
+            DeviceCustodyWire::NativeLocal,
+        )?;
+        let provider_profile = signed_profile(
+            "alice-native",
+            &alice_root,
+            &alice_provider_key,
+            vec![
+                DeviceCapabilityWire::Propose,
+                DeviceCapabilityWire::ReceivePrivateProjection,
+                DeviceCapabilityWire::ProvideCapture,
+            ],
+            DeviceCustodyWire::NativeLocal,
+        )?;
+        let profiles = vec![
+            ("alice-agent", "player-policy", requester_profile),
+            ("alice-native", "player-sibling", provider_profile.clone()),
             (
                 "bob-agent",
                 "player-policy",
-                bob,
-                "b1",
-                DeviceCustodyWire::NativeLocal,
+                signed_profile(
+                    "bob-agent",
+                    &bob_root,
+                    &bob_agent_key,
+                    vec![
+                        DeviceCapabilityWire::Propose,
+                        DeviceCapabilityWire::ReceivePrivateProjection,
+                    ],
+                    DeviceCustodyWire::NativeLocal,
+                )?,
             ),
             (
                 "bob-native",
                 "player-sibling",
-                principal("22")?,
-                "b2",
-                DeviceCustodyWire::NativeLocal,
+                signed_profile(
+                    "bob-native",
+                    &bob_root,
+                    &bob_native_key,
+                    vec![
+                        DeviceCapabilityWire::Propose,
+                        DeviceCapabilityWire::ReceivePrivateProjection,
+                    ],
+                    DeviceCustodyWire::NativeLocal,
+                )?,
             ),
             (
                 "spectator-browser",
                 "spectator",
-                spectator,
-                "c1",
-                DeviceCustodyWire::BrowserLocal,
+                signed_profile(
+                    "spectator-browser",
+                    &spectator_root,
+                    &spectator_key,
+                    vec![
+                        DeviceCapabilityWire::Propose,
+                        DeviceCapabilityWire::ReceivePrivateProjection,
+                    ],
+                    DeviceCustodyWire::BrowserLocal,
+                )?,
             ),
             (
                 "authority-clock",
                 "authority-clock",
-                authority_clock,
-                "d1",
-                DeviceCustodyWire::NativeLocal,
+                signed_profile(
+                    "authority-clock",
+                    &clock_root,
+                    &clock_key,
+                    vec![DeviceCapabilityWire::Propose],
+                    DeviceCustodyWire::NativeLocal,
+                )?,
             ),
             (
                 "game-environment",
                 "game-environment",
-                game_environment,
-                "e1",
-                DeviceCustodyWire::NativeLocal,
+                signed_profile(
+                    "game-environment",
+                    &environment_root,
+                    &environment_key,
+                    vec![DeviceCapabilityWire::Propose],
+                    DeviceCustodyWire::NativeLocal,
+                )?,
             ),
         ];
         let mut devices = Vec::with_capacity(profiles.len());
-        for (label, role, player, device_octet, custody) in profiles {
-            let profile = profile(label, player, device_octet, custody)?;
+        for (label, role, profile) in profiles {
             adapter.enroll(&profile).map_err(device_error)?;
             let client =
                 PlayerDeviceClient::new(profile, LoopbackDeviceTransport::new(adapter.clone()))
@@ -571,45 +707,65 @@ impl Fixture {
                 client,
             });
         }
-        Ok(Self { room_id, devices })
+        Ok(Self {
+            room_id,
+            adapter,
+            devices,
+            capture_identity: CaptureIdentity {
+                requester_key: alice_requester_key,
+                provider_profile,
+                provider_key: alice_provider_key,
+            },
+        })
     }
 }
 
-fn principal(octet: &str) -> Result<PrincipalId, PuppetError> {
-    PrincipalId::new(octet.repeat(32)).map_err(|_| invalid_fixture())
+fn deterministic_key(label: &str, seed: u64) -> SigningKey {
+    let mut hasher = blake3::Hasher::new_derive_key("poche/puppet-device-key/v1");
+    hasher.update(label.as_bytes());
+    hasher.update(&seed.to_be_bytes());
+    SigningKey::from_bytes(hasher.finalize().as_bytes())
 }
 
-fn profile(
+fn principal_for_key(key: &SigningKey) -> Result<PrincipalId, PuppetError> {
+    PrincipalId::new(hex(&key.verifying_key().to_bytes())).map_err(|_| invalid_fixture())
+}
+
+fn signed_profile(
     label: &str,
-    player_id: PrincipalId,
-    device_octet: &str,
+    root_key: &SigningKey,
+    device_key: &SigningKey,
+    capabilities: Vec<DeviceCapabilityWire>,
     custody: DeviceCustodyWire,
 ) -> Result<DeviceProfile, PuppetError> {
-    let device_key = device_octet.repeat(32);
-    let device_id = DeviceId::new(device_key.clone()).map_err(|_| invalid_fixture())?;
-    let certificate = UnsignedDeviceCertificateWire {
+    let player_key = hex(&root_key.verifying_key().to_bytes());
+    let device_public_key = hex(&device_key.verifying_key().to_bytes());
+    let player_id = PrincipalId::new(player_key).map_err(|_| invalid_fixture())?;
+    let device_id = DeviceId::new(device_public_key.clone()).map_err(|_| invalid_fixture())?;
+    let unsigned = UnsignedDeviceCertificateWire {
         schema_version: REPLICATION_SCHEMA_VERSION_V1,
         certificate_id: CertificateId::new(format!("puppet-{label}"))
             .map_err(|_| invalid_fixture())?,
         player_id: player_id.clone(),
         device_id: device_id.clone(),
-        device_signing_public_key: device_key,
+        device_signing_public_key: device_public_key,
         sequence: 1,
         valid_from_membership_epoch: 1,
         valid_through_membership_epoch: None,
-        capabilities: vec![
-            DeviceCapabilityWire::Propose,
-            DeviceCapabilityWire::ReceivePrivateProjection,
-        ],
+        capabilities,
         custody,
         signature_intent: SignatureIntent {
             domain_version: REPLICATION_SIGNATURE_DOMAIN_V1,
             algorithm: SignatureAlgorithm::Ed25519,
             key_id: player_id.clone(),
         },
-    }
-    .attach_signature(SignatureBytes::new("00".repeat(64)).map_err(|_| invalid_fixture())?)
-    .map_err(|_| invalid_fixture())?;
+    };
+    let bytes = canonical_device_certificate_bytes(&unsigned).map_err(|_| invalid_fixture())?;
+    let signature = SignatureBytes::new(hex(&root_key.sign(&bytes).to_bytes()))
+        .map_err(|_| invalid_fixture())?;
+    let certificate = unsigned
+        .attach_signature(signature)
+        .map_err(|_| invalid_fixture())?;
     Ok(DeviceProfile {
         schema_version: DeviceProfile::SCHEMA_VERSION_V1,
         label: label.to_owned(),
@@ -618,6 +774,16 @@ fn profile(
         certificate,
         signing_key_handle: format!("puppet-protected:{label}"),
     })
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().fold(
+        String::with_capacity(bytes.len() * 2),
+        |mut output, byte| {
+            write!(output, "{byte:02x}").expect("writing to String cannot fail");
+            output
+        },
+    )
 }
 
 const fn invalid_fixture() -> PuppetError {

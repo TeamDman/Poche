@@ -743,10 +743,14 @@ signatures, same-root capabilities, one-based cooperation membership epoch,
 room/revision/expiry/provider bounds, and bounded replay before invoking a
 handler that has no reducer argument. A focused accepted-response test proves
 duplicate replay never re-enters the provider and capture cooperation changes
-neither room revision nor public history. Remaining before completion: supply
-and manually exercise a persistent/live transport profile, plug the hidden
-Bevy provider and private transfer into that authorized bridge, and complete a
-real sibling-requested capture. Visual inspection also retains an existing
+neither room revision nor public history. The native puppet now composes that
+bridge with the real windowless Bevy provider: Alice's root-signed policy
+device requests its root-signed native sibling, which returns a signed
+hash-bound descriptor while the provider bytes cross acknowledged encrypted
+24-KiB chunks and only the requester-side common pipeline persists them.
+Remaining before completion: supply and manually exercise a persistent/live
+transport profile and exercise human input in that profile. Visual inspection
+also retains an existing
 native-render gap: current/earlier unified screenshots show Slug and debug
 geometry but omit solid PBR meshes, so capture structure is accepted but visual
 completeness is not yet claimed.
@@ -891,10 +895,24 @@ actions, without sleeps or a second semantic engine.
 
 ### [ ] 4.2 Drive native evidence through cross-device capture requests
 
-**Completion notes:** The renderer prerequisite is complete: automation owns a
-1280x800 offscreen GPU image target and does not create an OS window. The
-cross-device puppet orchestration and multi-checkpoint capture evidence remain
-to be implemented.
+**Completion notes:** The first cross-device native vertical slice is complete.
+`poche.exe puppet run ... --surface native` plays the same 159-action certified
+full game, then Alice's agent signs a terminal-revision request to Alice's
+separately certified native sibling. The runtime verifies root/device
+certificates, provider advertisement, request, response, membership/revision,
+expiry, capability, and replay policy before/after invoking a handler with no
+reducer access. Bevy creates no OS window, renders the sibling's exact revision
+to its 1280x800 GPU image, and returns one raw PNG plus projection/scene/camera
+metadata. The provider response exposes only hash-bound descriptors; plaintext
+stays provider-owned until the requester acknowledges an encrypted bounded
+transfer. The requester alone reconstructs bytes and calls `poche-capture`,
+which writes the captioned PNG/manifest inside the atomic puppet run. The
+top-level manifest hashes all semantic and graphical files with portable paths.
+A GPU-gated integration test and manual unified-executable NDJSON run pass at
+revision 159 with seven converged devices and one visually inspected terminal
+artifact. `--show-window` is an explicit native-only debug escape hatch.
+Remaining: capture the applicable lobby/bidding/card-selection/trick/score/
+reconnect checkpoints rather than only terminal state.
 
 **Work:**
 
@@ -914,8 +932,9 @@ to be implemented.
 **Validation:**
 
 ```powershell
-target\debug\poche.exe puppet run two-player-full-round --surface native --viewport 1280x720 --seed 1
+target\debug\poche.exe --output json puppet run two-player-full-round --surface native --transport loopback-ndjson --seed 1
 cargo test --locked -p poche-puppet -p poche-native-ui -p poche-capture --offline
+$env:WGPU_BACKEND='dx12'; cargo test --locked -p poche-puppet --offline --test native_full_game -- --ignored --nocapture
 ```
 
 **Completion criteria:** Captioned native images and structural metadata are
