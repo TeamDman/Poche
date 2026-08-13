@@ -734,9 +734,17 @@ proves this path commits a native drag/play through the real reducer and that an
 independently certified sibling device for the same player observes the next
 revision and public-history entry. The deterministic action source now also
 models player turns plus seeded chance/environment turns without exposing
-private hands to the environment device. Remaining before completion: supply
-and manually exercise a persistent/live transport profile, and compose
-session-authorized sibling capture. Visual inspection also retains an existing
+private hands to the environment device. The reducer-backed loopback adapter
+now also has an exact-target non-authoritative provider registry: it verifies
+real Ed25519 root-signed device certificates plus request/advertisement/response
+signatures, same-root capabilities, one-based cooperation membership epoch,
+room/revision/expiry/provider bounds, and bounded replay before invoking a
+handler that has no reducer argument. A focused accepted-response test proves
+duplicate replay never re-enters the provider and capture cooperation changes
+neither room revision nor public history. Remaining before completion: supply
+and manually exercise a persistent/live transport profile, plug the hidden
+Bevy provider and private transfer into that authorized bridge, and complete a
+real sibling-requested capture. Visual inspection also retains an existing
 native-render gap: current/earlier unified screenshots show Slug and debug
 geometry but omit solid PBR meshes, so capture structure is accepted but visual
 completeness is not yet claimed.

@@ -9,17 +9,25 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use poche_player_client::{
     AdvertisedAction, DeviceActionRequest, DeviceActionResult, DeviceClientError,
     DeviceCooperationRequest, DeviceCooperationResult, DeviceObservation, DeviceProfile,
     LoopbackDeviceAuthority,
 };
 use poche_protocol::{
-    CommandPayload, CorrelationId, DeviceId, EventId, GameActionWire, MemberProjection,
-    PROTOCOL_VERSION_V1, ProjectionEnvelope, ProjectionId, ProjectionPayload, RoomId, RoomPhase,
-    SIGNATURE_DOMAIN_V1, SemanticHash, SignatureAlgorithm, SignatureBytes, SignatureMetadata,
+    CaptureProviderAdvertisementWire, CommandPayload, CorrelationId, DeviceCertificateWire,
+    DeviceId, EventId, GameActionWire, MemberProjection, PROTOCOL_VERSION_V1, ProjectionEnvelope,
+    ProjectionId, ProjectionPayload, RoomId, RoomPhase, SIGNATURE_DOMAIN_V1, SemanticHash,
+    SignatureAlgorithm, SignatureBytes, SignatureMetadata,
+    canonical_capture_provider_advertisement_bytes, canonical_capture_request_bytes,
+    canonical_capture_response_bytes, canonical_device_certificate_bytes,
 };
-use poche_session::{GameTurn, SessionGame, SessionPhase, SessionState, project_viewer};
+use poche_session::{
+    CaptureAuthorizationContext, CaptureReplayWindow, GameTurn, SessionGame, SessionPhase,
+    SessionState, authorize_capture_request_with_provider, authorize_capture_response,
+    project_viewer,
+};
 
 use crate::{
     AuthorityDisposition, ClientPort, InProcessAuthority, InProcessTransport, LoopbackCodec,
@@ -138,8 +146,43 @@ fn game_action_identity(action: &GameActionWire) -> (String, String) {
 struct SharedLoopbackState<G: SessionGame, A> {
     authority: InProcessAuthority<G>,
     clients: BTreeMap<DeviceId, ScriptedClient>,
+    profiles: BTreeMap<DeviceId, DeviceProfile>,
+    capture_providers: BTreeMap<DeviceId, RegisteredCaptureProvider>,
+    capture_replays: CaptureReplayWindow,
+    cooperation_now_unix_ms: u64,
     action_source: A,
     next_projection: u64,
+}
+
+struct RegisteredCaptureProvider {
+    advertisement: CaptureProviderAdvertisementWire,
+    handler: Arc<Mutex<Box<dyn RuntimeDeviceCooperationHandler>>>,
+}
+
+impl Clone for RegisteredCaptureProvider {
+    fn clone(&self) -> Self {
+        Self {
+            advertisement: self.advertisement.clone(),
+            handler: Arc::clone(&self.handler),
+        }
+    }
+}
+
+/// Exact-target non-authoritative device handler used by the deterministic
+/// loopback adapter. The transport authorizes signed capture messages before
+/// invoking this port; handlers never receive the room reducer.
+pub trait RuntimeDeviceCooperationHandler: Send + 'static {
+    /// Answer one already-authorized exact-target request without access to
+    /// the authoritative room reducer.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable provider/transport failure; the adapter validates the
+    /// signed response again before delivering it to the requester.
+    fn cooperate(
+        &mut self,
+        request: DeviceCooperationRequest,
+    ) -> Result<DeviceCooperationResult, DeviceClientError>;
 }
 
 /// Cloneable device adapter whose clones share one actual in-process authority.
@@ -164,6 +207,10 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
             shared: Arc::new(Mutex::new(SharedLoopbackState {
                 authority: InProcessAuthority::new(state, InProcessTransport::new(codec)),
                 clients: BTreeMap::new(),
+                profiles: BTreeMap::new(),
+                capture_providers: BTreeMap::new(),
+                capture_replays: CaptureReplayWindow::new(256),
+                cooperation_now_unix_ms: 1,
                 action_source,
                 next_projection: 0,
             })),
@@ -191,6 +238,63 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
             .connect(profile.player_id.clone())
             .map_err(|_| DeviceClientError::TransportUnavailable)?;
         shared.clients.insert(profile.device_id.clone(), client);
+        shared
+            .profiles
+            .insert(profile.device_id.clone(), profile.clone());
+        Ok(())
+    }
+
+    /// Register an enrolled target device's signed capture advertisement and
+    /// non-authoritative provider handler.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unenrolled/mismatched device, invalid certificate or
+    /// advertisement signature, or duplicate provider registration.
+    pub fn register_capture_provider<H>(
+        &self,
+        profile: &DeviceProfile,
+        advertisement: CaptureProviderAdvertisementWire,
+        handler: H,
+    ) -> Result<(), DeviceClientError>
+    where
+        H: RuntimeDeviceCooperationHandler,
+    {
+        profile.validate()?;
+        verify_device_certificate(&profile.certificate)?;
+        verify_capture_advertisement(&advertisement, &profile.certificate)?;
+        let mut shared = self
+            .shared
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        if shared.profiles.get(&profile.device_id) != Some(profile)
+            || advertisement.provider_device_id != profile.device_id
+            || shared.capture_providers.contains_key(&profile.device_id)
+        {
+            return Err(DeviceClientError::AuthorizationDenied);
+        }
+        shared.capture_providers.insert(
+            profile.device_id.clone(),
+            RegisteredCaptureProvider {
+                advertisement,
+                handler: Arc::new(Mutex::new(Box::new(handler))),
+            },
+        );
+        Ok(())
+    }
+
+    /// Set deterministic wall-clock evidence used only by non-authoritative
+    /// device-cooperation expiry checks.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error if the shared adapter is unavailable.
+    pub fn set_cooperation_now_unix_ms(&self, now_unix_ms: u64) -> Result<(), DeviceClientError> {
+        let mut shared = self
+            .shared
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        shared.cooperation_now_unix_ms = now_unix_ms;
         Ok(())
     }
 
@@ -301,12 +405,202 @@ where
 
     fn cooperate(
         &mut self,
-        _profile: &DeviceProfile,
-        _target_device: &DeviceId,
-        _request: DeviceCooperationRequest,
+        profile: &DeviceProfile,
+        target_device: &DeviceId,
+        request: DeviceCooperationRequest,
     ) -> Result<DeviceCooperationResult, DeviceClientError> {
-        Err(DeviceClientError::TransportUnavailable)
+        let DeviceCooperationRequest::Capture(capture_request) = &request else {
+            return Err(DeviceClientError::TransportUnavailable);
+        };
+        let capture_request = capture_request.clone();
+        let (registered, context_snapshot, revision_before, history_before) = {
+            let mut shared = self
+                .shared
+                .lock()
+                .map_err(|_| DeviceClientError::TransportUnavailable)?;
+            let requester = shared
+                .profiles
+                .get(&profile.device_id)
+                .filter(|enrolled| *enrolled == profile)
+                .cloned()
+                .ok_or(DeviceClientError::AuthorizationDenied)?;
+            let provider = shared
+                .profiles
+                .get(target_device)
+                .cloned()
+                .ok_or(DeviceClientError::AuthorizationDenied)?;
+            let registered = shared
+                .capture_providers
+                .get(target_device)
+                .cloned()
+                .ok_or(DeviceClientError::TransportUnavailable)?;
+            verify_device_certificate(&requester.certificate)?;
+            verify_device_certificate(&provider.certificate)?;
+            verify_capture_request(&capture_request, &requester.certificate)?;
+            let membership_epoch = shared
+                .authority
+                .state
+                .member(&capture_request.player_id)
+                // The host-authoritative session generation is zero-based;
+                // replicated device certificates/cooperation wires are
+                // deliberately one-based so zero remains invalid on wire.
+                .and_then(|member| member.membership_epoch.checked_add(1))
+                .ok_or(DeviceClientError::AuthorizationDenied)?;
+            let snapshot = CaptureContextSnapshot {
+                room_id: shared.authority.state.room_id.clone(),
+                membership_epoch,
+                current_revision: shared.authority.state.revision,
+                now_unix_ms: shared.cooperation_now_unix_ms,
+                requester_certificate: requester.certificate,
+                provider_certificate: provider.certificate,
+            };
+            let context = snapshot.context();
+            authorize_capture_request_with_provider(
+                &registered.advertisement,
+                &capture_request,
+                &context,
+            )
+            .map_err(|_| DeviceClientError::AuthorizationDenied)?;
+            shared
+                .capture_replays
+                .authorize_once(&capture_request, &context)
+                .map_err(|_| DeviceClientError::AuthorizationDenied)?;
+            (
+                registered,
+                snapshot,
+                shared.authority.state.revision,
+                shared.authority.state.public_history.len(),
+            )
+        };
+
+        let result = registered
+            .handler
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?
+            .cooperate(request)?;
+        let DeviceCooperationResult::Capture(response) = &result;
+        verify_capture_response(response, &context_snapshot.provider_certificate)?;
+        authorize_capture_response(&capture_request, response, &context_snapshot.context())
+            .map_err(|_| DeviceClientError::ProtocolViolation)?;
+        let shared = self
+            .shared
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        if shared.authority.state.revision != revision_before
+            || shared.authority.state.public_history.len() != history_before
+        {
+            return Err(DeviceClientError::ProtocolViolation);
+        }
+        Ok(result)
     }
+}
+
+struct CaptureContextSnapshot {
+    room_id: RoomId,
+    membership_epoch: u64,
+    current_revision: u64,
+    now_unix_ms: u64,
+    requester_certificate: DeviceCertificateWire,
+    provider_certificate: DeviceCertificateWire,
+}
+
+impl CaptureContextSnapshot {
+    const fn context(&self) -> CaptureAuthorizationContext<'_> {
+        CaptureAuthorizationContext {
+            room_id: &self.room_id,
+            membership_epoch: self.membership_epoch,
+            current_revision: self.current_revision,
+            now_unix_ms: self.now_unix_ms,
+            requester_certificate: &self.requester_certificate,
+            provider_certificate: &self.provider_certificate,
+            requester_revoked: false,
+            provider_revoked: false,
+        }
+    }
+}
+
+fn verify_device_certificate(certificate: &DeviceCertificateWire) -> Result<(), DeviceClientError> {
+    let bytes = canonical_device_certificate_bytes(&certificate.unsigned())
+        .map_err(|_| DeviceClientError::InvalidProfile)?;
+    verify_ed25519(
+        certificate.player_id.as_str(),
+        certificate.signature.signature.as_str(),
+        &bytes,
+    )
+    .then_some(())
+    .ok_or(DeviceClientError::InvalidProfile)
+}
+
+fn verify_capture_advertisement(
+    advertisement: &CaptureProviderAdvertisementWire,
+    certificate: &DeviceCertificateWire,
+) -> Result<(), DeviceClientError> {
+    let bytes = canonical_capture_provider_advertisement_bytes(&advertisement.unsigned())
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    verify_ed25519(
+        &certificate.device_signing_public_key,
+        advertisement.signature.signature.as_str(),
+        &bytes,
+    )
+    .then_some(())
+    .ok_or(DeviceClientError::AuthorizationDenied)
+}
+
+fn verify_capture_request(
+    request: &poche_protocol::CaptureRequestWire,
+    certificate: &DeviceCertificateWire,
+) -> Result<(), DeviceClientError> {
+    let bytes = canonical_capture_request_bytes(&request.unsigned())
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    verify_ed25519(
+        &certificate.device_signing_public_key,
+        request.signature.signature.as_str(),
+        &bytes,
+    )
+    .then_some(())
+    .ok_or(DeviceClientError::AuthorizationDenied)
+}
+
+fn verify_capture_response(
+    response: &poche_protocol::CaptureResponseWire,
+    certificate: &DeviceCertificateWire,
+) -> Result<(), DeviceClientError> {
+    let bytes = canonical_capture_response_bytes(&response.unsigned())
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    verify_ed25519(
+        &certificate.device_signing_public_key,
+        response.signature.signature.as_str(),
+        &bytes,
+    )
+    .then_some(())
+    .ok_or(DeviceClientError::ProtocolViolation)
+}
+
+fn verify_ed25519(public_key: &str, signature: &str, bytes: &[u8]) -> bool {
+    let Some(public_key) = decode_hex::<32>(public_key) else {
+        return false;
+    };
+    let Some(signature) = decode_hex::<64>(signature) else {
+        return false;
+    };
+    let Ok(verifying_key) = VerifyingKey::from_bytes(&public_key) else {
+        return false;
+    };
+    verifying_key
+        .verify(bytes, &Signature::from_bytes(&signature))
+        .is_ok()
+}
+
+fn decode_hex<const BYTES: usize>(encoded: &str) -> Option<[u8; BYTES]> {
+    if encoded.len() != BYTES * 2 {
+        return None;
+    }
+    let mut decoded = [0_u8; BYTES];
+    for (index, byte) in decoded.iter_mut().enumerate() {
+        let offset = index * 2;
+        *byte = u8::from_str_radix(encoded.get(offset..offset + 2)?, 16).ok()?;
+    }
+    Some(decoded)
 }
 
 fn observation<G, A>(
@@ -454,11 +748,20 @@ fn denial_code(reason: poche_protocol::DenyReason) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use ed25519_dalek::{Signer, SigningKey};
     use poche_player_client::{DeviceProfile, LoopbackDeviceTransport, PlayerDeviceClient};
     use poche_protocol::{
-        CertificateId, CommandId, CommandPayload, DeviceCapabilityWire, DeviceCustodyWire,
-        PrincipalId, REPLICATION_SCHEMA_VERSION_V1, REPLICATION_SIGNATURE_DOMAIN_V1,
-        SignatureIntent, UnsignedDeviceCertificateWire,
+        CaptureArtifactDescriptorWire, CaptureArtifactId, CaptureConsentPolicyWire,
+        CapturePrivacyWire, CaptureProviderKindWire, CaptureRepresentationWire, CaptureRequestId,
+        CaptureResponseOutcomeWire, CaptureTransferDescriptorWire, CaptureTransferId,
+        CaptureViewportWire, CertificateId, CommandId, CommandPayload,
+        DEVICE_COOPERATION_SCHEMA_VERSION_V1, DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+        DeviceCapabilityWire, DeviceCustodyWire, DeviceSignatureIntentWire, PrincipalId,
+        REPLICATION_SCHEMA_VERSION_V1, REPLICATION_SIGNATURE_DOMAIN_V1, SignatureIntent,
+        UnsignedCaptureProviderAdvertisementWire, UnsignedCaptureRequestWire,
+        UnsignedCaptureResponseWire, UnsignedDeviceCertificateWire, capture_request_hash,
     };
 
     use super::*;
@@ -518,6 +821,125 @@ mod tests {
         }
     }
 
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().fold(String::new(), |mut output, byte| {
+            use std::fmt::Write as _;
+            write!(output, "{byte:02x}").unwrap();
+            output
+        })
+    }
+
+    fn wire_signature(bytes: &[u8], key: &SigningKey) -> SignatureBytes {
+        SignatureBytes::new(hex(&key.sign(bytes).to_bytes())).unwrap()
+    }
+
+    fn signed_profile(
+        label: &str,
+        root_key: &SigningKey,
+        device_key: &SigningKey,
+        capabilities: Vec<DeviceCapabilityWire>,
+    ) -> DeviceProfile {
+        let player_public = hex(&root_key.verifying_key().to_bytes());
+        let device_public = hex(&device_key.verifying_key().to_bytes());
+        let player_id = PrincipalId::new(player_public).unwrap();
+        let device_id = DeviceId::new(device_public.clone()).unwrap();
+        let unsigned = UnsignedDeviceCertificateWire {
+            schema_version: REPLICATION_SCHEMA_VERSION_V1,
+            certificate_id: CertificateId::new(format!("signed-{label}")).unwrap(),
+            player_id: player_id.clone(),
+            device_id: device_id.clone(),
+            device_signing_public_key: device_public,
+            sequence: 1,
+            valid_from_membership_epoch: 1,
+            valid_through_membership_epoch: None,
+            capabilities,
+            custody: DeviceCustodyWire::NativeLocal,
+            signature_intent: SignatureIntent {
+                domain_version: REPLICATION_SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: player_id.clone(),
+            },
+        };
+        let signature = wire_signature(
+            &canonical_device_certificate_bytes(&unsigned).unwrap(),
+            root_key,
+        );
+        let certificate = unsigned.attach_signature(signature).unwrap();
+        DeviceProfile {
+            schema_version: DeviceProfile::SCHEMA_VERSION_V1,
+            label: label.to_owned(),
+            player_id,
+            device_id,
+            certificate,
+            signing_key_handle: format!("test-protected:{label}"),
+        }
+    }
+
+    struct AcceptingCaptureHandler {
+        key: SigningKey,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl RuntimeDeviceCooperationHandler for AcceptingCaptureHandler {
+        fn cooperate(
+            &mut self,
+            request: DeviceCooperationRequest,
+        ) -> Result<DeviceCooperationResult, DeviceClientError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let DeviceCooperationRequest::Capture(request) = request else {
+                return Err(DeviceClientError::ProtocolViolation);
+            };
+            let unsigned = UnsignedCaptureResponseWire {
+                schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+                request_id: request.request_id.clone(),
+                request_hash: capture_request_hash(&request.unsigned())
+                    .map_err(|_| DeviceClientError::ProtocolViolation)?,
+                room_id: request.room_id.clone(),
+                membership_epoch: request.membership_epoch,
+                player_id: request.player_id.clone(),
+                requester_device_id: request.requester_device_id.clone(),
+                provider_device_id: request.provider_device_id.clone(),
+                outcome: CaptureResponseOutcomeWire::Accepted {
+                    artifacts: vec![CaptureArtifactDescriptorWire {
+                        artifact_id: CaptureArtifactId::new("runtime-synthetic-png")
+                            .map_err(|_| DeviceClientError::ProtocolViolation)?,
+                        representation: CaptureRepresentationWire::Png,
+                        provider_kind: CaptureProviderKindWire::NativeBevy,
+                        captured_revision: request.observed_revision,
+                        projection_hash: SemanticHash([7; 32]),
+                        scene_hash: Some(SemanticHash([8; 32])),
+                        viewport: Some(CaptureViewportWire {
+                            width_pixels: 1,
+                            height_pixels: 1,
+                        }),
+                        transfer: CaptureTransferDescriptorWire {
+                            transfer_id: CaptureTransferId::new("runtime-synthetic-transfer")
+                                .map_err(|_| DeviceClientError::ProtocolViolation)?,
+                            byte_length: 1,
+                            chunk_bytes: 1,
+                            chunk_count: 1,
+                            content_hash: SemanticHash(*blake3::hash(&[0]).as_bytes()),
+                        },
+                    }],
+                },
+                signature_intent: DeviceSignatureIntentWire {
+                    domain_version: DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+                    algorithm: SignatureAlgorithm::Ed25519,
+                    key_id: request.provider_device_id,
+                },
+            };
+            let signature = wire_signature(
+                &canonical_capture_response_bytes(&unsigned)
+                    .map_err(|_| DeviceClientError::ProtocolViolation)?,
+                &self.key,
+            );
+            let response = unsigned
+                .attach_signature(signature)
+                .map_err(|_| DeviceClientError::ProtocolViolation)?;
+            Ok(DeviceCooperationResult::Capture(response))
+        }
+    }
+
     #[test]
     fn shared_client_invokes_the_real_reducer_over_loopback() {
         let state = SessionState::pending(
@@ -573,5 +995,154 @@ mod tests {
                 .current_revision,
             1
         );
+    }
+
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the acceptance test keeps certificate, advertisement, request, response, replay, and revision evidence together"
+    )]
+    fn exact_target_capture_is_signed_replay_safe_and_non_authoritative() {
+        let root_key = SigningKey::from_bytes(&[9; 32]);
+        let requester_key = SigningKey::from_bytes(&[10; 32]);
+        let provider_key = SigningKey::from_bytes(&[11; 32]);
+        let requester = signed_profile(
+            "capture-requester",
+            &root_key,
+            &requester_key,
+            vec![
+                DeviceCapabilityWire::Propose,
+                DeviceCapabilityWire::RequestCapture,
+            ],
+        );
+        let provider = signed_profile(
+            "capture-provider",
+            &root_key,
+            &provider_key,
+            vec![
+                DeviceCapabilityWire::Propose,
+                DeviceCapabilityWire::ProvideCapture,
+            ],
+        );
+        let room = RoomId::new("signed-capture-room").unwrap();
+        let state = SessionState::pending(
+            room.clone(),
+            PrincipalId::new("clock").unwrap(),
+            PrincipalId::new("game").unwrap(),
+        );
+        let adapter = RuntimeLoopbackDeviceAdapter::new(
+            state,
+            CreateRoomActions,
+            LoopbackCodec::CanonicalNdjson,
+        );
+        adapter.enroll(&requester).unwrap();
+        adapter.enroll(&provider).unwrap();
+        adapter.set_cooperation_now_unix_ms(100).unwrap();
+
+        let advertisement_unsigned = UnsignedCaptureProviderAdvertisementWire {
+            schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+            room_id: room.clone(),
+            membership_epoch: 1,
+            player_id: provider.player_id.clone(),
+            provider_device_id: provider.device_id.clone(),
+            provider_kind: CaptureProviderKindWire::NativeBevy,
+            representations: vec![CaptureRepresentationWire::Png],
+            privacy_scopes: vec![CapturePrivacyWire::ExactPlayerView],
+            consent_policy: CaptureConsentPolicyWire::HarnessOnly,
+            max_total_bytes: 8 * 1024 * 1024,
+            advertisement_sequence: 1,
+            expires_at_unix_ms: 1_000,
+            signature_intent: DeviceSignatureIntentWire {
+                domain_version: DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: provider.device_id.clone(),
+            },
+        };
+        let advertisement_signature = wire_signature(
+            &canonical_capture_provider_advertisement_bytes(&advertisement_unsigned).unwrap(),
+            &provider_key,
+        );
+        let advertisement = advertisement_unsigned
+            .attach_signature(advertisement_signature)
+            .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        adapter
+            .register_capture_provider(
+                &provider,
+                advertisement,
+                AcceptingCaptureHandler {
+                    key: provider_key,
+                    calls: Arc::clone(&calls),
+                },
+            )
+            .unwrap();
+
+        let mut requester_client = PlayerDeviceClient::new(
+            requester.clone(),
+            LoopbackDeviceTransport::new(adapter.clone()),
+        )
+        .unwrap();
+        let observed = requester_client.observe(&room).unwrap();
+        requester_client
+            .invoke(
+                &observed,
+                "create-room",
+                CommandId::new("signed-room-create").unwrap(),
+            )
+            .unwrap();
+        let observed = requester_client.observe(&room).unwrap();
+        let request_unsigned = UnsignedCaptureRequestWire {
+            schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+            request_id: CaptureRequestId::new("signed-capture-request").unwrap(),
+            room_id: room,
+            membership_epoch: 1,
+            player_id: requester.player_id.clone(),
+            requester_device_id: requester.device_id.clone(),
+            provider_device_id: provider.device_id.clone(),
+            observed_revision: observed.projection.current_revision,
+            expires_at_unix_ms: 1_000,
+            replay_nonce: "signed-capture-nonce".to_owned(),
+            privacy: CapturePrivacyWire::ExactPlayerView,
+            provider_kind: CaptureProviderKindWire::NativeBevy,
+            representations: vec![CaptureRepresentationWire::Png],
+            viewport: None,
+            label: "signed capture".to_owned(),
+            max_total_bytes: 8 * 1024 * 1024,
+            signature_intent: DeviceSignatureIntentWire {
+                domain_version: DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: requester.device_id.clone(),
+            },
+        };
+        let request_signature = wire_signature(
+            &canonical_capture_request_bytes(&request_unsigned).unwrap(),
+            &requester_key,
+        );
+        let request = request_unsigned
+            .attach_signature(request_signature)
+            .unwrap();
+        let revision_before = adapter.revision();
+        let result = requester_client
+            .cooperate(
+                &provider.device_id,
+                DeviceCooperationRequest::Capture(request.clone()),
+            )
+            .unwrap();
+        let DeviceCooperationResult::Capture(response) = result;
+        assert!(matches!(
+            response.outcome,
+            CaptureResponseOutcomeWire::Accepted { ref artifacts }
+                if artifacts.len() == 1 && artifacts[0].captured_revision == 1
+        ));
+        assert_eq!(adapter.revision(), revision_before);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            requester_client.cooperate(
+                &provider.device_id,
+                DeviceCooperationRequest::Capture(request)
+            ),
+            Err(DeviceClientError::AuthorizationDenied)
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }
