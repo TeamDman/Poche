@@ -62,6 +62,7 @@ pub struct PuppetArtifactsArgs {
 #[repr(u8)]
 pub enum PuppetArtifactsCommand {
     Path,
+    Open,
 }
 
 impl PuppetArgs {
@@ -80,10 +81,10 @@ impl PuppetArgs {
             PuppetCommand::Run { surface, .. }
                 if surface
                     .as_deref()
-                    .is_some_and(|surface| !matches!(surface, "headless" | "native" | "web")) =>
+                    .is_some_and(|surface| !valid_surface_list(surface)) =>
             {
                 Err(ParseError::new(
-                    "--surface requires headless, native, or web",
+                    "--surface requires a comma-separated selection of headless, web, or native",
                 ))
             }
             PuppetCommand::Run {
@@ -118,7 +119,7 @@ impl PuppetArgs {
     ///
     /// Returns an unknown-scenario, device, cancellation, evidence, encoding,
     /// or stdout failure.
-    pub fn invoke(self, format: OutputFormat, cancelled: impl FnMut() -> bool) -> Result<bool> {
+    pub fn invoke(self, format: OutputFormat, mut cancelled: impl FnMut() -> bool) -> Result<bool> {
         match self.command {
             PuppetCommand::List => {
                 emit_serializable(
@@ -158,14 +159,10 @@ impl PuppetArgs {
                 output_dir,
                 show_window,
             } => {
+                let surfaces = surface_list(surface.as_deref());
                 let mut options = PuppetRunOptions {
                     scenario,
-                    surface: match surface.as_deref() {
-                        Some("native") => PuppetSurface::Native,
-                        Some("web") => PuppetSurface::Web,
-                        None | Some("headless") => PuppetSurface::Headless,
-                        Some(_) => unreachable!("validated surface"),
-                    },
+                    surface: surfaces[0],
                     transport: match transport.as_deref() {
                         Some("loopback-ndjson") => PuppetTransport::LoopbackNdjson,
                         None | Some("loopback-typed") => PuppetTransport::LoopbackTyped,
@@ -181,37 +178,151 @@ impl PuppetArgs {
                 if let Some(output_dir) = output_dir {
                     options.artifact_root = PathBuf::from(output_dir);
                 }
-                let report =
-                    run_with_cancel(&options, cancelled).map_err(|error| eyre::eyre!(error))?;
-                let summary = PuppetRunSummary::from(&report);
-                emit_serializable(
-                    &summary,
-                    &format!(
-                        "scenario: {}\nstatus: {}\nsurface: {}\nsteps: {}\ncaptures: {}\nfinal revision: {}\nfinal scores: {:?}\nartifacts: {}",
-                        report.scenario,
-                        report.status,
-                        report.surface,
-                        report.step_count,
-                        report.captures.len(),
-                        report.final_revision,
-                        report.final_scores,
-                        report.artifact_directory
-                    ),
-                    format,
-                )?;
+                let mut reports = Vec::with_capacity(surfaces.len());
+                for surface in surfaces {
+                    options.surface = surface;
+                    reports.push(
+                        run_with_cancel(&options, &mut cancelled)
+                            .map_err(|error| eyre::eyre!(error))?,
+                    );
+                }
+                if reports.len() == 1 {
+                    emit_run(&reports[0], format)?;
+                } else {
+                    emit_suite(&reports, &options.artifact_root, format)?;
+                }
             }
-            PuppetCommand::Artifacts(PuppetArtifactsArgs {
-                command: PuppetArtifactsCommand::Path,
-            }) => {
-                let path = ArtifactPathOutput {
-                    schema: "poche.puppet.artifact-root.v1",
-                    path: default_artifact_root().to_string_lossy().into_owned(),
-                };
-                emit_serializable(&path, &path.path, format)?;
-            }
+            PuppetCommand::Artifacts(arguments) => invoke_artifacts(&arguments.command, format)?,
         }
         Ok(true)
     }
+}
+
+fn valid_surface_list(value: &str) -> bool {
+    let mut seen = std::collections::BTreeSet::new();
+    !value.is_empty()
+        && value
+            .split(',')
+            .all(|surface| matches!(surface, "headless" | "native" | "web") && seen.insert(surface))
+}
+
+fn surface_list(value: Option<&str>) -> Vec<PuppetSurface> {
+    value
+        .unwrap_or("headless")
+        .split(',')
+        .map(|surface| match surface {
+            "native" => PuppetSurface::Native,
+            "web" => PuppetSurface::Web,
+            "headless" => PuppetSurface::Headless,
+            _ => unreachable!("validated surface"),
+        })
+        .collect()
+}
+
+fn emit_run(report: &poche_puppet::PuppetRunReport, format: OutputFormat) -> Result<()> {
+    let summary = PuppetRunSummary::from(report);
+    emit_serializable(
+        &summary,
+        &format!(
+            "scenario: {}\nstatus: {}\nsurface: {}\nsteps: {}\ncaptures: {}\nfinal revision: {}\nfinal scores: {:?}\nartifacts: {}",
+            report.scenario,
+            report.status,
+            report.surface,
+            report.step_count,
+            report.captures.len(),
+            report.final_revision,
+            report.final_scores,
+            report.artifact_directory
+        ),
+        format,
+    )
+}
+
+fn emit_suite(
+    reports: &[poche_puppet::PuppetRunReport],
+    artifact_root: &std::path::Path,
+    format: OutputFormat,
+) -> Result<()> {
+    let summaries = reports
+        .iter()
+        .map(PuppetRunSummary::from)
+        .collect::<Vec<_>>();
+    let suite = PuppetRunSuiteSummary {
+        schema: "poche.puppet.run-suite-summary.v1",
+        status: "complete",
+        surfaces: summaries,
+        artifact_root: artifact_root.to_string_lossy().into_owned(),
+        contact_sheet: artifact_root
+            .join("index.html")
+            .to_string_lossy()
+            .into_owned(),
+        catalog: artifact_root
+            .join("catalog.json")
+            .to_string_lossy()
+            .into_owned(),
+    };
+    let text = format!(
+        "status: complete\nsurfaces: {}\nartifacts: {}\ncontact sheet: {}",
+        reports
+            .iter()
+            .map(|report| report.surface.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+        suite.artifact_root,
+        suite.contact_sheet
+    );
+    emit_serializable(&suite, &text, format)
+}
+
+fn invoke_artifacts(command: &PuppetArtifactsCommand, format: OutputFormat) -> Result<()> {
+    match command {
+        PuppetArtifactsCommand::Path => {
+            let path = ArtifactPathOutput {
+                schema: "poche.puppet.artifact-root.v1",
+                path: default_artifact_root().to_string_lossy().into_owned(),
+            };
+            emit_serializable(&path, &path.path, format)
+        }
+        PuppetArtifactsCommand::Open => {
+            let root = default_artifact_root();
+            let target = if root.join("index.html").is_file() {
+                root.join("index.html")
+            } else {
+                root
+            };
+            open_artifact_target(&target)?;
+            let opened = ArtifactPathOutput {
+                schema: "poche.puppet.artifact-open.v1",
+                path: target.to_string_lossy().into_owned(),
+            };
+            emit_serializable(&opened, &opened.path, format)
+        }
+    }
+}
+
+fn open_artifact_target(path: &std::path::Path) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("explorer.exe");
+        command.arg(path);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg(path);
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(path);
+        command
+    };
+    command
+        .spawn()
+        .wrap_err("failed to open the puppet artifact catalog")?;
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -239,6 +350,16 @@ struct PuppetRunSummary<'a> {
     public_history_hash: &'a str,
     artifact_directory: &'a str,
     evidence_boundary: &'a str,
+}
+
+#[derive(Serialize)]
+struct PuppetRunSuiteSummary<'a> {
+    schema: &'static str,
+    status: &'static str,
+    surfaces: Vec<PuppetRunSummary<'a>>,
+    artifact_root: String,
+    contact_sheet: String,
+    catalog: String,
 }
 
 impl<'a> From<&'a poche_puppet::PuppetRunReport> for PuppetRunSummary<'a> {

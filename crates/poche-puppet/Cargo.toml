@@ -1,5 +1,6 @@
 [package]
 name = "poche-puppet"
+build = "build.rs"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

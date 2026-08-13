@@ -1000,9 +1000,30 @@ cargo test --locked -p poche-puppet --offline --test browser_full_game -- --igno
 capture contract with screenshot/DOM/a11y/console/network/layout evidence;
 unsupported production capture fails explicitly.
 
-### [ ] 4.4 Emit one verified manifest and contact sheet across surfaces
+### [x] 4.4 Emit one verified manifest and contact sheet across surfaces
 
-**Completion notes:** Not started.
+**Completion notes:** Complete. Every run now publishes an atomically staged
+v3 manifest, `run.json`, `steps.ndjson`, and a responsive `index.html`. The
+manifest records build revision/worktree state, scenario/surface/status/final
+revision/history hash/evidence boundary, every capture's signed requester and
+target, requested/captured revision, projection/scene hash, provider,
+representations/qualification, viewport/framebuffer/scale/camera presence,
+windowless state, transfer bytes/chunks, preview/structural paths, and every
+file's media type, size, and BLAKE3 hash. Safe relative paths, uniqueness,
+listed-file hashes, and capture attachments are rechecked before a run can enter
+the root catalog.
+
+The Figue CLI accepts a unique comma-separated surface set. One real
+`headless,web,native` NDJSON invocation (seed 45) completed all three surfaces
+at revision 159 with the same final scores/history hash, generated twelve
+graphical captures, and regenerated `target/poche-puppets/catalog.json` plus a
+cross-surface `index.html`. Headless Edge visual QA confirmed the contact sheet
+clearly distinguishes surface qualifications and links PNG, capture manifests,
+HTML, accessibility, and layout evidence. `puppet artifacts path` locates the
+root and `puppet artifacts open` opens the verified sheet (or root before one
+exists). Older manifest schemas are skipped rather than defaulted into current
+evidence. Formal checker evidence is explicitly release/developer evidence
+linked by repository revision, not claimed as checked-now per capture.
 
 **Work:**
 
@@ -1025,6 +1046,7 @@ unsupported production capture fails explicitly.
 ```powershell
 target\debug\poche.exe puppet run two-player-full-round --surface headless,web,native --seed 1
 target\debug\poche.exe puppet artifacts path
+target\debug\poche.exe puppet artifacts open
 cargo test --locked -p poche-capture -p poche-puppet --offline manifest
 ```
 

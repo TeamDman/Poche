@@ -41,6 +41,9 @@ fn certified_devices_complete_and_witness_the_full_game() {
     assert!(artifact_directory.join("run.json").is_file());
     assert!(artifact_directory.join("steps.ndjson").is_file());
     assert!(artifact_directory.join("manifest.json").is_file());
+    assert!(artifact_directory.join("index.html").is_file());
+    assert!(temporary.path().join("catalog.json").is_file());
+    assert!(temporary.path().join("index.html").is_file());
     let manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(artifact_directory.join("manifest.json")).expect("manifest bytes"),
     )
@@ -54,6 +57,17 @@ fn certified_devices_complete_and_witness_the_full_game() {
             Some(blake3::hash(&bytes).to_hex().as_str())
         );
     }
+    assert_eq!(
+        manifest["executable_revision"].as_str().map(str::is_empty),
+        Some(false)
+    );
+    assert_eq!(manifest["contact_sheet"], "index.html");
+    let catalog: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(temporary.path().join("catalog.json")).expect("catalog bytes"),
+    )
+    .expect("catalog JSON");
+    assert_eq!(catalog["generated_from_verified_manifests"], true);
+    assert_eq!(catalog["runs"].as_array().map(Vec::len), Some(1));
 }
 
 #[test]

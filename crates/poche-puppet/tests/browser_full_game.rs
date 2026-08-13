@@ -70,6 +70,8 @@ fn unified_web_surface_authorizes_transfers_and_persists_every_representation() 
             .evidence_boundary
             .contains("parallel real-browser UI")
     );
+    assert!(temporary.path().join("catalog.json").is_file());
+    assert!(temporary.path().join("index.html").is_file());
     for capture in report.captures {
         assert_eq!(capture.status, "complete");
         assert_eq!(capture.provider_kind, "browser_harness");
