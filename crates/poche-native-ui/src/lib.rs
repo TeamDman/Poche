@@ -21,12 +21,18 @@ use std::{
 };
 
 use bevy::{
+    app::ScheduleRunnerPlugin,
+    asset::RenderAssetUsages,
+    camera::RenderTarget,
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
+    image::Image,
     input::mouse::AccumulatedMouseMotion,
     log::LogPlugin,
     prelude::*,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
     render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk},
-    window::{CursorIcon, PrimaryWindow, SystemCursorIcon, WindowPlugin},
+    window::{CursorIcon, ExitCondition, PrimaryWindow, SystemCursorIcon, WindowPlugin},
+    winit::WinitPlugin,
 };
 use poche_capture::{
     CaptureCameraMetadata, CapturePipeline, CaptureProvider, CaptureProviderPoll,
@@ -644,7 +650,9 @@ pub struct NativeUiLaunchOptions {
     pub acceptance_report: Option<PathBuf>,
     pub exit_after_seconds: Option<f64>,
     pub debug_overlay: bool,
-    /// Keep the native surface hidden for automation/capture workers.
+    /// Render automation/capture workers to an image without creating an OS
+    /// window. This is intentionally separate from ordinary interactive
+    /// desktop launch, which remains windowed.
     pub hidden_window: bool,
     /// Optional exact-target provider handle owned by this graphical device.
     pub capture_provider: Option<NativeCaptureProvider>,
@@ -652,6 +660,74 @@ pub struct NativeUiLaunchOptions {
     pub capture_context: Option<NativeCaptureContext>,
     /// The caller already installed the process tracing subscriber.
     pub external_tracing: bool,
+}
+
+const AUTOMATION_RENDER_WIDTH: u32 = 1280;
+const AUTOMATION_RENDER_HEIGHT: u32 = 800;
+
+/// Render destination selected before Bevy starts. Automation owns an image
+/// target; interactive play owns the primary window swapchain.
+#[derive(Clone, Debug, Resource)]
+enum NativeRenderSurface {
+    Windowed,
+    Windowless {
+        width: u32,
+        height: u32,
+        target: Option<Handle<Image>>,
+    },
+}
+
+impl NativeRenderSurface {
+    const fn from_automation(hidden_window: bool) -> Self {
+        if hidden_window {
+            Self::Windowless {
+                width: AUTOMATION_RENDER_WIDTH,
+                height: AUTOMATION_RENDER_HEIGHT,
+                target: None,
+            }
+        } else {
+            Self::Windowed
+        }
+    }
+
+    fn render_target(&self) -> Option<RenderTarget> {
+        match self {
+            Self::Windowless {
+                target: Some(target),
+                ..
+            } => Some(RenderTarget::Image(target.clone().into())),
+            Self::Windowed | Self::Windowless { target: None, .. } => None,
+        }
+    }
+
+    fn screenshot(&self) -> Option<Screenshot> {
+        match self {
+            Self::Windowed => Some(Screenshot::primary_window()),
+            Self::Windowless {
+                target: Some(target),
+                ..
+            } => Some(Screenshot::image(target.clone())),
+            Self::Windowless { target: None, .. } => None,
+        }
+    }
+
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "validated positive window scale is intentionally quantized into integer capture metadata"
+    )]
+    fn extent(&self, window: Option<&Window>) -> Option<(u32, u32, u32)> {
+        match self {
+            Self::Windowed => window.map(|window| {
+                (
+                    window.resolution.physical_width(),
+                    window.resolution.physical_height(),
+                    (window.resolution.scale_factor() * 1_000.0).round() as u32,
+                )
+            }),
+            Self::Windowless { width, height, .. } => Some((*width, *height, 1_000)),
+        }
+    }
 }
 
 /// Run the real Bevy window with arguments from the current process.
@@ -729,6 +805,10 @@ pub fn run_live(
     run_with_live_device(options, Some(live_device))
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the Bevy application contract is kept together so windowed and windowless plugin selection cannot drift"
+)]
 fn run_with_live_device(
     options: NativeUiLaunchOptions,
     live_device: Option<NativeLiveDevice>,
@@ -778,30 +858,52 @@ fn run_with_live_device(
     let debug_overlay = DebugOverlay {
         enabled: acceptance.debug_overlay,
     };
-    let default_plugins = DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Poche — canonical spatial mirror".to_owned(),
-            resolution: (1280, 800).into(),
-            visible: !hidden_window,
-            focused: !hidden_window,
+    let render_surface = NativeRenderSurface::from_automation(hidden_window);
+    let window_plugin = if hidden_window {
+        WindowPlugin {
+            primary_window: None,
+            exit_condition: ExitCondition::DontExit,
             ..default()
-        }),
-        ..default()
-    });
+        }
+    } else {
+        WindowPlugin {
+            primary_window: Some(Window {
+                title: "Poche — canonical spatial mirror".to_owned(),
+                resolution: (1280, 800).into(),
+                ..default()
+            }),
+            ..default()
+        }
+    };
+    let mut default_plugins = DefaultPlugins.set(window_plugin);
+    if hidden_window {
+        // Winit is the OS-window/event-loop integration. Windowless workers
+        // own a GPU image target and a bounded schedule runner instead.
+        default_plugins = default_plugins.disable::<WinitPlugin>();
+    }
     let mut app = App::new();
     if external_tracing {
         app.add_plugins(default_plugins.disable::<LogPlugin>());
     } else {
         app.add_plugins(default_plugins);
     }
+    if hidden_window {
+        app.add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
+            1.0 / 60.0,
+        )));
+    }
     app.insert_resource(controller)
         .insert_resource(debug_overlay)
+        .insert_resource(render_surface)
         .insert_resource(acceptance)
         .init_resource::<TweenClock>()
         .init_resource::<CameraRig>()
         .init_resource::<LaunchClock>()
         .add_plugins((MeshPickingPlugin, FrameTimeDiagnosticsPlugin::default()))
-        .add_systems(Startup, setup_native_scene)
+        .add_systems(
+            Startup,
+            (setup_native_render_target, setup_native_scene).chain(),
+        )
         .add_systems(
             Update,
             (
@@ -936,18 +1038,48 @@ pub fn run_fixture_capture_acceptance(
         .map_err(|error| error.to_string())
 }
 
+fn setup_native_render_target(
+    mut images: ResMut<Assets<Image>>,
+    mut surface: ResMut<NativeRenderSurface>,
+) {
+    let NativeRenderSurface::Windowless {
+        width,
+        height,
+        target,
+    } = surface.as_mut()
+    else {
+        return;
+    };
+    let mut image = Image::new_uninit(
+        Extent3d {
+            width: *width,
+            height: *height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC;
+    *target = Some(images.add(image));
+}
+
 #[allow(clippy::too_many_lines)]
 fn setup_native_scene(
     mut commands: Commands,
     controller: Res<NativeController>,
+    surface: Res<NativeRenderSurface>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    commands.spawn((
+    let mut camera = commands.spawn((
         Camera3d::default(),
         CameraView::home().transform(),
         TabletopCamera,
     ));
+    if let Some(target) = surface.render_target() {
+        camera.insert(target);
+    }
     commands.spawn((
         DirectionalLight {
             illuminance: 8_000.0,
@@ -1378,8 +1510,11 @@ fn update_status(
     controller: Res<NativeController>,
     debug: Res<DebugOverlay>,
     diagnostics: Res<DiagnosticsStore>,
-    mut window: Single<&mut Window, With<PrimaryWindow>>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
+    let Ok(mut window) = windows.single_mut() else {
+        return;
+    };
     let fps = diagnostics
         .get(&FrameTimeDiagnosticsPlugin::FPS)
         .and_then(bevy::diagnostic::Diagnostic::smoothed)
@@ -1405,13 +1540,18 @@ fn update_status(
     clippy::cast_sign_loss,
     reason = "validated camera and window values are intentionally quantized into bounded integer evidence metadata"
 )]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Bevy injects these independent renderer resources as system parameters"
+)]
 fn native_capture_driver(
     mut commands: Commands,
     provider: Option<Res<NativeCaptureProvider>>,
     context: Option<Res<NativeCaptureContext>>,
     controller: Res<NativeController>,
     camera: Res<CameraRig>,
-    window: Single<&Window, With<PrimaryWindow>>,
+    surface: Res<NativeRenderSurface>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     mut provider_started: Local<Option<Instant>>,
 ) {
     let (Some(provider), Some(context)) = (provider, context) else {
@@ -1431,9 +1571,17 @@ fn native_capture_driver(
         let _ = provider.deny(&request.request_id, CaptureDenialReasonWire::StaleRevision);
         return;
     }
+    let window = windows.single().ok();
+    let Some((width_pixels, height_pixels, scale_milli)) = surface.extent(window) else {
+        let _ = provider.deny(
+            &request.request_id,
+            CaptureDenialReasonWire::ProviderUnavailable,
+        );
+        return;
+    };
     let viewport = poche_protocol::CaptureViewportWire {
-        width_pixels: window.resolution.physical_width(),
-        height_pixels: window.resolution.physical_height(),
+        width_pixels,
+        height_pixels,
     };
     if request
         .viewport
@@ -1466,24 +1614,32 @@ fn native_capture_driver(
         ],
         vertical_fov_millidegrees: 45_000,
     };
-    let surface = CaptureSurfaceMetadata {
+    let surface_metadata = CaptureSurfaceMetadata {
         provider_kind: CaptureProviderKindWire::NativeBevy,
         viewport,
         framebuffer_width: viewport.width_pixels,
         framebuffer_height: viewport.height_pixels,
-        scale_milli: (window.resolution.scale_factor() * 1_000.0).round() as u32,
+        scale_milli,
         camera: Some(camera_metadata),
     };
     let provider = provider.clone();
     let projection_hash = context.projection_hash;
-    commands.spawn(Screenshot::primary_window()).observe(
-        move |captured: On<ScreenshotCaptured>| {
+    let Some(screenshot) = surface.screenshot() else {
+        let _ = provider.deny(
+            &request.request_id,
+            CaptureDenialReasonWire::ProviderUnavailable,
+        );
+        return;
+    };
+    commands
+        .spawn(screenshot)
+        .observe(move |captured: On<ScreenshotCaptured>| {
             let request_id = request.request_id.clone();
             match native_capture_bundle(
                 &request,
                 projection_hash,
                 SemanticHash(scene_hash),
-                surface.clone(),
+                surface_metadata.clone(),
                 &captured.image,
             ) {
                 Ok(bundle) => {
@@ -1493,8 +1649,7 @@ fn native_capture_driver(
                     let _ = provider.deny(&request_id, reason);
                 }
             }
-        },
-    );
+        });
 }
 
 fn native_capture_bundle(
@@ -1550,12 +1705,17 @@ fn capture_token(request_id: &poche_protocol::CaptureRequestId) -> String {
         })
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Bevy injects these independent acceptance resources as system parameters"
+)]
 fn acceptance_driver(
     mut commands: Commands,
     time: Res<Time>,
     options: Res<AcceptanceOptions>,
     controller: Res<NativeController>,
     debug: Res<DebugOverlay>,
+    surface: Res<NativeRenderSurface>,
     mut clock: ResMut<LaunchClock>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -1572,10 +1732,12 @@ fn acceptance_driver(
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        commands
-            .spawn(Screenshot::primary_window())
-            .observe(save_to_disk(path.clone()));
-        clock.screenshot_requested = true;
+        if let Some(screenshot) = surface.screenshot() {
+            commands
+                .spawn(screenshot)
+                .observe(save_to_disk(path.clone()));
+            clock.screenshot_requested = true;
+        }
     }
     let Some(exit_after) = options.exit_after else {
         return;
@@ -1722,10 +1884,28 @@ mod tests {
     use poche_spatial::{CardFace, CardLocation, ObjectId, TextBinding, ZoneId};
 
     use super::{
-        CAMERA_RESET_SECONDS, CameraRig, CameraView, FONT_BYTES, NativeController,
-        NativeLiveDevice, advertised_action_for_play, native_controller_from_observation,
+        AUTOMATION_RENDER_HEIGHT, AUTOMATION_RENDER_WIDTH, CAMERA_RESET_SECONDS, CameraRig,
+        CameraView, FONT_BYTES, NativeController, NativeLiveDevice, NativeRenderSurface,
+        NativeUiLaunchOptions, advertised_action_for_play, native_controller_from_observation,
         parse_card_face, replay_fixture_controller, slug_packet_for_text, zone_center_card_bounds,
     };
+
+    #[test]
+    fn automation_defaults_to_a_windowless_image_surface() {
+        assert!(!NativeUiLaunchOptions::default().hidden_window);
+        assert!(matches!(
+            NativeRenderSurface::from_automation(true),
+            NativeRenderSurface::Windowless {
+                width: AUTOMATION_RENDER_WIDTH,
+                height: AUTOMATION_RENDER_HEIGHT,
+                target: None,
+            }
+        ));
+        assert!(matches!(
+            NativeRenderSurface::from_automation(false),
+            NativeRenderSurface::Windowed
+        ));
+    }
 
     fn live_play_observation() -> DeviceObservation {
         let alice = PrincipalId::new("alice").expect("alice");

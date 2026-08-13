@@ -724,8 +724,10 @@ consent/queue/cancel/result state and returns real Bevy render-target bytes,
 camera/viewport/revision/projection/scene metadata to `poche-capture`; it never
 selects artifact paths. `poche desktop --capture-artifact-root ...` exercises
 the provider and shared persistence pipeline through the unified executable.
-Automation surfaces are hidden by default while normal desktop launch remains
-visible. Unit, Clippy, and manual hidden-surface artifact acceptance pass.
+Automation capture surfaces are truly windowless by default: Bevy creates no
+primary window, disables Winit, renders the camera into a GPU image target, and
+reads the PNG back from that image. Normal `poche desktop` launch remains
+windowed. Unit, Clippy, and manual windowless artifact acceptance pass.
 The native update loop now has a bounded, nonblocking `NativeLiveDevice` bridge:
 its worker owns an ordinary configured device transport, spatial input resolves
 against the exact rendered observation, and accepted input returns through the
@@ -889,7 +891,10 @@ actions, without sleeps or a second semantic engine.
 
 ### [ ] 4.2 Drive native evidence through cross-device capture requests
 
-**Completion notes:** Not started.
+**Completion notes:** The renderer prerequisite is complete: automation owns a
+1280x800 offscreen GPU image target and does not create an OS window. The
+cross-device puppet orchestration and multi-checkpoint capture evidence remain
+to be implemented.
 
 **Work:**
 
