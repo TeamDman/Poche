@@ -830,9 +830,29 @@ privileged mutation authority.
 
 ## Phase 4 — build the single fan-out puppet and capture providers
 
-### [ ] 4.1 Add one multi-player, multi-device puppet harness
+### [x] 4.1 Add one multi-player, multi-device puppet harness
 
-**Completion notes:** Not started.
+**Completion notes:** Completed 2026-08-12. Added `poche-puppet` and wired its
+static `list`, `show`, `run`, and `artifacts path` catalog into the one Figue
+`poche.exe`. The `two-player-full-round` scenario creates three player roots
+(Alice, Bob, and spectator), seven distinct certified devices (two sibling
+devices for each player plus spectator, authority-clock, and game-environment
+devices), actual memberships/seats/readiness, and drives room creation through
+terminal scoring exclusively by selecting opaque advertised actions from each
+exact-recipient `PlayerDeviceClient` observation. Every completed semantic step
+retains its pending observation revision/hash, action identity, committed
+revision, and a same-revision witness from all seven devices. Bounded action and
+whole-run deadlines, maximum semantic steps, caller cancellation, temporary
+artifact cleanup, deterministic seeds, and explicit typed/canonical-NDJSON
+loopback transports are implemented without sleeps. Atomic ignored evidence
+contains `run.json`, `steps.ndjson`, and a hash/length-qualified manifest with a
+clear headless-only evidence boundary. Tests prove cancellation publishes no
+partial run, manifests match their bytes, and typed/NDJSON transports produce
+identical deterministic actions, scores, history hash, and terminal revision.
+A real unified-executable NDJSON run reached `post_game` at revision 159 after
+159 actions across seven devices, with 138 public-history events and inspectable
+artifacts. This completes the headless harness, not native/browser capture or
+external transport qualification assigned to Tasks 4.2-5.3.
 
 **Work:**
 
@@ -851,8 +871,8 @@ privileged mutation authority.
 
 ```powershell
 cargo test --locked -p poche-puppet --offline
-target\debug\poche.exe puppet list --output json
-target\debug\poche.exe puppet run two-player-full-round --surface headless --seed 1
+target\debug\poche.exe --output json puppet list
+target\debug\poche.exe --output json puppet run two-player-full-round --surface headless --transport loopback-ndjson --seed 1
 ```
 
 **Completion criteria:** One deterministic invocation completes a full round

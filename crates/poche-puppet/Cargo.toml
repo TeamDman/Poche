@@ -1,0 +1,24 @@
+[package]
+name = "poche-puppet"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+blake3.workspace = true
+poche-player-client = { path = "../poche-player-client" }
+poche-protocol = { path = "../poche-protocol" }
+poche-runtime = { path = "../poche-runtime" }
+poche-session = { path = "../poche-session" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -20,6 +20,7 @@ figue.workspace = true
 poche-domain = { path = "../poche-domain" }
 poche-native-ui = { path = "../poche-native-ui" }
 poche-protocol = { path = "../poche-protocol" }
+poche-puppet = { path = "../poche-puppet" }
 poche-runtime = { path = "../poche-runtime" }
 serde.workspace = true
 serde_json.workspace = true

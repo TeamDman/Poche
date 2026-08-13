@@ -10,6 +10,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, PoisonError};
 
 use crate::normalize::{
     NormalizedRun, normalize_alloy, normalize_alloy_commands, normalize_nusmv, normalize_prolog,
@@ -27,6 +28,13 @@ struct ToolSpec {
     version_arguments: &'static [&'static str],
     accept_nonzero_marker: Option<&'static str>,
 }
+
+// Alloy writes fixed receipt/instance names under a caller-selected suite
+// directory. Multiple conformance tests intentionally reuse a suite ID while
+// composing individual and aggregate gates, so serialize these native runs
+// inside one test/process rather than letting them remove or replace each
+// other's receipt mid-read.
+static ALLOY_SUITE_LOCK: Mutex<()> = Mutex::new(());
 
 /// Run all three installed native tools in a stable order.
 #[must_use]
@@ -50,6 +58,9 @@ pub fn run_alloy_suite(
     model_path: &Path,
     expectations: &[AlloyCommandExpectation],
 ) -> AlloySuiteReport {
+    let _alloy_suite_guard = ALLOY_SUITE_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     let evidence_directory = root.join("target").join(suite_id);
     let valid_suite_id = !suite_id.is_empty()
         && suite_id

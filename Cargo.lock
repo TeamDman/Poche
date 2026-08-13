@@ -8714,6 +8714,7 @@ dependencies = [
  "poche-domain",
  "poche-native-ui",
  "poche-protocol",
+ "poche-puppet",
  "poche-runtime",
  "serde",
  "serde_json",
@@ -8837,6 +8838,20 @@ dependencies = [
  "facet",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "poche-puppet"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "poche-player-client",
+ "poche-protocol",
+ "poche-runtime",
+ "poche-session",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

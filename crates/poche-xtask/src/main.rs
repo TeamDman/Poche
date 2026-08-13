@@ -3635,8 +3635,8 @@ mod tests {
         let profile = profile(&profiles, "poche-phase-5-live-control-puppets");
         let report = audit_guidance_plan(&plan_fixture(profile, "Active")).unwrap();
         assert_eq!(report.plan_id, "poche-phase-5-live-control-puppets");
-        assert_eq!(report.guidance, 16);
-        assert_eq!(report.traceability, 16);
+        assert_eq!(report.guidance, 17);
+        assert_eq!(report.traceability, 17);
         assert_eq!(report.gates, 7);
         assert_eq!(report.tasks, 19);
         assert_eq!(report.overall_criteria, 11);

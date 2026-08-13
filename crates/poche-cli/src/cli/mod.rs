@@ -123,8 +123,8 @@ impl Command {
             | Self::Transcript(_)
             | Self::Identity(_)
             | Self::Agent(_)
-            | Self::Device(_)
-            | Self::Puppet(_) => Ok(()),
+            | Self::Device(_) => Ok(()),
+            Self::Puppet(command) => command.validate(),
         }
     }
 }
@@ -325,6 +325,12 @@ mod tests {
                 ("device", "capture"),
             ),
             (&["puppet", "run", "full-round"], ("puppet", "run")),
+            (&["puppet", "list"], ("puppet", "list")),
+            (
+                &["puppet", "show", "two-player-full-round"],
+                ("puppet", "show"),
+            ),
+            (&["puppet", "artifacts", "path"], ("puppet", "artifacts")),
         ];
         for (arguments, expected) in cases {
             let outcome = parse_args(arguments.iter().map(ToString::to_string))

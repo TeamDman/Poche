@@ -333,17 +333,11 @@ where
         .map_err(|_| DeviceClientError::TransportUnavailable)?
         .is_some()
     {}
-    let payload = if profile.player_id == shared.authority.state.game_environment {
-        environment_projection(&shared.authority.state)?
-    } else if shared.authority.state.members.is_empty() {
-        ProjectionPayload {
-            phase: RoomPhase::Lobby,
-            members: Vec::new(),
-            public_game_state: None,
-            own_hand: None,
-            granted_hands: Vec::new(),
-            public_history: Vec::new(),
-        }
+    let payload = if profile.player_id == shared.authority.state.game_environment
+        || profile.player_id == shared.authority.state.authority_clock
+        || shared.authority.state.member(&profile.player_id).is_none()
+    {
+        public_unprivileged_projection(&shared.authority.state)?
     } else {
         project_viewer(
             &shared.authority.state,
@@ -407,7 +401,9 @@ where
     })
 }
 
-fn environment_projection<G: SessionGame>(
+/// Public-only projection for authority services and not-yet-enrolled room
+/// principals. It deliberately carries no private hand or spectator grant.
+fn public_unprivileged_projection<G: SessionGame>(
     state: &SessionState<G>,
 ) -> Result<ProjectionPayload, DeviceClientError> {
     let public_game_state = match &state.phase {
