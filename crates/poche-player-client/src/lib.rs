@@ -281,11 +281,24 @@ impl<T: DeviceTransport> PlayerDeviceClient<T> {
         action_id: &str,
         command_id: CommandId,
     ) -> Result<DeviceActionResult, DeviceClientError> {
+        let request = self.prepare(observation, action_id, command_id)?;
+        self.transport.invoke(&self.profile, request)
+    }
+
+    /// Prepare the exact transport-neutral request for an opaque advertised
+    /// action without sending it. This is the canonical parity seam for GUI,
+    /// CLI, policy, and puppet entry points.
+    pub fn prepare(
+        &self,
+        observation: &DeviceObservation,
+        action_id: &str,
+        command_id: CommandId,
+    ) -> Result<DeviceActionRequest, DeviceClientError> {
         observation.validate_for(&self.profile, &observation.projection.room_id)?;
         let action = observation
             .action(action_id)
             .ok_or(DeviceClientError::UnknownAction)?;
-        let request = DeviceActionRequest {
+        Ok(DeviceActionRequest {
             room_id: observation.projection.room_id.clone(),
             session_epoch: observation.projection.session_epoch,
             command_id,
@@ -295,8 +308,7 @@ impl<T: DeviceTransport> PlayerDeviceClient<T> {
             expected_projection_hash: observation.projection_hash,
             action_id: action.id.clone(),
             payload: action.payload.clone(),
-        };
-        self.transport.invoke(&self.profile, request)
+        })
     }
 
     /// Resolve a typed convenience payload through the exact current action
@@ -310,6 +322,18 @@ impl<T: DeviceTransport> PlayerDeviceClient<T> {
     ) -> Result<DeviceActionResult, DeviceClientError> {
         let action_id = observation.action_for_payload(payload)?.id.clone();
         self.invoke(observation, &action_id, command_id)
+    }
+
+    /// Prepare a typed convenience action through the same exact advertised
+    /// action record used by [`Self::prepare`].
+    pub fn prepare_payload(
+        &self,
+        observation: &DeviceObservation,
+        payload: &CommandPayload,
+        command_id: CommandId,
+    ) -> Result<DeviceActionRequest, DeviceClientError> {
+        let action_id = observation.action_for_payload(payload)?.id.clone();
+        self.prepare(observation, &action_id, command_id)
     }
 
     pub fn wait(
@@ -546,6 +570,58 @@ mod tests {
             SemanticHash([7; 32])
         );
         assert_eq!(transport.invoked[0].device_id.as_str(), "22".repeat(32));
+    }
+
+    #[test]
+    fn action_id_and_typed_convenience_prepare_the_identical_request() {
+        let (profile, observation) = fixture();
+        let authority = FixtureTransport {
+            observation: observation.clone(),
+            invoked: Vec::new(),
+        };
+        let client =
+            PlayerDeviceClient::new(profile, LoopbackDeviceTransport::new(authority)).unwrap();
+        let by_id = client
+            .prepare(
+                &observation,
+                "ready",
+                CommandId::new("parity-command").unwrap(),
+            )
+            .unwrap();
+        let by_payload = client
+            .prepare_payload(
+                &observation,
+                &CommandPayload::Ready,
+                CommandId::new("parity-command").unwrap(),
+            )
+            .unwrap();
+        assert_eq!(by_id, by_payload);
+        assert_eq!(
+            serde_json::to_vec(&by_id).unwrap(),
+            serde_json::to_vec(&by_payload).unwrap()
+        );
+    }
+
+    #[test]
+    fn convenience_resolution_fails_closed_for_duplicate_payloads() {
+        let (profile, mut observation) = fixture();
+        observation.actions.push(AdvertisedAction {
+            id: "ready-again".to_owned(),
+            label: "Ready through a conflicting control".to_owned(),
+            payload: CommandPayload::Ready,
+        });
+        observation
+            .actions
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        assert_eq!(
+            observation.action_for_payload(&CommandPayload::Ready),
+            Err(DeviceClientError::ProtocolViolation)
+        );
+        assert!(
+            observation
+                .validate_for(&profile, &observation.projection.room_id)
+                .is_ok()
+        );
     }
 
     #[test]

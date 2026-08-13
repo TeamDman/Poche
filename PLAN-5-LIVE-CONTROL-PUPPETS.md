@@ -832,7 +832,15 @@ device capture through shared code.
 
 ### [ ] 3.3 Prove GUI, CLI, and policy parity plus vote-lock safety
 
-**Completion notes:** Not started.
+**Completion notes:** In progress. `PlayerDeviceClient::prepare` is now the
+pure canonical request seam beneath invocation, and `prepare_payload` first
+resolves a typed convenience payload to exactly one advertised opaque action.
+A parity test proves action-ID and convenience entry points produce identical
+structured requests and serialized bytes for the same command ID; another
+proves duplicate semantic controls fail closed instead of choosing one by
+order. Remaining: exercise the actual GUI and persistent policy adapters
+against this seam, compare reducer dispositions/successor hashes and stable
+denials, and complete the replicated per-player vote-lock cases.
 
 **Work:**
 

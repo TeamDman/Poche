@@ -15,5 +15,8 @@ facet.workspace = true
 poche-protocol = { path = "../poche-protocol" }
 serde.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true
