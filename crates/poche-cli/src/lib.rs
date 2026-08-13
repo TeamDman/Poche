@@ -67,6 +67,8 @@ pub fn run_from(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
                 cli::Command::Desktop(command) => command.invoke()?,
                 cli::Command::Transcript(command) => command.invoke(parsed.global.output)?,
                 cli::Command::Governance(command) => command.invoke(parsed.global.output)?,
+                cli::Command::Identity(command) => command.invoke(parsed.global.output)?,
+                cli::Command::Device(command) => command.invoke(parsed.global.output)?,
                 cli::Command::Puppet(command) => command.invoke(parsed.global.output, || {
                     cancellation.bail_if_cancelled().is_err()
                 })?,

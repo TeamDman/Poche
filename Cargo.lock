@@ -8827,11 +8827,17 @@ name = "poche-player-client"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "directories",
+ "ed25519-dalek",
  "facet",
+ "getrandom 0.3.4",
+ "keyring-manager",
  "poche-protocol",
  "serde",
  "serde_json",
+ "tempfile",
  "ureq",
+ "zeroize",
 ]
 
 [[package]]

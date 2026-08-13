@@ -34,11 +34,15 @@ use serde::{Deserialize, Serialize};
 mod http;
 mod loopback;
 mod policy;
+#[cfg(feature = "protected-store")]
+mod protected_store;
 
 #[cfg(feature = "http")]
 pub use http::*;
 pub use loopback::*;
 pub use policy::*;
+#[cfg(feature = "protected-store")]
+pub use protected_store::*;
 
 /// Public, persistable portion of a protected device profile.
 ///

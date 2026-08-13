@@ -827,9 +827,20 @@ HTTP device adapter and the Axum `/device/v1/observe` plus
 real ephemeral-server test signs a pending observation, invokes advertised
 room creation, crosses into epoch one, observes the lobby, performs a
 strictly-later wait, and proves exact retry behavior. Remaining: connect this
-transport to protected persistent profiles and the public Figue execution
-surface; implement chat/governance/spectator and capture commands; and run the
-persistent agent loop against graphical peers.
+transport to the public Figue execution surface; implement
+chat/governance/spectator and capture commands; and run the persistent agent
+loop against graphical peers. Protected persistence is now concrete:
+`poche-player-client` stores root/device Ed25519 secrets only in the platform
+credential vault (Windows Credential Manager on the acceptance platform),
+persists authenticated root/certificate metadata separately, and implements
+the opaque `DeviceSigner` port without key export. Root creation and device
+enrollment are collision-safe, public files use atomic no-clobber publication,
+and mismatched/corrupt secrets or certificates fail closed. `poche identity
+create|show` and `poche device create|list|show` execute through Figue and emit
+only redacted public summaries. Memory-vault tests cover collision,
+authentication, signing, traversal-shaped labels, secret mismatch, and public
+file scanning; a Windows-only vault probe stores, reads, and deletes its test
+credential.
 
 **Work:**
 

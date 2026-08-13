@@ -77,6 +77,27 @@ pub fn emit(receipt: &CommandReceipt, format: OutputFormat) -> Result<()> {
     write_stdout(&rendered)
 }
 
+/// Emit one command-specific serializable value with a deliberate text view.
+/// JSON is one document; NDJSON is exactly one LF-terminated record.
+///
+/// # Errors
+///
+/// Returns an error if serialization or stdout writing fails.
+pub fn emit_value<T: Serialize>(value: &T, text: &str, format: OutputFormat) -> Result<()> {
+    let rendered = match format {
+        OutputFormat::Text => format!("{text}\n"),
+        OutputFormat::Json => format!(
+            "{}\n",
+            serde_json::to_string_pretty(value).wrap_err("failed to encode JSON output")?
+        ),
+        OutputFormat::Ndjson => format!(
+            "{}\n",
+            serde_json::to_string(value).wrap_err("failed to encode NDJSON output")?
+        ),
+    };
+    write_stdout(&rendered)
+}
+
 /// Write a pre-rendered help/version response to stdout.
 ///
 /// # Errors

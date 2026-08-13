@@ -314,6 +314,10 @@ mod tests {
             ),
             (&["device", "list"], ("device", "list")),
             (
+                &["device", "create", "alice", "alice-cli"],
+                ("device", "create"),
+            ),
+            (
                 &[
                     "device",
                     "capture",

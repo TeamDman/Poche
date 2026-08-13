@@ -3,6 +3,13 @@ use std::process::{Command, Output};
 fn poche(arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_poche"))
         .args(arguments)
+        .env(
+            "POCHE_PROFILE_ROOT",
+            std::env::temp_dir().join(format!(
+                "poche-cli-contract-public-profiles-{}",
+                std::process::id()
+            )),
+        )
         .output()
         .expect("poche process should start")
 }
@@ -33,7 +40,7 @@ fn text_and_json_outputs_keep_diagnostics_on_stderr() {
     let text = poche(&["--output", "text", "identity", "show"]);
     assert!(text.status.success());
     let stdout = String::from_utf8(text.stdout).expect("text output should be UTF-8");
-    assert!(stdout.contains("command: identity.show"));
+    assert!(stdout.contains("No player identities"));
     assert!(!stdout.contains(" INFO "));
     assert!(String::from_utf8_lossy(&text.stderr).contains("command parsed"));
 
@@ -41,8 +48,7 @@ fn text_and_json_outputs_keep_diagnostics_on_stderr() {
     assert!(json.status.success());
     let value: serde_json::Value =
         serde_json::from_slice(&json.stdout).expect("stdout should be one JSON value");
-    assert_eq!(value["command"], "identity.show");
-    assert_eq!(value["status"], "parsed");
+    assert_eq!(value, serde_json::json!([]));
     assert!(String::from_utf8_lossy(&json.stderr).contains("command parsed"));
 }
 

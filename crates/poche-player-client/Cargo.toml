@@ -12,14 +12,29 @@ description = "Transport-neutral exact-recipient Poche device client"
 [features]
 default = []
 http = ["dep:serde_json", "dep:ureq"]
+protected-store = [
+    "dep:directories",
+    "dep:ed25519-dalek",
+    "dep:getrandom",
+    "dep:keyring-manager",
+    "dep:serde_json",
+    "dep:tempfile",
+    "dep:zeroize",
+]
 
 [dependencies]
 blake3.workspace = true
+directories = { workspace = true, optional = true }
+ed25519-dalek = { workspace = true, optional = true }
 facet.workspace = true
+getrandom = { workspace = true, optional = true }
+keyring-manager = { workspace = true, optional = true }
 poche-protocol = { path = "../poche-protocol" }
 serde.workspace = true
 serde_json = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
 ureq = { workspace = true, optional = true }
+zeroize = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true

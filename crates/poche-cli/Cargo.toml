@@ -19,7 +19,7 @@ facet.workspace = true
 figue.workspace = true
 poche-domain = { path = "../poche-domain" }
 poche-native-ui = { path = "../poche-native-ui" }
-poche-player-client = { path = "../poche-player-client", features = ["http"] }
+poche-player-client = { path = "../poche-player-client", features = ["http", "protected-store"] }
 poche-protocol = { path = "../poche-protocol" }
 poche-puppet = { path = "../poche-puppet" }
 poche-runtime = { path = "../poche-runtime" }
