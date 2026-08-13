@@ -9,6 +9,7 @@
 //! mutation port.
 
 mod artifacts;
+pub mod browser;
 mod catalog;
 mod native;
 mod scenario;
@@ -137,6 +138,7 @@ pub enum PuppetErrorCode {
     RunTimeout,
     Cancelled,
     EvidenceIo,
+    BrowserUnavailable,
 }
 
 impl PuppetErrorCode {
@@ -154,6 +156,7 @@ impl PuppetErrorCode {
             Self::RunTimeout => "PUPPET-RUN-TIMEOUT",
             Self::Cancelled => "PUPPET-CANCELLED",
             Self::EvidenceIo => "PUPPET-EVIDENCE-IO",
+            Self::BrowserUnavailable => "PUPPET-BROWSER-UNAVAILABLE",
         }
     }
 }

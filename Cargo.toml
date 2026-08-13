@@ -12,11 +12,13 @@ repository = "https://github.com/TeamDman/Poche"
 
 [workspace.dependencies]
 ark-serialize = { version = "=0.5.0", default-features = false }
+async-tungstenite = { version = "=0.34.1", features = ["tokio-runtime"] }
 bevy = { version = "=0.19.0", default-features = false, features = ["3d"] }
 blake3 = "=1.8.5"
 chacha20poly1305 = "=0.11.0"
 burn = { version = "=0.21.0", default-features = false, features = ["std", "autodiff", "flex", "wgpu", "store"] }
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
+base64 = "=0.22.1"
 curve25519-dalek = { version = "=5.0.0", default-features = false, features = ["precomputed-tables", "zeroize"] }
 datastar = { version = "=0.3.1", features = ["axum"] }
 data-encoding = "=2.11.0"

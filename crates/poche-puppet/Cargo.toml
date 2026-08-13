@@ -9,20 +9,25 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+async-tungstenite.workspace = true
+base64.workspace = true
 blake3.workspace = true
 ed25519-dalek.workspace = true
 getrandom.workspace = true
+futures-util.workspace = true
 poche-capture = { path = "../poche-capture" }
 poche-native-ui = { path = "../poche-native-ui" }
 poche-player-client = { path = "../poche-player-client" }
 poche-protocol = { path = "../poche-protocol" }
 poche-runtime = { path = "../poche-runtime" }
 poche-session = { path = "../poche-session" }
+poche-web-spike = { path = "../poche-web-spike" }
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
 
 [lints]
 workspace = true

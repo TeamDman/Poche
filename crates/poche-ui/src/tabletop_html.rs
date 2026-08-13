@@ -75,9 +75,11 @@ pub fn render_tabletop_semantic_html(
     let scene_hash = spatial_scene_hash_hex(scene)?;
     let prefix = command_endpoint.trim_end_matches('/');
     let mut html = format!(
-        "<main id=\"{}\" class=\"game-shell\" data-scene-hash=\"{}\"><header class=\"game-hud\"><div class=\"game-title\"><span>POCHE</span><small>card table</small></div>{}{}<div class=\"authority-chip\"><span>{:?}</span><small>{:?} · rev {}</small></div><output data-role=\"scene-hash\" hidden>{}</output></header>",
+        "<main id=\"{}\" class=\"game-shell\" data-scene-hash=\"{}\" data-room-phase=\"{:?}\" data-authority-revision=\"{}\"><header class=\"game-hud\"><div class=\"game-title\"><span>POCHE</span><small>card table</small></div>{}{}<div class=\"authority-chip\"><span>{:?}</span><small>{:?} · rev {}</small></div><output data-role=\"scene-hash\" hidden>{}</output></header>",
         escape_html(root_id),
         scene_hash,
+        live.projection.room_phase,
+        live.authority_revision,
         render_viewer_switcher(live, supplement),
         render_room_code(supplement, root_id),
         live.projection.room_phase,
@@ -823,7 +825,7 @@ fn render_private_hand(html: &mut String, live: &LiveClientPresentation, prefix:
                 let endpoint = format!("{prefix}/{}", control.id);
                 let _ = write!(
                     html,
-                    "<li style=\"--card-offset:{offset}\" data-layout-footprint=\"hand-card-{index}\"><form method=\"post\" action=\"{}\"><button class=\"playing-card legal-card\" type=\"submit\" draggable=\"true\" data-card-code=\"{}\" data-command-id=\"{}\" aria-describedby=\"hand-help\"><strong>{}</strong><small>play</small></button></form></li>",
+                    "<li style=\"--card-offset:{offset}\" data-layout-footprint=\"hand-card-{index}\" data-layout-overlap-group=\"viewer-hand\"><form method=\"post\" action=\"{}\"><button class=\"playing-card legal-card\" type=\"submit\" draggable=\"true\" data-card-code=\"{}\" data-command-id=\"{}\" aria-describedby=\"hand-help\"><strong>{}</strong><small>play</small></button></form></li>",
                     escape_html(&endpoint),
                     code,
                     escape_html(&control.id),
@@ -832,7 +834,7 @@ fn render_private_hand(html: &mut String, live: &LiveClientPresentation, prefix:
             } else {
                 let _ = write!(
                     html,
-                    "<li style=\"--card-offset:{offset}\" data-layout-footprint=\"hand-card-{index}\"><span class=\"playing-card held-card\" aria-label=\"{}; not currently legal\"><strong>{}</strong></span></li>",
+                    "<li style=\"--card-offset:{offset}\" data-layout-footprint=\"hand-card-{index}\" data-layout-overlap-group=\"viewer-hand\"><span class=\"playing-card held-card\" aria-label=\"{}; not currently legal\"><strong>{}</strong></span></li>",
                     escape_html(label),
                     escape_html(label)
                 );
@@ -1029,7 +1031,7 @@ fn render_activity(
             escape_html(status)
         );
     }
-    html.push_str("<section aria-labelledby=\"history-heading\"><h2 id=\"history-heading\">Public history</h2><ol class=\"event-log\">");
+    html.push_str("<section aria-labelledby=\"history-heading\"><h2 id=\"history-heading\">Public history</h2><ol class=\"event-log public-event-log\">");
     for event in &live.projection.history {
         let _ = write!(html, "<li>{}</li>", escape_html(event));
     }
@@ -1038,7 +1040,7 @@ fn render_activity(
     }
     html.push_str("</ol></section>");
     if !live.projection.notices.is_empty() {
-        html.push_str("<section aria-labelledby=\"client-events-heading\"><h2 id=\"client-events-heading\">This device</h2><ol class=\"event-log\">");
+        html.push_str("<section aria-labelledby=\"client-events-heading\"><h2 id=\"client-events-heading\">This device</h2><ol class=\"event-log client-event-log\">");
         for notice in &live.projection.notices {
             let _ = write!(
                 html,

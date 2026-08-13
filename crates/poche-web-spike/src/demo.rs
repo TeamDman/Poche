@@ -142,24 +142,9 @@ impl LiveDemo {
 
     /// Build the exact current live presentation for one browser identity.
     pub fn view(&self, viewer: &str) -> Result<LiveClientPresentation, String> {
-        if !self.clients.contains_key(viewer) || viewer == GAME {
-            return Err("unknown live demo viewer".to_owned());
-        }
         let viewer_id = principal(viewer)?;
         let member = self.authority.state.member(&viewer_id);
-        let mut payload = self
-            .latest
-            .get(viewer)
-            .cloned()
-            .unwrap_or_else(|| self.synthetic_lobby_projection());
-        if let Some(projected_viewer) = payload
-            .members
-            .iter_mut()
-            .find(|candidate| candidate.principal_id == viewer_id)
-            && let Some(current) = member
-        {
-            projected_viewer.connected = current.connection == ConnectionState::Connected;
-        }
+        let payload = self.viewer_payload(viewer)?;
         let connection = match member.map(|member| member.connection) {
             Some(ConnectionState::Disconnected) => ConnectionPresentation::Reconnecting,
             Some(ConnectionState::Connected) | None => ConnectionPresentation::Connected,
@@ -222,6 +207,38 @@ impl LiveDemo {
                 replay_href: Some(format!("/live/{viewer}/replay")),
             },
         ))
+    }
+
+    /// Hash the exact protocol projection consumed by this browser view.
+    pub fn projection_hash(&self, viewer: &str) -> Result<poche_protocol::SemanticHash, String> {
+        let payload = self.viewer_payload(viewer)?;
+        let bytes = serde_json::to_vec(&payload)
+            .map_err(|_| "browser projection could not be encoded".to_owned())?;
+        Ok(poche_protocol::SemanticHash(
+            *blake3::hash(&bytes).as_bytes(),
+        ))
+    }
+
+    fn viewer_payload(&self, viewer: &str) -> Result<ProjectionPayload, String> {
+        if !self.clients.contains_key(viewer) || viewer == GAME {
+            return Err("unknown live demo viewer".to_owned());
+        }
+        let viewer_id = principal(viewer)?;
+        let member = self.authority.state.member(&viewer_id);
+        let mut payload = self
+            .latest
+            .get(viewer)
+            .cloned()
+            .unwrap_or_else(|| self.synthetic_lobby_projection());
+        if let Some(projected_viewer) = payload
+            .members
+            .iter_mut()
+            .find(|candidate| candidate.principal_id == viewer_id)
+            && let Some(current) = member
+        {
+            projected_viewer.connected = current.connection == ConnectionState::Connected;
+        }
+        Ok(payload)
     }
 
     fn display_name<'a>(&'a self, principal: &'a str) -> &'a str {

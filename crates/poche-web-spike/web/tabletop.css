@@ -533,7 +533,7 @@ code { overflow-wrap: anywhere; }
   .rules-paper { left:3%; right:auto; top:auto; bottom:3%; }
   .table-chat { left:2%; top:2%; }
   .table-door { right:2%; top:2%; }
-  .table-clock { left:2%; bottom:4rem; }
+  .table-clock { left:auto; right:2%; bottom:4rem; }
   .action-dock h2 { font-size:.72rem; }
   .actions { gap:.28rem; }
   .primary-action, .secondary-action, .danger-action { min-height:2.35rem; }

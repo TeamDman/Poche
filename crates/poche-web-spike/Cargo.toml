@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 axum = { workspace = true, features = ["form"] }
+blake3.workspace = true
 datastar.workspace = true
 ed25519-dalek.workspace = true
 flate2.workspace = true

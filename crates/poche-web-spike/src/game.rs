@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use poche_protocol::CommandPayload;
+use poche_protocol::SemanticHash;
 use poche_spatial::{LayoutId, SPATIAL_SCHEMA_VERSION, SpatialScene, TableId, registered_layout};
 use poche_ui::{
     ConnectionPresentation, LiveClientPresentation, TabletopHtmlSupplement,
@@ -42,6 +43,7 @@ struct BrowserRoom {
 pub struct BrowserRoomView {
     pub live: LiveClientPresentation,
     pub scene: SpatialScene,
+    pub projection_hash: SemanticHash,
     pub supplement: TabletopHtmlSupplement,
 }
 
@@ -189,6 +191,7 @@ impl BrowserRooms {
             .get(&session.room_code)
             .ok_or_else(|| "This room is no longer active.".to_owned())?;
         let mut live = room.demo.view(&session.principal)?;
+        let projection_hash = room.demo.projection_hash(&session.principal)?;
         live.controls
             .retain(|control| !matches!(control.payload, CommandPayload::Chat { .. }));
         let layout = registered_layout(
@@ -211,6 +214,7 @@ impl BrowserRooms {
         };
         let connected = live.projection.connection == ConnectionPresentation::Connected;
         Ok(BrowserRoomView {
+            projection_hash,
             supplement: TabletopHtmlSupplement {
                 status: live
                     .projection

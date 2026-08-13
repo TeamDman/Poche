@@ -788,7 +788,21 @@ validated captioned capture without Bevy owning file layout or game semantics.
 
 ### [ ] 3.2 Connect CLI commands and deterministic agents as real devices
 
-**Completion notes:** Not started.
+**Completion notes:** In progress. `poche-web-spike` is now an embeddable
+caller-owned-listener library, and `poche-puppet::browser` launches an installed
+Edge/Chrome process headlessly with a private temporary profile and three
+isolated browser contexts. The ignored external qualification test drives
+ordinary create/join/seat/ready/countdown/bid/play/chat/exit/resume/reconnect
+controls through a complete 124-choice game (terminal revision 159; 138 public
+events) and passes with zero console/network errors. Six semantic checkpoints
+each persist PNG, semantic HTML, accessibility-tree JSON, and wide/narrow
+layout JSON through `CapturePipeline`; the layout audit discovered and fixed a
+real phone-width deck/clock collision and now distinguishes the intentional
+viewer-hand fan by an explicit overlap group. Remaining before completion:
+expose `--surface web`, route these raw bundles through a signed same-player
+device-cooperation request/transfer rather than only the common persistence
+pipeline, and make ordinary production-browser capture capability/consent
+denial explicit.
 
 **Work:**
 

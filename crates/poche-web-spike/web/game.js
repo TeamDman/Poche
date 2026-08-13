@@ -128,6 +128,8 @@ function visibleFootprintCollisions(root = document.getElementById("game-shell")
     for (let right = left + 1; right < elements.length; right += 1) {
       const b = elements[right];
       if (a.contains(b) || b.contains(a)) continue;
+      const overlapGroup = a.dataset.layoutOverlapGroup;
+      if (overlapGroup && overlapGroup === b.dataset.layoutOverlapGroup) continue;
       const br = b.getBoundingClientRect();
       const width = Math.min(ar.right, br.right) - Math.max(ar.left, br.left);
       const height = Math.min(ar.bottom, br.bottom) - Math.max(ar.top, br.top);
