@@ -23,6 +23,12 @@ pub enum GameCommand {
         #[facet(args::positional)]
         room: String,
     },
+    Bid {
+        #[facet(args::positional)]
+        room: String,
+        #[facet(args::positional)]
+        tricks: u8,
+    },
     PlayCard {
         #[facet(args::positional)]
         room: String,
@@ -45,6 +51,7 @@ impl GameArgs {
         match self.command {
             GameCommand::Observe { .. } => "observe",
             GameCommand::Actions { .. } => "actions",
+            GameCommand::Bid { .. } => "bid",
             GameCommand::PlayCard { .. } => "play-card",
         }
     }
@@ -53,6 +60,7 @@ impl GameArgs {
     #[must_use]
     pub fn game_action(&self) -> Option<GameActionWire> {
         match &self.command {
+            GameCommand::Bid { tricks, .. } => Some(GameActionWire::Bid { tricks: *tricks }),
             GameCommand::PlayCard { card, .. } => parse_card_name(card)
                 .ok()
                 .map(|card| GameActionWire::Play { card: card.code() }),
@@ -87,5 +95,19 @@ mod tests {
             },
         };
         assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn bid_is_a_typed_game_action() {
+        let parsed = GameArgs {
+            command: GameCommand::Bid {
+                room: "room-1".to_owned(),
+                tricks: 3,
+            },
+        };
+        assert_eq!(
+            parsed.game_action(),
+            Some(GameActionWire::Bid { tricks: 3 })
+        );
     }
 }

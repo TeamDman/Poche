@@ -27,8 +27,10 @@ use poche_protocol::{
 use serde::{Deserialize, Serialize};
 
 mod loopback;
+mod policy;
 
 pub use loopback::*;
+pub use policy::*;
 
 /// Public, persistable portion of a protected device profile.
 ///
@@ -138,6 +140,25 @@ impl DeviceObservation {
             .binary_search_by(|action| action.id.as_str().cmp(action_id))
             .ok()
             .map(|index| &self.actions[index])
+    }
+
+    /// Resolve one convenience payload against the exact advertised action
+    /// set. Zero matches mean unavailable; duplicate matches are a protocol
+    /// violation rather than an arbitrary client-side choice.
+    pub fn action_for_payload(
+        &self,
+        payload: &CommandPayload,
+    ) -> Result<&AdvertisedAction, DeviceClientError> {
+        let mut matches = self
+            .actions
+            .iter()
+            .filter(|action| &action.payload == payload);
+        let action = matches.next().ok_or(DeviceClientError::UnknownAction)?;
+        if matches.next().is_some() {
+            Err(DeviceClientError::ProtocolViolation)
+        } else {
+            Ok(action)
+        }
     }
 }
 
@@ -276,6 +297,19 @@ impl<T: DeviceTransport> PlayerDeviceClient<T> {
             payload: action.payload.clone(),
         };
         self.transport.invoke(&self.profile, request)
+    }
+
+    /// Resolve a typed convenience payload through the exact current action
+    /// set and invoke the corresponding opaque action ID through the ordinary
+    /// device transport.
+    pub fn invoke_payload(
+        &mut self,
+        observation: &DeviceObservation,
+        payload: &CommandPayload,
+        command_id: CommandId,
+    ) -> Result<DeviceActionResult, DeviceClientError> {
+        let action_id = observation.action_for_payload(payload)?.id.clone();
+        self.invoke(observation, &action_id, command_id)
     }
 
     pub fn wait(

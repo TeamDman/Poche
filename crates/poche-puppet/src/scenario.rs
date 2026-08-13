@@ -6,8 +6,8 @@ use std::{fmt::Write as _, time::Instant};
 
 use ed25519_dalek::{Signer, SigningKey};
 use poche_player_client::{
-    AdvertisedAction, DeviceActionResult, DeviceObservation, DeviceProfile,
-    LoopbackDeviceTransport, PlayerDeviceClient,
+    AdvertisedAction, AdvertisedActionPolicy, DeviceActionResult, DeviceObservation, DeviceProfile,
+    LoopbackDeviceTransport, PlayerDeviceClient, PolicyScope,
 };
 use poche_protocol::{
     CertificateId, CommandId, CommandPayload, CountdownToken, DeviceCapabilityWire,
@@ -338,7 +338,8 @@ fn perform_next_action(
     devices: &mut [HarnessDevice],
     steps: &mut Vec<PuppetStepEvidence>,
 ) -> Result<bool, PuppetError> {
-    let Some((actor_index, observation, action)) = next_action(devices, room_id)? else {
+    let Some((actor_index, observation, action)) = next_action(devices, room_id, options.seed)?
+    else {
         return Err(PuppetError::new(
             PuppetErrorCode::NoAction,
             "no certified device advertised the next semantic action",
@@ -437,10 +438,14 @@ fn ensure_running(
 fn next_action(
     devices: &mut [HarnessDevice],
     room_id: &RoomId,
+    seed: u64,
 ) -> Result<Option<(usize, DeviceObservation, AdvertisedAction)>, PuppetError> {
     for (index, device) in devices.iter_mut().enumerate() {
         let observation = device.client.observe(room_id).map_err(device_error)?;
-        if let Some(action) = observation.actions.first().cloned() {
+        if let Some(action) = (AdvertisedActionPolicy::SeededRandom { seed })
+            .select(&observation, PolicyScope::AllAdvertised)
+            .cloned()
+        {
             return Ok(Some((index, observation, action)));
         }
     }

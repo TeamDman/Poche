@@ -104,6 +104,7 @@ impl Command {
     fn validate(&self) -> Result<(), ParseError> {
         match self {
             Self::Game(command) => command.validate(),
+            Self::Agent(command) => command.validate(),
             Self::Governance(command) => command.validate(),
             Self::Desktop(command) => {
                 if command
@@ -122,7 +123,6 @@ impl Command {
             | Self::Spectator(_)
             | Self::Transcript(_)
             | Self::Identity(_)
-            | Self::Agent(_)
             | Self::Device(_) => Ok(()),
             Self::Puppet(command) => command.validate(),
         }
@@ -271,6 +271,7 @@ mod tests {
             (&["room", "close", "r"], ("room", "close")),
             (&["game", "observe", "r"], ("game", "observe")),
             (&["game", "actions", "r"], ("game", "actions")),
+            (&["game", "bid", "r", "2"], ("game", "bid")),
             (
                 &["game", "play-card", "r", "jack-spades"],
                 ("game", "play-card"),
@@ -308,7 +309,7 @@ mod tests {
             (&["identity", "show"], ("identity", "show")),
             (&["identity", "create", "alice"], ("identity", "create")),
             (
-                &["agent", "run", "alice-cli", "r", "legal-random"],
+                &["agent", "run", "alice-cli", "r", "first-legal"],
                 ("agent", "run"),
             ),
             (&["device", "list"], ("device", "list")),

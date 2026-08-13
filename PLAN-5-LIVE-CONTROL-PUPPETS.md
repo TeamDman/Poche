@@ -788,7 +788,19 @@ validated captioned capture without Bevy owning file layout or game semantics.
 
 ### [ ] 3.2 Connect CLI commands and deterministic agents as real devices
 
-**Completion notes:** Not started.
+**Completion notes:** In progress. The shared player-device client now resolves
+typed convenience payloads only by finding exactly one matching action in the
+current advertised action set; unavailable actions fail and duplicate semantic
+matches are a protocol violation. It also owns reusable `first-legal` and
+seeded-random policies with an explicit player-game-only scope that excludes
+pause, chat, leave, close, and other human controls. The full certified
+eight-device puppet now uses the seeded policy seam and still completes 159
+committed revisions with every device converged. The one-executable Figue
+schema validates `first-legal` and `seeded-random:<seed>` and now exposes a
+typed `game bid` convenience action alongside typed card play. Remaining:
+connect these seams to protected persistent profiles and an external live
+transport; implement observe/actions/invoke/wait, chat/governance/spectator and
+capture commands; and run the persistent agent loop against graphical peers.
 
 **Work:**
 

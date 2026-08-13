@@ -8714,6 +8714,7 @@ dependencies = [
  "figue",
  "poche-domain",
  "poche-native-ui",
+ "poche-player-client",
  "poche-protocol",
  "poche-puppet",
  "poche-runtime",
@@ -8825,6 +8826,7 @@ version = "0.1.0"
 name = "poche-player-client"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "facet",
  "poche-protocol",
  "serde",
