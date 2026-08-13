@@ -16,14 +16,14 @@ use poche_player_client::{
     LoopbackDeviceAuthority,
 };
 use poche_protocol::{
-    CaptureProviderAdvertisementWire, CommandPayload, CorrelationId, DeviceActionWire,
-    DeviceCertificateWire, DeviceId, DeviceObservationRequestWire, EventId, GameActionWire,
-    MemberProjection, PROTOCOL_VERSION_V1, ProjectionEnvelope, ProjectionId, ProjectionPayload,
-    RoomId, RoomPhase, SIGNATURE_DOMAIN_V1, SemanticHash, SignatureAlgorithm, SignatureBytes,
-    SignatureMetadata, canonical_capture_provider_advertisement_bytes,
-    canonical_capture_request_bytes, canonical_capture_response_bytes,
-    canonical_device_action_bytes, canonical_device_certificate_bytes,
-    canonical_device_observation_request_bytes,
+    CaptureProviderAdvertisementWire, CommandPayload, CorrelationId, CountdownToken,
+    DeviceActionWire, DeviceCertificateWire, DeviceId, DeviceObservationRequestWire, EventId,
+    GameActionWire, InviteProof, MemberProjection, PROTOCOL_VERSION_V1, ProjectionEnvelope,
+    ProjectionId, ProjectionPayload, RoomId, RoomPhase, SIGNATURE_DOMAIN_V1, SemanticHash,
+    SignatureAlgorithm, SignatureBytes, SignatureMetadata,
+    canonical_capture_provider_advertisement_bytes, canonical_capture_request_bytes,
+    canonical_capture_response_bytes, canonical_device_action_bytes,
+    canonical_device_certificate_bytes, canonical_device_observation_request_bytes,
 };
 use poche_session::{
     CaptureAuthorizationContext, CaptureReplayWindow, GameTurn, SessionGame, SessionPhase,
@@ -133,6 +133,276 @@ impl<const PLAYERS: usize> AdvertisedActionSource<crate::OracleSessionGame<PLAYE
                 }
             })
             .collect())
+    }
+}
+
+/// Concrete lifecycle controls around the Oracle game actions. Client-local
+/// parameterized actions such as an arbitrary chat draft remain supplements;
+/// every action returned here is complete and ready for exact invocation.
+#[derive(Clone)]
+pub struct OracleRoomActionSource {
+    game: OracleGameActionSource,
+    seat_count: u8,
+    invite: InviteProof,
+    countdown_deadline_tick: u64,
+    countdown_token: CountdownToken,
+}
+
+impl OracleRoomActionSource {
+    /// Create a bounded room action source.
+    ///
+    /// # Errors
+    ///
+    /// Rejects zero/more-than-eight seats, a zero deadline, or malformed
+    /// invite/countdown text.
+    pub fn new(
+        seed: u64,
+        seat_count: u8,
+        invite: impl Into<String>,
+        countdown_deadline_tick: u64,
+        countdown_token: impl Into<String>,
+    ) -> Result<Self, DeviceClientError> {
+        if seat_count == 0 || seat_count > 8 || countdown_deadline_tick == 0 {
+            return Err(DeviceClientError::ProtocolViolation);
+        }
+        Ok(Self {
+            game: OracleGameActionSource::new(seed),
+            seat_count,
+            invite: InviteProof::new(invite.into())
+                .map_err(|_| DeviceClientError::ProtocolViolation)?,
+            countdown_deadline_tick,
+            countdown_token: CountdownToken::new(countdown_token.into())
+                .map_err(|_| DeviceClientError::ProtocolViolation)?,
+        })
+    }
+
+    fn advertised(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        payload: CommandPayload,
+    ) -> AdvertisedAction {
+        AdvertisedAction {
+            id: id.into(),
+            label: label.into(),
+            payload,
+        }
+    }
+}
+
+impl<const PLAYERS: usize> AdvertisedActionSource<crate::OracleSessionGame<PLAYERS>>
+    for OracleRoomActionSource
+{
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the exhaustive lifecycle mapping keeps every concrete room action visible in one source"
+    )]
+    fn actions(
+        &self,
+        state: &SessionState<crate::OracleSessionGame<PLAYERS>>,
+        projection: &ProjectionEnvelope,
+    ) -> Result<Vec<AdvertisedAction>, DeviceClientError> {
+        let principal = &projection.principal_id;
+        if principal == &state.authority_clock {
+            return Ok(match &state.phase {
+                SessionPhase::Countdown { token, .. } => vec![Self::advertised(
+                    "countdown-expire",
+                    "Expire countdown",
+                    CommandPayload::CountdownExpired {
+                        countdown_token: token.clone(),
+                    },
+                )],
+                _ => Vec::new(),
+            });
+        }
+        if principal == &state.game_environment {
+            return self.game.actions(state, projection);
+        }
+        if matches!(&state.phase, SessionPhase::Uninitialized) {
+            return Ok(vec![Self::advertised(
+                "room-create",
+                "Create room",
+                CommandPayload::CreateRoom,
+            )]);
+        }
+        let Some(member) = state.member(principal) else {
+            return Ok(vec![Self::advertised(
+                "room-join",
+                "Join room",
+                CommandPayload::RedeemInvite {
+                    invite: self.invite.clone(),
+                },
+            )]);
+        };
+        let mut actions = Vec::new();
+        match &state.phase {
+            SessionPhase::Lobby => {
+                if member.seat.is_some() {
+                    actions.push(Self::advertised(
+                        "room-release-seat",
+                        "Become spectator",
+                        CommandPayload::ReleaseSeat,
+                    ));
+                    actions.push(Self::advertised(
+                        if member.ready {
+                            "room-unready"
+                        } else {
+                            "room-ready"
+                        },
+                        if member.ready { "Not ready" } else { "Ready" },
+                        if member.ready {
+                            CommandPayload::Unready
+                        } else {
+                            CommandPayload::Ready
+                        },
+                    ));
+                } else {
+                    for seat in 0..self.seat_count {
+                        if state.seat_owner(seat).is_none() {
+                            actions.push(Self::advertised(
+                                format!("room-take-seat-{seat}"),
+                                format!("Take seat {seat}"),
+                                CommandPayload::TakeSeat { seat },
+                            ));
+                        }
+                    }
+                }
+                let seated = state
+                    .members
+                    .iter()
+                    .filter(|candidate| candidate.seat.is_some())
+                    .collect::<Vec<_>>();
+                if member.host
+                    && seated.len() == usize::from(self.seat_count)
+                    && seated.iter().all(|candidate| candidate.ready)
+                {
+                    actions.push(Self::advertised(
+                        "countdown-arm",
+                        "Start countdown",
+                        CommandPayload::ArmCountdown {
+                            deadline_tick: self.countdown_deadline_tick,
+                            countdown_token: self.countdown_token.clone(),
+                        },
+                    ));
+                }
+            }
+            SessionPhase::Countdown { .. } if member.seat.is_some() => {
+                actions.push(Self::advertised(
+                    "countdown-abort",
+                    "Abort countdown",
+                    CommandPayload::AbortCountdown,
+                ));
+            }
+            SessionPhase::Running { .. } if member.seat.is_some() => {
+                actions.push(Self::advertised(
+                    "room-pause",
+                    "Pause game",
+                    CommandPayload::Pause,
+                ));
+                actions.extend(self.game.actions(state, projection)?);
+            }
+            SessionPhase::Paused { .. } if member.seat.is_some() => actions.push(Self::advertised(
+                "room-unpause",
+                "Resume game",
+                CommandPayload::Unpause,
+            )),
+            SessionPhase::Running { .. } | SessionPhase::Paused { .. } => {
+                let already_scoped = state
+                    .hand_requests
+                    .iter()
+                    .any(|request| request.recipient == *principal)
+                    || state
+                        .hand_grants
+                        .iter()
+                        .any(|grant| grant.recipient == *principal);
+                if !already_scoped {
+                    for (index, player) in state
+                        .members
+                        .iter()
+                        .filter(|candidate| candidate.seat.is_some())
+                        .enumerate()
+                    {
+                        actions.push(Self::advertised(
+                            format!("hand-request-{index}"),
+                            "Request hand view",
+                            CommandPayload::RequestHand {
+                                player: player.principal_id.clone(),
+                            },
+                        ));
+                    }
+                }
+            }
+            SessionPhase::PostGame { .. } if member.host => actions.push(Self::advertised(
+                "room-reset-lobby",
+                "Return to lobby",
+                CommandPayload::ResetLobby,
+            )),
+            SessionPhase::Uninitialized
+            | SessionPhase::Countdown { .. }
+            | SessionPhase::PostGame { .. }
+            | SessionPhase::Closed => {}
+        }
+        for (index, request) in state
+            .hand_requests
+            .iter()
+            .filter(|request| request.player == *principal)
+            .enumerate()
+        {
+            actions.push(Self::advertised(
+                format!("hand-grant-{index}"),
+                "Grant hand view",
+                CommandPayload::GrantHand {
+                    request_id: request.request_id.clone(),
+                    player: request.player.clone(),
+                    recipient: request.recipient.clone(),
+                    grant_epoch: state.projection_epoch.saturating_add(1),
+                },
+            ));
+            actions.push(Self::advertised(
+                format!("hand-deny-{index}"),
+                "Deny hand view",
+                CommandPayload::DenyHand {
+                    request_id: request.request_id.clone(),
+                    player: request.player.clone(),
+                    recipient: request.recipient.clone(),
+                },
+            ));
+        }
+        for (index, grant) in state
+            .hand_grants
+            .iter()
+            .filter(|grant| grant.player == *principal)
+            .enumerate()
+        {
+            actions.push(Self::advertised(
+                format!("hand-revoke-{index}"),
+                "Revoke hand view",
+                CommandPayload::RevokeHand {
+                    player: grant.player.clone(),
+                    recipient: grant.recipient.clone(),
+                    grant_epoch: grant.grant_epoch,
+                },
+            ));
+        }
+        if member.host && !matches!(&state.phase, SessionPhase::Closed) {
+            actions.push(Self::advertised(
+                "room-close",
+                "Close room",
+                CommandPayload::CloseRoom,
+            ));
+        } else if !member.host
+            && (member.seat.is_none()
+                || matches!(
+                    &state.phase,
+                    SessionPhase::Lobby | SessionPhase::Countdown { .. }
+                ))
+        {
+            actions.push(Self::advertised(
+                "room-leave",
+                "Leave room",
+                CommandPayload::Leave,
+            ));
+        }
+        Ok(actions)
     }
 }
 
@@ -307,6 +577,198 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
             .ok()
             .map(|shared| shared.authority.state.revision)
     }
+
+    #[must_use]
+    pub fn session_epoch(&self) -> Option<u64> {
+        self.shared
+            .lock()
+            .ok()
+            .map(|shared| shared.authority.state.session_epoch)
+    }
+
+    #[must_use]
+    pub fn room_id(&self) -> Option<RoomId> {
+        self.shared
+            .lock()
+            .ok()
+            .map(|shared| shared.authority.state.room_id.clone())
+    }
+}
+
+struct CachedRemoteObservation {
+    request: DeviceObservationRequestWire,
+    observation: DeviceObservation,
+}
+
+struct CachedRemoteAction {
+    action: DeviceActionWire,
+    result: DeviceActionResult,
+}
+
+/// Process-external certified-device boundary around one real reducer-backed
+/// room adapter. HTTP and Veilid servers may share this service rather than
+/// reimplementing certificate enrollment, signature verification, or replay.
+pub struct CertifiedDeviceRoom<G: SessionGame, A> {
+    adapter: RuntimeLoopbackDeviceAdapter<G, A>,
+    profiles: BTreeMap<DeviceId, DeviceProfile>,
+    observation_cache: BTreeMap<(DeviceId, String), CachedRemoteObservation>,
+    action_cache: BTreeMap<(DeviceId, String), CachedRemoteAction>,
+}
+
+impl<G, A> CertifiedDeviceRoom<G, A>
+where
+    G: SessionGame + Send + 'static,
+    G::Error: Send,
+    A: AdvertisedActionSource<G>,
+{
+    #[must_use]
+    pub fn new(adapter: RuntimeLoopbackDeviceAdapter<G, A>) -> Self {
+        Self {
+            adapter,
+            profiles: BTreeMap::new(),
+            observation_cache: BTreeMap::new(),
+            action_cache: BTreeMap::new(),
+        }
+    }
+
+    /// Verify, enroll, and answer one signed exact-recipient snapshot or wait.
+    /// Successful request IDs are replayed as the exact original observation,
+    /// never reinterpreted against newer private state.
+    ///
+    /// # Errors
+    ///
+    /// Returns stable device-client categories for bad signatures, room/epoch
+    /// mismatch, conflicting replay, no wait progress, or adapter failure.
+    pub fn observe(
+        &mut self,
+        request: DeviceObservationRequestWire,
+    ) -> Result<DeviceObservation, DeviceClientError> {
+        verify_signed_device_observation_request(&request)?;
+        let key = (
+            request.device_id.clone(),
+            request.request_id.as_str().to_owned(),
+        );
+        if let Some(cached) = self.observation_cache.get(&key) {
+            return if cached.request == request {
+                Ok(cached.observation.clone())
+            } else {
+                Err(DeviceClientError::ProtocolViolation)
+            };
+        }
+        self.validate_room_epoch(&request.room_id, request.session_epoch)?;
+        let profile = self.ensure_enrolled(&request.certificate)?;
+        let mut adapter = self.adapter.clone();
+        let observation = match request.mode {
+            poche_protocol::DeviceObservationModeWire::Snapshot => {
+                adapter.observe(&profile, &request.room_id)?
+            }
+            poche_protocol::DeviceObservationModeWire::Wait { after_revision } => {
+                adapter.wait(&profile, &request.room_id, after_revision)?
+            }
+        };
+        if self.observation_cache.len() >= 256 {
+            let oldest = self.observation_cache.keys().next().cloned();
+            if let Some(oldest) = oldest {
+                self.observation_cache.remove(&oldest);
+            }
+        }
+        self.observation_cache.insert(
+            key,
+            CachedRemoteObservation {
+                request,
+                observation: observation.clone(),
+            },
+        );
+        Ok(observation)
+    }
+
+    /// Verify, enroll, and submit one signed action through the ordinary
+    /// advertised-action/reducer path.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable category for signature, room/epoch, stale action,
+    /// authorization, or adapter failure.
+    pub fn invoke(
+        &mut self,
+        action: &DeviceActionWire,
+    ) -> Result<DeviceActionResult, DeviceClientError> {
+        let request = verify_signed_device_action(action)?;
+        let key = (
+            action.device_id.clone(),
+            action.command_id.as_str().to_owned(),
+        );
+        if let Some(cached) = self.action_cache.get(&key) {
+            return if cached.action == *action {
+                Ok(cached.result.clone())
+            } else {
+                Err(DeviceClientError::ProtocolViolation)
+            };
+        }
+        self.validate_room_epoch(&request.room_id, request.session_epoch)?;
+        let profile = self.ensure_enrolled(&action.certificate)?;
+        let result = self.adapter.clone().invoke(&profile, request)?;
+        if self.action_cache.len() >= 256 {
+            let oldest = self.action_cache.keys().next().cloned();
+            if let Some(oldest) = oldest {
+                self.action_cache.remove(&oldest);
+            }
+        }
+        self.action_cache.insert(
+            key,
+            CachedRemoteAction {
+                action: action.clone(),
+                result: result.clone(),
+            },
+        );
+        Ok(result)
+    }
+
+    fn validate_room_epoch(
+        &self,
+        room_id: &RoomId,
+        session_epoch: u64,
+    ) -> Result<(), DeviceClientError> {
+        if self.adapter.room_id().as_ref() == Some(room_id)
+            && self.adapter.session_epoch() == Some(session_epoch)
+        {
+            Ok(())
+        } else {
+            Err(DeviceClientError::TransportUnavailable)
+        }
+    }
+
+    fn ensure_enrolled(
+        &mut self,
+        certificate: &DeviceCertificateWire,
+    ) -> Result<DeviceProfile, DeviceClientError> {
+        verify_device_certificate(certificate)?;
+        if let Some(profile) = self.profiles.get(&certificate.device_id) {
+            return if profile.certificate == *certificate {
+                Ok(profile.clone())
+            } else {
+                Err(DeviceClientError::InvalidProfile)
+            };
+        }
+        let device_label = certificate
+            .device_id
+            .as_str()
+            .get(..48)
+            .ok_or(DeviceClientError::InvalidProfile)?;
+        let profile = DeviceProfile {
+            schema_version: DeviceProfile::SCHEMA_VERSION_V1,
+            label: format!("remote-{device_label}"),
+            player_id: certificate.player_id.clone(),
+            device_id: certificate.device_id.clone(),
+            certificate: certificate.clone(),
+            signing_key_handle: format!("remote-certified:{}", certificate.device_id.as_str()),
+        };
+        profile.validate()?;
+        self.adapter.enroll(&profile)?;
+        self.profiles
+            .insert(profile.device_id.clone(), profile.clone());
+        Ok(profile)
+    }
 }
 
 impl<G, A> LoopbackDeviceAuthority for RuntimeLoopbackDeviceAdapter<G, A>
@@ -443,10 +905,7 @@ where
                 .authority
                 .state
                 .member(&capture_request.player_id)
-                // The host-authoritative session generation is zero-based;
-                // replicated device certificates/cooperation wires are
-                // deliberately one-based so zero remains invalid on wire.
-                .and_then(|member| member.membership_epoch.checked_add(1))
+                .map(|member| member.membership_epoch)
                 .ok_or(DeviceClientError::AuthorizationDenied)?;
             let snapshot = CaptureContextSnapshot {
                 room_id: shared.authority.state.room_id.clone(),
@@ -1142,6 +1601,82 @@ mod tests {
         assert_eq!(
             verify_signed_device_observation_request(&changed_wait),
             Err(DeviceClientError::AuthorizationDenied)
+        );
+    }
+
+    #[test]
+    fn certified_room_replays_external_reads_and_writes_exactly() {
+        let root_key = SigningKey::from_bytes(&[31; 32]);
+        let device_key = SigningKey::from_bytes(&[32; 32]);
+        let profile = signed_profile(
+            "remote-room-device",
+            &root_key,
+            &device_key,
+            vec![
+                DeviceCapabilityWire::Propose,
+                DeviceCapabilityWire::ReceivePrivateProjection,
+            ],
+        );
+        let room_id = RoomId::new("remote-room").unwrap();
+        let adapter = RuntimeLoopbackDeviceAdapter::new(
+            SessionState::pending(
+                room_id.clone(),
+                PrincipalId::new("clock").unwrap(),
+                PrincipalId::new("game").unwrap(),
+            ),
+            CreateRoomActions,
+            LoopbackCodec::CanonicalNdjson,
+        );
+        let mut room = CertifiedDeviceRoom::new(adapter.clone());
+        let signer = TestDeviceSigner(SigningKey::from_bytes(&[32; 32]));
+        let signed_observe = sign_observation_request(
+            &profile,
+            &room_id,
+            0,
+            CorrelationId::new("remote-observe-0").unwrap(),
+            DeviceObservationModeWire::Snapshot,
+            &signer,
+        )
+        .unwrap();
+        let observation = room.observe(signed_observe.clone()).unwrap();
+        assert_eq!(observation.projection.current_revision, 0);
+        assert_eq!(observation.actions[0].id, "create-room");
+
+        let client = PlayerDeviceClient::new(
+            profile.clone(),
+            LoopbackDeviceTransport::new(adapter.clone()),
+        )
+        .unwrap();
+        let prepared = client
+            .prepare(
+                &observation,
+                "create-room",
+                CommandId::new("remote-create").unwrap(),
+            )
+            .unwrap();
+        let signed_action = prepared.sign(&profile, &signer).unwrap();
+        let result = room.invoke(&signed_action).unwrap();
+        assert_eq!(
+            result,
+            DeviceActionResult::Committed {
+                command_id: CommandId::new("remote-create").unwrap(),
+                revision: 1,
+            }
+        );
+        assert_eq!(adapter.revision(), Some(1));
+        assert_eq!(room.invoke(&signed_action).unwrap(), result);
+        assert_eq!(
+            room.observe(signed_observe).unwrap(),
+            observation,
+            "a retry must not reinterpret the signed snapshot against revision 1"
+        );
+
+        let mut conflicting = signed_action;
+        conflicting.action_id = "create-room-conflict".to_owned();
+        assert_eq!(
+            room.invoke(&conflicting),
+            Err(DeviceClientError::AuthorizationDenied),
+            "mutating a signed retry fails before cache lookup"
         );
     }
 

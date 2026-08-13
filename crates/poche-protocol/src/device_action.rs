@@ -53,12 +53,15 @@ impl UnsignedDeviceActionWire {
         if self.schema_version != DEVICE_ACTION_SCHEMA_VERSION_V1 {
             return Err(DeviceActionWireError::UnknownVersion);
         }
+        let bootstrap = self.session_epoch == 0
+            && self.expected_revision == 0
+            && matches!(self.payload, CommandPayload::CreateRoom)
+            && self.certificate.valid_from_membership_epoch == 1;
         if !self.room_id.validate()
-            || self.session_epoch == 0
             || !self.command_id.validate()
             || self.player_id != self.certificate.player_id
             || self.device_id != self.certificate.device_id
-            || !self.certificate.is_valid_at(self.session_epoch)
+            || (!bootstrap && !self.certificate.is_valid_at(self.session_epoch))
             || !self
                 .certificate
                 .has_capability(DeviceCapabilityWire::Propose)
@@ -231,12 +234,14 @@ impl UnsignedDeviceObservationRequestWire {
         if self.schema_version != DEVICE_ACTION_SCHEMA_VERSION_V1 {
             return Err(DeviceActionWireError::UnknownVersion);
         }
+        let bootstrap = self.session_epoch == 0
+            && matches!(self.mode, DeviceObservationModeWire::Snapshot)
+            && self.certificate.valid_from_membership_epoch == 1;
         if !self.room_id.validate()
-            || self.session_epoch == 0
             || !self.request_id.validate()
             || self.player_id != self.certificate.player_id
             || self.device_id != self.certificate.device_id
-            || !self.certificate.is_valid_at(self.session_epoch)
+            || (!bootstrap && !self.certificate.is_valid_at(self.session_epoch))
             || !self
                 .certificate
                 .has_capability(DeviceCapabilityWire::ReceivePrivateProjection)

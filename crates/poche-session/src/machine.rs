@@ -1111,6 +1111,7 @@ fn apply_kind<G: SessionGame>(
             if !matches!(state.phase, SessionPhase::Uninitialized) {
                 return denied(DenyReason::WrongPhase);
             }
+            state.session_epoch = 1;
             state.host = Some(host.clone());
             state.members.push(MemberState {
                 principal_id: host.clone(),

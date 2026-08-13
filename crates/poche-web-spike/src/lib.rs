@@ -22,15 +22,18 @@ use axum::{
 };
 use datastar::prelude::PatchElements;
 use futures_util::{StreamExt as _, stream};
+use poche_player_client::DeviceClientError;
 use poche_protocol::{
-    CommandPayload, DeviceCustodyWire, GatewayAuthorityModeWire, GatewayProjectionProtectionWire,
-    GatewayTrustDisclosureWire, PrincipalId, ProtocolFrame, RoomId,
+    CommandPayload, DeviceActionWire, DeviceCustodyWire, DeviceObservationRequestWire,
+    GatewayAuthorityModeWire, GatewayProjectionProtectionWire, GatewayTrustDisclosureWire,
+    PrincipalId, ProtocolFrame, RoomId,
 };
 use poche_runtime::{
-    AuthorityDisposition, ClientPort, InProcessAuthority, InProcessTransport, LoopbackCodec,
-    OracleSessionGame, ScriptedClient,
+    AuthorityDisposition, CertifiedDeviceRoom, ClientPort, InProcessAuthority, InProcessTransport,
+    LoopbackCodec, OracleRoomActionSource, OracleSessionGame, RuntimeLoopbackDeviceAdapter,
+    ScriptedClient,
 };
-use poche_session::SessionState;
+use poche_session::{InviteRecord, SessionState};
 use poche_ui::{
     ConnectionPresentation, EMBEDDED_REPLAY, PresentationInput, PresentationModel, ReplayDeck,
     embedded_spatial_fixture, escape_html, render_live_semantic_html, render_semantic_html,
@@ -71,7 +74,10 @@ struct AppState {
     gateway: GatewayLab,
     gateway_live: Arc<Mutex<LiveDemo>>,
     tabletop: Arc<Mutex<TabletopLab>>,
+    certified_room: Arc<Mutex<WebCertifiedRoom>>,
 }
+
+type WebCertifiedRoom = CertifiedDeviceRoom<OracleSessionGame<2>, OracleRoomActionSource>;
 
 struct AuthorityHost {
     authority: InProcessAuthority<OracleSessionGame<2>>,
@@ -193,6 +199,8 @@ fn router(state: AppState) -> Router {
         .route("/gateway/native/revoke/{device}", post(gateway_revoke))
         .route("/gateway/devices", get(gateway_devices))
         .route("/gateway/metrics", get(gateway_metrics))
+        .route("/device/v1/observe", post(certified_device_observe))
+        .route("/device/v1/invoke", post(certified_device_invoke))
         .route("/tabletop/{viewer}", get(tabletop_view))
         .route("/tabletop/{viewer}/action/{control}", post(tabletop_action))
         .route("/tabletop/{viewer}/disconnect", post(tabletop_disconnect))
@@ -202,6 +210,52 @@ fn router(state: AppState) -> Router {
 
 async fn favicon() -> StatusCode {
     StatusCode::NO_CONTENT
+}
+
+async fn certified_device_observe(
+    State(state): State<AppState>,
+    Json(request): Json<DeviceObservationRequestWire>,
+) -> Response {
+    let result = state
+        .certified_room
+        .lock()
+        .map_err(|_| DeviceClientError::TransportUnavailable)
+        .and_then(|mut room| room.observe(request));
+    device_api_response(result)
+}
+
+async fn certified_device_invoke(
+    State(state): State<AppState>,
+    Json(action): Json<DeviceActionWire>,
+) -> Response {
+    let result = state
+        .certified_room
+        .lock()
+        .map_err(|_| DeviceClientError::TransportUnavailable)
+        .and_then(|mut room| room.invoke(&action));
+    device_api_response(result)
+}
+
+fn device_api_response<T: serde::Serialize>(result: Result<T, DeviceClientError>) -> Response {
+    match result {
+        Ok(value) => Json(value).into_response(),
+        Err(error) => {
+            let status = match error {
+                DeviceClientError::InvalidProfile
+                | DeviceClientError::KeyUnavailable
+                | DeviceClientError::SigningFailed
+                | DeviceClientError::AuthorizationDenied => StatusCode::FORBIDDEN,
+                DeviceClientError::StaleRevision | DeviceClientError::NoProgress => {
+                    StatusCode::CONFLICT
+                }
+                DeviceClientError::InvalidObservation
+                | DeviceClientError::UnknownAction
+                | DeviceClientError::ProtocolViolation => StatusCode::UNPROCESSABLE_ENTITY,
+                DeviceClientError::TransportUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            };
+            (status, error.to_string()).into_response()
+        }
+    }
 }
 
 async fn gateway_index() -> Response {
@@ -1055,6 +1109,7 @@ pub async fn serve(listener: tokio::net::TcpListener) -> Result<(), Box<dyn std:
         gateway: GatewayLab::new()?,
         gateway_live: Arc::new(Mutex::new(gateway_demo()?)),
         tabletop: Arc::new(Mutex::new(TabletopLab::new()?)),
+        certified_room: Arc::new(Mutex::new(certified_device_room()?)),
     };
     let _clock_task = spawn_live_clock(Arc::clone(&state.live), state.live_updates.clone());
     let _room_clock_task = spawn_room_clock(Arc::clone(&state.rooms), state.room_updates.clone());
@@ -1067,6 +1122,25 @@ fn gateway_demo() -> Result<LiveDemo, String> {
     demo.setup("running")?;
     demo.control("spectator", "request-hand-0")?;
     Ok(demo)
+}
+
+fn certified_device_room() -> Result<WebCertifiedRoom, String> {
+    const INVITE: &str = "certified-device-join-v1";
+    let mut state = SessionState::pending(
+        room("certified-device-room")?,
+        principal("certified-authority-clock")?,
+        principal("certified-game-environment")?,
+    );
+    state
+        .invites
+        .push(InviteRecord::new(INVITE, u64::MAX).map_err(|error| format!("{error:?}"))?);
+    let actions = OracleRoomActionSource::new(0x5eed, 2, INVITE, 3, "certified-countdown")
+        .map_err(|error| error.to_string())?;
+    Ok(CertifiedDeviceRoom::new(RuntimeLoopbackDeviceAdapter::new(
+        state,
+        actions,
+        LoopbackCodec::CanonicalNdjson,
+    )))
 }
 
 #[cfg(test)]
@@ -1083,6 +1157,76 @@ mod tests {
         time::Duration,
     };
     use tokio::sync::broadcast;
+
+    use ed25519_dalek::{Signer as _, SigningKey};
+    use poche_player_client::{
+        DeviceClientError, DeviceProfile, DeviceSigner, HttpDeviceTransport, PlayerDeviceClient,
+    };
+    use poche_protocol::{
+        CertificateId, CommandId, DeviceCapabilityWire, DeviceCustodyWire, DeviceId, PrincipalId,
+        REPLICATION_SCHEMA_VERSION_V1, REPLICATION_SIGNATURE_DOMAIN_V1, RoomId, SignatureAlgorithm,
+        SignatureBytes, SignatureIntent, UnsignedDeviceCertificateWire,
+        canonical_device_certificate_bytes,
+    };
+
+    struct TestHttpSigner(SigningKey);
+
+    impl DeviceSigner for TestHttpSigner {
+        fn sign_device_bytes(
+            &self,
+            _profile: &DeviceProfile,
+            canonical_bytes: &[u8],
+        ) -> Result<SignatureBytes, DeviceClientError> {
+            Ok(SignatureBytes::new(hex(&self.0.sign(canonical_bytes).to_bytes())).unwrap())
+        }
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().fold(String::new(), |mut output, byte| {
+            use std::fmt::Write as _;
+            write!(output, "{byte:02x}").unwrap();
+            output
+        })
+    }
+
+    fn certified_http_profile() -> DeviceProfile {
+        let root = SigningKey::from_bytes(&[51; 32]);
+        let device = SigningKey::from_bytes(&[52; 32]);
+        let player_id = PrincipalId::new(hex(&root.verifying_key().to_bytes())).unwrap();
+        let device_id = DeviceId::new(hex(&device.verifying_key().to_bytes())).unwrap();
+        let unsigned = UnsignedDeviceCertificateWire {
+            schema_version: REPLICATION_SCHEMA_VERSION_V1,
+            certificate_id: CertificateId::new("web-http-client").unwrap(),
+            player_id: player_id.clone(),
+            device_id: device_id.clone(),
+            device_signing_public_key: device_id.as_str().to_owned(),
+            sequence: 1,
+            valid_from_membership_epoch: 1,
+            valid_through_membership_epoch: None,
+            capabilities: vec![
+                DeviceCapabilityWire::Propose,
+                DeviceCapabilityWire::ReceivePrivateProjection,
+            ],
+            custody: DeviceCustodyWire::NativeLocal,
+            signature_intent: SignatureIntent {
+                domain_version: REPLICATION_SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: player_id.clone(),
+            },
+        };
+        let signature = SignatureBytes::new(hex(&root
+            .sign(&canonical_device_certificate_bytes(&unsigned).unwrap())
+            .to_bytes()))
+        .unwrap();
+        DeviceProfile {
+            schema_version: DeviceProfile::SCHEMA_VERSION_V1,
+            label: "web-http-client".to_owned(),
+            player_id,
+            device_id,
+            certificate: unsigned.attach_signature(signature).unwrap(),
+            signing_key_handle: "test-protected:web-http-client".to_owned(),
+        }
+    }
 
     #[test]
     fn selected_rl_replay_is_hash_identical_and_contains_no_hidden_state() {
@@ -1395,6 +1539,54 @@ mod tests {
         );
         clock.abort();
         let _ = clock.await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn signed_http_device_observes_invokes_waits_and_retries() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("ephemeral listener");
+        let address = listener.local_addr().expect("listener address");
+        let server = tokio::spawn(async move {
+            super::serve(listener)
+                .await
+                .expect("certified device test server");
+        });
+
+        let profile = certified_http_profile();
+        let transport = HttpDeviceTransport::new(
+            format!("http://{address}"),
+            0,
+            TestHttpSigner(SigningKey::from_bytes(&[52; 32])),
+        )
+        .expect("loopback HTTP transport");
+        let mut client = PlayerDeviceClient::new(profile, transport).expect("device client");
+        let room_id = RoomId::new("certified-device-room").unwrap();
+        let pending = client.observe(&room_id).expect("signed pending view");
+        assert_eq!(pending.projection.current_revision, 0);
+        assert_eq!(pending.actions[0].id, "room-create");
+
+        let result = client
+            .invoke(
+                &pending,
+                "room-create",
+                CommandId::new("http-create-room").unwrap(),
+            )
+            .expect("signed HTTP action");
+        assert!(matches!(
+            result,
+            poche_player_client::DeviceActionResult::Committed { revision: 1, .. }
+        ));
+        let lobby = client.observe(&room_id).expect("epoch-one lobby view");
+        assert_eq!(lobby.projection.current_revision, 1);
+        assert!(lobby.action("room-take-seat-0").is_some());
+        assert!(lobby.action("room-take-seat-1").is_some());
+        assert!(lobby.action("room-close").is_some());
+        let waited = client.wait(&room_id, 0).expect("strictly later view");
+        assert_eq!(waited.projection.current_revision, 1);
+
+        server.abort();
+        let _ = server.await;
     }
 
     #[test]

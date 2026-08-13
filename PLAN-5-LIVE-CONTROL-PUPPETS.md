@@ -575,7 +575,18 @@ request domain as well: snapshot/wait mode, after-revision, unique request ID,
 room/session, player/device certificate, and private-projection capability are
 bound before a projection can be requested. Runtime verification checks both
 signature layers and rejects a mutated wait cursor. Gateway/Veilid carriage
-remains Phase 3/5 work.
+remains Phase 3/5 work. The first process-external carrier now exists as an
+optional synchronous HTTP adapter: it permits HTTPS generally and plaintext
+HTTP only on explicit loopback origins, signs every observation/wait/action,
+bounds responses, and maps wire failures to the shared redacted error set. A
+reducer-backed `CertifiedDeviceRoom` verifies both certificate and device
+signatures, enrolls exact devices, and retains bounded exact-result caches so
+retries cannot be reinterpreted against newer private state. Pending rooms use
+epoch zero only for signed snapshot/create bootstrap and `RoomCreated`
+atomically advances the authoritative session and first membership to the
+one-based epoch required by device certificates. The prior capture-local epoch
+offset was removed, the reducer rejects zero/future member epochs, and the
+golden transcript was deliberately regenerated.
 
 **Work:**
 
@@ -810,10 +821,15 @@ pause, chat, leave, close, and other human controls. The full certified
 eight-device puppet now uses the seeded policy seam and still completes 159
 committed revisions with every device converged. The one-executable Figue
 schema validates `first-legal` and `seeded-random:<seed>` and now exposes a
-typed `game bid` convenience action alongside typed card play. Remaining:
-connect these seams to protected persistent profiles and an external live
-transport; implement observe/actions/invoke/wait, chat/governance/spectator and
-capture commands; and run the persistent agent loop against graphical peers.
+typed `game bid` convenience action alongside typed card play. The optional
+HTTP device adapter and the Axum `/device/v1/observe` plus
+`/device/v1/invoke` endpoints now exercise a real process/socket boundary. A
+real ephemeral-server test signs a pending observation, invokes advertised
+room creation, crosses into epoch one, observes the lobby, performs a
+strictly-later wait, and proves exact retry behavior. Remaining: connect this
+transport to protected persistent profiles and the public Figue execution
+surface; implement chat/governance/spectator and capture commands; and run the
+persistent agent loop against graphical peers.
 
 **Work:**
 
@@ -1090,7 +1106,14 @@ compare target-device views, and understand what each artifact proves and omits.
 
 ### [ ] 5.1 Run the complete external-device vertical slice
 
-**Completion notes:** Not started.
+**Completion notes:** Preparatory external-boundary evidence is complete, but
+the task remains unchecked until the multi-player graphical acceptance run.
+The real Axum listener and HTTP device adapter now prove signed
+observe/invoke/wait plus idempotent retry over a process-shaped socket
+boundary, using the same advertised action resolver and authoritative reducer
+as loopback devices. This currently covers single-device room creation only;
+it does not yet claim native/browser peers, protected persistent keys, a full
+game, or cross-device capture over the external carrier.
 
 **Work:**
 

@@ -8831,6 +8831,7 @@ dependencies = [
  "poche-protocol",
  "serde",
  "serde_json",
+ "ureq",
 ]
 
 [[package]]
@@ -8968,6 +8969,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "getrandom 0.3.4",
+ "poche-player-client",
  "poche-protocol",
  "poche-rl",
  "poche-runtime",

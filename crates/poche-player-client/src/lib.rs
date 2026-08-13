@@ -30,9 +30,13 @@ use poche_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "http")]
+mod http;
 mod loopback;
 mod policy;
 
+#[cfg(feature = "http")]
+pub use http::*;
 pub use loopback::*;
 pub use policy::*;
 

@@ -219,7 +219,10 @@ fn created_room() -> SessionState<TestGame> {
         "create",
         CommandPayload::CreateRoom,
     );
-    execute(&pending, &create).0
+    let created = execute(&pending, &create).0;
+    assert_eq!(created.session_epoch, 1);
+    assert_eq!(created.members[0].membership_epoch, 1);
+    created
 }
 
 fn two_player_lobby() -> SessionState<TestGame> {
@@ -673,6 +676,13 @@ fn removed_member_cannot_reconnect_with_the_former_stable_principal() {
 #[test]
 fn controlled_invalid_states_and_stale_events_are_rejected() {
     let state = two_player_lobby();
+    let mut invalid_membership_epoch = state.clone();
+    invalid_membership_epoch.members[0].membership_epoch = 0;
+    assert_eq!(
+        invalid_membership_epoch.validate(),
+        Err(SessionInvariantError::InvalidPhaseData)
+    );
+
     let mut duplicate_seat = state.clone();
     duplicate_seat.member_mut(&principal("alice")).unwrap().seat = Some(0);
     assert_eq!(

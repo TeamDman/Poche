@@ -9,11 +9,17 @@ repository.workspace = true
 publish = false
 description = "Transport-neutral exact-recipient Poche device client"
 
+[features]
+default = []
+http = ["dep:serde_json", "dep:ureq"]
+
 [dependencies]
 blake3.workspace = true
 facet.workspace = true
 poche-protocol = { path = "../poche-protocol" }
 serde.workspace = true
+serde_json = { workspace = true, optional = true }
+ureq = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true

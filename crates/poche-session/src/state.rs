@@ -507,6 +507,9 @@ impl<G> SessionState<G> {
             return Err(SessionInvariantError::TooManyHandCapabilities);
         }
         for (index, member) in self.members.iter().enumerate() {
+            if member.membership_epoch == 0 || member.membership_epoch > self.session_epoch {
+                return Err(SessionInvariantError::InvalidPhaseData);
+            }
             if member
                 .seat
                 .is_some_and(|seat| usize::from(seat) >= MAX_MEMBERS)
@@ -535,9 +538,12 @@ impl<G> SessionState<G> {
         }
         match &self.phase {
             SessionPhase::Uninitialized => {
-                if self.host.is_some() || !self.members.is_empty() {
+                if self.session_epoch != 0 || self.host.is_some() || !self.members.is_empty() {
                     return Err(SessionInvariantError::InvalidPhaseData);
                 }
+            }
+            _ if self.session_epoch == 0 => {
+                return Err(SessionInvariantError::InvalidPhaseData);
             }
             SessionPhase::Countdown { .. } => {
                 let seated: Vec<_> = self
