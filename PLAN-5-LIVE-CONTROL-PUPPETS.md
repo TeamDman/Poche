@@ -726,8 +726,11 @@ selects artifact paths. `poche desktop --capture-artifact-root ...` exercises
 the provider and shared persistence pipeline through the unified executable.
 Automation capture surfaces are truly windowless by default: Bevy creates no
 primary window, disables Winit, renders the camera into a GPU image target, and
-reads the PNG back from that image. Normal `poche desktop` launch remains
-windowed. Unit, Clippy, and manual windowless artifact acceptance pass.
+reads the PNG back from that image. Headless workers compile render pipelines
+synchronously, wait for rendered application frames rather than assuming a
+wall-clock delay proves readiness, and reject effectively uniform readbacks as
+integrity failures. Normal `poche desktop` launch remains windowed. Unit,
+Clippy, and GPU-gated windowless artifact acceptance pass.
 The native update loop now has a bounded, nonblocking `NativeLiveDevice` bridge:
 its worker owns an ordinary configured device transport, spatial input resolves
 against the exact rendered observation, and accepted input returns through the
@@ -895,24 +898,28 @@ actions, without sleeps or a second semantic engine.
 
 ### [ ] 4.2 Drive native evidence through cross-device capture requests
 
-**Completion notes:** The first cross-device native vertical slice is complete.
-`poche.exe puppet run ... --surface native` plays the same 159-action certified
-full game, then Alice's agent signs a terminal-revision request to Alice's
-separately certified native sibling. The runtime verifies root/device
-certificates, provider advertisement, request, response, membership/revision,
-expiry, capability, and replay policy before/after invoking a handler with no
-reducer access. Bevy creates no OS window, renders the sibling's exact revision
-to its 1280x800 GPU image, and returns one raw PNG plus projection/scene/camera
-metadata. The provider response exposes only hash-bound descriptors; plaintext
-stays provider-owned until the requester acknowledges an encrypted bounded
-transfer. The requester alone reconstructs bytes and calls `poche-capture`,
-which writes the captioned PNG/manifest inside the atomic puppet run. The
-top-level manifest hashes all semantic and graphical files with portable paths.
-A GPU-gated integration test and manual unified-executable NDJSON run pass at
-revision 159 with seven converged devices and one visually inspected terminal
-artifact. `--show-window` is an explicit native-only debug escape hatch.
-Remaining: capture the applicable lobby/bidding/card-selection/trick/score/
-reconnect checkpoints rather than only terminal state.
+**Completion notes:** Cross-device native evidence now spans six semantic
+checkpoints. `poche.exe puppet run ... --surface native` plays the same
+159-action certified full game while Alice's agent signs revision-bound
+requests to Alice's separately certified native sibling at bidding, card
+selection, trick in progress, resolved trick, scoring, and terminal states.
+The runtime verifies root/device certificates, provider advertisement,
+request, response, membership/revision, expiry, capability, and replay policy
+before/after invoking a handler with no reducer access. Bevy creates no OS
+window or Winit event loop, renders each exact revision to its 1280x800 GPU
+image, synchronously readies render pipelines, waits for rendered frames, and
+fails closed on an effectively uniform readback. Each response exposes only
+hash-bound descriptors; plaintext stays provider-owned until the requester
+acknowledges an encrypted bounded transfer. The requester alone reconstructs
+bytes and calls `poche-capture`, which writes each captioned PNG/manifest inside
+the atomic puppet run. The top-level manifest hashes all semantic and
+graphical files with portable paths. A GPU-gated integration test passes at
+revision 159 with seven converged devices, six ordered windowless captures,
+and no visible automation window. `--show-window` is an explicit native-only
+debug escape hatch. Remaining: decide and exercise main-menu/lobby and
+disconnect/reconnect capture boundaries; the native game adapter currently
+requires a seated game projection and therefore cannot honestly claim those
+states.
 
 **Work:**
 

@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     PuppetError, PuppetErrorCode, PuppetRunOptions, PuppetSurface, PuppetTransport,
-    native::{PendingPuppetCapture, capture_terminal_projection},
+    native::{NativeCaptureSession, PendingPuppetCapture},
 };
 
 pub(crate) type Adapter = RuntimeLoopbackDeviceAdapter<OracleSessionGame<2>, PuppetActionSource>;
@@ -255,117 +255,119 @@ pub(crate) fn run_two_player_full_round(
     let adapter = fixture.adapter;
     let capture_identity = fixture.capture_identity;
     let mut devices = fixture.devices;
+    let mut native_capture = match options.surface {
+        PuppetSurface::Headless => None,
+        PuppetSurface::Native => Some(NativeCaptureSession::register(
+            options,
+            &room_id,
+            &adapter,
+            &capture_identity.requester_key,
+            &capture_identity.provider_profile,
+            &capture_identity.provider_key,
+        )?),
+    };
     let started = Instant::now();
     let mut steps = Vec::new();
+    let mut captures = Vec::new();
 
     loop {
         ensure_running(options, started, cancelled, steps.len())?;
-        let Some((actor_index, observation, action)) = next_action(&mut devices, &room_id)? else {
-            return Err(PuppetError::new(
-                PuppetErrorCode::NoAction,
-                "no certified device advertised the next semantic action",
-            ));
-        };
-        let sequence = u32::try_from(steps.len()).map_err(|_| {
-            PuppetError::new(PuppetErrorCode::StepLimit, "puppet step count overflowed")
-        })?;
-        let command_id_text = format!("puppet-{sequence:04}");
-        let command_id = CommandId::new(command_id_text.clone()).map_err(|_| {
-            PuppetError::new(
-                PuppetErrorCode::InvalidFixture,
-                "puppet command identity is invalid",
-            )
-        })?;
-        let action_started = Instant::now();
-        let result = devices[actor_index]
-            .client
-            .invoke(&observation, &action.id, command_id)
-            .map_err(device_error)?;
-        let committed_revision = match result {
-            DeviceActionResult::Committed { revision, .. } => revision,
-            DeviceActionResult::Denied { .. } => {
-                return Err(PuppetError::new(
-                    PuppetErrorCode::ActionDenied,
-                    "an advertised puppet action was denied",
-                ));
+        let terminal = perform_next_action(options, &room_id, &mut devices, &mut steps)?;
+        if let Some(session) = native_capture.as_mut() {
+            let requester = devices
+                .iter_mut()
+                .find(|device| device.label == "alice-agent")
+                .ok_or_else(invalid_fixture)?;
+            if let Some(capture) = session.capture_next_checkpoint(&mut requester.client)? {
+                captures.push(capture);
             }
-        };
-        let witnesses = observe_all(&mut devices, &room_id)?;
-        if action_started.elapsed() > options.per_action_timeout {
-            return Err(PuppetError::new(
-                PuppetErrorCode::ActionTimeout,
-                "puppet action exceeded its semantic deadline",
-            ));
         }
-        if witnesses
-            .iter()
-            .any(|witness| witness.revision != committed_revision)
-        {
-            return Err(PuppetError::new(
-                PuppetErrorCode::DeviceProtocol,
-                "enrolled devices did not converge on the committed revision",
-            ));
-        }
-        let terminal = witnesses
-            .iter()
-            .all(|witness| witness.room_phase == "post_game");
-        steps.push(PuppetStepEvidence {
-            status: "complete".to_owned(),
-            sequence,
-            command_id: command_id_text,
-            acting_device: devices[actor_index].label.to_owned(),
-            acting_principal: observation.projection.principal_id.as_str().to_owned(),
-            observed_revision: observation.projection.current_revision,
-            observed_projection_hash: semantic_hash(&observation),
-            action_id: action.id,
-            action_label: action.label,
-            committed_revision,
-            observed_by: witnesses,
-        });
         if terminal {
             break;
         }
     }
 
-    let captures =
-        capture_for_surface(options, &room_id, &adapter, &mut devices, &capture_identity)?;
     let mut report = build_report(options, &room_id, &mut devices, steps)?;
     report.captures = captures
         .iter()
         .map(|capture| capture.evidence.clone())
         .collect();
     if !captures.is_empty() {
-        "The full game is proved by exact certified-device observations and reducer commits. One terminal native view is additionally bound to an authorized same-player capture request, real windowless Bevy render target, encrypted bounded transfer, and requester-side shared artifact pipeline; intermediate native checkpoints and external-network transport are not claimed."
+        "The full game is proved by exact certified-device observations and reducer commits. Semantically named native checkpoints are additionally bound to authorized same-player capture requests, real windowless Bevy render targets, encrypted bounded transfers, and requester-side shared artifact persistence; main-menu/reconnect and external-network transport are not claimed."
             .clone_into(&mut report.evidence_boundary);
     }
     Ok(PuppetExecution { report, captures })
 }
 
-fn capture_for_surface(
+fn perform_next_action(
     options: &PuppetRunOptions,
     room_id: &RoomId,
-    adapter: &Adapter,
     devices: &mut [HarnessDevice],
-    identity: &CaptureIdentity,
-) -> Result<Vec<PendingPuppetCapture>, PuppetError> {
-    match options.surface {
-        PuppetSurface::Headless => Ok(Vec::new()),
-        PuppetSurface::Native => {
-            let requester = devices
-                .iter_mut()
-                .find(|device| device.label == "alice-agent")
-                .ok_or_else(invalid_fixture)?;
-            Ok(vec![capture_terminal_projection(
-                options,
-                room_id,
-                adapter,
-                &mut requester.client,
-                &identity.requester_key,
-                &identity.provider_profile,
-                &identity.provider_key,
-            )?])
+    steps: &mut Vec<PuppetStepEvidence>,
+) -> Result<bool, PuppetError> {
+    let Some((actor_index, observation, action)) = next_action(devices, room_id)? else {
+        return Err(PuppetError::new(
+            PuppetErrorCode::NoAction,
+            "no certified device advertised the next semantic action",
+        ));
+    };
+    let sequence = u32::try_from(steps.len()).map_err(|_| {
+        PuppetError::new(PuppetErrorCode::StepLimit, "puppet step count overflowed")
+    })?;
+    let command_id_text = format!("puppet-{sequence:04}");
+    let command_id = CommandId::new(command_id_text.clone()).map_err(|_| {
+        PuppetError::new(
+            PuppetErrorCode::InvalidFixture,
+            "puppet command identity is invalid",
+        )
+    })?;
+    let action_started = Instant::now();
+    let result = devices[actor_index]
+        .client
+        .invoke(&observation, &action.id, command_id)
+        .map_err(device_error)?;
+    let committed_revision = match result {
+        DeviceActionResult::Committed { revision, .. } => revision,
+        DeviceActionResult::Denied { .. } => {
+            return Err(PuppetError::new(
+                PuppetErrorCode::ActionDenied,
+                "an advertised puppet action was denied",
+            ));
         }
+    };
+    let witnesses = observe_all(devices, room_id)?;
+    if action_started.elapsed() > options.per_action_timeout {
+        return Err(PuppetError::new(
+            PuppetErrorCode::ActionTimeout,
+            "puppet action exceeded its semantic deadline",
+        ));
     }
+    if witnesses
+        .iter()
+        .any(|witness| witness.revision != committed_revision)
+    {
+        return Err(PuppetError::new(
+            PuppetErrorCode::DeviceProtocol,
+            "enrolled devices did not converge on the committed revision",
+        ));
+    }
+    let terminal = witnesses
+        .iter()
+        .all(|witness| witness.room_phase == "post_game");
+    steps.push(PuppetStepEvidence {
+        status: "complete".to_owned(),
+        sequence,
+        command_id: command_id_text,
+        acting_device: devices[actor_index].label.to_owned(),
+        acting_principal: observation.projection.principal_id.as_str().to_owned(),
+        observed_revision: observation.projection.current_revision,
+        observed_projection_hash: semantic_hash(&observation),
+        action_id: action.id,
+        action_label: action.label,
+        committed_revision,
+        observed_by: witnesses,
+    });
+    Ok(terminal)
 }
 
 fn ensure_running(

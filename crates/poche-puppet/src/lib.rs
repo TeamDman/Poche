@@ -82,7 +82,7 @@ impl Default for PuppetRunOptions {
             seed: 1,
             max_steps: 2_000,
             per_action_timeout: Duration::from_secs(5),
-            whole_run_timeout: Duration::from_secs(30),
+            whole_run_timeout: Duration::from_mins(2),
             artifact_root: default_artifact_root(),
             show_native_window: false,
         }

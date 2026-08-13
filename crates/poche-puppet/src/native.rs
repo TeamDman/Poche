@@ -8,7 +8,10 @@
 //! encrypted transfer. Only the requester-facing artifact stage receives a
 //! reconstructed raw bundle; the Bevy provider never chooses output paths.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeSet,
+    sync::{Arc, Mutex},
+};
 
 use ed25519_dalek::{Signer, SigningKey};
 use poche_capture::{
@@ -28,8 +31,8 @@ use poche_protocol::{
     CaptureProviderAdvertisementWire, CaptureProviderKindWire, CaptureRepresentationWire,
     CaptureRequestId, CaptureResponseOutcomeWire, CaptureTransferId,
     DEVICE_COOPERATION_SCHEMA_VERSION_V1, DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
-    DeviceSignatureIntentWire, RoomId, SignatureAlgorithm, SignatureBytes,
-    UnsignedCaptureProviderAdvertisementWire, UnsignedCaptureRequestWire,
+    DeviceSignatureIntentWire, PublicGamePhase, RoomId, RoomPhase, SignatureAlgorithm,
+    SignatureBytes, UnsignedCaptureProviderAdvertisementWire, UnsignedCaptureRequestWire,
     UnsignedCaptureResponseWire, canonical_capture_provider_advertisement_bytes,
     canonical_capture_request_bytes, canonical_capture_response_bytes, capture_request_hash,
 };
@@ -163,97 +166,170 @@ impl RuntimeDeviceCooperationHandler for NativeCaptureHandler {
     clippy::too_many_arguments,
     reason = "the harness passes the two exact device identities and keys separately to preserve the authorization boundary"
 )]
-pub(crate) fn capture_terminal_projection(
-    options: &PuppetRunOptions,
-    room_id: &RoomId,
-    adapter: &Adapter,
-    requester: &mut Client,
-    requester_key: &SigningKey,
-    provider_profile: &DeviceProfile,
-    provider_key: &SigningKey,
-) -> Result<PendingPuppetCapture, PuppetError> {
-    adapter
-        .set_cooperation_now_unix_ms(COOPERATION_NOW_UNIX_MS)
-        .map_err(device_error)?;
-    let advertisement = signed_advertisement(room_id, provider_profile, provider_key)?;
-    let mailbox = Arc::new(Mutex::new(None));
-    adapter
-        .register_capture_provider(
-            provider_profile,
-            advertisement.clone(),
-            NativeCaptureHandler {
-                advertisement,
-                adapter: adapter.clone(),
-                provider_profile: provider_profile.clone(),
-                provider_key: provider_key.clone(),
-                mailbox: Arc::clone(&mailbox),
-                show_window: options.show_native_window,
-            },
-        )
-        .map_err(device_error)?;
+pub(crate) struct NativeCaptureSession {
+    room_id: RoomId,
+    requester_key: SigningKey,
+    provider_profile: DeviceProfile,
+    mailbox: Arc<Mutex<Option<PreparedCapture>>>,
+    captured_labels: BTreeSet<&'static str>,
+    show_window: bool,
+    seed: u64,
+}
 
-    let observation = requester.observe(room_id).map_err(device_error)?;
-    let unsigned = UnsignedCaptureRequestWire {
-        schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
-        request_id: CaptureRequestId::new(format!("native-terminal-seed-{}", options.seed))
-            .map_err(|_| invalid_capture())?,
-        room_id: room_id.clone(),
-        membership_epoch: 1,
-        player_id: requester.profile().player_id.clone(),
-        requester_device_id: requester.profile().device_id.clone(),
-        provider_device_id: provider_profile.device_id.clone(),
-        observed_revision: observation.projection.current_revision,
-        expires_at_unix_ms: COOPERATION_EXPIRES_UNIX_MS,
-        replay_nonce: format!("native-terminal-nonce-{}", options.seed),
-        privacy: CapturePrivacyWire::ExactPlayerView,
-        provider_kind: CaptureProviderKindWire::NativeBevy,
-        representations: vec![CaptureRepresentationWire::Png],
-        viewport: None,
-        label: "Terminal native player view".to_owned(),
-        max_total_bytes: CAPTURE_MAX_BYTES,
-        signature_intent: DeviceSignatureIntentWire {
-            domain_version: DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
-            algorithm: SignatureAlgorithm::Ed25519,
-            key_id: requester.profile().device_id.clone(),
-        },
-    };
-    let request = unsigned
-        .clone()
-        .attach_signature(
-            sign(
-                requester_key,
-                &canonical_capture_request_bytes(&unsigned).map_err(|_| invalid_capture())?,
+impl NativeCaptureSession {
+    pub(crate) fn register(
+        options: &PuppetRunOptions,
+        room_id: &RoomId,
+        adapter: &Adapter,
+        requester_key: &SigningKey,
+        provider_profile: &DeviceProfile,
+        provider_key: &SigningKey,
+    ) -> Result<Self, PuppetError> {
+        adapter
+            .set_cooperation_now_unix_ms(COOPERATION_NOW_UNIX_MS)
+            .map_err(device_error)?;
+        let advertisement = signed_advertisement(room_id, provider_profile, provider_key)?;
+        let mailbox = Arc::new(Mutex::new(None));
+        adapter
+            .register_capture_provider(
+                provider_profile,
+                advertisement.clone(),
+                NativeCaptureHandler {
+                    advertisement,
+                    adapter: adapter.clone(),
+                    provider_profile: provider_profile.clone(),
+                    provider_key: provider_key.clone(),
+                    mailbox: Arc::clone(&mailbox),
+                    show_window: options.show_native_window,
+                },
             )
-            .map_err(|_| invalid_capture())?,
-        )
-        .map_err(|_| invalid_capture())?;
-    let result = requester
-        .cooperate(
-            &provider_profile.device_id,
-            DeviceCooperationRequest::Capture(request.clone()),
-        )
-        .map_err(device_error)?;
-    let DeviceCooperationResult::Capture(response) = result;
-    let response_descriptors = match response.outcome {
-        CaptureResponseOutcomeWire::Accepted { artifacts } => artifacts,
-        CaptureResponseOutcomeWire::Denied { .. } => {
-            return Err(PuppetError::new(
-                PuppetErrorCode::ActionDenied,
-                "native capture provider denied the authorized request",
-            ));
+            .map_err(device_error)?;
+        Ok(Self {
+            room_id: room_id.clone(),
+            requester_key: requester_key.clone(),
+            provider_profile: provider_profile.clone(),
+            mailbox,
+            captured_labels: BTreeSet::new(),
+            show_window: options.show_native_window,
+            seed: options.seed,
+        })
+    }
+
+    pub(crate) fn capture_next_checkpoint(
+        &mut self,
+        requester: &mut Client,
+    ) -> Result<Option<PendingPuppetCapture>, PuppetError> {
+        let observation = requester.observe(&self.room_id).map_err(device_error)?;
+        let Some((label, caption)) = checkpoint(&observation) else {
+            return Ok(None);
+        };
+        if !self.captured_labels.insert(label) {
+            return Ok(None);
         }
-    };
-    let prepared = mailbox
-        .lock()
-        .map_err(|_| device_error(DeviceClientError::TransportUnavailable))?
-        .take()
-        .ok_or_else(invalid_capture)?;
-    receive_prepared_capture(
-        &request,
-        &response_descriptors,
-        prepared,
-        options.show_native_window,
-    )
+        self.capture(
+            requester,
+            label,
+            caption,
+            observation.projection.current_revision,
+        )
+        .map(Some)
+    }
+
+    fn capture(
+        &mut self,
+        requester: &mut Client,
+        label: &'static str,
+        caption: &'static str,
+        revision: u64,
+    ) -> Result<PendingPuppetCapture, PuppetError> {
+        let unsigned = UnsignedCaptureRequestWire {
+            schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+            request_id: CaptureRequestId::new(format!(
+                "native-{label}-seed-{}-revision-{revision}",
+                self.seed
+            ))
+            .map_err(|_| invalid_capture())?,
+            room_id: self.room_id.clone(),
+            membership_epoch: 1,
+            player_id: requester.profile().player_id.clone(),
+            requester_device_id: requester.profile().device_id.clone(),
+            provider_device_id: self.provider_profile.device_id.clone(),
+            observed_revision: revision,
+            expires_at_unix_ms: COOPERATION_EXPIRES_UNIX_MS,
+            replay_nonce: format!("native-{label}-nonce-{}-{revision}", self.seed),
+            privacy: CapturePrivacyWire::ExactPlayerView,
+            provider_kind: CaptureProviderKindWire::NativeBevy,
+            representations: vec![CaptureRepresentationWire::Png],
+            viewport: None,
+            label: caption.to_owned(),
+            max_total_bytes: CAPTURE_MAX_BYTES,
+            signature_intent: DeviceSignatureIntentWire {
+                domain_version: DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: requester.profile().device_id.clone(),
+            },
+        };
+        let request = unsigned
+            .clone()
+            .attach_signature(
+                sign(
+                    &self.requester_key,
+                    &canonical_capture_request_bytes(&unsigned).map_err(|_| invalid_capture())?,
+                )
+                .map_err(|_| invalid_capture())?,
+            )
+            .map_err(|_| invalid_capture())?;
+        let result = requester
+            .cooperate(
+                &self.provider_profile.device_id,
+                DeviceCooperationRequest::Capture(request.clone()),
+            )
+            .map_err(device_error)?;
+        let DeviceCooperationResult::Capture(response) = result;
+        let response_descriptors = match response.outcome {
+            CaptureResponseOutcomeWire::Accepted { artifacts } => artifacts,
+            CaptureResponseOutcomeWire::Denied { .. } => {
+                return Err(PuppetError::new(
+                    PuppetErrorCode::ActionDenied,
+                    "native capture provider denied the authorized request",
+                ));
+            }
+        };
+        let prepared = self
+            .mailbox
+            .lock()
+            .map_err(|_| device_error(DeviceClientError::TransportUnavailable))?
+            .take()
+            .ok_or_else(invalid_capture)?;
+        receive_prepared_capture(
+            &request,
+            label,
+            &response_descriptors,
+            prepared,
+            self.show_window,
+        )
+    }
+}
+
+fn checkpoint(
+    observation: &poche_player_client::DeviceObservation,
+) -> Option<(&'static str, &'static str)> {
+    if observation.projection.payload.phase == RoomPhase::PostGame {
+        return Some(("terminal", "Terminal native player view"));
+    }
+    let game = observation.projection.payload.public_game_state.as_ref()?;
+    match game.phase {
+        PublicGamePhase::Bidding => Some(("bidding", "Bidding native player view")),
+        PublicGamePhase::Playing if !game.current_trick.is_empty() => {
+            Some(("trick-in-progress", "Trick in progress native player view"))
+        }
+        PublicGamePhase::Playing if game.tricks_won.iter().any(|tricks| *tricks > 0) => {
+            Some(("trick-resolved", "Resolved trick native player view"))
+        }
+        PublicGamePhase::Playing => Some(("card-selection", "Card selection native player view")),
+        PublicGamePhase::Scoring => Some(("scoring", "Score sheet native player view")),
+        PublicGamePhase::AwaitingDeal | PublicGamePhase::Finished => None,
+    }
 }
 
 fn signed_advertisement(
@@ -350,6 +426,7 @@ fn prepare_transfers(
 
 fn receive_prepared_capture(
     request: &poche_protocol::CaptureRequestWire,
+    label: &str,
     response_descriptors: &[CaptureArtifactDescriptorWire],
     mut prepared: PreparedCapture,
     show_window: bool,
@@ -401,7 +478,7 @@ fn receive_prepared_capture(
     let scene_hash = prepared.bundle.scene_hash.map(hash_hex);
     let evidence = PuppetCaptureEvidence {
         status: "complete".to_owned(),
-        label: "terminal-native-player-view".to_owned(),
+        label: label.to_owned(),
         request_id: request.request_id.as_str().to_owned(),
         requester_device_id: request.requester_device_id.as_str().to_owned(),
         provider_device_id: request.provider_device_id.as_str().to_owned(),

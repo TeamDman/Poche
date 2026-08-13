@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::{path::Path, time::Duration};
+use std::{collections::BTreeSet, path::Path, time::Duration};
 
 use poche_puppet::{PuppetRunOptions, PuppetSurface, TWO_PLAYER_FULL_ROUND, run};
 
@@ -21,7 +21,7 @@ fn authorized_windowless_native_capture_survives_the_full_game() {
         seed: 29,
         artifact_root: temporary.path().to_path_buf(),
         per_action_timeout: Duration::from_secs(3),
-        whole_run_timeout: Duration::from_mins(1),
+        whole_run_timeout: Duration::from_mins(2),
         ..PuppetRunOptions::default()
     })
     .expect("native full-game puppet");
@@ -29,13 +29,38 @@ fn authorized_windowless_native_capture_survives_the_full_game() {
     assert_eq!(report.status, "complete");
     assert_eq!(report.final_room_phase, "post_game");
     assert_eq!(report.devices.len(), 7);
-    let capture = report.captures.first().expect("terminal native capture");
-    assert!(capture.windowless);
-    assert_eq!(capture.requested_revision, report.final_revision);
-    assert_eq!(capture.captured_revision, report.final_revision);
-    assert!(capture.transferred_bytes > 0);
-    assert!(capture.transfer_chunks > 0);
-    assert!(Path::new(&capture.manifest_path).is_file());
+    let expected_labels = BTreeSet::from([
+        "bidding",
+        "card-selection",
+        "scoring",
+        "terminal",
+        "trick-in-progress",
+        "trick-resolved",
+    ]);
+    assert_eq!(
+        report
+            .captures
+            .iter()
+            .map(|capture| capture.label.as_str())
+            .collect::<BTreeSet<_>>(),
+        expected_labels
+    );
+    let mut previous_revision = 0;
+    for capture in &report.captures {
+        assert!(capture.windowless);
+        assert_eq!(capture.requested_revision, capture.captured_revision);
+        assert!(capture.captured_revision > previous_revision);
+        previous_revision = capture.captured_revision;
+        assert!(capture.transferred_bytes > 0);
+        assert!(capture.transfer_chunks > 0);
+        assert!(Path::new(&capture.manifest_path).is_file());
+    }
+    let terminal = report
+        .captures
+        .iter()
+        .find(|capture| capture.label == "terminal")
+        .expect("terminal native capture");
+    assert_eq!(terminal.captured_revision, report.final_revision);
 
     let run_directory = Path::new(&report.artifact_directory);
     let manifest: serde_json::Value = serde_json::from_slice(
@@ -43,7 +68,7 @@ fn authorized_windowless_native_capture_survives_the_full_game() {
     )
     .expect("run manifest JSON");
     let files = manifest["files"].as_array().expect("manifest files");
-    assert!(files.len() >= 4);
+    assert!(files.len() >= 2 + report.captures.len() * 2);
     for file in files {
         let relative = file["path"].as_str().expect("portable relative path");
         assert!(!relative.contains('\\'));

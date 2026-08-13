@@ -111,7 +111,7 @@ pub(crate) fn persist_run(
         qualification: if report.captures.is_empty() {
             "Headless semantic evidence only; no graphical-capture claim.".to_owned()
         } else {
-            "Certified full-game semantic evidence plus one authorized terminal native render-target capture transferred privately and persisted by the requester; no intermediate-native or external-network claim.".to_owned()
+            "Certified full-game semantic evidence plus authorized semantic-checkpoint native render-target captures transferred privately and persisted by the requester; no main-menu/reconnect or external-network claim.".to_owned()
         },
         files,
     };

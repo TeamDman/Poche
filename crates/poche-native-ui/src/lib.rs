@@ -29,8 +29,11 @@ use bevy::{
     input::mouse::AccumulatedMouseMotion,
     log::LogPlugin,
     prelude::*,
-    render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
     render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk},
+    render::{
+        RenderPlugin,
+        render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
+    },
     window::{CursorIcon, ExitCondition, PrimaryWindow, SystemCursorIcon, WindowPlugin},
     winit::WinitPlugin,
 };
@@ -664,6 +667,7 @@ pub struct NativeUiLaunchOptions {
 
 const AUTOMATION_RENDER_WIDTH: u32 = 1280;
 const AUTOMATION_RENDER_HEIGHT: u32 = 800;
+const AUTOMATION_CAPTURE_PREROLL_FRAMES: u32 = 60;
 
 /// Render destination selected before Bevy starts. Automation owns an image
 /// target; interactive play owns the primary window swapchain.
@@ -878,8 +882,15 @@ fn run_with_live_device(
     let mut default_plugins = DefaultPlugins.set(window_plugin);
     if hidden_window {
         // Winit is the OS-window/event-loop integration. Windowless workers
-        // own a GPU image target and a bounded schedule runner instead.
-        default_plugins = default_plugins.disable::<WinitPlugin>();
+        // own a GPU image target and a bounded schedule runner instead. Force
+        // pipeline compilation to finish in-band so an early offscreen
+        // readback cannot race the renderer and produce a blank artifact.
+        default_plugins = default_plugins
+            .set(RenderPlugin {
+                synchronous_pipeline_compilation: true,
+                ..default()
+            })
+            .disable::<WinitPlugin>();
     }
     let mut app = App::new();
     if external_tracing {
@@ -1552,16 +1563,17 @@ fn native_capture_driver(
     camera: Res<CameraRig>,
     surface: Res<NativeRenderSurface>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    mut provider_started: Local<Option<Instant>>,
+    mut rendered_frames: Local<u32>,
 ) {
     let (Some(provider), Some(context)) = (provider, context) else {
         return;
     };
-    // The startup update can run before the primary swapchain has presented a
-    // fully rendered scene. Keep the first request queued for the same warm-up
-    // used by the established native screenshot acceptance path.
-    let started = provider_started.get_or_insert_with(Instant::now);
-    if started.elapsed() < Duration::from_millis(900) {
+    // A wall-clock delay does not prove that a headless renderer has produced
+    // a frame: pipeline compilation and GPU scheduling vary by backend. Count
+    // actual application frames after startup while synchronous compilation
+    // closes the shader-pipeline race.
+    *rendered_frames = rendered_frames.saturating_add(1);
+    if *rendered_frames < AUTOMATION_CAPTURE_PREROLL_FRAMES {
         return;
     }
     let Ok(Some(request)) = provider.take_queued() else {
@@ -1663,8 +1675,12 @@ fn native_capture_bundle(
         .clone()
         .try_into_dynamic()
         .map_err(|_| CaptureDenialReasonWire::ProviderUnavailable)?;
+    let rgba = dynamic.to_rgba8();
+    if !has_meaningful_render_content(&rgba) {
+        return Err(CaptureDenialReasonWire::IntegrityFailure);
+    }
     let mut cursor = Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(dynamic.to_rgba8())
+    image::DynamicImage::ImageRgba8(rgba)
         .write_to(&mut cursor, image::ImageFormat::Png)
         .map_err(|_| CaptureDenialReasonWire::ProviderUnavailable)?;
     let bytes = cursor.into_inner();
@@ -1691,6 +1707,25 @@ fn native_capture_bundle(
             expected_source_hash: Some(source_hash),
         }],
     })
+}
+
+fn has_meaningful_render_content(image: &image::RgbaImage) -> bool {
+    let Some(background) = image.pixels().next().copied() else {
+        return false;
+    };
+    image
+        .pixels()
+        .filter(|pixel| {
+            pixel.0[..3]
+                .iter()
+                .zip(&background.0[..3])
+                .map(|(channel, base)| u16::from(channel.abs_diff(*base)))
+                .sum::<u16>()
+                > 18
+        })
+        .take(257)
+        .count()
+        > 256
 }
 
 fn capture_token(request_id: &poche_protocol::CaptureRequestId) -> String {
@@ -1896,8 +1931,9 @@ mod tests {
     use super::{
         AUTOMATION_RENDER_HEIGHT, AUTOMATION_RENDER_WIDTH, CAMERA_RESET_SECONDS, CameraRig,
         CameraView, FONT_BYTES, NativeController, NativeLiveDevice, NativeRenderSurface,
-        NativeUiLaunchOptions, advertised_action_for_play, native_controller_from_observation,
-        parse_card_face, replay_fixture_controller, slug_packet_for_text, zone_center_card_bounds,
+        NativeUiLaunchOptions, advertised_action_for_play, has_meaningful_render_content,
+        native_controller_from_observation, parse_card_face, replay_fixture_controller,
+        slug_packet_for_text, zone_center_card_bounds,
     };
 
     #[test]
@@ -1915,6 +1951,20 @@ mod tests {
             NativeRenderSurface::from_automation(false),
             NativeRenderSurface::Windowed
         ));
+    }
+
+    #[test]
+    fn graphical_evidence_rejects_uniform_readbacks() {
+        let blank = image::RgbaImage::from_pixel(64, 64, image::Rgba([18, 24, 30, 255]));
+        assert!(!has_meaningful_render_content(&blank));
+
+        let mut rendered = blank;
+        for y in 8..32 {
+            for x in 8..32 {
+                rendered.put_pixel(x, y, image::Rgba([220, 180, 80, 255]));
+            }
+        }
+        assert!(has_meaningful_render_content(&rendered));
     }
 
     fn live_play_observation() -> DeviceObservation {
