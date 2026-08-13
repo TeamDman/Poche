@@ -17,12 +17,13 @@ use poche_player_client::{
 };
 use poche_protocol::{
     CaptureProviderAdvertisementWire, CommandPayload, CorrelationId, DeviceActionWire,
-    DeviceCertificateWire, DeviceId, EventId, GameActionWire, MemberProjection,
-    PROTOCOL_VERSION_V1, ProjectionEnvelope, ProjectionId, ProjectionPayload, RoomId, RoomPhase,
-    SIGNATURE_DOMAIN_V1, SemanticHash, SignatureAlgorithm, SignatureBytes, SignatureMetadata,
-    canonical_capture_provider_advertisement_bytes, canonical_capture_request_bytes,
-    canonical_capture_response_bytes, canonical_device_action_bytes,
-    canonical_device_certificate_bytes,
+    DeviceCertificateWire, DeviceId, DeviceObservationRequestWire, EventId, GameActionWire,
+    MemberProjection, PROTOCOL_VERSION_V1, ProjectionEnvelope, ProjectionId, ProjectionPayload,
+    RoomId, RoomPhase, SIGNATURE_DOMAIN_V1, SemanticHash, SignatureAlgorithm, SignatureBytes,
+    SignatureMetadata, canonical_capture_provider_advertisement_bytes,
+    canonical_capture_request_bytes, canonical_capture_response_bytes,
+    canonical_device_action_bytes, canonical_device_certificate_bytes,
+    canonical_device_observation_request_bytes,
 };
 use poche_session::{
     CaptureAuthorizationContext, CaptureReplayWindow, GameTurn, SessionGame, SessionPhase,
@@ -572,6 +573,29 @@ pub fn verify_signed_device_action(
     })
 }
 
+/// Verify both certificate and device signatures on an exact-recipient read.
+///
+/// # Errors
+///
+/// Returns a stable category for malformed, wrong-root, or wrong-device input.
+pub fn verify_signed_device_observation_request(
+    request: &DeviceObservationRequestWire,
+) -> Result<(), DeviceClientError> {
+    request
+        .validate()
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    verify_device_certificate(&request.certificate)?;
+    let bytes = canonical_device_observation_request_bytes(&request.unsigned())
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    verify_ed25519(
+        &request.certificate.device_signing_public_key,
+        request.signature.signature.as_str(),
+        &bytes,
+    )
+    .then_some(())
+    .ok_or(DeviceClientError::AuthorizationDenied)
+}
+
 fn verify_capture_advertisement(
     advertisement: &CaptureProviderAdvertisementWire,
     certificate: &DeviceCertificateWire,
@@ -794,6 +818,7 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use poche_player_client::{
         DeviceProfile, DeviceSigner, LoopbackDeviceTransport, PlayerDeviceClient,
+        sign_observation_request,
     };
     use poche_protocol::{
         CaptureArtifactDescriptorWire, CaptureArtifactId, CaptureConsentPolicyWire,
@@ -801,10 +826,11 @@ mod tests {
         CaptureResponseOutcomeWire, CaptureTransferDescriptorWire, CaptureTransferId,
         CaptureViewportWire, CertificateId, CommandId, CommandPayload,
         DEVICE_COOPERATION_SCHEMA_VERSION_V1, DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
-        DeviceCapabilityWire, DeviceCustodyWire, DeviceSignatureIntentWire, PrincipalId,
-        REPLICATION_SCHEMA_VERSION_V1, REPLICATION_SIGNATURE_DOMAIN_V1, SignatureIntent,
-        UnsignedCaptureProviderAdvertisementWire, UnsignedCaptureRequestWire,
-        UnsignedCaptureResponseWire, UnsignedDeviceCertificateWire, capture_request_hash,
+        DeviceCapabilityWire, DeviceCustodyWire, DeviceObservationModeWire,
+        DeviceSignatureIntentWire, PrincipalId, REPLICATION_SCHEMA_VERSION_V1,
+        REPLICATION_SIGNATURE_DOMAIN_V1, SignatureIntent, UnsignedCaptureProviderAdvertisementWire,
+        UnsignedCaptureRequestWire, UnsignedCaptureResponseWire, UnsignedDeviceCertificateWire,
+        capture_request_hash,
     };
 
     use super::*;
@@ -1060,7 +1086,10 @@ mod tests {
             "external-cli",
             &root_key,
             &device_key,
-            vec![DeviceCapabilityWire::Propose],
+            vec![
+                DeviceCapabilityWire::Propose,
+                DeviceCapabilityWire::ReceivePrivateProjection,
+            ],
         );
         let request = DeviceActionRequest {
             room_id: RoomId::new("external-room").unwrap(),
@@ -1093,6 +1122,26 @@ mod tests {
         assert_eq!(
             verify_signed_device_action(&changed_certificate),
             Err(DeviceClientError::InvalidProfile)
+        );
+
+        let observation_request = sign_observation_request(
+            &profile,
+            &RoomId::new("external-room").unwrap(),
+            1,
+            CorrelationId::new("external-observe").unwrap(),
+            DeviceObservationModeWire::Wait { after_revision: 7 },
+            &TestDeviceSigner(SigningKey::from_bytes(&[22; 32])),
+        )
+        .unwrap();
+        assert_eq!(
+            verify_signed_device_observation_request(&observation_request),
+            Ok(())
+        );
+        let mut changed_wait = observation_request;
+        changed_wait.mode = DeviceObservationModeWire::Wait { after_revision: 8 };
+        assert_eq!(
+            verify_signed_device_observation_request(&changed_wait),
+            Err(DeviceClientError::AuthorizationDenied)
         );
     }
 

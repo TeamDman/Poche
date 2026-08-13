@@ -22,9 +22,11 @@ use facet::Facet;
 use poche_protocol::{
     CaptureCancelWire, CaptureRequestWire, CaptureResponseWire, CommandId, CommandPayload,
     DEVICE_ACTION_SCHEMA_VERSION_V1, DEVICE_ACTION_SIGNATURE_DOMAIN_V1, DeviceActionWire,
-    DeviceCertificateWire, DeviceId, DeviceSignatureIntentWire, PrincipalId, ProjectionEnvelope,
-    RoomId, SemanticHash, SignatureAlgorithm, SignatureBytes, UnsignedDeviceActionWire,
-    canonical_device_action_bytes,
+    DeviceCertificateWire, DeviceId, DeviceObservationModeWire, DeviceObservationRequestWire,
+    DeviceSignatureIntentWire, PrincipalId, ProjectionEnvelope, RoomId, SemanticHash,
+    SignatureAlgorithm, SignatureBytes, UnsignedDeviceActionWire,
+    UnsignedDeviceObservationRequestWire, canonical_device_action_bytes,
+    canonical_device_observation_request_bytes,
 };
 use serde::{Deserialize, Serialize};
 
@@ -84,6 +86,40 @@ pub trait DeviceSigner {
         profile: &DeviceProfile,
         canonical_bytes: &[u8],
     ) -> Result<SignatureBytes, DeviceClientError>;
+}
+
+/// Sign one exact-recipient observation/wait request through the profile's
+/// protected key handle. The caller supplies a unique request ID so transport
+/// retries can remain explicit and inspectable.
+pub fn sign_observation_request(
+    profile: &DeviceProfile,
+    room_id: &RoomId,
+    session_epoch: u64,
+    request_id: poche_protocol::CorrelationId,
+    mode: DeviceObservationModeWire,
+    signer: &impl DeviceSigner,
+) -> Result<DeviceObservationRequestWire, DeviceClientError> {
+    profile.validate()?;
+    let unsigned = UnsignedDeviceObservationRequestWire {
+        schema_version: DEVICE_ACTION_SCHEMA_VERSION_V1,
+        certificate: profile.certificate.clone(),
+        room_id: room_id.clone(),
+        session_epoch,
+        request_id,
+        player_id: profile.player_id.clone(),
+        device_id: profile.device_id.clone(),
+        mode,
+        signature_intent: DeviceSignatureIntentWire {
+            domain_version: DEVICE_ACTION_SIGNATURE_DOMAIN_V1,
+            algorithm: SignatureAlgorithm::Ed25519,
+            key_id: profile.device_id.clone(),
+        },
+    };
+    let bytes = canonical_device_observation_request_bytes(&unsigned)
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    unsigned
+        .attach_signature(signer.sign_device_bytes(profile, &bytes)?)
+        .map_err(|_| DeviceClientError::SigningFailed)
 }
 
 /// One action advertised for one exact projection revision.

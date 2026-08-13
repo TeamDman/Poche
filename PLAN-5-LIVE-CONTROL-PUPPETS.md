@@ -570,7 +570,12 @@ advertised action ID, and exact typed payload under a distinct device
 signature. `DeviceActionRequest::sign` crosses only the opaque protected-key
 port, and the runtime verifier checks both root and device Ed25519 signatures
 before recovering the transport-neutral request. Mutation and wrong-root tests
-fail closed; gateway/Veilid carriage remains Phase 3/5 work.
+fail closed. Exact-recipient reads and waits now have an independent signed
+request domain as well: snapshot/wait mode, after-revision, unique request ID,
+room/session, player/device certificate, and private-projection capability are
+bound before a projection can be requested. Runtime verification checks both
+signature layers and rejects a mutated wait cursor. Gateway/Veilid carriage
+remains Phase 3/5 work.
 
 **Work:**
 

@@ -15,15 +15,16 @@ use facet::Facet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CommandId, CommandPayload, DeviceCapabilityWire, DeviceCertificateWire, DeviceId,
-    DeviceSignatureIntentWire, DeviceSignatureMetadataWire, PrincipalId, RoomId, SemanticHash,
-    SignatureAlgorithm, SignatureBytes,
+    CommandId, CommandPayload, CorrelationId, DeviceCapabilityWire, DeviceCertificateWire,
+    DeviceId, DeviceSignatureIntentWire, DeviceSignatureMetadataWire, PrincipalId, RoomId,
+    SemanticHash, SignatureAlgorithm, SignatureBytes,
 };
 
 pub const DEVICE_ACTION_SCHEMA_VERSION_V1: u16 = 1;
 pub const DEVICE_ACTION_SIGNATURE_DOMAIN_V1: u16 = 1;
 
 const DEVICE_ACTION_DOMAIN: &[u8] = b"POCHE\0DEVICE-ACTION\0V1";
+const DEVICE_OBSERVATION_REQUEST_DOMAIN: &[u8] = b"POCHE\0DEVICE-OBSERVATION-REQUEST\0V1";
 const MAX_ACTION_ID_BYTES: usize = 96;
 
 /// Exact action request before the certified device signature is attached.
@@ -198,6 +199,140 @@ fn valid_action_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
+/// Whether the caller wants an immediate snapshot or a strictly later view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[repr(u8)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DeviceObservationModeWire {
+    Snapshot,
+    Wait { after_revision: u64 },
+}
+
+/// Device-authenticated exact-recipient read before its signature is attached.
+#[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnsignedDeviceObservationRequestWire {
+    pub schema_version: u16,
+    pub certificate: DeviceCertificateWire,
+    pub room_id: RoomId,
+    pub session_epoch: u64,
+    pub request_id: CorrelationId,
+    pub player_id: PrincipalId,
+    pub device_id: DeviceId,
+    pub mode: DeviceObservationModeWire,
+    pub signature_intent: DeviceSignatureIntentWire,
+}
+
+impl UnsignedDeviceObservationRequestWire {
+    pub fn validate(&self) -> Result<(), DeviceActionWireError> {
+        self.certificate
+            .validate()
+            .map_err(|_| DeviceActionWireError::InvalidCertificate)?;
+        if self.schema_version != DEVICE_ACTION_SCHEMA_VERSION_V1 {
+            return Err(DeviceActionWireError::UnknownVersion);
+        }
+        if !self.room_id.validate()
+            || self.session_epoch == 0
+            || !self.request_id.validate()
+            || self.player_id != self.certificate.player_id
+            || self.device_id != self.certificate.device_id
+            || !self.certificate.is_valid_at(self.session_epoch)
+            || !self
+                .certificate
+                .has_capability(DeviceCapabilityWire::ReceivePrivateProjection)
+        {
+            return Err(DeviceActionWireError::InvalidBinding);
+        }
+        if self.signature_intent.domain_version != DEVICE_ACTION_SIGNATURE_DOMAIN_V1
+            || self.signature_intent.algorithm != SignatureAlgorithm::Ed25519
+            || self.signature_intent.key_id != self.device_id
+        {
+            return Err(DeviceActionWireError::InvalidSignatureIntent);
+        }
+        Ok(())
+    }
+
+    pub fn attach_signature(
+        self,
+        signature: SignatureBytes,
+    ) -> Result<DeviceObservationRequestWire, DeviceActionWireError> {
+        self.validate()?;
+        signature
+            .validate()
+            .map_err(|_| DeviceActionWireError::InvalidSignature)?;
+        Ok(DeviceObservationRequestWire {
+            schema_version: self.schema_version,
+            certificate: self.certificate,
+            room_id: self.room_id,
+            session_epoch: self.session_epoch,
+            request_id: self.request_id,
+            player_id: self.player_id,
+            device_id: self.device_id,
+            mode: self.mode,
+            signature: DeviceSignatureMetadataWire {
+                domain_version: self.signature_intent.domain_version,
+                algorithm: self.signature_intent.algorithm,
+                key_id: self.signature_intent.key_id,
+                signature,
+            },
+        })
+    }
+}
+
+/// Root-certified, device-signed exact-recipient read or wait request.
+#[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceObservationRequestWire {
+    pub schema_version: u16,
+    pub certificate: DeviceCertificateWire,
+    pub room_id: RoomId,
+    pub session_epoch: u64,
+    pub request_id: CorrelationId,
+    pub player_id: PrincipalId,
+    pub device_id: DeviceId,
+    pub mode: DeviceObservationModeWire,
+    pub signature: DeviceSignatureMetadataWire,
+}
+
+impl DeviceObservationRequestWire {
+    pub fn validate(&self) -> Result<(), DeviceActionWireError> {
+        self.unsigned().validate()?;
+        self.signature
+            .signature
+            .validate()
+            .map_err(|_| DeviceActionWireError::InvalidSignature)
+    }
+
+    #[must_use]
+    pub fn unsigned(&self) -> UnsignedDeviceObservationRequestWire {
+        UnsignedDeviceObservationRequestWire {
+            schema_version: self.schema_version,
+            certificate: self.certificate.clone(),
+            room_id: self.room_id.clone(),
+            session_epoch: self.session_epoch,
+            request_id: self.request_id.clone(),
+            player_id: self.player_id.clone(),
+            device_id: self.device_id.clone(),
+            mode: self.mode,
+            signature_intent: self.signature.intent(),
+        }
+    }
+}
+
+/// Canonical device-signing bytes for a private observation/wait request.
+pub fn canonical_device_observation_request_bytes(
+    request: &UnsignedDeviceObservationRequestWire,
+) -> Result<Vec<u8>, DeviceActionWireError> {
+    request.validate()?;
+    let json = serde_json::to_vec(request).map_err(|_| DeviceActionWireError::Encoding)?;
+    let length = u64::try_from(json.len()).map_err(|_| DeviceActionWireError::Encoding)?;
+    let mut bytes = Vec::with_capacity(DEVICE_OBSERVATION_REQUEST_DOMAIN.len() + 8 + json.len());
+    bytes.extend_from_slice(DEVICE_OBSERVATION_REQUEST_DOMAIN);
+    bytes.extend_from_slice(&length.to_be_bytes());
+    bytes.extend_from_slice(&json);
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -297,6 +432,42 @@ mod tests {
         assert_eq!(
             wrong_device.validate(),
             Err(DeviceActionWireError::InvalidBinding)
+        );
+    }
+
+    #[test]
+    fn observation_request_requires_private_projection_capability() {
+        let action = action();
+        let request = UnsignedDeviceObservationRequestWire {
+            schema_version: DEVICE_ACTION_SCHEMA_VERSION_V1,
+            certificate: action.certificate.clone(),
+            room_id: action.room_id,
+            session_epoch: action.session_epoch,
+            request_id: CorrelationId::new("observe-1").unwrap(),
+            player_id: action.player_id,
+            device_id: action.device_id.clone(),
+            mode: DeviceObservationModeWire::Snapshot,
+            signature_intent: DeviceSignatureIntentWire {
+                domain_version: DEVICE_ACTION_SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: action.device_id,
+            },
+        };
+        assert_eq!(
+            request.validate(),
+            Err(DeviceActionWireError::InvalidBinding)
+        );
+        let mut allowed = request;
+        allowed.certificate.capabilities = vec![
+            DeviceCapabilityWire::Propose,
+            DeviceCapabilityWire::ReceivePrivateProjection,
+        ];
+        assert!(allowed.validate().is_ok());
+        let snapshot = canonical_device_observation_request_bytes(&allowed).unwrap();
+        allowed.mode = DeviceObservationModeWire::Wait { after_revision: 7 };
+        assert_ne!(
+            canonical_device_observation_request_bytes(&allowed).unwrap(),
+            snapshot
         );
     }
 }
