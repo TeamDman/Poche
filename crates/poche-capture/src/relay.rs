@@ -77,6 +77,20 @@ pub struct CaptureProviderPollCall {
     pub provider_token: CaptureRelayToken,
 }
 
+/// Explicitly retire one provider lane. In-flight artifact jobs retain their
+/// independently scoped requester delivery capability.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CaptureProviderUnregisterCall {
+    pub provider_token: CaptureRelayToken,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CaptureProviderUnregisterReceipt {
+    pub provider_device_id: DeviceId,
+}
+
 /// Exact request plus the certified recipient key a provider needs to wrap
 /// artifact keys. No requester secret or omniscient projection is present.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

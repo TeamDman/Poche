@@ -265,6 +265,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one table is the executable completeness inventory for every reflected CLI command"
+    )]
     fn every_declared_command_round_trips_through_the_schema() {
         let cases: &[(&[&str], (&str, &str))] = &[
             (&["desktop"], ("desktop", "launch")),
@@ -275,6 +279,8 @@ mod tests {
             (&["room", "host", "room-1"], ("room", "host")),
             (&["room", "join", "room-1", "invite"], ("room", "join")),
             (&["room", "show", "r"], ("room", "show")),
+            (&["room", "take-seat", "r", "0"], ("room", "take-seat")),
+            (&["room", "release-seat", "r"], ("room", "release-seat")),
             (&["room", "ready", "r"], ("room", "ready")),
             (&["room", "unready", "r"], ("room", "unready")),
             (&["room", "countdown", "r", "3"], ("room", "countdown")),
@@ -332,6 +338,10 @@ mod tests {
                 ("device", "create"),
             ),
             (
+                &["device", "capture", "providers", "alice-cli", "r"],
+                ("device", "capture"),
+            ),
+            (
                 &[
                     "device",
                     "capture",
@@ -340,6 +350,17 @@ mod tests {
                     "r",
                     "device-renderer",
                     "bidding",
+                ],
+                ("device", "capture"),
+            ),
+            (
+                &[
+                    "device",
+                    "capture",
+                    "serve-native",
+                    "alice-native",
+                    "r",
+                    "--once",
                 ],
                 ("device", "capture"),
             ),

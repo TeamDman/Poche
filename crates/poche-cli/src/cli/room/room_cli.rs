@@ -28,6 +28,16 @@ pub enum RoomCommand {
         #[facet(args::positional)]
         room: String,
     },
+    TakeSeat {
+        #[facet(args::positional)]
+        room: String,
+        #[facet(args::positional)]
+        seat: u8,
+    },
+    ReleaseSeat {
+        #[facet(args::positional)]
+        room: String,
+    },
     Ready {
         #[facet(args::positional)]
         room: String,
@@ -71,6 +81,8 @@ impl RoomArgs {
             RoomCommand::Host { .. } => "host",
             RoomCommand::Join { .. } => "join",
             RoomCommand::Show { .. } => "show",
+            RoomCommand::TakeSeat { .. } => "take-seat",
+            RoomCommand::ReleaseSeat { .. } => "release-seat",
             RoomCommand::Ready { .. } => "ready",
             RoomCommand::Unready { .. } => "unready",
             RoomCommand::Countdown { .. } => "countdown",
@@ -105,6 +117,20 @@ impl RoomArgs {
                 config.invoke_join(&room, &invite_code, output)
             }
             RoomCommand::Show { room } => config.observe(&room, 1, output),
+            RoomCommand::TakeSeat { room, seat } => config.invoke_payload(
+                &room,
+                1,
+                &CommandPayload::TakeSeat { seat },
+                "room-take-seat",
+                output,
+            ),
+            RoomCommand::ReleaseSeat { room } => config.invoke_payload(
+                &room,
+                1,
+                &CommandPayload::ReleaseSeat,
+                "room-release-seat",
+                output,
+            ),
             RoomCommand::Ready { room } => {
                 config.invoke_payload(&room, 1, &CommandPayload::Ready, "room-ready", output)
             }

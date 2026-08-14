@@ -248,7 +248,7 @@ impl LiveDeviceConfig {
         self.client_for_profile(epoch, join_invite, None)
     }
 
-    fn client_for_profile(
+    pub(crate) fn client_for_profile(
         &self,
         epoch: u64,
         join_invite: Option<InviteProof>,

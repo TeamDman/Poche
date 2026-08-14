@@ -303,6 +303,9 @@ pub struct DeviceObservation {
     pub actions: Vec<AdvertisedAction>,
     pub action_templates: Vec<AdvertisedActionTemplate>,
     pub chat_tail: Vec<DeviceChatEntry>,
+    /// Signed providers owned by this exact player root in this room/session.
+    /// Other players' devices are absent from the object graph.
+    pub capture_providers: Vec<CaptureProviderAdvertisementWire>,
 }
 
 impl DeviceObservation {
@@ -338,6 +341,16 @@ impl DeviceObservation {
                 .chat_tail
                 .windows(2)
                 .all(|pair| pair[0].revision <= pair[1].revision)
+            || self.capture_providers.iter().any(|provider| {
+                provider.validate().is_err()
+                    || provider.room_id != self.projection.room_id
+                    || provider.membership_epoch != self.projection.session_epoch
+                    || provider.player_id != profile.player_id
+            })
+            || !self
+                .capture_providers
+                .windows(2)
+                .all(|pair| pair[0].provider_device_id < pair[1].provider_device_id)
         {
             Err(DeviceClientError::InvalidObservation)
         } else {
@@ -833,6 +846,7 @@ mod tests {
             }],
             action_templates: Vec::new(),
             chat_tail: Vec::new(),
+            capture_providers: Vec::new(),
         };
         (profile, observation)
     }

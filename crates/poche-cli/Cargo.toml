@@ -14,11 +14,13 @@ name = "poche"
 path = "src/main.rs"
 
 [dependencies]
+blake3.workspace = true
 eyre = "=0.6.12"
 facet.workspace = true
 figue.workspace = true
 getrandom.workspace = true
 poche-domain = { path = "../poche-domain" }
+poche-capture = { path = "../poche-capture" }
 poche-native-ui = { path = "../poche-native-ui" }
 poche-player-client = { path = "../poche-player-client", features = ["http", "protected-store"] }
 poche-protocol = { path = "../poche-protocol" }

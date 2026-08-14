@@ -141,6 +141,13 @@ impl<S: DeviceSigner> HttpDeviceTransport<S> {
         self.post("/device/v1/capture/provider/poll", call)
     }
 
+    pub fn unregister_capture_provider(
+        &self,
+        call: &poche_capture::CaptureProviderUnregisterCall,
+    ) -> Result<poche_capture::CaptureProviderUnregisterReceipt, DeviceClientError> {
+        self.post("/device/v1/capture/provider/unregister", call)
+    }
+
     pub fn provide_capture_response(
         &self,
         call: &poche_capture::CaptureProviderResponseCall,

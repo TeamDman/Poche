@@ -7,8 +7,8 @@
 **Intent audit:** Passed 2026-08-12 against the available original Poche/SFM,
 desktop, browser, CLI, computer-player, multi-device, capture, puppet, Figue,
 Veilid, and planning instructions in this task
-**Current implementation focus:** Tasks 3.1-3.2; finish the external capture
-carrier and close the remaining executable certified-device commands
+**Current implementation focus:** Task 3.2; close the remaining executable
+certified-device governance/cancellation commands before parity acceptance
 
 ## How to update this plan
 
@@ -747,9 +747,9 @@ oversize, expiry, tampering, and cancellation as specified.
 
 ## Phase 3 — connect graphical, CLI, and policy devices
 
-### [~] 3.1 Turn Bevy into a live Poche device and capture provider
+### [x] 3.1 Turn Bevy into a live Poche device and capture provider
 
-**Completion notes:** In progress. `poche-native-ui` now converts an exact
+**Completion notes:** Complete. `poche-native-ui` now converts an exact
 `DeviceObservation` into the shared presentation/spatial scene, admits only
 advertised game actions, and maps a spatial click/drag result back to the
 opaque advertised action ID. `NativeCaptureProvider` implements nonblocking
@@ -796,12 +796,28 @@ the native observation. The external Axum boundary also exposes
 `/device/v1/cooperate`; it verifies/enrolls the requester's root certificate
 before routing the independently signed request to the exact provider, and an
 HTTP acceptance proves unknown targets fail closed. A registered external
-provider relay and artifact-byte carrier remain before external capture is
-claimed.
-Remaining before completion: manually exercise a protected profile against a
-live server, exercise human input in that profile, and connect its provider
-poll/reply path for cross-process capture. Visual inspection
-also retains an existing
+provider now polls over the real Axum boundary without holding the room mutex
+while Bevy renders. Public `poche device capture serve-native <profile> <room>`
+workers are offscreen by default, sign through protected storage, wrap fresh
+content keys to the requester's certified encryption key, and upload bounded
+encrypted chunks. The requester alone decrypts and invokes `poche-capture`;
+the relay never sees plaintext or publication paths.
+
+A 2026-08-13 cross-process manual acceptance used two Windows-Credential-
+Manager-backed sibling profiles and a real `poche-web-spike` socket. The
+requester seated at lobby revision 2, requested the native sibling, published
+a 343,685-byte 1280x800 PNG plus manifest under
+`target/live-capture-proof-20260813/captures2`, and the provider reported
+`1 complete, 0 denied, windowless=true`. Image-tool inspection confirmed a
+nonuniform exact table/player view. The first unseated attempt correctly
+returned `ProviderUnavailable` because the native adapter refused to invent a
+player viewpoint; executable `room take-seat|release-seat` commands now expose
+that prerequisite. Provider retirement is explicit, and a newer signed
+advertisement can replace a crashed/stale worker without changing game
+history. The focused HTTP relay test covers same-player discovery, encrypted
+reconstruction, retirement, and unchanged revision; native input tests cover
+ordinary advertised-action submission and peer convergence. Visual inspection
+retains an existing
 native-render gap: current/earlier unified screenshots show Slug and debug
 geometry but omit solid PBR meshes, so capture structure is accepted but visual
 completeness is not yet claimed.
@@ -827,14 +843,16 @@ cargo clippy --locked -p poche-native-ui --all-targets --offline -- -D warnings
 cargo run --locked -p poche-cli --offline -- --endpoint http://127.0.0.1:4174 --profile alice-native desktop --room certified-device-room
 ```
 
-The final command is a manual live prerequisite; update its exact Figue syntax
-and never mark it passed without observing the window and device enrollment.
+The protected-profile/socket acceptance above closes the old fixture-only
+manual prerequisite. Ordinary `poche desktop` remains visibly windowed; only
+capture and puppet workers select the tested offscreen target. Native input
+and peer-observation behavior is exercised by the focused live-device tests.
 
 **Completion criteria:** A real native client joins a room as its own device,
 human actions are visible elsewhere, and a certified sibling device obtains a
 validated captioned capture without Bevy owning file layout or game semantics.
 
-### [ ] 3.2 Connect CLI commands and deterministic agents as real devices
+### [~] 3.2 Connect CLI commands and deterministic agents as real devices
 
 **Completion notes:** In progress. The shared player-device client now resolves
 typed convenience payloads only by finding exactly one matching action in the
@@ -905,6 +923,18 @@ device sends arbitrary chat and its peer observes the committed tail.
 requests use an exact typed payload, while grant/revoke select exactly one
 currently advertised recipient-bound action and fail on zero or ambiguous
 matches. Focused player-client/runtime/CLI tests and strict Clippy pass.
+Cross-process capture is now executable rather than a parser receipt.
+`device capture providers <profile> <room>` obtains signed same-player provider
+advertisements from the exact observation; `serve-native` registers and
+retires an offscreen Bevy worker; and `request <profile> <room> <device>
+<label>` performs the signed request, recipient-only key unwrap, bounded chunk
+fetch, integrity validation, requester-owned atomic publication, and final
+delivery acknowledgement. Request/status/receive intentionally form one
+blocking command for the first public contract so partial bytes never become a
+user-visible artifact; durable resume and explicit cancellation remain Task
+5.3. Room `take-seat|release-seat` commands expose the real seated-view
+prerequisite. The real socket test and protected-profile proof in Task 3.1
+cover provider discovery and complete native artifact delivery.
 
 **Work:**
 
@@ -914,8 +944,9 @@ matches. Focused player-client/runtime/CLI tests and strict Clippy pass.
   membership selection, revocation, and custody disclosure without printing
   secrets.
 - Add `first-legal` and seeded-random policies; no Burn/learned policy yet.
-- Add `device capture providers|request|status|receive` commands that use the
-  same cooperation and artifact pipeline as puppets.
+- Add `device capture providers|serve-native|request` commands that use the
+  same cooperation and artifact pipeline as puppets. Keep status/receive
+  internal to the blocking request until Task 5.3 adds durable resume.
 - Resolve convenience commands against current advertised actions; never
   invent a parallel payload.
 
@@ -925,7 +956,7 @@ matches. Focused player-client/runtime/CLI tests and strict Clippy pass.
 cargo test --locked -p poche-cli -p poche-player-client -p poche-capture --offline
 target\debug\poche.exe game observe --output json
 target\debug\poche.exe game actions --output json
-target\debug\poche.exe device capture providers --output json
+target\debug\poche.exe --output json device capture providers <profile> <room>
 ```
 
 Update argument ordering to the final Figue schema before completion.

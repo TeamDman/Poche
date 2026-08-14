@@ -8711,10 +8711,12 @@ dependencies = [
 name = "poche-cli"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "eyre",
  "facet",
  "figue",
  "getrandom 0.3.4",
+ "poche-capture",
  "poche-domain",
  "poche-native-ui",
  "poche-player-client",

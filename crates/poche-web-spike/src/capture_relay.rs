@@ -11,8 +11,9 @@ use std::{
 use poche_capture::{
     CaptureChunkFetchCall, CaptureChunkFetchResult, CaptureChunkUploadCall,
     CaptureDeliveryAcknowledgeCall, CaptureProviderPollCall, CaptureProviderRegistrationReceipt,
-    CaptureProviderResponseCall, CaptureRelayAcknowledgement, CaptureRelayJob, CaptureRelayToken,
-    CaptureRequestRelayReceipt, EncryptedCaptureChunk, WrappedCaptureTransferKey,
+    CaptureProviderResponseCall, CaptureProviderUnregisterCall, CaptureProviderUnregisterReceipt,
+    CaptureRelayAcknowledgement, CaptureRelayJob, CaptureRelayToken, CaptureRequestRelayReceipt,
+    EncryptedCaptureChunk, WrappedCaptureTransferKey,
 };
 use poche_player_client::{DeviceClientError, DeviceCooperationRequest, DeviceCooperationResult};
 use poche_protocol::{
@@ -69,7 +70,14 @@ impl CaptureRelay {
         let mut state = lock
             .lock()
             .map_err(|_| DeviceClientError::TransportUnavailable)?;
-        if state.providers.contains_key(&provider_device_id) {
+        if state
+            .providers
+            .get(&provider_device_id)
+            .is_some_and(|existing| {
+                existing.advertisement.advertisement_sequence
+                    >= advertisement.advertisement_sequence
+            })
+        {
             return Err(DeviceClientError::AuthorizationDenied);
         }
         state.providers.insert(
@@ -131,6 +139,24 @@ impl CaptureRelay {
                 state.providers.remove(&receipt.provider_device_id);
             }
         }
+    }
+
+    pub(crate) fn unregister_call(
+        &self,
+        call: &CaptureProviderUnregisterCall,
+    ) -> Result<CaptureProviderUnregisterReceipt, DeviceClientError> {
+        call.provider_token
+            .validate()
+            .map_err(|_| DeviceClientError::AuthorizationDenied)?;
+        let (lock, _) = &*self.shared;
+        let mut state = lock
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        let device = provider_for_token(&state, &call.provider_token)?.clone();
+        state.providers.remove(&device);
+        Ok(CaptureProviderUnregisterReceipt {
+            provider_device_id: device,
+        })
     }
 
     pub(crate) fn provide_response(

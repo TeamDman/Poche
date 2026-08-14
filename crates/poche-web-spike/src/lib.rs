@@ -26,6 +26,7 @@ use futures_util::{StreamExt as _, stream};
 use poche_capture::{
     CaptureChunkFetchCall, CaptureChunkUploadCall, CaptureDeliveryAcknowledgeCall,
     CaptureProviderPollCall, CaptureProviderRegistrationCall, CaptureProviderResponseCall,
+    CaptureProviderUnregisterCall,
 };
 use poche_player_client::{DeviceClientError, DeviceProfile, HttpDeviceCooperationCall};
 use poche_protocol::{
@@ -222,6 +223,10 @@ fn router(state: AppState) -> Router {
             post(capture_provider_poll),
         )
         .route(
+            "/device/v1/capture/provider/unregister",
+            post(capture_provider_unregister),
+        )
+        .route(
             "/device/v1/capture/provider/respond",
             post(capture_provider_respond),
         )
@@ -324,6 +329,28 @@ async fn capture_provider_poll(
     Json(call): Json<CaptureProviderPollCall>,
 ) -> Response {
     device_api_response(state.capture_relay.poll(&call))
+}
+
+async fn capture_provider_unregister(
+    State(state): State<AppState>,
+    Json(call): Json<CaptureProviderUnregisterCall>,
+) -> Response {
+    let result = state
+        .capture_relay
+        .unregister_call(&call)
+        .and_then(|receipt| {
+            let removed = state
+                .certified_room
+                .lock()
+                .map_err(|_| DeviceClientError::TransportUnavailable)?
+                .unregister_capture_provider(&receipt.provider_device_id)?;
+            if removed {
+                Ok(receipt)
+            } else {
+                Err(DeviceClientError::TransportUnavailable)
+            }
+        });
+    device_api_response(result)
 }
 
 async fn capture_provider_respond(
@@ -1401,8 +1428,8 @@ mod tests {
     use poche_capture::{
         CaptureChunkFetchCall, CaptureChunkFetchResult, CaptureChunkUploadCall,
         CaptureDeliveryAcknowledgeCall, CaptureProviderPollCall, CaptureProviderRegistrationCall,
-        CaptureProviderResponseCall, CaptureTransferReceiver, CaptureTransferSender,
-        capture_transfer_descriptor, generate_wrapped_capture_transfer_key,
+        CaptureProviderResponseCall, CaptureProviderUnregisterCall, CaptureTransferReceiver,
+        CaptureTransferSender, capture_transfer_descriptor, generate_wrapped_capture_transfer_key,
         open_wrapped_capture_transfer_key,
     };
     use poche_player_client::{
@@ -1875,6 +1902,12 @@ mod tests {
                 advertisement,
             })
             .unwrap();
+        let discovered = requester.observe(&room_id).unwrap();
+        assert_eq!(discovered.capture_providers.len(), 1);
+        assert_eq!(
+            discovered.capture_providers[0].provider_device_id,
+            provider_profile.device_id
+        );
 
         let provider_certificate = provider_profile.certificate.clone();
         let provider_thread = std::thread::spawn(move || {
@@ -1964,6 +1997,12 @@ mod tests {
                     )
                     .unwrap();
             }
+            let unregistered = provider_transport
+                .unregister_capture_provider(&CaptureProviderUnregisterCall {
+                    provider_token: registration.provider_token,
+                })
+                .unwrap();
+            assert_eq!(unregistered.provider_device_id, provider_profile.device_id);
             bytes
         });
 
@@ -2053,14 +2092,14 @@ mod tests {
                 request_id: request.request_id,
             })
             .unwrap();
+        let after_capture = requester.observe(&room_id).unwrap();
         assert_eq!(
-            requester
-                .observe(&room_id)
-                .unwrap()
-                .projection
-                .current_revision,
-            1,
+            after_capture.projection.current_revision, 1,
             "capture cooperation must not enter game history"
+        );
+        assert!(
+            after_capture.capture_providers.is_empty(),
+            "provider retirement must be visible without changing game history"
         );
 
         server.abort();

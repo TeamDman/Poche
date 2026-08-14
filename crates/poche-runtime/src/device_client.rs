@@ -571,7 +571,9 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
     /// # Errors
     ///
     /// Rejects an unenrolled/mismatched device, invalid certificate or
-    /// advertisement signature, or duplicate provider registration.
+    /// advertisement signature, or a stale provider registration. A newer
+    /// signed advertisement for the same device atomically replaces its old
+    /// transport route so crashed/restarted graphical workers can recover.
     pub fn register_capture_provider<H>(
         &self,
         profile: &DeviceProfile,
@@ -590,7 +592,13 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
             .map_err(|_| DeviceClientError::TransportUnavailable)?;
         if shared.profiles.get(&profile.device_id) != Some(profile)
             || advertisement.provider_device_id != profile.device_id
-            || shared.capture_providers.contains_key(&profile.device_id)
+            || shared
+                .capture_providers
+                .get(&profile.device_id)
+                .is_some_and(|existing| {
+                    existing.advertisement.advertisement_sequence
+                        >= advertisement.advertisement_sequence
+                })
         {
             return Err(DeviceClientError::AuthorizationDenied);
         }
@@ -602,6 +610,24 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
             },
         );
         Ok(())
+    }
+
+    /// Retire one provider route after its transport bearer capability has
+    /// been authenticated by the owning gateway. Prepared in-flight routes
+    /// remain independently owned and can finish.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error if shared provider state is unavailable.
+    pub fn unregister_capture_provider(
+        &self,
+        device_id: &DeviceId,
+    ) -> Result<bool, DeviceClientError> {
+        let mut shared = self
+            .shared
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        Ok(shared.capture_providers.remove(device_id).is_some())
     }
 
     /// Set deterministic wall-clock evidence used only by non-authoritative
@@ -903,6 +929,19 @@ where
         let profile = self.ensure_enrolled(certificate)?;
         self.adapter
             .register_capture_provider(&profile, advertisement, handler)
+    }
+
+    /// Retire a gateway-authenticated external provider route without
+    /// changing player membership or authoritative game history.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error if the shared adapter is unavailable.
+    pub fn unregister_capture_provider(
+        &mut self,
+        device_id: &DeviceId,
+    ) -> Result<bool, DeviceClientError> {
+        self.adapter.unregister_capture_provider(device_id)
     }
 
     /// Verify, enroll, and answer one signed exact-recipient snapshot or wait.
@@ -1531,12 +1570,25 @@ where
         return Err(DeviceClientError::ProtocolViolation);
     }
     let (action_templates, chat_tail) = observation_supplements(shared, &projection, &actions)?;
+    let mut capture_providers = shared
+        .capture_providers
+        .values()
+        .filter(|provider| {
+            provider.advertisement.player_id == projection.principal_id
+                && provider.advertisement.room_id == projection.room_id
+                && provider.advertisement.membership_epoch == projection.session_epoch
+                && provider.advertisement.expires_at_unix_ms >= shared.cooperation_now_unix_ms
+        })
+        .map(|provider| provider.advertisement.clone())
+        .collect::<Vec<_>>();
+    capture_providers.sort_by(|left, right| left.provider_device_id.cmp(&right.provider_device_id));
     Ok(DeviceObservation {
         projection,
         projection_hash,
         actions,
         action_templates,
         chat_tail,
+        capture_providers,
     })
 }
 

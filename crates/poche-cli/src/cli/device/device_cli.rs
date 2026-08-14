@@ -4,7 +4,10 @@ use poche_player_client::{DeviceProfile, ProtectedProfileStore};
 use serde::Serialize;
 
 use super::capture::CaptureArgs;
-use crate::cli::output::{OutputFormat, emit_value};
+use crate::cli::{
+    live_device::LiveDeviceConfig,
+    output::{OutputFormat, emit_value},
+};
 
 #[derive(Facet, PartialEq, Eq)]
 pub struct DeviceArgs {
@@ -41,13 +44,31 @@ impl DeviceArgs {
         }
     }
 
+    #[must_use]
+    pub const fn reports_cancellation_as_result(&self) -> bool {
+        match &self.command {
+            DeviceCommand::Capture(arguments) => arguments.reports_cancellation_as_result(),
+            DeviceCommand::Create { .. } | DeviceCommand::List | DeviceCommand::Show { .. } => {
+                false
+            }
+        }
+    }
+
     /// Execute protected device enrollment or public profile inspection.
     /// Capture subcommands remain owned by the cooperation execution path.
     ///
     /// # Errors
     ///
     /// Fails closed on unavailable/corrupt protected or public profile state.
-    pub fn invoke(self, output: OutputFormat) -> eyre::Result<bool> {
+    pub fn invoke(
+        self,
+        config: &LiveDeviceConfig,
+        output: OutputFormat,
+        cancelled: impl FnMut() -> bool,
+    ) -> eyre::Result<bool> {
+        if let DeviceCommand::Capture(arguments) = self.command {
+            return arguments.invoke(config, output, cancelled);
+        }
         let store = ProtectedProfileStore::open_default()?;
         let profiles = match self.command {
             DeviceCommand::Create { identity, profile } => {
@@ -55,7 +76,7 @@ impl DeviceArgs {
             }
             DeviceCommand::List => store.list_devices()?,
             DeviceCommand::Show { profile } => vec![store.load_device(&profile)?],
-            DeviceCommand::Capture(_) => return Ok(false),
+            DeviceCommand::Capture(_) => unreachable!("capture returned before profile dispatch"),
         };
         let summaries = profiles.iter().map(DeviceSummary::from).collect::<Vec<_>>();
         let text = if summaries.is_empty() {
