@@ -776,6 +776,7 @@ mod tests {
             player_id: player.player_id.clone(),
             device_id: DeviceId::new(public(seed)).unwrap(),
             device_signing_public_key: public(seed),
+            device_encryption_public_key: "ee".repeat(32),
             sequence,
             valid_from_membership_epoch: 1,
             valid_through_membership_epoch: None,

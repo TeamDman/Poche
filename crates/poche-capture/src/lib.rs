@@ -12,8 +12,10 @@
     reason = "the public pipeline returns the documented stable redacted CapturePipelineError categories"
 )]
 
+mod key_wrap;
 mod pipeline;
 mod transfer;
 
+pub use key_wrap::*;
 pub use pipeline::*;
 pub use transfer::*;

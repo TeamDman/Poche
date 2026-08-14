@@ -15,6 +15,10 @@ use directories::ProjectDirs;
 use ed25519_dalek::{Signer as _, SigningKey, VerifyingKey};
 use facet::Facet;
 use keyring_manager::{KeyringError, KeyringManager};
+use poche_capture::{
+    CaptureTransferKey, WrappedCaptureTransferKey, device_encryption_public_key,
+    open_wrapped_capture_transfer_key,
+};
 use poche_protocol::{
     CertificateId, DeviceCapabilityWire, DeviceCustodyWire, DeviceId, PlayerRootWire, PrincipalId,
     REPLICATION_SCHEMA_VERSION_V1, REPLICATION_SIGNATURE_DOMAIN_V1, SignatureAlgorithm,
@@ -263,6 +267,7 @@ impl ProtectedProfileStore {
         let seed = random_seed()?;
         let signing = SigningKey::from_bytes(&seed);
         let device_key = hex(&signing.verifying_key().to_bytes());
+        let device_encryption_key = hex(&device_encryption_public_key(&seed));
         let device_id = DeviceId::new(device_key.clone())
             .map_err(|_| ProfileStoreError::CorruptPublicProfile)?;
         let unsigned = UnsignedDeviceCertificateWire {
@@ -272,6 +277,7 @@ impl ProtectedProfileStore {
             player_id: root.root.player_id.clone(),
             device_id: device_id.clone(),
             device_signing_public_key: device_key,
+            device_encryption_public_key: device_encryption_key,
             sequence,
             valid_from_membership_epoch: 1,
             valid_through_membership_epoch: None,
@@ -353,6 +359,30 @@ impl ProtectedProfileStore {
         list_public(&self.public_root.join("devices"), |label| {
             self.load_device(label)
         })
+    }
+
+    /// Open a short-lived artifact key only for the exact protected device
+    /// profile named by a recipient-wrapped envelope. Raw profile seed bytes
+    /// never cross this key-store boundary.
+    pub fn open_capture_transfer_key(
+        &self,
+        profile: &DeviceProfile,
+        wrapped: &WrappedCaptureTransferKey,
+    ) -> Result<CaptureTransferKey, DeviceClientError> {
+        profile.validate()?;
+        let signing = self
+            .load_signing_key(
+                &profile.signing_key_handle,
+                &profile.certificate.device_signing_public_key,
+            )
+            .map_err(|error| match error {
+                ProfileStoreError::NotFound | ProfileStoreError::ProtectedStoreUnavailable => {
+                    DeviceClientError::KeyUnavailable
+                }
+                _ => DeviceClientError::InvalidProfile,
+            })?;
+        open_wrapped_capture_transfer_key(wrapped, &profile.certificate, &signing.to_bytes())
+            .map_err(|_| DeviceClientError::AuthorizationDenied)
     }
 
     fn root_path(&self, label: &str) -> PathBuf {
@@ -645,6 +675,38 @@ mod tests {
                 &ed25519_dalek::Signature::from_bytes(&decode_hex(signature.as_str()).unwrap()),
             )
             .unwrap();
+
+        let transfer_id = poche_protocol::CaptureTransferId::new("protected-store-wrap").unwrap();
+        let request_hash = poche_protocol::SemanticHash([7; 32]);
+        let (sender_key, wrapped) = poche_capture::generate_wrapped_capture_transfer_key(
+            &device.certificate,
+            transfer_id.clone(),
+            request_hash,
+        )
+        .unwrap();
+        let receiver_key = store.open_capture_transfer_key(&device, &wrapped).unwrap();
+        let bytes = b"exact-recipient-artifact".to_vec();
+        let descriptor =
+            poche_capture::capture_transfer_descriptor(transfer_id, &bytes, 1024).unwrap();
+        let mut sender = poche_capture::CaptureTransferSender::new(
+            descriptor.clone(),
+            request_hash,
+            1_000,
+            bytes.clone(),
+            sender_key,
+            1,
+        )
+        .unwrap();
+        let mut receiver = poche_capture::CaptureTransferReceiver::new(
+            descriptor,
+            request_hash,
+            1_000,
+            receiver_key,
+        )
+        .unwrap();
+        let chunk = sender.next_chunk(1).unwrap().unwrap();
+        receiver.accept(1, &chunk).unwrap();
+        assert_eq!(receiver.finish().unwrap(), bytes);
     }
 
     #[test]

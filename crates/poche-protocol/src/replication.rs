@@ -132,6 +132,9 @@ pub struct UnsignedDeviceCertificateWire {
     pub player_id: PrincipalId,
     pub device_id: DeviceId,
     pub device_signing_public_key: String,
+    /// X25519 public key used only for exact-device private cooperation
+    /// payloads. It is deliberately distinct from the Ed25519 signing key.
+    pub device_encryption_public_key: String,
     pub sequence: u64,
     pub valid_from_membership_epoch: u64,
     pub valid_through_membership_epoch: Option<u64>,
@@ -152,6 +155,8 @@ impl UnsignedDeviceCertificateWire {
         }
         if !self.certificate_id.validate()
             || !is_public_key(&self.device_signing_public_key)
+            || !is_public_key(&self.device_encryption_public_key)
+            || self.device_signing_public_key == self.device_encryption_public_key
             || self.device_id.as_str() != self.device_signing_public_key
             || self.sequence == 0
             || self.valid_from_membership_epoch == 0
@@ -181,6 +186,7 @@ impl UnsignedDeviceCertificateWire {
             player_id: self.player_id,
             device_id: self.device_id,
             device_signing_public_key: self.device_signing_public_key,
+            device_encryption_public_key: self.device_encryption_public_key,
             sequence: self.sequence,
             valid_from_membership_epoch: self.valid_from_membership_epoch,
             valid_through_membership_epoch: self.valid_through_membership_epoch,
@@ -207,6 +213,7 @@ pub struct DeviceCertificateWire {
     pub player_id: PrincipalId,
     pub device_id: DeviceId,
     pub device_signing_public_key: String,
+    pub device_encryption_public_key: String,
     pub sequence: u64,
     pub valid_from_membership_epoch: u64,
     pub valid_through_membership_epoch: Option<u64>,
@@ -233,6 +240,7 @@ impl DeviceCertificateWire {
             player_id: self.player_id.clone(),
             device_id: self.device_id.clone(),
             device_signing_public_key: self.device_signing_public_key.clone(),
+            device_encryption_public_key: self.device_encryption_public_key.clone(),
             sequence: self.sequence,
             valid_from_membership_epoch: self.valid_from_membership_epoch,
             valid_through_membership_epoch: self.valid_through_membership_epoch,
@@ -831,6 +839,7 @@ pub fn legacy_self_device_certificate(
         device_id: DeviceId::new(root.signing_public_key.clone())
             .map_err(|_| ReplicationWireError::IdentityBinding)?,
         device_signing_public_key: root.signing_public_key.clone(),
+        device_encryption_public_key: "ee".repeat(32),
         sequence: 1,
         valid_from_membership_epoch: 1,
         valid_through_membership_epoch: None,
@@ -983,6 +992,7 @@ mod tests {
             player_id: root.player_id.clone(),
             device_id: DeviceId::new(public.clone()).unwrap(),
             device_signing_public_key: public,
+            device_encryption_public_key: "ee".repeat(32),
             sequence: u64::from(device_seed),
             valid_from_membership_epoch: 1,
             valid_through_membership_epoch: None,
@@ -1011,11 +1021,11 @@ mod tests {
         let bytes = canonical_device_certificate_bytes(&certificate.unsigned()).unwrap();
         assert_eq!(
             hex(blake3::hash(&bytes).as_bytes()),
-            "8b7b7aa2d2759c0c2745d919be1491dc089c142453950c4aa47f89ed47abd8c3"
+            "2b228cb704a9d79f252f7cdfc348f8d68c5c40c29775e067d02852917a27f920"
         );
         assert_eq!(
             certificate.signature.signature.as_str(),
-            "a5976b56c202450e64584b7d93fdc38c105a00b23b9c9b8af620121a6d0184b8a39e15e79168ba8f3abadb01a619d79eb2a3e3fc4cac6fd23fe2bc81db717d0d"
+            "441b42dcb4f3c217835d760f574245b5e43fa6643371ec3ef2b8df13a98b958f0873bbd2950cbd578985a71d9d73dc69ff25b23897d66dd393555814bc1ecf02"
         );
         key(1)
             .verifying_key()

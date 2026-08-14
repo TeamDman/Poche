@@ -712,7 +712,16 @@ premature-finish refusal, exact recovery, and publication through the common
 pipeline only after verification. Wrong keys, tampering, expiry, cancellation,
 and partial cleanup fail closed. Gateway/native Veilid transport qualification
 remains explicitly owned by Tasks 5.1 and 5.3 rather than being inferred from
-loopback evidence.
+loopback evidence. The carrier prerequisite is now stronger as well: every
+root-signed device certificate binds a distinct X25519 recipient public key.
+The protected profile derives its recipient secret through a domain-separated
+KDF behind the same nonexportable seed handle used for Ed25519, without reusing
+the signing scalar. `poche-capture` wraps each random artifact content key to
+that exact certificate with ephemeral X25519 plus XChaCha20-Poly1305, binding
+request/transfer/recipient/certificate fields as associated data. Wrong-device
+and tampered envelopes fail; a protected-store test unwraps and completes the
+existing encrypted chunk receiver without exporting the seed. The full
+workspace compiles with the revised certificate schema.
 
 **Work:**
 

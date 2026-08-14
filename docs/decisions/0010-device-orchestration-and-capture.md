@@ -65,6 +65,9 @@ A protected device profile identifies:
 
 - a player-root reference, never an exported root secret;
 - one independently generated device key and root-signed certificate;
+- a distinct X25519 recipient public key bound into that certificate and a
+  purpose-separated private subkey retained behind the protected profile
+  handle;
 - custody class and certificate sequence/epoch;
 - exact sorted capabilities;
 - room membership/locator aliases and transport configuration; and
@@ -138,6 +141,9 @@ private chunks on a cooperation lane:
 - artifact descriptors bind transfer ID, exact byte length, chunk size/count,
   and BLAKE3 content hash;
 - each chunk is at most 24 KiB before adapter encryption/framing;
+- each fresh artifact content key is X25519/XChaCha20-Poly1305 wrapped to the
+  requester's exact root-certified device recipient key, so a forwarding
+  gateway cannot decrypt the artifact merely because it carries the chunks;
 - one artifact is at most 64 MiB and one request returns at most four sorted
   representations;
 - the receiver may request missing chunk indices and safely deduplicates

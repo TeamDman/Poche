@@ -809,6 +809,7 @@ fn signed_profile(
         player_id: player_id.clone(),
         device_id: device_id.clone(),
         device_signing_public_key: device_public_key,
+        device_encryption_public_key: "ee".repeat(32),
         sequence: 1,
         valid_from_membership_epoch: 1,
         valid_through_membership_epoch: None,
