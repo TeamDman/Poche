@@ -166,6 +166,17 @@ impl LiveDeviceConfig {
         Ok(true)
     }
 
+    pub(crate) fn existing_room_client(
+        &self,
+        room: &str,
+    ) -> Result<(
+        PlayerDeviceClient<HttpDeviceTransport<ProtectedProfileStore>>,
+        RoomId,
+    )> {
+        let room_id = parse_room(room)?;
+        Ok((self.client(1)?, room_id))
+    }
+
     fn client(
         &self,
         epoch: u64,

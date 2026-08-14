@@ -23,7 +23,7 @@ use axum::{
 use datastar::prelude::PatchElements;
 use ed25519_dalek::{Signer as _, SigningKey};
 use futures_util::{StreamExt as _, stream};
-use poche_player_client::{DeviceClientError, DeviceProfile};
+use poche_player_client::{DeviceClientError, DeviceProfile, HttpDeviceCooperationCall};
 use poche_protocol::{
     CertificateId, CommandPayload, DeviceActionWire, DeviceCapabilityWire, DeviceCustodyWire,
     DeviceId, DeviceObservationRequestWire, GatewayAuthorityModeWire,
@@ -205,6 +205,7 @@ fn router(state: AppState) -> Router {
         .route("/gateway/metrics", get(gateway_metrics))
         .route("/device/v1/observe", post(certified_device_observe))
         .route("/device/v1/invoke", post(certified_device_invoke))
+        .route("/device/v1/cooperate", post(certified_device_cooperate))
         .route("/tabletop/{viewer}", get(tabletop_view))
         .route("/tabletop/{viewer}/action/{control}", post(tabletop_action))
         .route("/tabletop/{viewer}/disconnect", post(tabletop_disconnect))
@@ -237,6 +238,18 @@ async fn certified_device_invoke(
         .lock()
         .map_err(|_| DeviceClientError::TransportUnavailable)
         .and_then(|mut room| room.invoke(&action));
+    device_api_response(result)
+}
+
+async fn certified_device_cooperate(
+    State(state): State<AppState>,
+    Json(call): Json<HttpDeviceCooperationCall>,
+) -> Response {
+    let result = state
+        .certified_room
+        .lock()
+        .map_err(|_| DeviceClientError::TransportUnavailable)
+        .and_then(|mut room| room.cooperate(&call.certificate, &call.target_device, call.request));
     device_api_response(result)
 }
 
@@ -1256,9 +1269,12 @@ mod tests {
         HttpDeviceTransport, PlayerDeviceClient, PolicyScope,
     };
     use poche_protocol::{
-        CertificateId, CommandId, DeviceCapabilityWire, DeviceCustodyWire, DeviceId, InviteProof,
-        PrincipalId, REPLICATION_SCHEMA_VERSION_V1, REPLICATION_SIGNATURE_DOMAIN_V1, RoomId,
-        SignatureAlgorithm, SignatureBytes, SignatureIntent, UnsignedDeviceCertificateWire,
+        CapturePrivacyWire, CaptureProviderKindWire, CaptureRepresentationWire, CaptureRequestId,
+        CertificateId, CommandId, DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+        DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1, DeviceCapabilityWire, DeviceCustodyWire, DeviceId,
+        DeviceSignatureIntentWire, InviteProof, PrincipalId, REPLICATION_SCHEMA_VERSION_V1,
+        REPLICATION_SIGNATURE_DOMAIN_V1, RoomId, SignatureAlgorithm, SignatureBytes,
+        SignatureIntent, UnsignedCaptureRequestWire, UnsignedDeviceCertificateWire,
         canonical_device_certificate_bytes,
     };
 
@@ -1725,6 +1741,40 @@ mod tests {
             .expect("joined exact-recipient view");
         assert_eq!(guest_lobby.projection.current_revision, 2);
         assert!(guest_lobby.action("room-take-seat-0").is_some());
+        let unknown_target = DeviceId::new("11".repeat(32)).unwrap();
+        let unavailable_capture = UnsignedCaptureRequestWire {
+            schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+            request_id: CaptureRequestId::new("http-unknown-provider").unwrap(),
+            room_id: room_id.clone(),
+            membership_epoch: 1,
+            player_id: guest.profile().player_id.clone(),
+            requester_device_id: guest.profile().device_id.clone(),
+            provider_device_id: unknown_target.clone(),
+            observed_revision: guest_lobby.projection.current_revision,
+            expires_at_unix_ms: 1_000,
+            replay_nonce: "http-unknown-provider-nonce".to_owned(),
+            privacy: CapturePrivacyWire::ExactPlayerView,
+            provider_kind: CaptureProviderKindWire::NativeBevy,
+            representations: vec![CaptureRepresentationWire::Png],
+            viewport: None,
+            label: "unknown external provider".to_owned(),
+            max_total_bytes: 1024,
+            signature_intent: DeviceSignatureIntentWire {
+                domain_version: DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: guest.profile().device_id.clone(),
+            },
+        }
+        .attach_signature(SignatureBytes::new("0".repeat(128)).unwrap())
+        .unwrap();
+        assert_eq!(
+            guest.cooperate(
+                &unknown_target,
+                poche_player_client::DeviceCooperationRequest::Capture(unavailable_capture)
+            ),
+            Err(DeviceClientError::AuthorizationDenied),
+            "the HTTP cooperation route must fail closed for an unknown exact target"
+        );
 
         macro_rules! invoke_lifecycle {
             ($client:expr, $action:literal, $command:literal) => {{

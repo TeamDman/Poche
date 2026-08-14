@@ -767,6 +767,25 @@ where
         Ok(committed)
     }
 
+    /// Route one independently signed, non-authoritative cooperation request
+    /// from an external certified device to its exact registered target.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid requester certification, request/profile mismatch,
+    /// unknown targets, replay, or provider protocol failures.
+    pub fn cooperate(
+        &mut self,
+        certificate: &DeviceCertificateWire,
+        target_device: &DeviceId,
+        request: DeviceCooperationRequest,
+    ) -> Result<DeviceCooperationResult, DeviceClientError> {
+        let profile = self.ensure_enrolled(certificate)?;
+        self.adapter
+            .clone()
+            .cooperate(&profile, target_device, request)
+    }
+
     /// Verify, enroll, and answer one signed exact-recipient snapshot or wait.
     /// Successful request IDs are replayed as the exact original observation,
     /// never reinterpreted against newer private state.
@@ -2002,8 +2021,9 @@ mod tests {
             CreateRoomActions,
             LoopbackCodec::CanonicalNdjson,
         );
-        adapter.enroll(&requester).unwrap();
         adapter.enroll(&provider).unwrap();
+        let mut certified = CertifiedDeviceRoom::new(adapter.clone());
+        certified.ensure_enrolled(&requester.certificate).unwrap();
         adapter.set_cooperation_now_unix_ms(100).unwrap();
 
         let advertisement_unsigned = UnsignedCaptureProviderAdvertisementWire {
@@ -2089,8 +2109,9 @@ mod tests {
             .attach_signature(request_signature)
             .unwrap();
         let revision_before = adapter.revision();
-        let result = requester_client
+        let result = certified
             .cooperate(
+                &requester.certificate,
                 &provider.device_id,
                 DeviceCooperationRequest::Capture(request.clone()),
             )
@@ -2104,7 +2125,8 @@ mod tests {
         assert_eq!(adapter.revision(), revision_before);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(
-            requester_client.cooperate(
+            certified.cooperate(
+                &requester.certificate,
                 &provider.device_id,
                 DeviceCooperationRequest::Capture(request)
             ),

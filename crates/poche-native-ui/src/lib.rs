@@ -815,7 +815,7 @@ pub fn run_live(
 )]
 fn run_with_live_device(
     options: NativeUiLaunchOptions,
-    live_device: Option<NativeLiveDevice>,
+    mut live_device: Option<NativeLiveDevice>,
 ) -> Result<(), String> {
     let NativeUiLaunchOptions {
         play_card,
@@ -841,7 +841,10 @@ fn run_with_live_device(
         } else {
             parse_card_face(&value).ok_or_else(|| format!("unrecognized card face {value:?}"))?
         };
-        controller.commit_named(face)?;
+        let committed = controller.commit_named(face)?;
+        if let Some(live) = live_device.as_mut() {
+            live.submit_play(&committed)?;
+        }
     }
     let exit_after = exit_after_seconds
         .map(|seconds| {
@@ -1909,7 +1912,7 @@ mod tests {
         PlayerDeviceClient,
     };
     use poche_protocol::{
-        CertificateId, ChanceWire, CommandPayload, CorrelationId, CountdownToken,
+        CertificateId, ChanceWire, CommandId, CommandPayload, CorrelationId, CountdownToken,
         DeviceCapabilityWire, DeviceCustodyWire, DeviceId, EventId, GameActionWire,
         GamePublicStateWire, HandProjection, InviteProof, MemberProjection, PrincipalId,
         ProjectionEnvelope, ProjectionId, ProjectionPayload, PublicGamePhase, PublicTurnWire,
@@ -2355,6 +2358,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the live-device acceptance keeps spatial input, sibling observation, and peer-driven refresh in one shared-room scenario"
+    )]
     fn native_spatial_action_commits_through_device_client_and_reaches_sibling() {
         let (state, actor) = running_play_state();
         let room_id = state.room_id.clone();
@@ -2407,9 +2414,14 @@ mod tests {
             LoopbackDeviceTransport::new(adapter.clone()),
         )
         .expect("native client");
-        let mut sibling =
-            PlayerDeviceClient::new(sibling_profile, LoopbackDeviceTransport::new(adapter))
-                .expect("sibling client");
+        let mut sibling = PlayerDeviceClient::new(
+            sibling_profile,
+            LoopbackDeviceTransport::new(adapter.clone()),
+        )
+        .expect("sibling client");
+        let mut other =
+            PlayerDeviceClient::new(other_profile, LoopbackDeviceTransport::new(adapter))
+                .expect("other player client");
 
         let mut live = NativeLiveDevice::connect(native, room_id.clone()).expect("live device");
         let observation = live.observation().clone();
@@ -2456,6 +2468,37 @@ mod tests {
             observed_elsewhere.projection.payload.public_history.len(),
             starting_history + 1,
             "the sibling must observe the ordinary committed game history"
+        );
+
+        let other_observation = other.observe(&room_id).expect("other player turn");
+        let other_action = other_observation
+            .actions
+            .iter()
+            .find(|action| matches!(action.payload, CommandPayload::GameAction { .. }))
+            .expect("other player advertised action")
+            .id
+            .clone();
+        other
+            .invoke(
+                &other_observation,
+                &other_action,
+                CommandId::new("other-player-live-action").expect("other action ID"),
+            )
+            .expect("other player action");
+        let mut observed_peer_progress = false;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            if live.poll().expect("poll peer progress")
+                && live.observation().projection.current_revision == starting_revision + 2
+            {
+                observed_peer_progress = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(
+            observed_peer_progress,
+            "native live device must refresh when a peer commits an action"
         );
     }
 

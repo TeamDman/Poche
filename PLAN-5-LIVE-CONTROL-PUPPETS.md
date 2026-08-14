@@ -775,8 +775,23 @@ bridge with the real windowless Bevy provider: Alice's root-signed policy
 device requests its root-signed native sibling, which returns a signed
 hash-bound descriptor while the provider bytes cross acknowledged encrypted
 24-KiB chunks and only the requester-side common pipeline persists them.
-Remaining before completion: supply and manually exercise a persistent/live
-transport profile and exercise human input in that profile. Visual inspection
+`poche desktop --room <room> --profile <device> --endpoint <origin>` now turns
+that bridge into a persistent graphical HTTP device from the one executable.
+The profile signer remains in protected storage and is moved only as an opaque
+`Send` capability to the worker; key bytes are never exported. The worker
+submits spatial card actions and continuously waits for strictly newer
+projections, so peer actions update the Bevy mirror even when the local human
+has not acted. Acceptance now proves both directions: a native spatial action
+reaches a sibling device and a different player's subsequent action refreshes
+the native observation. The external Axum boundary also exposes
+`/device/v1/cooperate`; it verifies/enrolls the requester's root certificate
+before routing the independently signed request to the exact provider, and an
+HTTP acceptance proves unknown targets fail closed. A registered external
+provider relay and artifact-byte carrier remain before external capture is
+claimed.
+Remaining before completion: manually exercise a protected profile against a
+live server, exercise human input in that profile, and connect its provider
+poll/reply path for cross-process capture. Visual inspection
 also retains an existing
 native-render gap: current/earlier unified screenshots show Slug and debug
 geometry but omit solid PBR meshes, so capture structure is accepted but visual
@@ -800,7 +815,7 @@ completeness is not yet claimed.
 ```powershell
 cargo test --locked -p poche-native-ui -p poche-player-client -p poche-capture --offline
 cargo clippy --locked -p poche-native-ui --all-targets --offline -- -D warnings
-cargo run --locked -p poche-cli --offline -- desktop --automation-profile target\poche-puppets\profile.json
+cargo run --locked -p poche-cli --offline -- --endpoint http://127.0.0.1:4174 --profile alice-native desktop --room certified-device-room
 ```
 
 The final command is a manual live prerequisite; update its exact Figue syntax

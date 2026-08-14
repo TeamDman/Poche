@@ -6,29 +6,16 @@
 
 use std::{io::Read as _, time::Duration};
 
-use poche_protocol::{
-    CorrelationId, DeviceCertificateWire, DeviceId, DeviceObservationModeWire, InviteProof, RoomId,
-};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use poche_protocol::{CorrelationId, DeviceId, DeviceObservationModeWire, InviteProof, RoomId};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     DeviceActionRequest, DeviceActionResult, DeviceClientError, DeviceCooperationRequest,
     DeviceCooperationResult, DeviceObservation, DeviceProfile, DeviceSigner, DeviceTransport,
-    sign_observation_request, sign_observation_request_with_invite,
+    HttpDeviceCooperationCall, sign_observation_request, sign_observation_request_with_invite,
 };
 
 const MAX_HTTP_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
-
-/// Cooperation call carrier. Capture requests remain independently signed;
-/// this wrapper supplies the requester's root-certified profile and exact
-/// target so a stateless gateway can locate the normal cooperation route.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HttpDeviceCooperationCall {
-    pub certificate: DeviceCertificateWire,
-    pub target_device: DeviceId,
-    pub request: DeviceCooperationRequest,
-}
 
 /// Configured network transport whose signer owns the protected device key.
 pub struct HttpDeviceTransport<S> {

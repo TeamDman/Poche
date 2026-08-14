@@ -95,7 +95,7 @@ impl fmt::Display for ProfileStoreError {
 
 impl std::error::Error for ProfileStoreError {}
 
-trait SecretVault {
+trait SecretVault: Send {
     fn load(&self, handle: &str) -> Result<Option<Zeroizing<String>>, ProfileStoreError>;
     fn store(&self, handle: &str, value: &str) -> Result<(), ProfileStoreError>;
     fn delete(&self, handle: &str) -> Result<(), ProfileStoreError>;
@@ -566,29 +566,42 @@ const fn nibble(byte: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+    use std::{
+        collections::BTreeMap,
+        sync::{Arc, Mutex},
+    };
 
     use ed25519_dalek::Verifier as _;
 
     use super::*;
 
     #[derive(Clone, Default)]
-    struct MemoryVault(Rc<RefCell<BTreeMap<String, String>>>);
+    struct MemoryVault(Arc<Mutex<BTreeMap<String, String>>>);
 
     impl SecretVault for MemoryVault {
         fn load(&self, handle: &str) -> Result<Option<Zeroizing<String>>, ProfileStoreError> {
-            Ok(self.0.borrow().get(handle).cloned().map(Zeroizing::new))
+            Ok(self
+                .0
+                .lock()
+                .map_err(|_| ProfileStoreError::ProtectedStoreUnavailable)?
+                .get(handle)
+                .cloned()
+                .map(Zeroizing::new))
         }
 
         fn store(&self, handle: &str, value: &str) -> Result<(), ProfileStoreError> {
             self.0
-                .borrow_mut()
+                .lock()
+                .map_err(|_| ProfileStoreError::ProtectedStoreUnavailable)?
                 .insert(handle.to_owned(), value.to_owned());
             Ok(())
         }
 
         fn delete(&self, handle: &str) -> Result<(), ProfileStoreError> {
-            self.0.borrow_mut().remove(handle);
+            self.0
+                .lock()
+                .map_err(|_| ProfileStoreError::ProtectedStoreUnavailable)?
+                .remove(handle);
             Ok(())
         }
     }
@@ -618,7 +631,7 @@ mod tests {
             fs::read_to_string(directory.path().join("identities/alice.json")).unwrap(),
             fs::read_to_string(directory.path().join("devices/alice-cli.json")).unwrap()
         );
-        for secret in vault.0.borrow().values() {
+        for secret in vault.0.lock().unwrap().values() {
             assert!(!public_files.contains(secret));
         }
 
@@ -644,7 +657,8 @@ mod tests {
         );
         let original = vault
             .0
-            .borrow()
+            .lock()
+            .unwrap()
             .get(&root.signing_key_handle)
             .cloned()
             .unwrap();
@@ -653,14 +667,15 @@ mod tests {
             Err(ProfileStoreError::NotFound)
         );
         assert_eq!(
-            vault.0.borrow().get(&root.signing_key_handle),
+            vault.0.lock().unwrap().get(&root.signing_key_handle),
             Some(&original)
         );
 
         let device = store.create_device("alice", "alice-cli").unwrap();
         vault
             .0
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .insert(device.signing_key_handle.clone(), "00".repeat(32));
         assert_eq!(
             store.sign_device_bytes(&device, b"payload"),

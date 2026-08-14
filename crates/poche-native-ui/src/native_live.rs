@@ -1,11 +1,12 @@
 use std::{
     sync::{Mutex, mpsc},
     thread,
+    time::Duration,
 };
 
 use bevy::prelude::Resource;
 use poche_player_client::{
-    DeviceActionResult, DeviceObservation, DeviceTransport, PlayerDeviceClient,
+    DeviceActionResult, DeviceClientError, DeviceObservation, DeviceTransport, PlayerDeviceClient,
 };
 use poche_protocol::{CommandId, RoomId};
 
@@ -24,6 +25,7 @@ enum NativeWorkerEvent {
         result: DeviceActionResult,
         observation: Box<DeviceObservation>,
     },
+    Observed(Box<DeviceObservation>),
     Failed(String),
 }
 
@@ -56,20 +58,23 @@ impl NativeLiveDevice {
             .map_err(|error| error.to_string())?;
         let (command_tx, command_rx) = mpsc::sync_channel(8);
         let (event_tx, event_rx) = mpsc::sync_channel(8);
+        let initial_revision = observation.projection.current_revision;
         thread::Builder::new()
             .name("poche-native-device".to_owned())
             .spawn(move || {
-                while let Ok(command) = command_rx.recv() {
-                    match command {
-                        NativeWorkerCommand::Invoke {
+                let mut latest_revision = initial_revision;
+                loop {
+                    match command_rx.recv_timeout(Duration::from_millis(50)) {
+                        Ok(NativeWorkerCommand::Invoke {
                             observation,
                             action_id,
                             command_id,
-                        } => {
+                        }) => {
                             let result = client.invoke(&observation, &action_id, command_id);
                             match result {
                                 Ok(result) => match client.observe(&room_id) {
                                     Ok(observation) => {
+                                        latest_revision = observation.projection.current_revision;
                                         if event_tx
                                             .send(NativeWorkerEvent::Updated {
                                                 result,
@@ -81,24 +86,41 @@ impl NativeLiveDevice {
                                         }
                                     }
                                     Err(error) => {
-                                        if event_tx
-                                            .send(NativeWorkerEvent::Failed(error.to_string()))
-                                            .is_err()
-                                        {
-                                            break;
-                                        }
+                                        let _ = event_tx
+                                            .send(NativeWorkerEvent::Failed(error.to_string()));
+                                        break;
                                     }
                                 },
                                 Err(error) => {
+                                    let _ =
+                                        event_tx.send(NativeWorkerEvent::Failed(error.to_string()));
+                                    break;
+                                }
+                            }
+                        }
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            match client.wait(&room_id, latest_revision) {
+                                Ok(observation) => {
+                                    latest_revision = observation.projection.current_revision;
                                     if event_tx
-                                        .send(NativeWorkerEvent::Failed(error.to_string()))
+                                        .send(NativeWorkerEvent::Observed(Box::new(observation)))
                                         .is_err()
                                     {
                                         break;
                                     }
                                 }
+                                Err(
+                                    DeviceClientError::NoProgress
+                                    | DeviceClientError::StaleRevision,
+                                ) => {}
+                                Err(error) => {
+                                    let _ =
+                                        event_tx.send(NativeWorkerEvent::Failed(error.to_string()));
+                                    break;
+                                }
                             }
                         }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     }
                 }
             })
@@ -163,6 +185,10 @@ impl NativeLiveDevice {
                     observation,
                 }) => {
                     self.last_result = Some(result);
+                    self.observation = *observation;
+                    changed = true;
+                }
+                Ok(NativeWorkerEvent::Observed(observation)) => {
                     self.observation = *observation;
                     changed = true;
                 }

@@ -112,7 +112,11 @@ impl Command {
             Self::Agent(command) => command.validate(),
             Self::Governance(command) => command.validate(),
             Self::Desktop(command) => {
-                if command
+                if command.room.is_some() && command.capture_artifact_root.is_some() {
+                    Err(ParseError::new(
+                        "--room and --capture-artifact-root cannot be combined",
+                    ))
+                } else if command
                     .exit_after_seconds
                     .is_some_and(|seconds| !seconds.is_finite() || seconds < 1.0)
                 {
@@ -264,6 +268,10 @@ mod tests {
     fn every_declared_command_round_trips_through_the_schema() {
         let cases: &[(&[&str], (&str, &str))] = &[
             (&["desktop"], ("desktop", "launch")),
+            (
+                &["desktop", "--room", "certified-device-room"],
+                ("desktop", "launch"),
+            ),
             (&["room", "host", "room-1"], ("room", "host")),
             (&["room", "join", "room-1", "invite"], ("room", "join")),
             (&["room", "show", "r"], ("room", "show")),

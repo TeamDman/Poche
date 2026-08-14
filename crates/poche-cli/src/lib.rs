@@ -67,7 +67,7 @@ pub fn run_from(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
             let reports_cancellation_as_a_result =
                 matches!(&parsed.command, cli::Command::Agent(_));
             let emitted = match parsed.command {
-                cli::Command::Desktop(command) => command.invoke()?,
+                cli::Command::Desktop(command) => command.invoke(&live_config)?,
                 cli::Command::Room(command) => {
                     command.invoke(&live_config, parsed.global.output)?
                 }

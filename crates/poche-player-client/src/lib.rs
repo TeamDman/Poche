@@ -318,6 +318,17 @@ pub enum DeviceCooperationResult {
     Capture(CaptureResponseWire),
 }
 
+/// HTTP cooperation carrier. The nested capture request remains independently
+/// device-signed; this wrapper supplies the root-certified requester profile
+/// and exact target needed to locate the ordinary device route.
+#[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpDeviceCooperationCall {
+    pub certificate: DeviceCertificateWire,
+    pub target_device: DeviceId,
+    pub request: DeviceCooperationRequest,
+}
+
 /// Adapter boundary shared by loopback, gateway, and Veilid clients.
 pub trait DeviceTransport {
     /// Obtain one atomic exact-recipient observation.
