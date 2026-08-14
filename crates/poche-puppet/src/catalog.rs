@@ -36,7 +36,7 @@ const SCENARIOS: [ScenarioDescriptor; 2] = [
         schema: "poche.puppet.scenario.v1",
         name: EXTERNAL_DEVICES_FULL_GAME,
         description: "Complete a two-player game through one real Axum socket using independent certified policy and graphical sibling devices.",
-        surfaces: &["headless", "native"],
+        surfaces: &["headless", "native", "web"],
         transports: &["http-loopback"],
         player_roots: 2,
         devices: 5,

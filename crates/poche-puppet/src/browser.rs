@@ -86,6 +86,79 @@ pub struct BrowserHarnessResult {
     pub summary: BrowserRunSummary,
 }
 
+/// Persistent headless browser renderer for exact certified-device HTML.
+/// The caller owns authority/device I/O; this leaf accepts only a complete
+/// presentation document plus its expected semantic binding.
+pub(crate) struct CertifiedBrowserRenderer {
+    cdp: Cdp,
+    page: BrowserPage,
+    _browser: BrowserGuard,
+    _profile: tempfile::TempDir,
+    runtime: tokio::runtime::Runtime,
+}
+
+impl CertifiedBrowserRenderer {
+    pub(crate) fn new() -> Result<Self, PuppetError> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| browser_unavailable())?;
+        let profile = tempfile::Builder::new()
+            .prefix("poche-certified-browser-provider-")
+            .tempdir()
+            .map_err(|_| browser_unavailable())?;
+        let browser = BrowserGuard(launch_browser(profile.path())?);
+        let (cdp, page) = runtime.block_on(async {
+            let websocket = wait_for_devtools(profile.path()).await?;
+            let (socket, _) = connect_async(&websocket)
+                .await
+                .map_err(|_| browser_unavailable())?;
+            let mut cdp = Cdp::new(socket);
+            let page = cdp.new_blank_page().await?;
+            Ok::<_, PuppetError>((cdp, page))
+        })?;
+        Ok(Self {
+            cdp,
+            page,
+            _browser: browser,
+            _profile: profile,
+            runtime,
+        })
+    }
+
+    pub(crate) fn capture_document(
+        &mut self,
+        seed: u64,
+        label: &str,
+        document: &str,
+        expected_revision: u64,
+        expected_projection_hash: SemanticHash,
+    ) -> Result<RawCaptureBundle, PuppetError> {
+        let cdp = &mut self.cdp;
+        let page = &self.page;
+        self.runtime.block_on(async {
+            cdp.set_document(page, document).await?;
+            let state = cdp.page_state(page).await?;
+            if state.revision != expected_revision
+                || state.projection_hash != expected_projection_hash
+            {
+                return Err(browser_contract(
+                    "certified browser document did not retain its external observation binding",
+                ));
+            }
+            let bundle = cdp.capture_bundle(page, seed, label, &state).await?;
+            if !cdp.diagnostics.console_errors.is_empty()
+                || !cdp.diagnostics.network_failures.is_empty()
+            {
+                return Err(browser_contract(
+                    "certified browser renderer emitted console or network failures",
+                ));
+            }
+            Ok(bundle)
+        })
+    }
+}
+
 struct BrowserCaptureHandler {
     advertisement: CaptureProviderAdvertisementWire,
     provider_key: SigningKey,
@@ -595,6 +668,19 @@ impl Cdp {
     }
 
     async fn new_page(&mut self, origin: &str) -> Result<BrowserPage, PuppetError> {
+        let page = self.new_blank_page().await?;
+        self.command(
+            Some(&page),
+            "Page.navigate",
+            json!({"url":format!("{origin}/")}),
+        )
+        .await?;
+        self.wait_bool(&page, "document.readyState === 'complete'")
+            .await?;
+        Ok(page)
+    }
+
+    async fn new_blank_page(&mut self) -> Result<BrowserPage, PuppetError> {
         let context = self
             .command(None, "Target.createBrowserContext", json!({}))
             .await?["browserContextId"]
@@ -631,15 +717,30 @@ impl Cdp {
             self.command(Some(&page), domain, json!({})).await?;
         }
         self.set_viewport(&page, WIDE_WIDTH, WIDE_HEIGHT).await?;
-        self.command(
-            Some(&page),
-            "Page.navigate",
-            json!({"url":format!("{origin}/")}),
-        )
-        .await?;
         self.wait_bool(&page, "document.readyState === 'complete'")
             .await?;
         Ok(page)
+    }
+
+    async fn set_document(
+        &mut self,
+        page: &BrowserPage,
+        document: &str,
+    ) -> Result<(), PuppetError> {
+        let frame_tree = self
+            .command(Some(page), "Page.getFrameTree", json!({}))
+            .await?;
+        let frame_id = frame_tree["frameTree"]["frame"]["id"]
+            .as_str()
+            .ok_or_else(browser_protocol)?;
+        self.command(
+            Some(page),
+            "Page.setDocumentContent",
+            json!({"frameId":frame_id,"html":document}),
+        )
+        .await?;
+        self.wait_bool(page, "document.readyState === 'complete'")
+            .await
     }
 
     async fn command(

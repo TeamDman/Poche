@@ -110,3 +110,48 @@ fn authorized_native_relay_captures_the_same_hosted_game() {
         report.final_revision
     );
 }
+
+#[test]
+#[ignore = "requires a supported headless browser and full external socket acceptance"]
+fn authorized_browser_relay_captures_the_same_hosted_game_without_a_window() {
+    let temporary = tempfile::tempdir().expect("temporary external browser artifacts");
+    let report = run(&PuppetRunOptions {
+        scenario: EXTERNAL_DEVICES_FULL_GAME.to_owned(),
+        surface: PuppetSurface::Web,
+        transport: PuppetTransport::HttpLoopback,
+        seed: 75,
+        artifact_root: temporary.path().to_path_buf(),
+        per_action_timeout: Duration::from_secs(10),
+        whole_run_timeout: Duration::from_mins(3),
+        ..PuppetRunOptions::default()
+    })
+    .expect("external browser full-game puppet");
+
+    assert_eq!(report.status, "complete");
+    assert_eq!(report.final_room_phase, "post_game");
+    assert_eq!(report.final_revision, 158);
+    assert_eq!(report.public_history_events, 138);
+    assert_eq!(report.captures.len(), 6);
+    for capture in &report.captures {
+        assert_eq!(capture.status, "complete");
+        assert!(capture.windowless);
+        assert_eq!(capture.requested_revision, capture.captured_revision);
+        assert_eq!(capture.provider_kind, "browser_harness_external_relay");
+        assert_eq!(
+            capture.representation,
+            "png,semantic_html,accessibility_tree_json,layout_json"
+        );
+        assert!(capture.transferred_bytes > 0);
+        assert!(capture.transfer_chunks > 0);
+        assert!(std::path::Path::new(&capture.manifest_path).is_file());
+    }
+    assert_eq!(
+        report
+            .captures
+            .iter()
+            .find(|capture| capture.label == "terminal")
+            .expect("terminal capture")
+            .captured_revision,
+        report.final_revision
+    );
+}

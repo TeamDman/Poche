@@ -822,6 +822,12 @@ native-render gap: current/earlier unified screenshots show Slug and debug
 geometry but omit solid PBR meshes, so capture structure is accepted but visual
 completeness is not yet claimed.
 
+A fresh 2026-08-14 current-tree acceptance ran the complete externally hosted
+game at seed 76 through `--surface native` with DX12. It reached revision 158
+after 131 commands, emitted six exact-revision Bevy captures, and reported
+every artifact `windowless=true`; no Winit window was created. This specifically
+regresses P5-U17 after the native/browser external-relay provider was unified.
+
 **Work:**
 
 - Replace the immutable-only Bevy entry path with `poche-player-client` while
@@ -1243,10 +1249,21 @@ turn from their own exact observation, proving state/key takeover is
 unnecessary when another certified device begins acting. The run publishes a
 hashed headless manifest. A second native-surface run at seed 74 additionally
 proved six exact shared-room Bevy captures and full requester/provider encrypted
-relay custody as recorded under Task 4.2. The task therefore remains open only
-for an exact shared-room browser renderer/capture and lifecycle/disconnect
-evidence; it no longer lacks the complete external multi-player game, sibling
-takeover, or Bevy half of the graphical acceptance.
+relay custody as recorded under Task 4.2. A 2026-08-14 web-surface run at seed
+75 closed the remaining renderer-identity boundary: the certified Alice
+browser sibling rendered the exact externally hosted observation in a
+persistent headless Edge/Chrome context and returned PNG, semantic HTML,
+accessibility, and layout artifacts through the same signed, recipient-key-
+wrapped relay. The run reached revision 158 after 131 commands with scores
+`[44, 54]`, five converged devices, 138 public events, history hash
+`755798db2d1d75f1a9031aef5ee2a019d3e38e45170a55f433a1c10e16e1f51a`,
+and six exact-revision captures, all `windowless=true`. Image-tool inspection
+confirmed the card-selection PNG is a nonblank production tabletop view.
+Browser launch uses `--headless=new` and Windows `CREATE_NO_WINDOW`; normal
+human desktop launch remains windowed. The task therefore remains open only
+for explicit lifecycle/disconnect/rejoin evidence; it no longer lacks the
+complete external multi-player game, sibling takeover, or either graphical
+half of the acceptance.
 
 **Work:**
 
@@ -1289,11 +1306,12 @@ contact-sheet hash
 The manifests explicitly preserve the distinct qualifications: native images
 are real windowless Bevy image-target readbacks; browser images/HTML/a11y/layout
 come from real headless Edge/Chrome contexts; neither pixel stream is treated
-as authority or formal proof. The browser qualification also explicitly says
-its production-shaped UI room is a deterministic parallel authority matched
-by semantic revision, not yet the same certified external room. Closing that
-last identity boundary remains Task 5.1 rather than being hidden by this parity
-result.
+as authority or formal proof. The original browser qualification explicitly
+said its production-shaped UI room was a deterministic parallel authority
+matched by semantic revision. The later seed-75 Task 5.1 acceptance closes
+that identity boundary by rendering and relaying the exact certified external-
+room observation; the earlier qualification remains accurate for its seed-45
+artifact rather than being rewritten retroactively.
 
 **Work:**
 

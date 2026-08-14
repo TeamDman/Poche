@@ -23,7 +23,7 @@ use poche_protocol::{
 
 use crate::{
     PuppetError, PuppetErrorCode, PuppetRunOptions, PuppetSurface, PuppetTransport,
-    external_capture::ExternalNativeCaptureSession,
+    external_capture::{ExternalCaptureKind, ExternalRelayCaptureSession},
     scenario::{
         Client, DeviceRevisionEvidence, PuppetDeviceEvidence, PuppetExecution, PuppetRunReport,
         PuppetStepEvidence, deterministic_key, device_error, hex, invalid_fixture, room_phase,
@@ -113,15 +113,6 @@ pub(crate) fn run_external_full_game(
     options: &PuppetRunOptions,
     cancelled: &mut impl FnMut() -> bool,
 ) -> Result<PuppetExecution, PuppetError> {
-    if !matches!(
-        options.surface,
-        PuppetSurface::Headless | PuppetSurface::Native
-    ) {
-        return Err(PuppetError::new(
-            PuppetErrorCode::UnsupportedSurface,
-            "the requested external graphical surface is not connected to the shared authority yet",
-        ));
-    }
     if options.transport != PuppetTransport::HttpLoopback {
         return Err(PuppetError::new(
             PuppetErrorCode::InvalidFixture,
@@ -151,19 +142,20 @@ pub(crate) fn run_external_full_game(
         ALICE_AGENT,
         "room-create",
     )?;
-    let mut native_capture = match options.surface {
-        PuppetSurface::Native => Some(ExternalNativeCaptureSession::start(
+    let mut graphical_capture = match options.surface {
+        PuppetSurface::Native => Some(ExternalRelayCaptureSession::start(
+            ExternalCaptureKind::Native,
+            &server.endpoint,
+            &room_id,
+            options.seed,
+        )?),
+        PuppetSurface::Web => Some(ExternalRelayCaptureSession::start(
+            ExternalCaptureKind::Browser,
             &server.endpoint,
             &room_id,
             options.seed,
         )?),
         PuppetSurface::Headless => None,
-        PuppetSurface::Web => {
-            return Err(PuppetError::new(
-                PuppetErrorCode::UnsupportedSurface,
-                "external browser capture is not connected to the shared authority yet",
-            ));
-        }
     };
     invoke_named(
         options,
@@ -201,7 +193,7 @@ pub(crate) fn run_external_full_game(
         &mut devices,
         RoomPhase::Running,
     )?;
-    capture_native_checkpoint(&mut native_capture, &mut captures)?;
+    capture_graphical_checkpoint(&mut graphical_capture, &mut captures)?;
 
     let mut alice_graphical_takeover = false;
     let mut bob_graphical_takeover = false;
@@ -232,7 +224,7 @@ pub(crate) fn run_external_full_game(
             &observation,
             action,
         )?;
-        capture_native_checkpoint(&mut native_capture, &mut captures)?;
+        capture_graphical_checkpoint(&mut graphical_capture, &mut captures)?;
         let terminal = devices[ALICE_AGENT]
             .client
             .observe(&room_id)
@@ -248,7 +240,7 @@ pub(crate) fn run_external_full_game(
         ));
     }
 
-    if let Some(session) = native_capture {
+    if let Some(session) = graphical_capture {
         session.finish()?;
     }
     let mut report = build_report(options, &room_id, &mut devices, steps)?;
@@ -256,16 +248,18 @@ pub(crate) fn run_external_full_game(
         .iter()
         .map(|capture| capture.evidence.clone())
         .collect();
-    if !captures.is_empty() {
-        "This run proves one complete game through one real Axum socket authority. Distinct root-certified policy, browser-custody, and native-custody siblings use signed exact-recipient HTTP observations/actions; Alice's requester additionally sends exact-revision same-player capture requests to the native sibling, receives recipient-key-wrapped encrypted chunks over the relay, and alone publishes six real windowless Bevy images through the shared artifact pipeline."
-            .clone_into(&mut report.evidence_boundary);
+    match options.surface {
+        PuppetSurface::Native => "This run proves one complete game through one real Axum socket authority. Distinct root-certified policy, browser-custody, and native-custody siblings use signed exact-recipient HTTP observations/actions; Alice's requester additionally sends exact-revision same-player capture requests to the native sibling, receives recipient-key-wrapped encrypted chunks over the relay, and alone publishes six real windowless Bevy images through the shared artifact pipeline.",
+        PuppetSurface::Web => "This run proves one complete game through one real Axum socket authority. Distinct root-certified policy, browser-custody, and native-custody siblings use signed exact-recipient HTTP observations/actions; Alice's requester additionally sends exact-revision same-player capture requests to the browser sibling, receives recipient-key-wrapped encrypted PNG, semantic HTML, accessibility, and layout artifacts over the relay, and alone publishes six real headless-browser captures through the shared artifact pipeline.",
+        PuppetSurface::Headless => "This run proves a complete game through one real Axum socket authority: root-certified policy, browser-custody, and native-custody sibling devices use signed exact-recipient HTTP observations and ordinary advertised actions; graphical pixels and external capture transfer are not claimed by this headless slice.",
     }
+    .clone_into(&mut report.evidence_boundary);
     drop(server);
     Ok(PuppetExecution { report, captures })
 }
 
-fn capture_native_checkpoint(
-    session: &mut Option<ExternalNativeCaptureSession>,
+fn capture_graphical_checkpoint(
+    session: &mut Option<ExternalRelayCaptureSession>,
     captures: &mut Vec<crate::native::PendingPuppetCapture>,
 ) -> Result<(), PuppetError> {
     if let Some(session) = session
@@ -285,10 +279,9 @@ fn external_devices(
     endpoint: &str,
     invite: &str,
 ) -> Result<Vec<ExternalDevice>, PuppetError> {
-    let alice_root = deterministic_key("external-alice-root", seed);
     let bob_root = deterministic_key("external-bob-root", seed);
     let (alice_agent_profile, alice_agent_key) = external_alice_agent_identity(seed)?;
-    let alice_browser_key = deterministic_key("external-alice-browser", seed);
+    let (alice_browser_profile, alice_browser_key) = external_alice_browser_identity(seed)?;
     let (alice_native_profile, alice_native_key) = external_alice_native_identity(seed)?;
     let bob_agent_key = deterministic_key("external-bob-agent", seed);
     let bob_native_key = deterministic_key("external-bob-native", seed);
@@ -308,13 +301,7 @@ fn external_devices(
         (
             "alice-browser",
             "player-browser",
-            signed_profile(
-                "external-alice-browser",
-                &alice_root,
-                &alice_browser_key,
-                private_player.clone(),
-                DeviceCustodyWire::BrowserLocal,
-            )?,
+            alice_browser_profile,
             alice_browser_key,
             1,
             None,
@@ -412,6 +399,25 @@ pub(crate) fn external_alice_native_identity(
             DeviceCapabilityWire::ProvideCapture,
         ],
         DeviceCustodyWire::NativeLocal,
+    )?;
+    Ok((profile, key))
+}
+
+pub(crate) fn external_alice_browser_identity(
+    seed: u64,
+) -> Result<(DeviceProfile, SigningKey), PuppetError> {
+    let root = deterministic_key("external-alice-root", seed);
+    let key = deterministic_key("external-alice-browser", seed);
+    let profile = signed_profile(
+        "external-alice-browser",
+        &root,
+        &key,
+        vec![
+            DeviceCapabilityWire::Propose,
+            DeviceCapabilityWire::ReceivePrivateProjection,
+            DeviceCapabilityWire::ProvideCapture,
+        ],
+        DeviceCustodyWire::BrowserLocal,
     )?;
     Ok((profile, key))
 }

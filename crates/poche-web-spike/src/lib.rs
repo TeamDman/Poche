@@ -43,10 +43,12 @@ use poche_runtime::{
     ScriptedClient,
 };
 use poche_session::{InviteRecord, SessionState};
+use poche_spatial::{LayoutId, SPATIAL_SCHEMA_VERSION, SpatialScene, TableId, registered_layout};
 use poche_ui::{
-    ConnectionPresentation, EMBEDDED_REPLAY, PresentationInput, PresentationModel, ReplayDeck,
-    embedded_spatial_fixture, escape_html, render_live_semantic_html, render_semantic_html,
-    render_semantic_html_with_root_id, render_tabletop_semantic_html,
+    ChatPresentation, ConnectionPresentation, EMBEDDED_REPLAY, LiveClientPresentation,
+    PresentationInput, PresentationModel, ReplayDeck, TabletopHtmlSupplement, TypedUiControl,
+    embedded_spatial_fixture, escape_html, realize_presentation_spatial, render_live_semantic_html,
+    render_semantic_html, render_semantic_html_with_root_id, render_tabletop_semantic_html,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -873,6 +875,132 @@ fn hex_hash(hash: poche_protocol::SemanticHash) -> String {
             write!(output, "{byte:02x}").expect("writing to String cannot fail");
             output
         })
+}
+
+/// Render one exact certified-device observation through the production
+/// tabletop HTML/CSS projection. This helper is presentation-only: controls
+/// retain their advertised IDs and typed payloads for inspection, but no
+/// signer, profile secret, reducer, or command endpoint is embedded in the
+/// document.
+///
+/// # Errors
+///
+/// Returns a spatial-layout or HTML projection failure.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the presentation-only adapter keeps exact observation mapping, advertised controls, registered spatial layout, and production HTML binding together without exposing authority or signer state"
+)]
+pub fn certified_device_document(
+    observation: &poche_player_client::DeviceObservation,
+    viewer_display_name: &str,
+) -> Result<String, String> {
+    let mut projection = PresentationModel::from_input(PresentationInput {
+        viewer: observation.projection.principal_id.as_str().to_owned(),
+        projection: observation.projection.payload.clone(),
+        legal_actions: observation
+            .actions
+            .iter()
+            .filter_map(|action| match &action.payload {
+                CommandPayload::GameAction { action } => Some(action.clone()),
+                _ => None,
+            })
+            .collect(),
+        connection: ConnectionPresentation::Connected,
+        countdown: None,
+        chat: observation
+            .chat_tail
+            .iter()
+            .map(|message| ChatPresentation {
+                principal: message.principal_id.as_str().to_owned(),
+                text: message.text.clone(),
+            })
+            .collect(),
+        notices: Vec::new(),
+    });
+    viewer_display_name.clone_into(&mut projection.viewer_display_name);
+    for member in &mut projection.members {
+        member.display_name = if member.principal == projection.viewer {
+            viewer_display_name.to_owned()
+        } else if let Some(seat) = member.seat {
+            format!("Player {}", seat.saturating_add(1))
+        } else {
+            "Spectator".to_owned()
+        };
+    }
+    let controls = observation
+        .actions
+        .iter()
+        .map(|action| TypedUiControl {
+            id: action.id.clone(),
+            label: action.label.clone(),
+            payload: action.payload.clone(),
+        })
+        .collect();
+    let live = LiveClientPresentation {
+        projection,
+        room_id: observation.projection.room_id.as_str().to_owned(),
+        authority_instance: "certified-device-http".to_owned(),
+        authority_revision: observation.projection.current_revision,
+        room_invites: Vec::new(),
+        hand_requests: Vec::new(),
+        hand_grants: Vec::new(),
+        transcript_href: None,
+        replay_href: None,
+        controls,
+    };
+    let layout = registered_layout(
+        TableId::new(0x504f_4348_4545_5854),
+        LayoutId::new(2, 1).ok_or_else(|| "two-player layout is unavailable".to_owned())?,
+    )
+    .map_err(|error| format!("external browser layout failed: {error:?}"))?;
+    let scene = if live.projection.table.is_none() {
+        SpatialScene {
+            schema_version: SPATIAL_SCHEMA_VERSION,
+            table_id: layout.table_id(),
+            layout: layout.id(),
+            projection_epoch: observation.projection.projection_epoch,
+            objects: Vec::new(),
+            cards: Vec::new(),
+            text: Vec::new(),
+        }
+    } else {
+        realize_presentation_spatial(
+            &layout,
+            observation.projection.projection_epoch,
+            &live.projection,
+        )
+        .map_err(|error| format!("external browser scene failed: {error:?}"))?
+    };
+    let supplement = TabletopHtmlSupplement {
+        status: Some("Certified external device view".to_owned()),
+        room_code: None,
+        main_menu_href: None,
+        exit_endpoint: None,
+        chat_endpoint: None,
+        governance_commands: false,
+        viewer_href_prefix: None,
+        findings: Vec::new(),
+        proposals: Vec::new(),
+    };
+    let projection = render_tabletop_semantic_html(
+        &live,
+        &scene,
+        "game-shell",
+        "/certified-device/action",
+        &supplement,
+    )
+    .map_err(|error| format!("external browser HTML failed: {error:?}"))?
+    .replacen(
+        "id=\"game-shell\"",
+        &format!(
+            "id=\"game-shell\" data-projection-hash=\"{}\" data-certified-device=\"true\"",
+            hex_hash(observation.projection_hash)
+        ),
+        1,
+    );
+    Ok(format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Poche certified device view</title><style>{TABLETOP_CSS}</style></head><body>{projection}</body></html>"#
+    ))
 }
 
 fn render_session_end(end: BrowserSessionEnd) -> String {

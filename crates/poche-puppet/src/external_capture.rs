@@ -41,7 +41,11 @@ use poche_protocol::{
 
 use crate::{
     PuppetError, PuppetErrorCode,
-    external::{external_alice_agent_identity, external_alice_native_identity},
+    browser::CertifiedBrowserRenderer,
+    external::{
+        external_alice_agent_identity, external_alice_browser_identity,
+        external_alice_native_identity,
+    },
     native::PendingPuppetCapture,
     scenario::{PuppetCaptureEvidence, hex},
 };
@@ -49,7 +53,55 @@ use crate::{
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const REQUEST_LIFETIME_MS: u64 = 120_000;
 const PROVIDER_LIFETIME_MS: u64 = 10 * 60 * 1_000;
-const EXPECTED_NATIVE_CAPTURES: usize = 6;
+const EXPECTED_CAPTURES: usize = 6;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExternalCaptureKind {
+    Native,
+    Browser,
+}
+
+impl ExternalCaptureKind {
+    const fn wire(self) -> CaptureProviderKindWire {
+        match self {
+            Self::Native => CaptureProviderKindWire::NativeBevy,
+            Self::Browser => CaptureProviderKindWire::BrowserHarness,
+        }
+    }
+
+    fn representations(self) -> Vec<CaptureRepresentationWire> {
+        match self {
+            Self::Native => vec![CaptureRepresentationWire::Png],
+            Self::Browser => vec![
+                CaptureRepresentationWire::Png,
+                CaptureRepresentationWire::SemanticHtml,
+                CaptureRepresentationWire::AccessibilityTreeJson,
+                CaptureRepresentationWire::LayoutJson,
+            ],
+        }
+    }
+
+    const fn provider_name(self) -> &'static str {
+        match self {
+            Self::Native => "native_bevy_external_relay",
+            Self::Browser => "browser_harness_external_relay",
+        }
+    }
+
+    const fn representation_name(self) -> &'static str {
+        match self {
+            Self::Native => "png",
+            Self::Browser => "png,semantic_html,accessibility_tree_json,layout_json",
+        }
+    }
+
+    const fn artifact_prefix(self) -> &'static str {
+        match self {
+            Self::Native => "external-native",
+            Self::Browser => "external-browser",
+        }
+    }
+}
 
 #[derive(Clone)]
 struct KeySigner(SigningKey);
@@ -65,21 +117,30 @@ impl DeviceSigner for KeySigner {
     }
 }
 
-struct NativeProviderWorker {
+struct ProviderWorker {
     stop: mpsc::Sender<()>,
     join: Option<thread::JoinHandle<Result<usize, PuppetError>>>,
 }
 
-impl NativeProviderWorker {
-    fn start(endpoint: &str, room_id: &RoomId, seed: u64) -> Result<Self, PuppetError> {
-        let (profile, key) = external_alice_native_identity(seed)?;
+impl ProviderWorker {
+    fn start(
+        kind: ExternalCaptureKind,
+        endpoint: &str,
+        room_id: &RoomId,
+        seed: u64,
+    ) -> Result<Self, PuppetError> {
+        let (profile, key) = provider_identity(kind, seed)?;
         let endpoint = endpoint.to_owned();
         let room_id = room_id.clone();
         let (stop_tx, stop_rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let join = thread::Builder::new()
-            .name("poche-external-native-provider".to_owned())
-            .spawn(move || provider_loop(&endpoint, &room_id, &profile, &key, &stop_rx, &ready_tx))
+            .name(format!("poche-{}-provider", kind.artifact_prefix()))
+            .spawn(move || {
+                provider_loop(
+                    kind, seed, &endpoint, &room_id, &profile, &key, &stop_rx, &ready_tx,
+                )
+            })
             .map_err(|_| capture_transport_error())?;
         ready_rx
             .recv_timeout(Duration::from_secs(10))
@@ -100,7 +161,7 @@ impl NativeProviderWorker {
     }
 }
 
-impl Drop for NativeProviderWorker {
+impl Drop for ProviderWorker {
     fn drop(&mut self) {
         let _ = self.stop.send(());
         if let Some(join) = self.join.take() {
@@ -109,8 +170,9 @@ impl Drop for NativeProviderWorker {
     }
 }
 
-pub(crate) struct ExternalNativeCaptureSession {
-    worker: Option<NativeProviderWorker>,
+pub(crate) struct ExternalRelayCaptureSession {
+    kind: ExternalCaptureKind,
+    worker: Option<ProviderWorker>,
     client: PlayerDeviceClient<HttpDeviceTransport<KeySigner>>,
     requester_profile: DeviceProfile,
     requester_key: SigningKey,
@@ -120,16 +182,22 @@ pub(crate) struct ExternalNativeCaptureSession {
     captured: BTreeSet<&'static str>,
 }
 
-impl ExternalNativeCaptureSession {
-    pub(crate) fn start(endpoint: &str, room_id: &RoomId, seed: u64) -> Result<Self, PuppetError> {
-        let worker = NativeProviderWorker::start(endpoint, room_id, seed)?;
+impl ExternalRelayCaptureSession {
+    pub(crate) fn start(
+        kind: ExternalCaptureKind,
+        endpoint: &str,
+        room_id: &RoomId,
+        seed: u64,
+    ) -> Result<Self, PuppetError> {
+        let worker = ProviderWorker::start(kind, endpoint, room_id, seed)?;
         let (requester_profile, requester_key) = external_alice_agent_identity(seed)?;
-        let (provider_profile, _) = external_alice_native_identity(seed)?;
+        let (provider_profile, _) = provider_identity(kind, seed)?;
         let transport = HttpDeviceTransport::new(endpoint, 1, KeySigner(requester_key.clone()))
             .map_err(device_error)?;
         let client =
             PlayerDeviceClient::new(requester_profile.clone(), transport).map_err(device_error)?;
         Ok(Self {
+            kind,
             worker: Some(worker),
             client,
             requester_profile,
@@ -143,20 +211,21 @@ impl ExternalNativeCaptureSession {
 
     pub(crate) fn capture_next(&mut self) -> Result<Option<PendingPuppetCapture>, PuppetError> {
         let observation = self.client.observe(&self.room_id).map_err(device_error)?;
-        let Some((label, caption)) = checkpoint(&observation) else {
+        let Some(label) = checkpoint(&observation) else {
             return Ok(None);
         };
         if !self.captured.insert(label) {
             return Ok(None);
         }
+        let caption = checkpoint_caption(self.kind, label);
         self.capture(label, caption, &observation).map(Some)
     }
 
     pub(crate) fn finish(mut self) -> Result<(), PuppetError> {
-        if self.captured.len() != EXPECTED_NATIVE_CAPTURES {
+        if self.captured.len() != EXPECTED_CAPTURES {
             return Err(PuppetError::new(
                 PuppetErrorCode::DeviceProtocol,
-                "external native provider omitted required semantic checkpoints",
+                "external graphical provider omitted required semantic checkpoints",
             ));
         }
         let completed = self
@@ -164,7 +233,7 @@ impl ExternalNativeCaptureSession {
             .take()
             .ok_or_else(capture_protocol_error)?
             .finish()?;
-        if completed != EXPECTED_NATIVE_CAPTURES {
+        if completed != EXPECTED_CAPTURES {
             return Err(capture_protocol_error());
         }
         Ok(())
@@ -182,13 +251,11 @@ impl ExternalNativeCaptureSession {
     ) -> Result<PendingPuppetCapture, PuppetError> {
         let now = unix_time_ms()?;
         let revision = observation.projection.current_revision;
+        let prefix = self.kind.artifact_prefix();
         let unsigned = UnsignedCaptureRequestWire {
             schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
-            request_id: CaptureRequestId::new(format!(
-                "external-native-{label}-{}-{revision}",
-                self.seed
-            ))
-            .map_err(|_| capture_protocol_error())?,
+            request_id: CaptureRequestId::new(format!("{prefix}-{label}-{}-{revision}", self.seed))
+                .map_err(|_| capture_protocol_error())?,
             room_id: self.room_id.clone(),
             membership_epoch: observation.projection.session_epoch,
             player_id: self.requester_profile.player_id.clone(),
@@ -196,10 +263,10 @@ impl ExternalNativeCaptureSession {
             provider_device_id: self.provider_device_id.clone(),
             observed_revision: revision,
             expires_at_unix_ms: now.saturating_add(REQUEST_LIFETIME_MS),
-            replay_nonce: format!("external-native-{label}-nonce-{}-{revision}", self.seed),
+            replay_nonce: format!("{prefix}-{label}-nonce-{}-{revision}", self.seed),
             privacy: CapturePrivacyWire::ExactPlayerView,
-            provider_kind: CaptureProviderKindWire::NativeBevy,
-            representations: vec![CaptureRepresentationWire::Png],
+            provider_kind: self.kind.wire(),
+            representations: self.kind.representations(),
             viewport: None,
             label: caption.to_owned(),
             max_total_bytes: MAX_CAPTURE_ARTIFACT_BYTES,
@@ -292,7 +359,7 @@ impl ExternalNativeCaptureSession {
         let first = artifacts.first().ok_or_else(capture_protocol_error)?;
         let viewport = first.viewport.ok_or_else(capture_protocol_error)?;
         let bundle = RawCaptureBundle {
-            figure_id: format!("external-native-{label}-{}-{revision}", self.seed),
+            figure_id: format!("{prefix}-{label}-{}-{revision}", self.seed),
             caption: caption.to_owned(),
             captured_revision: first.captured_revision,
             projection_hash: first.projection_hash,
@@ -305,7 +372,10 @@ impl ExternalNativeCaptureSession {
                 scale_milli: 1_000,
                 camera: None,
             },
-            qualification: CaptureQualification::RuntimeGenerated,
+            qualification: match self.kind {
+                ExternalCaptureKind::Native => CaptureQualification::RuntimeGenerated,
+                ExternalCaptureKind::Browser => CaptureQualification::BrowserHarness,
+            },
             cancelled: false,
             artifacts: raw,
         };
@@ -320,8 +390,8 @@ impl ExternalNativeCaptureSession {
                 captured_revision: bundle.captured_revision,
                 projection_hash: hash_hex(bundle.projection_hash),
                 scene_hash: bundle.scene_hash.map(hash_hex),
-                provider_kind: "native_bevy_external_relay".to_owned(),
-                representation: "png".to_owned(),
+                provider_kind: self.kind.provider_name().to_owned(),
+                representation: self.kind.representation_name().to_owned(),
                 windowless: true,
                 transferred_bytes,
                 transfer_chunks,
@@ -338,6 +408,8 @@ impl ExternalNativeCaptureSession {
     reason = "the provider loop retains its exact socket, room, certified profile/key, lifecycle channels, and readiness result"
 )]
 fn provider_loop(
+    kind: ExternalCaptureKind,
+    seed: u64,
     endpoint: &str,
     room_id: &RoomId,
     profile: &DeviceProfile,
@@ -346,6 +418,10 @@ fn provider_loop(
     ready: &mpsc::SyncSender<Result<(), PuppetError>>,
 ) -> Result<usize, PuppetError> {
     let signer = KeySigner(key.clone());
+    let mut browser_renderer = match kind {
+        ExternalCaptureKind::Native => None,
+        ExternalCaptureKind::Browser => Some(CertifiedBrowserRenderer::new()?),
+    };
     let transport = HttpDeviceTransport::new(endpoint, 1, signer.clone()).map_err(device_error)?;
     let mut client = PlayerDeviceClient::new(profile.clone(), transport).map_err(device_error)?;
     let observation = client.observe(room_id).map_err(device_error)?;
@@ -358,8 +434,8 @@ fn provider_loop(
             membership_epoch: observation.projection.session_epoch,
             player_id: profile.player_id.clone(),
             provider_device_id: profile.device_id.clone(),
-            provider_kind: CaptureProviderKindWire::NativeBevy,
-            representations: vec![CaptureRepresentationWire::Png],
+            provider_kind: kind.wire(),
+            representations: kind.representations(),
             privacy_scopes: vec![CapturePrivacyWire::ExactPlayerView],
             consent_policy: CaptureConsentPolicyWire::HarnessOnly,
             max_total_bytes: MAX_CAPTURE_ARTIFACT_BYTES,
@@ -381,7 +457,7 @@ fn provider_loop(
     let mut completed = 0_usize;
     let service = (|| -> Result<(), PuppetError> {
         loop {
-            if stop.try_recv().is_ok() || completed >= EXPECTED_NATIVE_CAPTURES {
+            if stop.try_recv().is_ok() || completed >= EXPECTED_CAPTURES {
                 return Ok(());
             }
             let job = client
@@ -394,17 +470,33 @@ fn provider_loop(
                 thread::sleep(POLL_INTERVAL);
                 continue;
             };
-            serve_native_job(
-                endpoint,
-                room_id,
-                profile,
-                key,
-                &signer,
-                &advertisement,
-                &receipt.provider_token,
-                &mut client,
-                &job,
-            )?;
+            match kind {
+                ExternalCaptureKind::Native => serve_native_job(
+                    endpoint,
+                    room_id,
+                    profile,
+                    key,
+                    &signer,
+                    &advertisement,
+                    &receipt.provider_token,
+                    &mut client,
+                    &job,
+                )?,
+                ExternalCaptureKind::Browser => serve_browser_job(
+                    seed,
+                    endpoint,
+                    room_id,
+                    profile,
+                    key,
+                    &signer,
+                    &receipt.provider_token,
+                    &mut client,
+                    &job,
+                    browser_renderer
+                        .as_mut()
+                        .ok_or_else(capture_protocol_error)?,
+                )?,
+            }
             completed = completed.saturating_add(1);
         }
     })();
@@ -479,6 +571,63 @@ fn serve_native_job(
             return Err(capture_protocol_error());
         }
     };
+    upload_bundle(
+        signer,
+        profile,
+        provider_token,
+        relay_client,
+        &job.requester_certificate,
+        &job.request,
+        bundle,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one browser provider job binds its renderer, exact HTTP device, signer, relay capability, request, and requester certificate"
+)]
+fn serve_browser_job(
+    seed: u64,
+    endpoint: &str,
+    room_id: &RoomId,
+    profile: &DeviceProfile,
+    key: &SigningKey,
+    signer: &KeySigner,
+    provider_token: &poche_capture::CaptureRelayToken,
+    relay_client: &mut PlayerDeviceClient<HttpDeviceTransport<KeySigner>>,
+    job: &poche_capture::CaptureRelayJob,
+    renderer: &mut CertifiedBrowserRenderer,
+) -> Result<(), PuppetError> {
+    if job.request.provider_device_id != profile.device_id
+        || &job.request.room_id != room_id
+        || job.request.provider_kind != CaptureProviderKindWire::BrowserHarness
+        || job.request.representations != ExternalCaptureKind::Browser.representations()
+    {
+        return Err(capture_protocol_error());
+    }
+    let transport =
+        HttpDeviceTransport::new(endpoint, 1, KeySigner(key.clone())).map_err(device_error)?;
+    let mut browser_client =
+        PlayerDeviceClient::new(profile.clone(), transport).map_err(device_error)?;
+    let observation = browser_client.observe(room_id).map_err(device_error)?;
+    if observation.projection.current_revision != job.request.observed_revision {
+        return Err(PuppetError::new(
+            PuppetErrorCode::DeviceProtocol,
+            "external browser provider observed a different authority revision",
+        ));
+    }
+    let label =
+        request_checkpoint_label(&job.request.request_id).ok_or_else(capture_protocol_error)?;
+    let document = poche_web_spike::certified_device_document(&observation, "Alice Browser")
+        .map_err(|_| capture_protocol_error())?;
+    let mut bundle = renderer.capture_document(
+        seed,
+        label,
+        &document,
+        job.request.observed_revision,
+        observation.projection_hash,
+    )?;
+    job.request.label.clone_into(&mut bundle.caption);
     upload_bundle(
         signer,
         profile,
@@ -597,11 +746,9 @@ fn upload_bundle(
     Ok(())
 }
 
-fn checkpoint(
-    observation: &poche_player_client::DeviceObservation,
-) -> Option<(&'static str, &'static str)> {
+fn checkpoint(observation: &poche_player_client::DeviceObservation) -> Option<&'static str> {
     if observation.projection.payload.phase == RoomPhase::PostGame {
-        return Some(("terminal", "Terminal external native player view"));
+        return Some("terminal");
     }
     let game = observation.projection.payload.public_game_state.as_ref()?;
     if game.phase == PublicGamePhase::Bidding
@@ -613,25 +760,73 @@ fn checkpoint(
             .iter()
             .any(|event| matches!(event, PublicGameEventWire::RoundScored { .. }))
     {
-        return Some(("score-sheet", "Score sheet external native player view"));
+        return Some("score-sheet");
     }
     match game.phase {
-        PublicGamePhase::Bidding => Some(("bidding", "Bidding external native player view")),
-        PublicGamePhase::Playing if !game.current_trick.is_empty() => Some((
-            "trick-in-progress",
-            "Trick in progress external native player view",
-        )),
-        PublicGamePhase::Playing if game.tricks_won.iter().any(|tricks| *tricks > 0) => Some((
-            "trick-resolved",
-            "Resolved trick external native player view",
-        )),
-        PublicGamePhase::Playing => Some((
-            "card-selection",
-            "Card selection external native player view",
-        )),
+        PublicGamePhase::Bidding => Some("bidding"),
+        PublicGamePhase::Playing if !game.current_trick.is_empty() => Some("trick-in-progress"),
+        PublicGamePhase::Playing if game.tricks_won.iter().any(|tricks| *tricks > 0) => {
+            Some("trick-resolved")
+        }
+        PublicGamePhase::Playing => Some("card-selection"),
         PublicGamePhase::AwaitingDeal | PublicGamePhase::Scoring | PublicGamePhase::Finished => {
             None
         }
+    }
+}
+
+fn checkpoint_caption(kind: ExternalCaptureKind, label: &str) -> &'static str {
+    match (kind, label) {
+        (ExternalCaptureKind::Native, "bidding") => "Bidding external native player view",
+        (ExternalCaptureKind::Native, "card-selection") => {
+            "Card selection external native player view"
+        }
+        (ExternalCaptureKind::Native, "trick-in-progress") => {
+            "Trick in progress external native player view"
+        }
+        (ExternalCaptureKind::Native, "trick-resolved") => {
+            "Resolved trick external native player view"
+        }
+        (ExternalCaptureKind::Native, "score-sheet") => "Score sheet external native player view",
+        (ExternalCaptureKind::Native, "terminal") => "Terminal external native player view",
+        (ExternalCaptureKind::Browser, "bidding") => "Bidding external browser player view",
+        (ExternalCaptureKind::Browser, "card-selection") => {
+            "Card selection external browser player view"
+        }
+        (ExternalCaptureKind::Browser, "trick-in-progress") => {
+            "Trick in progress external browser player view"
+        }
+        (ExternalCaptureKind::Browser, "trick-resolved") => {
+            "Resolved trick external browser player view"
+        }
+        (ExternalCaptureKind::Browser, "score-sheet") => "Score sheet external browser player view",
+        (ExternalCaptureKind::Browser, "terminal") => "Terminal external browser player view",
+        (ExternalCaptureKind::Native | ExternalCaptureKind::Browser, _) => {
+            "External graphical player view"
+        }
+    }
+}
+
+fn request_checkpoint_label(request_id: &CaptureRequestId) -> Option<&'static str> {
+    [
+        "bidding",
+        "card-selection",
+        "trick-in-progress",
+        "trick-resolved",
+        "score-sheet",
+        "terminal",
+    ]
+    .into_iter()
+    .find(|label| request_id.as_str().contains(&format!("-{label}-")))
+}
+
+fn provider_identity(
+    kind: ExternalCaptureKind,
+    seed: u64,
+) -> Result<(DeviceProfile, SigningKey), PuppetError> {
+    match kind {
+        ExternalCaptureKind::Native => external_alice_native_identity(seed),
+        ExternalCaptureKind::Browser => external_alice_browser_identity(seed),
     }
 }
 
