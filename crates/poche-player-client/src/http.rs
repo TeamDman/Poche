@@ -126,6 +126,66 @@ impl<S> HttpDeviceTransport<S> {
     }
 }
 
+impl<S: DeviceSigner> HttpDeviceTransport<S> {
+    pub fn register_capture_provider(
+        &self,
+        call: &poche_capture::CaptureProviderRegistrationCall,
+    ) -> Result<poche_capture::CaptureProviderRegistrationReceipt, DeviceClientError> {
+        self.post("/device/v1/capture/provider/register", call)
+    }
+
+    pub fn poll_capture_provider(
+        &self,
+        call: &poche_capture::CaptureProviderPollCall,
+    ) -> Result<Option<poche_capture::CaptureRelayJob>, DeviceClientError> {
+        self.post("/device/v1/capture/provider/poll", call)
+    }
+
+    pub fn provide_capture_response(
+        &self,
+        call: &poche_capture::CaptureProviderResponseCall,
+    ) -> Result<poche_capture::CaptureRelayAcknowledgement, DeviceClientError> {
+        self.post("/device/v1/capture/provider/respond", call)
+    }
+
+    pub fn upload_capture_chunk(
+        &self,
+        call: &poche_capture::CaptureChunkUploadCall,
+    ) -> Result<poche_capture::CaptureRelayAcknowledgement, DeviceClientError> {
+        self.post("/device/v1/capture/provider/chunk", call)
+    }
+
+    pub fn request_capture(
+        &self,
+        profile: &DeviceProfile,
+        target_device: &DeviceId,
+        request: crate::DeviceCooperationRequest,
+    ) -> Result<poche_capture::CaptureRequestRelayReceipt, DeviceClientError> {
+        self.post(
+            "/device/v1/capture/request",
+            &HttpDeviceCooperationCall {
+                certificate: profile.certificate.clone(),
+                target_device: target_device.clone(),
+                request,
+            },
+        )
+    }
+
+    pub fn fetch_capture_chunk(
+        &self,
+        call: &poche_capture::CaptureChunkFetchCall,
+    ) -> Result<poche_capture::CaptureChunkFetchResult, DeviceClientError> {
+        self.post("/device/v1/capture/chunk", call)
+    }
+
+    pub fn acknowledge_capture_delivery(
+        &self,
+        call: &poche_capture::CaptureDeliveryAcknowledgeCall,
+    ) -> Result<poche_capture::CaptureRelayAcknowledgement, DeviceClientError> {
+        self.post("/device/v1/capture/acknowledge", call)
+    }
+}
+
 impl<S: DeviceSigner> DeviceTransport for HttpDeviceTransport<S> {
     fn observe(
         &mut self,

@@ -16,6 +16,7 @@ ed25519-dalek.workspace = true
 flate2.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
+poche-capture = { path = "../poche-capture" }
 poche-protocol = { path = "../poche-protocol" }
 poche-player-client = { path = "../poche-player-client" }
 poche-rl = { path = "../poche-rl" }

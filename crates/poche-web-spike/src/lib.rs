@@ -23,6 +23,10 @@ use axum::{
 use datastar::prelude::PatchElements;
 use ed25519_dalek::{Signer as _, SigningKey};
 use futures_util::{StreamExt as _, stream};
+use poche_capture::{
+    CaptureChunkFetchCall, CaptureChunkUploadCall, CaptureDeliveryAcknowledgeCall,
+    CaptureProviderPollCall, CaptureProviderRegistrationCall, CaptureProviderResponseCall,
+};
 use poche_player_client::{DeviceClientError, DeviceProfile, HttpDeviceCooperationCall};
 use poche_protocol::{
     CertificateId, CommandPayload, DeviceActionWire, DeviceCapabilityWire, DeviceCustodyWire,
@@ -46,11 +50,13 @@ use poche_ui::{
 use serde::Deserialize;
 use tokio::sync::broadcast;
 
+mod capture_relay;
 mod demo;
 mod game;
 mod gateway;
 mod tabletop;
 
+use capture_relay::CaptureRelay;
 use demo::LiveDemo;
 use game::{BrowserRooms, BrowserSessionEnd};
 use gateway::{
@@ -79,6 +85,7 @@ struct AppState {
     gateway_live: Arc<Mutex<LiveDemo>>,
     tabletop: Arc<Mutex<TabletopLab>>,
     certified_room: Arc<Mutex<WebCertifiedRoom>>,
+    capture_relay: CaptureRelay,
 }
 
 type WebCertifiedRoom = CertifiedDeviceRoom<OracleSessionGame<2>, OracleRoomActionSource>;
@@ -206,10 +213,29 @@ fn router(state: AppState) -> Router {
         .route("/device/v1/observe", post(certified_device_observe))
         .route("/device/v1/invoke", post(certified_device_invoke))
         .route("/device/v1/cooperate", post(certified_device_cooperate))
+        .route(
+            "/device/v1/capture/provider/register",
+            post(capture_provider_register),
+        )
+        .route(
+            "/device/v1/capture/provider/poll",
+            post(capture_provider_poll),
+        )
+        .route(
+            "/device/v1/capture/provider/respond",
+            post(capture_provider_respond),
+        )
+        .route(
+            "/device/v1/capture/provider/chunk",
+            post(capture_provider_chunk),
+        )
+        .route("/device/v1/capture/request", post(capture_request))
+        .route("/device/v1/capture/chunk", post(capture_chunk))
+        .route("/device/v1/capture/acknowledge", post(capture_acknowledge))
         .route("/tabletop/{viewer}", get(tabletop_view))
         .route("/tabletop/{viewer}/action/{control}", post(tabletop_action))
         .route("/tabletop/{viewer}/disconnect", post(tabletop_disconnect))
-        .layer(DefaultBodyLimit::max(8 * 1024))
+        .layer(DefaultBodyLimit::max(128 * 1024))
         .with_state(state)
 }
 
@@ -245,12 +271,116 @@ async fn certified_device_cooperate(
     State(state): State<AppState>,
     Json(call): Json<HttpDeviceCooperationCall>,
 ) -> Response {
-    let result = state
+    let prepared = state
         .certified_room
         .lock()
         .map_err(|_| DeviceClientError::TransportUnavailable)
-        .and_then(|mut room| room.cooperate(&call.certificate, &call.target_device, call.request));
+        .and_then(|mut room| {
+            room.prepare_cooperation(&call.certificate, &call.target_device, call.request)
+        });
+    let result = match prepared {
+        Ok(prepared) => tokio::task::spawn_blocking(move || prepared.execute())
+            .await
+            .map_err(|_| DeviceClientError::TransportUnavailable)
+            .and_then(|result| result),
+        Err(error) => Err(error),
+    };
     device_api_response(result)
+}
+
+async fn capture_provider_register(
+    State(state): State<AppState>,
+    Json(call): Json<CaptureProviderRegistrationCall>,
+) -> Response {
+    if call.certificate.device_id != call.advertisement.provider_device_id {
+        return device_api_response::<poche_capture::CaptureProviderRegistrationReceipt>(Err(
+            DeviceClientError::AuthorizationDenied,
+        ));
+    }
+    let registered = state.capture_relay.register(call.advertisement.clone());
+    let result = match registered {
+        Ok((receipt, handler)) => {
+            let result = state
+                .certified_room
+                .lock()
+                .map_err(|_| DeviceClientError::TransportUnavailable)
+                .and_then(|mut room| {
+                    room.register_capture_provider(&call.certificate, call.advertisement, handler)
+                });
+            if let Err(error) = result {
+                state.capture_relay.unregister(&receipt);
+                Err(error)
+            } else {
+                Ok(receipt)
+            }
+        }
+        Err(error) => Err(error),
+    };
+    device_api_response(result)
+}
+
+async fn capture_provider_poll(
+    State(state): State<AppState>,
+    Json(call): Json<CaptureProviderPollCall>,
+) -> Response {
+    device_api_response(state.capture_relay.poll(&call))
+}
+
+async fn capture_provider_respond(
+    State(state): State<AppState>,
+    Json(call): Json<CaptureProviderResponseCall>,
+) -> Response {
+    device_api_response(state.capture_relay.provide_response(call))
+}
+
+async fn capture_provider_chunk(
+    State(state): State<AppState>,
+    Json(call): Json<CaptureChunkUploadCall>,
+) -> Response {
+    device_api_response(state.capture_relay.upload_chunk(call))
+}
+
+async fn capture_request(
+    State(state): State<AppState>,
+    Json(call): Json<HttpDeviceCooperationCall>,
+) -> Response {
+    let poche_player_client::DeviceCooperationRequest::Capture(request) = &call.request else {
+        return device_api_response::<poche_capture::CaptureRequestRelayReceipt>(Err(
+            DeviceClientError::ProtocolViolation,
+        ));
+    };
+    let request_id = request.request_id.clone();
+    let requester_device = request.requester_device_id.clone();
+    let prepared = state
+        .certified_room
+        .lock()
+        .map_err(|_| DeviceClientError::TransportUnavailable)
+        .and_then(|mut room| {
+            room.prepare_cooperation(&call.certificate, &call.target_device, call.request)
+        });
+    let result = match prepared {
+        Ok(prepared) => tokio::task::spawn_blocking(move || prepared.execute())
+            .await
+            .map_err(|_| DeviceClientError::TransportUnavailable)
+            .and_then(|result| result)
+            .and_then(|_| state.capture_relay.receipt(&request_id, &requester_device)),
+        Err(error) => Err(error),
+    };
+    device_api_response(result)
+}
+
+async fn capture_chunk(
+    State(state): State<AppState>,
+    Json(call): Json<CaptureChunkFetchCall>,
+) -> Response {
+    device_api_response(state.capture_relay.fetch_chunk(&call))
+}
+
+async fn capture_acknowledge(
+    State(state): State<AppState>,
+    Json(call): Json<CaptureDeliveryAcknowledgeCall>,
+) -> Response {
+    device_api_response(state.capture_relay.acknowledge_delivery(&call))
 }
 
 fn device_api_response<T: serde::Serialize>(result: Result<T, DeviceClientError>) -> Response {
@@ -1147,6 +1277,7 @@ pub async fn serve(listener: tokio::net::TcpListener) -> Result<(), Box<dyn std:
         gateway_live: Arc::new(Mutex::new(gateway_demo()?)),
         tabletop: Arc::new(Mutex::new(TabletopLab::new()?)),
         certified_room: Arc::new(Mutex::new(certified_device_room()?)),
+        capture_relay: CaptureRelay::default(),
     };
     let _clock_task = spawn_live_clock(Arc::clone(&state.live), state.live_updates.clone());
     let _room_clock_task = spawn_room_clock(Arc::clone(&state.rooms), state.room_updates.clone());
@@ -1208,7 +1339,9 @@ fn ephemeral_service_profile(label: &str) -> Result<DeviceProfile, String> {
         player_id: player_id.clone(),
         device_id: device_id.clone(),
         device_signing_public_key: device_public,
-        device_encryption_public_key: "ee".repeat(32),
+        device_encryption_public_key: hex_bytes(&poche_capture::device_encryption_public_key(
+            &device_seed,
+        )),
         sequence: 1,
         valid_from_membership_epoch: 1,
         valid_through_membership_epoch: None,
@@ -1265,18 +1398,29 @@ mod tests {
     use tokio::sync::broadcast;
 
     use ed25519_dalek::{Signer as _, SigningKey};
+    use poche_capture::{
+        CaptureChunkFetchCall, CaptureChunkFetchResult, CaptureChunkUploadCall,
+        CaptureDeliveryAcknowledgeCall, CaptureProviderPollCall, CaptureProviderRegistrationCall,
+        CaptureProviderResponseCall, CaptureTransferReceiver, CaptureTransferSender,
+        capture_transfer_descriptor, generate_wrapped_capture_transfer_key,
+        open_wrapped_capture_transfer_key,
+    };
     use poche_player_client::{
-        AdvertisedActionPolicy, DeviceClientError, DeviceProfile, DeviceSigner,
-        HttpDeviceTransport, PlayerDeviceClient, PolicyScope,
+        AdvertisedActionPolicy, DeviceClientError, DeviceCooperationRequest, DeviceProfile,
+        DeviceSigner, HttpDeviceTransport, PlayerDeviceClient, PolicyScope,
+        sign_capture_provider_advertisement, sign_capture_request, sign_capture_response,
     };
     use poche_protocol::{
+        CaptureArtifactDescriptorWire, CaptureArtifactId, CaptureConsentPolicyWire,
         CapturePrivacyWire, CaptureProviderKindWire, CaptureRepresentationWire, CaptureRequestId,
-        CertificateId, CommandId, DEVICE_COOPERATION_SCHEMA_VERSION_V1,
-        DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1, DeviceCapabilityWire, DeviceCustodyWire, DeviceId,
-        DeviceSignatureIntentWire, InviteProof, PrincipalId, REPLICATION_SCHEMA_VERSION_V1,
-        REPLICATION_SIGNATURE_DOMAIN_V1, RoomId, SignatureAlgorithm, SignatureBytes,
-        SignatureIntent, UnsignedCaptureRequestWire, UnsignedDeviceCertificateWire,
-        canonical_device_certificate_bytes,
+        CaptureResponseOutcomeWire, CaptureTransferId, CertificateId, CommandId,
+        DEVICE_COOPERATION_SCHEMA_VERSION_V1, DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+        DeviceCapabilityWire, DeviceCustodyWire, DeviceId, DeviceSignatureIntentWire, InviteProof,
+        PrincipalId, REPLICATION_SCHEMA_VERSION_V1, REPLICATION_SIGNATURE_DOMAIN_V1, RoomId,
+        SemanticHash, SignatureAlgorithm, SignatureBytes, SignatureIntent,
+        UnsignedCaptureProviderAdvertisementWire, UnsignedCaptureRequestWire,
+        UnsignedCaptureResponseWire, UnsignedDeviceCertificateWire,
+        canonical_device_certificate_bytes, capture_request_hash,
     };
 
     struct TestHttpSigner(SigningKey);
@@ -1310,13 +1454,17 @@ mod tests {
             player_id: player_id.clone(),
             device_id: device_id.clone(),
             device_signing_public_key: device_id.as_str().to_owned(),
-            device_encryption_public_key: "ee".repeat(32),
+            device_encryption_public_key: hex(&poche_capture::device_encryption_public_key(
+                &[device_seed; 32],
+            )),
             sequence: 1,
             valid_from_membership_epoch: 1,
             valid_through_membership_epoch: None,
             capabilities: vec![
                 DeviceCapabilityWire::Propose,
                 DeviceCapabilityWire::ReceivePrivateProjection,
+                DeviceCapabilityWire::RequestCapture,
+                DeviceCapabilityWire::ProvideCapture,
             ],
             custody: DeviceCustodyWire::NativeLocal,
             signature_intent: SignatureIntent {
@@ -1650,6 +1798,277 @@ mod tests {
         );
         clock.abort();
         let _ = clock.await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the executable boundary proof intentionally keeps both independently signed devices, relay calls, key unwrap, and byte-for-byte reconstruction in one auditable scenario"
+    )]
+    async fn signed_http_capture_relay_streams_only_recipient_encrypted_chunks() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("ephemeral listener");
+        let address = listener.local_addr().expect("listener address");
+        let server = tokio::spawn(async move {
+            super::serve(listener)
+                .await
+                .expect("capture relay test server");
+        });
+
+        let requester_profile = certified_http_profile("capture-requester", 61, 62);
+        let requester_transport = HttpDeviceTransport::new(
+            format!("http://{address}"),
+            0,
+            TestHttpSigner(SigningKey::from_bytes(&[62; 32])),
+        )
+        .unwrap();
+        let mut requester =
+            PlayerDeviceClient::new(requester_profile.clone(), requester_transport).unwrap();
+        let room_id = RoomId::new("certified-device-room").unwrap();
+        let pending = requester.observe(&room_id).unwrap();
+        requester
+            .invoke(
+                &pending,
+                "room-create",
+                CommandId::new("capture-relay-create").unwrap(),
+            )
+            .unwrap();
+        let observed = requester.observe(&room_id).unwrap();
+        assert_eq!(observed.projection.current_revision, 1);
+
+        let provider_profile = certified_http_profile("capture-provider", 61, 63);
+        let provider_signer = TestHttpSigner(SigningKey::from_bytes(&[63; 32]));
+        let provider_transport = HttpDeviceTransport::new(
+            format!("http://{address}"),
+            1,
+            TestHttpSigner(SigningKey::from_bytes(&[63; 32])),
+        )
+        .unwrap();
+        let advertisement = sign_capture_provider_advertisement(
+            &provider_profile,
+            UnsignedCaptureProviderAdvertisementWire {
+                schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+                room_id: room_id.clone(),
+                membership_epoch: 1,
+                player_id: provider_profile.player_id.clone(),
+                provider_device_id: provider_profile.device_id.clone(),
+                provider_kind: CaptureProviderKindWire::HeadlessSemantic,
+                representations: vec![CaptureRepresentationWire::SemanticHtml],
+                privacy_scopes: vec![CapturePrivacyWire::ExactPlayerView],
+                consent_policy: CaptureConsentPolicyWire::Automatic,
+                max_total_bytes: 1024 * 1024,
+                advertisement_sequence: 1,
+                expires_at_unix_ms: 10_000,
+                signature_intent: DeviceSignatureIntentWire {
+                    domain_version: DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+                    algorithm: SignatureAlgorithm::Ed25519,
+                    key_id: provider_profile.device_id.clone(),
+                },
+            },
+            &provider_signer,
+        )
+        .unwrap();
+        let registration = provider_transport
+            .register_capture_provider(&CaptureProviderRegistrationCall {
+                certificate: provider_profile.certificate.clone(),
+                advertisement,
+            })
+            .unwrap();
+
+        let provider_certificate = provider_profile.certificate.clone();
+        let provider_thread = std::thread::spawn(move || {
+            let job = (0..200)
+                .find_map(|_| {
+                    let result = provider_transport
+                        .poll_capture_provider(&CaptureProviderPollCall {
+                            provider_token: registration.provider_token.clone(),
+                        })
+                        .unwrap();
+                    if result.is_none() {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    result
+                })
+                .expect("provider receives exact capture job");
+            let bytes = b"<main><h1>requester exact view</h1></main>".to_vec();
+            let request_hash = capture_request_hash(&job.request.unsigned()).unwrap();
+            let transfer_id = CaptureTransferId::new("external-semantic-html-transfer").unwrap();
+            let descriptor = capture_transfer_descriptor(transfer_id, &bytes, 24 * 1024).unwrap();
+            let (sender_key, wrapped_key) = generate_wrapped_capture_transfer_key(
+                &job.requester_certificate,
+                descriptor.transfer_id.clone(),
+                request_hash,
+            )
+            .unwrap();
+            let response = sign_capture_response(
+                &provider_profile,
+                UnsignedCaptureResponseWire {
+                    schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+                    request_id: job.request.request_id.clone(),
+                    request_hash,
+                    room_id: job.request.room_id.clone(),
+                    membership_epoch: job.request.membership_epoch,
+                    player_id: job.request.player_id.clone(),
+                    requester_device_id: job.request.requester_device_id.clone(),
+                    provider_device_id: provider_certificate.device_id.clone(),
+                    outcome: CaptureResponseOutcomeWire::Accepted {
+                        artifacts: vec![CaptureArtifactDescriptorWire {
+                            artifact_id: CaptureArtifactId::new("external-semantic-html").unwrap(),
+                            representation: CaptureRepresentationWire::SemanticHtml,
+                            provider_kind: CaptureProviderKindWire::HeadlessSemantic,
+                            captured_revision: job.request.observed_revision,
+                            projection_hash: SemanticHash([4; 32]),
+                            scene_hash: Some(SemanticHash([5; 32])),
+                            viewport: None,
+                            transfer: descriptor.clone(),
+                        }],
+                    },
+                    signature_intent: DeviceSignatureIntentWire {
+                        domain_version: DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+                        algorithm: SignatureAlgorithm::Ed25519,
+                        key_id: provider_certificate.device_id,
+                    },
+                },
+                &provider_signer,
+            )
+            .unwrap();
+            provider_transport
+                .provide_capture_response(&CaptureProviderResponseCall {
+                    provider_token: registration.provider_token.clone(),
+                    response,
+                    wrapped_keys: vec![wrapped_key],
+                })
+                .unwrap();
+            let mut sender = CaptureTransferSender::new(
+                descriptor,
+                request_hash,
+                10_000,
+                bytes.clone(),
+                sender_key,
+                1,
+            )
+            .unwrap();
+            while let Some(chunk) = sender.next_chunk(100).unwrap() {
+                provider_transport
+                    .upload_capture_chunk(&CaptureChunkUploadCall {
+                        provider_token: registration.provider_token.clone(),
+                        request_id: job.request.request_id.clone(),
+                        chunk: chunk.clone(),
+                    })
+                    .unwrap();
+                sender
+                    .acknowledge(
+                        chunk.chunk_index,
+                        SemanticHash(*blake3::hash(&chunk.ciphertext).as_bytes()),
+                    )
+                    .unwrap();
+            }
+            bytes
+        });
+
+        let request = sign_capture_request(
+            &requester_profile,
+            UnsignedCaptureRequestWire {
+                schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+                request_id: CaptureRequestId::new("external-capture-request").unwrap(),
+                room_id: room_id.clone(),
+                membership_epoch: 1,
+                player_id: requester_profile.player_id.clone(),
+                requester_device_id: requester_profile.device_id.clone(),
+                provider_device_id: provider_profile_for_id(61, 63),
+                observed_revision: observed.projection.current_revision,
+                expires_at_unix_ms: 10_000,
+                replay_nonce: "external-capture-request-nonce".to_owned(),
+                privacy: CapturePrivacyWire::ExactPlayerView,
+                provider_kind: CaptureProviderKindWire::HeadlessSemantic,
+                representations: vec![CaptureRepresentationWire::SemanticHtml],
+                viewport: None,
+                label: "external certified capture".to_owned(),
+                max_total_bytes: 1024 * 1024,
+                signature_intent: DeviceSignatureIntentWire {
+                    domain_version: DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
+                    algorithm: SignatureAlgorithm::Ed25519,
+                    key_id: requester_profile.device_id.clone(),
+                },
+            },
+            &TestHttpSigner(SigningKey::from_bytes(&[62; 32])),
+        )
+        .unwrap();
+        let target = request.provider_device_id.clone();
+        let receipt = requester
+            .transport_mut()
+            .request_capture(
+                &requester_profile,
+                &target,
+                DeviceCooperationRequest::Capture(request.clone()),
+            )
+            .unwrap();
+        let CaptureResponseOutcomeWire::Accepted { artifacts } = &receipt.response.outcome else {
+            panic!("provider denied accepted capture");
+        };
+        let transfer = artifacts[0].transfer.clone();
+        let receiver_key = open_wrapped_capture_transfer_key(
+            &receipt.wrapped_keys[0],
+            &requester_profile.certificate,
+            &[62; 32],
+        )
+        .unwrap();
+        let mut receiver = CaptureTransferReceiver::new(
+            transfer.clone(),
+            receipt.response.request_hash,
+            10_000,
+            receiver_key,
+        )
+        .unwrap();
+        for index in 0..transfer.chunk_count {
+            let chunk = (0..200)
+                .find_map(|_| {
+                    let fetched = requester
+                        .transport_mut()
+                        .fetch_capture_chunk(&CaptureChunkFetchCall {
+                            delivery_token: receipt.delivery_token.clone(),
+                            request_id: request.request_id.clone(),
+                            transfer_id: transfer.transfer_id.clone(),
+                            chunk_index: index,
+                        })
+                        .unwrap();
+                    match fetched {
+                        CaptureChunkFetchResult::Pending => {
+                            std::thread::sleep(Duration::from_millis(5));
+                            None
+                        }
+                        CaptureChunkFetchResult::Available(chunk) => Some(chunk),
+                    }
+                })
+                .expect("requester receives encrypted chunk");
+            receiver.accept(100, &chunk).unwrap();
+        }
+        let expected = provider_thread.join().unwrap();
+        assert_eq!(receiver.finish().unwrap(), expected);
+        requester
+            .transport_mut()
+            .acknowledge_capture_delivery(&CaptureDeliveryAcknowledgeCall {
+                delivery_token: receipt.delivery_token,
+                request_id: request.request_id,
+            })
+            .unwrap();
+        assert_eq!(
+            requester
+                .observe(&room_id)
+                .unwrap()
+                .projection
+                .current_revision,
+            1,
+            "capture cooperation must not enter game history"
+        );
+
+        server.abort();
+        let _ = server.await;
+    }
+
+    fn provider_profile_for_id(root_seed: u8, device_seed: u8) -> DeviceId {
+        certified_http_profile("provider-id", root_seed, device_seed).device_id
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

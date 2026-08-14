@@ -41,7 +41,7 @@ use poche_protocol::{
     UnsignedCaptureResponseWire, canonical_capture_provider_advertisement_bytes,
     canonical_capture_request_bytes, canonical_capture_response_bytes, capture_request_hash,
 };
-use poche_runtime::RuntimeDeviceCooperationHandler;
+use poche_runtime::{RuntimeDeviceCooperationContext, RuntimeDeviceCooperationHandler};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -96,6 +96,7 @@ struct BrowserCaptureHandler {
 impl RuntimeDeviceCooperationHandler for BrowserCaptureHandler {
     fn cooperate(
         &mut self,
+        _context: &RuntimeDeviceCooperationContext,
         request: DeviceCooperationRequest,
     ) -> Result<DeviceCooperationResult, DeviceClientError> {
         let DeviceCooperationRequest::Capture(request) = request else {

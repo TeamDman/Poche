@@ -14,8 +14,10 @@
 
 mod key_wrap;
 mod pipeline;
+mod relay;
 mod transfer;
 
 pub use key_wrap::*;
 pub use pipeline::*;
+pub use relay::*;
 pub use transfer::*;

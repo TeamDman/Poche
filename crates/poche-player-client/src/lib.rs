@@ -20,12 +20,15 @@ use core::fmt;
 
 use facet::Facet;
 use poche_protocol::{
-    CaptureCancelWire, CaptureRequestWire, CaptureResponseWire, CommandId, CommandPayload,
-    DEVICE_ACTION_SCHEMA_VERSION_V1, DEVICE_ACTION_SIGNATURE_DOMAIN_V1, DeviceActionWire,
-    DeviceCertificateWire, DeviceId, DeviceObservationModeWire, DeviceObservationRequestWire,
-    DeviceSignatureIntentWire, MAX_CHAT_BYTES, PrincipalId, ProjectionEnvelope, RoomId,
-    SemanticHash, SignatureAlgorithm, SignatureBytes, UnsignedDeviceActionWire,
-    UnsignedDeviceObservationRequestWire, canonical_device_action_bytes,
+    CaptureCancelWire, CaptureProviderAdvertisementWire, CaptureRequestWire, CaptureResponseWire,
+    CommandId, CommandPayload, DEVICE_ACTION_SCHEMA_VERSION_V1, DEVICE_ACTION_SIGNATURE_DOMAIN_V1,
+    DeviceActionWire, DeviceCertificateWire, DeviceId, DeviceObservationModeWire,
+    DeviceObservationRequestWire, DeviceSignatureIntentWire, MAX_CHAT_BYTES, PrincipalId,
+    ProjectionEnvelope, RoomId, SemanticHash, SignatureAlgorithm, SignatureBytes,
+    UnsignedCaptureProviderAdvertisementWire, UnsignedCaptureRequestWire,
+    UnsignedCaptureResponseWire, UnsignedDeviceActionWire, UnsignedDeviceObservationRequestWire,
+    canonical_capture_provider_advertisement_bytes, canonical_capture_request_bytes,
+    canonical_capture_response_bytes, canonical_device_action_bytes,
     canonical_device_observation_request_bytes,
 };
 use serde::{Deserialize, Serialize};
@@ -94,6 +97,68 @@ pub trait DeviceSigner {
         profile: &DeviceProfile,
         canonical_bytes: &[u8],
     ) -> Result<SignatureBytes, DeviceClientError>;
+}
+
+/// Sign a provider advertisement through the exact profile key handle.
+pub fn sign_capture_provider_advertisement(
+    profile: &DeviceProfile,
+    unsigned: UnsignedCaptureProviderAdvertisementWire,
+    signer: &impl DeviceSigner,
+) -> Result<CaptureProviderAdvertisementWire, DeviceClientError> {
+    profile.validate()?;
+    if unsigned.player_id != profile.player_id
+        || unsigned.provider_device_id != profile.device_id
+        || unsigned.signature_intent.key_id != profile.device_id
+    {
+        return Err(DeviceClientError::InvalidProfile);
+    }
+    let bytes = canonical_capture_provider_advertisement_bytes(&unsigned)
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    unsigned
+        .attach_signature(signer.sign_device_bytes(profile, &bytes)?)
+        .map_err(|_| DeviceClientError::SigningFailed)
+}
+
+/// Sign one exact-target capture request through the requester's protected
+/// device key.
+pub fn sign_capture_request(
+    profile: &DeviceProfile,
+    unsigned: UnsignedCaptureRequestWire,
+    signer: &impl DeviceSigner,
+) -> Result<CaptureRequestWire, DeviceClientError> {
+    profile.validate()?;
+    if unsigned.player_id != profile.player_id
+        || unsigned.requester_device_id != profile.device_id
+        || unsigned.signature_intent.key_id != profile.device_id
+    {
+        return Err(DeviceClientError::InvalidProfile);
+    }
+    let bytes = canonical_capture_request_bytes(&unsigned)
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    unsigned
+        .attach_signature(signer.sign_device_bytes(profile, &bytes)?)
+        .map_err(|_| DeviceClientError::SigningFailed)
+}
+
+/// Sign a hash-bound provider response without granting access to any room
+/// mutation port.
+pub fn sign_capture_response(
+    profile: &DeviceProfile,
+    unsigned: UnsignedCaptureResponseWire,
+    signer: &impl DeviceSigner,
+) -> Result<CaptureResponseWire, DeviceClientError> {
+    profile.validate()?;
+    if unsigned.player_id != profile.player_id
+        || unsigned.provider_device_id != profile.device_id
+        || unsigned.signature_intent.key_id != profile.device_id
+    {
+        return Err(DeviceClientError::InvalidProfile);
+    }
+    let bytes = canonical_capture_response_bytes(&unsigned)
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    unsigned
+        .attach_signature(signer.sign_device_bytes(profile, &bytes)?)
+        .map_err(|_| DeviceClientError::SigningFailed)
 }
 
 /// Sign one exact-recipient observation/wait request through the profile's
@@ -591,6 +656,14 @@ impl<T: DeviceTransport> PlayerDeviceClient<T> {
     #[must_use]
     pub fn into_transport(self) -> T {
         self.transport
+    }
+
+    /// Borrow the configured adapter for transport-specific cooperation lanes
+    /// such as bounded artifact streaming. Gameplay callers should continue
+    /// to use the transport-neutral methods above.
+    #[must_use]
+    pub const fn transport_mut(&mut self) -> &mut T {
+        &mut self.transport
     }
 }
 

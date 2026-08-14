@@ -491,8 +491,19 @@ pub trait RuntimeDeviceCooperationHandler: Send + 'static {
     /// signed response again before delivering it to the requester.
     fn cooperate(
         &mut self,
+        context: &RuntimeDeviceCooperationContext,
         request: DeviceCooperationRequest,
     ) -> Result<DeviceCooperationResult, DeviceClientError>;
+}
+
+/// Exact public certificate context supplied only after the adapter has
+/// authenticated both sides of a cooperation exchange. Providers need the
+/// requester encryption key to seal artifact keys, but receive no reducer or
+/// private projection through this context.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeDeviceCooperationContext {
+    pub requester_certificate: DeviceCertificateWire,
+    pub provider_certificate: DeviceCertificateWire,
 }
 
 /// Cloneable device adapter whose clones share one actual in-process authority.
@@ -698,6 +709,34 @@ pub struct CertifiedDeviceRoom<G: SessionGame, A> {
     next_service_command: u64,
 }
 
+/// Already-authenticated cooperation route that can execute without holding
+/// the certified-room enrollment/replay-cache lock. A remote graphical
+/// provider may therefore observe the room while answering the request.
+pub struct PreparedCertifiedCooperation<G: SessionGame, A> {
+    adapter: RuntimeLoopbackDeviceAdapter<G, A>,
+    profile: DeviceProfile,
+    target_device: DeviceId,
+    request: DeviceCooperationRequest,
+}
+
+impl<G, A> PreparedCertifiedCooperation<G, A>
+where
+    G: SessionGame + Send + 'static,
+    G::Error: Send,
+    A: AdvertisedActionSource<G>,
+{
+    /// Execute the authorized route through the ordinary adapter.
+    ///
+    /// # Errors
+    ///
+    /// Returns the provider adapter's stable cooperation failure.
+    pub fn execute(self) -> Result<DeviceCooperationResult, DeviceClientError> {
+        self.adapter
+            .clone()
+            .cooperate(&self.profile, &self.target_device, self.request)
+    }
+}
+
 impl<G, A> CertifiedDeviceRoom<G, A>
 where
     G: SessionGame + Send + 'static,
@@ -818,10 +857,52 @@ where
         target_device: &DeviceId,
         request: DeviceCooperationRequest,
     ) -> Result<DeviceCooperationResult, DeviceClientError> {
+        self.prepare_cooperation(certificate, target_device, request)?
+            .execute()
+    }
+
+    /// Authenticate/enroll the requester and detach a non-authoritative route
+    /// from the certified-room lock before a remote provider does rendering or
+    /// artifact I/O.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed when the requester certificate, membership, target route,
+    /// or signed cooperation request is invalid.
+    pub fn prepare_cooperation(
+        &mut self,
+        certificate: &DeviceCertificateWire,
+        target_device: &DeviceId,
+        request: DeviceCooperationRequest,
+    ) -> Result<PreparedCertifiedCooperation<G, A>, DeviceClientError> {
+        let profile = self.ensure_enrolled(certificate)?;
+        Ok(PreparedCertifiedCooperation {
+            adapter: self.adapter.clone(),
+            profile,
+            target_device: target_device.clone(),
+            request,
+        })
+    }
+
+    /// Register an external provider through the same certificate and
+    /// advertisement checks used by in-process graphical devices.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed for invalid, unauthorized, duplicate, expired, or
+    /// mismatched provider advertisements.
+    pub fn register_capture_provider<H>(
+        &mut self,
+        certificate: &DeviceCertificateWire,
+        advertisement: CaptureProviderAdvertisementWire,
+        handler: H,
+    ) -> Result<(), DeviceClientError>
+    where
+        H: RuntimeDeviceCooperationHandler,
+    {
         let profile = self.ensure_enrolled(certificate)?;
         self.adapter
-            .clone()
-            .cooperate(&profile, target_device, request)
+            .register_capture_provider(&profile, advertisement, handler)
     }
 
     /// Verify, enroll, and answer one signed exact-recipient snapshot or wait.
@@ -1169,7 +1250,13 @@ where
             .handler
             .lock()
             .map_err(|_| DeviceClientError::TransportUnavailable)?
-            .cooperate(request)?;
+            .cooperate(
+                &RuntimeDeviceCooperationContext {
+                    requester_certificate: context_snapshot.requester_certificate.clone(),
+                    provider_certificate: context_snapshot.provider_certificate.clone(),
+                },
+                request,
+            )?;
         let DeviceCooperationResult::Capture(response) = &result;
         verify_capture_response(response, &context_snapshot.provider_certificate)?;
         authorize_capture_response(&capture_request, response, &context_snapshot.context())
@@ -1695,6 +1782,7 @@ mod tests {
     impl RuntimeDeviceCooperationHandler for AcceptingCaptureHandler {
         fn cooperate(
             &mut self,
+            _context: &RuntimeDeviceCooperationContext,
             request: DeviceCooperationRequest,
         ) -> Result<DeviceCooperationResult, DeviceClientError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
