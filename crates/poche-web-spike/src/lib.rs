@@ -21,12 +21,16 @@ use axum::{
     routing::{get, post},
 };
 use datastar::prelude::PatchElements;
+use ed25519_dalek::{Signer as _, SigningKey};
 use futures_util::{StreamExt as _, stream};
-use poche_player_client::DeviceClientError;
+use poche_player_client::{DeviceClientError, DeviceProfile};
 use poche_protocol::{
-    CommandPayload, DeviceActionWire, DeviceCustodyWire, DeviceObservationRequestWire,
-    GatewayAuthorityModeWire, GatewayProjectionProtectionWire, GatewayTrustDisclosureWire,
-    PrincipalId, ProtocolFrame, RoomId,
+    CertificateId, CommandPayload, DeviceActionWire, DeviceCapabilityWire, DeviceCustodyWire,
+    DeviceId, DeviceObservationRequestWire, GatewayAuthorityModeWire,
+    GatewayProjectionProtectionWire, GatewayTrustDisclosureWire, PrincipalId, ProtocolFrame,
+    REPLICATION_SCHEMA_VERSION_V1, REPLICATION_SIGNATURE_DOMAIN_V1, RoomId, SignatureAlgorithm,
+    SignatureBytes, SignatureIntent, UnsignedDeviceCertificateWire,
+    canonical_device_certificate_bytes,
 };
 use poche_runtime::{
     AuthorityDisposition, CertifiedDeviceRoom, ClientPort, InProcessAuthority, InProcessTransport,
@@ -1071,6 +1075,26 @@ fn spawn_room_clock(
     })
 }
 
+fn spawn_certified_services(room: Arc<Mutex<WebCertifiedRoom>>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(50));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let result = room
+                .lock()
+                .map_err(|_| "certified device room lock poisoned".to_owned())
+                .and_then(|mut room| {
+                    room.drive_authority_services(16)
+                        .map_err(|error| error.to_string())
+                });
+            if let Err(error) = result {
+                eprintln!("poche-web-spike certified authority service failed: {error}");
+            }
+        }
+    })
+}
+
 /// Run the production-shaped browser surface using the configured address.
 ///
 /// # Errors
@@ -1113,6 +1137,7 @@ pub async fn serve(listener: tokio::net::TcpListener) -> Result<(), Box<dyn std:
     };
     let _clock_task = spawn_live_clock(Arc::clone(&state.live), state.live_updates.clone());
     let _room_clock_task = spawn_room_clock(Arc::clone(&state.rooms), state.room_updates.clone());
+    let _certified_service_task = spawn_certified_services(Arc::clone(&state.certified_room));
     axum::serve(listener, router(state)).await?;
     Ok(())
 }
@@ -1126,21 +1151,88 @@ fn gateway_demo() -> Result<LiveDemo, String> {
 
 fn certified_device_room() -> Result<WebCertifiedRoom, String> {
     const INVITE: &str = "certified-device-join-v1";
+    let clock = ephemeral_service_profile("certified-authority-clock")?;
+    let environment = ephemeral_service_profile("certified-game-environment")?;
     let mut state = SessionState::pending(
         room("certified-device-room")?,
-        principal("certified-authority-clock")?,
-        principal("certified-game-environment")?,
+        clock.player_id.clone(),
+        environment.player_id.clone(),
     );
     state
         .invites
         .push(InviteRecord::new(INVITE, u64::MAX).map_err(|error| format!("{error:?}"))?);
     let actions = OracleRoomActionSource::new(0x5eed, 2, INVITE, 3, "certified-countdown")
         .map_err(|error| error.to_string())?;
-    Ok(CertifiedDeviceRoom::new(RuntimeLoopbackDeviceAdapter::new(
+    let mut room = CertifiedDeviceRoom::new(RuntimeLoopbackDeviceAdapter::new(
         state,
         actions,
         LoopbackCodec::CanonicalNdjson,
-    )))
+    ));
+    room.enroll_authority_service(&clock)
+        .map_err(|error| error.to_string())?;
+    room.enroll_authority_service(&environment)
+        .map_err(|error| error.to_string())?;
+    Ok(room)
+}
+
+fn ephemeral_service_profile(label: &str) -> Result<DeviceProfile, String> {
+    let mut root_seed = [0_u8; 32];
+    let mut device_seed = [0_u8; 32];
+    getrandom::fill(&mut root_seed).map_err(|_| "service root entropy unavailable".to_owned())?;
+    getrandom::fill(&mut device_seed)
+        .map_err(|_| "service device entropy unavailable".to_owned())?;
+    let root = SigningKey::from_bytes(&root_seed);
+    let device = SigningKey::from_bytes(&device_seed);
+    let player_id = PrincipalId::new(hex_bytes(&root.verifying_key().to_bytes()))
+        .map_err(|_| "invalid service root identity".to_owned())?;
+    let device_public = hex_bytes(&device.verifying_key().to_bytes());
+    let device_id = DeviceId::new(device_public.clone())
+        .map_err(|_| "invalid service device identity".to_owned())?;
+    let unsigned = UnsignedDeviceCertificateWire {
+        schema_version: REPLICATION_SCHEMA_VERSION_V1,
+        certificate_id: CertificateId::new(format!("service-{label}"))
+            .map_err(|_| "invalid service certificate ID".to_owned())?,
+        player_id: player_id.clone(),
+        device_id: device_id.clone(),
+        device_signing_public_key: device_public,
+        sequence: 1,
+        valid_from_membership_epoch: 1,
+        valid_through_membership_epoch: None,
+        capabilities: vec![DeviceCapabilityWire::Propose],
+        custody: DeviceCustodyWire::NativeLocal,
+        signature_intent: SignatureIntent {
+            domain_version: REPLICATION_SIGNATURE_DOMAIN_V1,
+            algorithm: SignatureAlgorithm::Ed25519,
+            key_id: player_id.clone(),
+        },
+    };
+    let signature = SignatureBytes::new(hex_bytes(
+        &root
+            .sign(
+                &canonical_device_certificate_bytes(&unsigned)
+                    .map_err(|_| "invalid service certificate".to_owned())?,
+            )
+            .to_bytes(),
+    ))
+    .map_err(|_| "invalid service certificate signature".to_owned())?;
+    let certificate = unsigned
+        .attach_signature(signature)
+        .map_err(|_| "invalid signed service certificate".to_owned())?;
+    Ok(DeviceProfile {
+        schema_version: DeviceProfile::SCHEMA_VERSION_V1,
+        label: label.to_owned(),
+        player_id,
+        device_id,
+        certificate,
+        signing_key_handle: format!("ephemeral-authority-service:{label}"),
+    })
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().fold(String::new(), |mut output, byte| {
+        let _ = write!(output, "{byte:02x}");
+        output
+    })
 }
 
 #[cfg(test)]
@@ -1160,7 +1252,8 @@ mod tests {
 
     use ed25519_dalek::{Signer as _, SigningKey};
     use poche_player_client::{
-        DeviceClientError, DeviceProfile, DeviceSigner, HttpDeviceTransport, PlayerDeviceClient,
+        AdvertisedActionPolicy, DeviceClientError, DeviceProfile, DeviceSigner,
+        HttpDeviceTransport, PlayerDeviceClient, PolicyScope,
     };
     use poche_protocol::{
         CertificateId, CommandId, DeviceCapabilityWire, DeviceCustodyWire, DeviceId, InviteProof,
@@ -1542,6 +1635,10 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the external-device acceptance keeps signed discovery, lifecycle, persistent policy play, service progress, and convergence evidence together"
+    )]
     async fn signed_http_device_observes_invokes_waits_and_retries() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -1628,6 +1725,74 @@ mod tests {
             .expect("joined exact-recipient view");
         assert_eq!(guest_lobby.projection.current_revision, 2);
         assert!(guest_lobby.action("room-take-seat-0").is_some());
+
+        macro_rules! invoke_lifecycle {
+            ($client:expr, $action:literal, $command:literal) => {{
+                let observation = $client.observe(&room_id).expect("lifecycle view");
+                $client
+                    .invoke(
+                        &observation,
+                        $action,
+                        CommandId::new($command).expect("lifecycle command ID"),
+                    )
+                    .expect("signed lifecycle action");
+            }};
+        }
+        invoke_lifecycle!(client, "room-take-seat-0", "http-seat-host");
+        invoke_lifecycle!(guest, "room-take-seat-1", "http-seat-guest");
+        invoke_lifecycle!(client, "room-ready", "http-ready-host");
+        invoke_lifecycle!(guest, "room-ready", "http-ready-guest");
+        invoke_lifecycle!(client, "countdown-arm", "http-countdown-arm");
+
+        let policy = AdvertisedActionPolicy::FirstLegal;
+        let mut command_sequence = 0_u32;
+        let terminal = loop {
+            assert!(
+                command_sequence < 1_000,
+                "external certified players should finish a bounded game"
+            );
+            let mut progressed = false;
+            for (label, player) in [("host", &mut client), ("guest", &mut guest)] {
+                let observation = player.observe(&room_id).expect("external agent view");
+                if observation.projection.payload.phase == RoomPhase::PostGame {
+                    break;
+                }
+                let Some(action_id) = policy
+                    .select(&observation, PolicyScope::PlayerGameActions)
+                    .map(|action| action.id.clone())
+                else {
+                    continue;
+                };
+                player
+                    .invoke(
+                        &observation,
+                        &action_id,
+                        CommandId::new(format!("http-agent-{label}-{command_sequence}"))
+                            .expect("agent command ID"),
+                    )
+                    .expect("external policy action");
+                command_sequence = command_sequence.saturating_add(1);
+                progressed = true;
+            }
+            let observation = client.observe(&room_id).expect("terminal check");
+            if observation.projection.payload.phase == RoomPhase::PostGame {
+                break observation;
+            }
+            if !progressed {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        assert!(command_sequence > 100);
+        assert_eq!(terminal.projection.payload.phase, RoomPhase::PostGame);
+        assert!(!terminal.projection.payload.public_history.is_empty());
+        assert_eq!(
+            guest
+                .observe(&room_id)
+                .expect("guest terminal view")
+                .projection
+                .current_revision,
+            terminal.projection.current_revision
+        );
 
         server.abort();
         let _ = server.await;

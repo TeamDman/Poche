@@ -620,6 +620,22 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
             .map_err(|_| DeviceClientError::TransportUnavailable)?;
         Ok(shared.authority.state.accepts_invite(invite))
     }
+
+    /// Return the two configured authority-owned service principals.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport unavailable if the shared authority lock is poisoned.
+    pub fn authority_principals(&self) -> Result<(PrincipalId, PrincipalId), DeviceClientError> {
+        let shared = self
+            .shared
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        Ok((
+            shared.authority.state.authority_clock.clone(),
+            shared.authority.state.game_environment.clone(),
+        ))
+    }
 }
 
 struct CachedRemoteObservation {
@@ -640,6 +656,8 @@ pub struct CertifiedDeviceRoom<G: SessionGame, A> {
     profiles: BTreeMap<DeviceId, DeviceProfile>,
     observation_cache: BTreeMap<(DeviceId, String), CachedRemoteObservation>,
     action_cache: BTreeMap<(DeviceId, String), CachedRemoteAction>,
+    service_profiles: Vec<DeviceProfile>,
+    next_service_command: u64,
 }
 
 impl<G, A> CertifiedDeviceRoom<G, A>
@@ -655,7 +673,98 @@ where
             profiles: BTreeMap::new(),
             observation_cache: BTreeMap::new(),
             action_cache: BTreeMap::new(),
+            service_profiles: Vec::new(),
+            next_service_command: 0,
         }
+    }
+
+    /// Enroll one root-certified local authority service. Player devices never
+    /// enter this list; the profile root must equal the room's configured
+    /// authority-clock or game-environment principal.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an ordinary player, invalid certificate, or duplicate device.
+    pub fn enroll_authority_service(
+        &mut self,
+        profile: &DeviceProfile,
+    ) -> Result<(), DeviceClientError> {
+        let (clock, environment) = self.adapter.authority_principals()?;
+        if profile.player_id != clock && profile.player_id != environment {
+            return Err(DeviceClientError::AuthorizationDenied);
+        }
+        let enrolled = self.ensure_enrolled(&profile.certificate)?;
+        if self
+            .service_profiles
+            .iter()
+            .any(|item| item.device_id == enrolled.device_id)
+        {
+            return Err(DeviceClientError::InvalidProfile);
+        }
+        self.service_profiles.push(enrolled);
+        self.service_profiles
+            .sort_by(|left, right| left.device_id.cmp(&right.device_id));
+        Ok(())
+    }
+
+    /// Advance deterministic authority-owned transitions through the same
+    /// advertised-action and reducer path used by external devices. This is a
+    /// bounded scheduler tick, not a wall-clock read inside the reducer.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable transport/protocol error if a certified service cannot
+    /// observe or commit its currently advertised transition.
+    pub fn drive_authority_services(
+        &mut self,
+        max_actions: usize,
+    ) -> Result<usize, DeviceClientError> {
+        let room_id = self
+            .adapter
+            .room_id()
+            .ok_or(DeviceClientError::TransportUnavailable)?;
+        let mut committed = 0;
+        while committed < max_actions {
+            let mut progressed = false;
+            for profile in self.service_profiles.clone() {
+                if committed >= max_actions {
+                    break;
+                }
+                let mut adapter = self.adapter.clone();
+                let observation = adapter.observe(&profile, &room_id)?;
+                let Some(action) = observation.actions.first() else {
+                    continue;
+                };
+                let sequence = self.next_service_command;
+                self.next_service_command = self.next_service_command.saturating_add(1);
+                let request = DeviceActionRequest {
+                    room_id: room_id.clone(),
+                    session_epoch: observation.projection.session_epoch,
+                    command_id: poche_protocol::CommandId::new(format!(
+                        "authority-service-{sequence}"
+                    ))
+                    .map_err(|_| DeviceClientError::ProtocolViolation)?,
+                    player_id: profile.player_id.clone(),
+                    device_id: profile.device_id.clone(),
+                    expected_revision: observation.projection.current_revision,
+                    expected_projection_hash: observation.projection_hash,
+                    action_id: action.id.clone(),
+                    payload: action.payload.clone(),
+                };
+                if !matches!(
+                    adapter.invoke(&profile, request)?,
+                    DeviceActionResult::Committed { .. }
+                ) {
+                    return Err(DeviceClientError::ProtocolViolation);
+                }
+                committed += 1;
+                progressed = true;
+            }
+            if !progressed {
+                break;
+            }
+        }
+        Ok(committed)
     }
 
     /// Verify, enroll, and answer one signed exact-recipient snapshot or wait.
@@ -1342,7 +1451,7 @@ mod tests {
         CaptureViewportWire, CertificateId, CommandId, CommandPayload,
         DEVICE_COOPERATION_SCHEMA_VERSION_V1, DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
         DeviceCapabilityWire, DeviceCustodyWire, DeviceObservationModeWire,
-        DeviceSignatureIntentWire, PrincipalId, REPLICATION_SCHEMA_VERSION_V1,
+        DeviceSignatureIntentWire, PrincipalId, PublicGamePhase, REPLICATION_SCHEMA_VERSION_V1,
         REPLICATION_SIGNATURE_DOMAIN_V1, SignatureIntent, UnsignedCaptureProviderAdvertisementWire,
         UnsignedCaptureRequestWire, UnsignedCaptureResponseWire, UnsignedDeviceCertificateWire,
         capture_request_hash,
@@ -1350,6 +1459,7 @@ mod tests {
 
     use super::*;
     use crate::OracleSessionGame;
+    use poche_session::InviteRecord;
 
     struct CreateRoomActions;
 
@@ -1734,6 +1844,124 @@ mod tests {
             Err(DeviceClientError::AuthorizationDenied),
             "mutating a signed retry fails before cache lookup"
         );
+    }
+
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the acceptance scenario keeps certificate identity, lifecycle, service scheduling, and successor assertions together"
+    )]
+    fn certified_authority_services_advance_countdown_and_deal_without_a_window() {
+        let host_root = SigningKey::from_bytes(&[40; 32]);
+        let host_key = SigningKey::from_bytes(&[41; 32]);
+        let guest_root = SigningKey::from_bytes(&[42; 32]);
+        let guest_key = SigningKey::from_bytes(&[43; 32]);
+        let clock_root = SigningKey::from_bytes(&[44; 32]);
+        let clock_key = SigningKey::from_bytes(&[45; 32]);
+        let environment_root = SigningKey::from_bytes(&[46; 32]);
+        let environment_key = SigningKey::from_bytes(&[47; 32]);
+        let host_profile = signed_profile(
+            "service-host",
+            &host_root,
+            &host_key,
+            vec![DeviceCapabilityWire::Propose],
+        );
+        let guest_profile = signed_profile(
+            "service-guest",
+            &guest_root,
+            &guest_key,
+            vec![DeviceCapabilityWire::Propose],
+        );
+        let clock_profile = signed_profile(
+            "authority-clock",
+            &clock_root,
+            &clock_key,
+            vec![DeviceCapabilityWire::Propose],
+        );
+        let environment_profile = signed_profile(
+            "game-environment",
+            &environment_root,
+            &environment_key,
+            vec![DeviceCapabilityWire::Propose],
+        );
+        let room_id = RoomId::new("certified-service-room").unwrap();
+        let mut state: SessionState<OracleSessionGame<2>> = SessionState::pending(
+            room_id.clone(),
+            clock_profile.player_id.clone(),
+            environment_profile.player_id.clone(),
+        );
+        state
+            .invites
+            .push(InviteRecord::new("service-guest-invite", u64::MAX).unwrap());
+        let source =
+            OracleRoomActionSource::new(0x5eed, 2, "service-guest-invite", 3, "service-countdown")
+                .unwrap();
+        let adapter =
+            RuntimeLoopbackDeviceAdapter::new(state, source, LoopbackCodec::CanonicalNdjson);
+        adapter.enroll(&host_profile).unwrap();
+        adapter.enroll(&guest_profile).unwrap();
+        let mut host =
+            PlayerDeviceClient::new(host_profile, LoopbackDeviceTransport::new(adapter.clone()))
+                .unwrap();
+        let mut guest = PlayerDeviceClient::new(
+            guest_profile.clone(),
+            LoopbackDeviceTransport::new(adapter.clone()),
+        )
+        .unwrap();
+        let mut certified = CertifiedDeviceRoom::new(adapter);
+        assert_eq!(
+            certified.enroll_authority_service(&guest_profile),
+            Err(DeviceClientError::AuthorizationDenied)
+        );
+        certified.enroll_authority_service(&clock_profile).unwrap();
+        certified
+            .enroll_authority_service(&environment_profile)
+            .unwrap();
+        assert_eq!(
+            certified.enroll_authority_service(&clock_profile),
+            Err(DeviceClientError::InvalidProfile)
+        );
+
+        macro_rules! invoke {
+            ($client:expr, $action:literal, $command:literal) => {{
+                let observation = $client.observe(&room_id).unwrap();
+                assert!(
+                    observation.actions.iter().any(|item| item.id == $action),
+                    "expected advertised action {} at revision {}",
+                    $action,
+                    observation.projection.current_revision
+                );
+                assert!(matches!(
+                    $client
+                        .invoke(&observation, $action, CommandId::new($command).unwrap(),)
+                        .unwrap(),
+                    DeviceActionResult::Committed { .. }
+                ));
+            }};
+        }
+
+        invoke!(host, "room-create", "service-create");
+        invoke!(guest, "room-join", "service-join");
+        invoke!(host, "room-take-seat-0", "service-seat-host");
+        invoke!(guest, "room-take-seat-1", "service-seat-guest");
+        invoke!(host, "room-ready", "service-ready-host");
+        invoke!(guest, "room-ready", "service-ready-guest");
+        invoke!(host, "countdown-arm", "service-countdown-arm");
+
+        assert_eq!(certified.drive_authority_services(2).unwrap(), 2);
+        let observation = host.observe(&room_id).unwrap();
+        assert_eq!(observation.projection.current_revision, 9);
+        assert_eq!(observation.projection.payload.phase, RoomPhase::Running);
+        assert!(matches!(
+            observation
+                .projection
+                .payload
+                .public_game_state
+                .as_ref()
+                .map(|game| game.phase),
+            Some(PublicGamePhase::Bidding)
+        ));
+        assert_eq!(certified.drive_authority_services(2).unwrap(), 0);
     }
 
     #[test]

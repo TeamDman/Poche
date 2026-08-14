@@ -64,6 +64,8 @@ pub fn run_from(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
                 "command parsed"
             );
             let live_config = cli::live_device::LiveDeviceConfig::from_global(&parsed.global);
+            let reports_cancellation_as_a_result =
+                matches!(&parsed.command, cli::Command::Agent(_));
             let emitted = match parsed.command {
                 cli::Command::Desktop(command) => command.invoke()?,
                 cli::Command::Room(command) => {
@@ -76,6 +78,11 @@ pub fn run_from(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
                 cli::Command::Governance(command) => command.invoke(parsed.global.output)?,
                 cli::Command::Identity(command) => command.invoke(parsed.global.output)?,
                 cli::Command::Device(command) => command.invoke(parsed.global.output)?,
+                cli::Command::Agent(command) => {
+                    command.invoke(&live_config, parsed.global.output, || {
+                        cancellation.bail_if_cancelled().is_err()
+                    })?
+                }
                 cli::Command::Puppet(command) => command.invoke(parsed.global.output, || {
                     cancellation.bail_if_cancelled().is_err()
                 })?,
@@ -85,7 +92,9 @@ pub fn run_from(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
                 let output = cli::output::CommandReceipt::parsed(group, action);
                 cli::output::emit(&output, parsed.global.output)?;
             }
-            cancellation.bail_if_cancelled()?;
+            if !reports_cancellation_as_a_result {
+                cancellation.bail_if_cancelled()?;
+            }
             Ok(())
         }
     }

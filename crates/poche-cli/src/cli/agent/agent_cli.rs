@@ -2,7 +2,7 @@ use facet::Facet;
 use figue as args;
 use poche_player_client::AdvertisedActionPolicy;
 
-use crate::cli::ParseError;
+use crate::cli::{ParseError, live_device::LiveDeviceConfig, output::OutputFormat};
 
 #[derive(Facet, PartialEq, Eq)]
 pub struct AgentArgs {
@@ -55,6 +55,23 @@ impl AgentArgs {
             .parse()
             .map_err(|_| ParseError::new("policy must be first-legal or seeded-random:<seed>"))?;
         Ok(AdvertisedActionPolicy::SeededRandom { seed })
+    }
+
+    /// Run a persistent baseline policy as its own certified device.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted profile, transport, policy, action, cancellation, or
+    /// output error.
+    pub fn invoke(
+        self,
+        config: &LiveDeviceConfig,
+        output: OutputFormat,
+        cancelled: impl FnMut() -> bool,
+    ) -> eyre::Result<bool> {
+        let policy = self.policy().map_err(|error| eyre::eyre!(error))?;
+        let AgentCommand::Run { profile, room, .. } = self.command;
+        config.run_agent(&profile, &room, policy, output, cancelled)
     }
 }
 

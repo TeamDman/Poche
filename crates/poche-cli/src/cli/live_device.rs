@@ -4,10 +4,11 @@
 
 use eyre::{Result, eyre};
 use poche_player_client::{
-    AdvertisedAction, DeviceActionResult, DeviceObservation, HttpDeviceTransport,
-    PlayerDeviceClient, ProtectedProfileStore,
+    AdvertisedAction, AdvertisedActionPolicy, DeviceActionResult, DeviceClientError,
+    DeviceObservation, HttpDeviceTransport, PlayerDeviceClient, PolicyScope, ProtectedProfileStore,
 };
 use poche_protocol::{CommandId, CommandPayload, InviteProof, RoomId};
+use serde::Serialize;
 
 use super::{GlobalArgs, output::OutputFormat};
 use crate::cli::output::emit_value;
@@ -106,6 +107,65 @@ impl LiveDeviceConfig {
         Ok(true)
     }
 
+    pub fn run_agent(
+        &self,
+        profile: &str,
+        room: &str,
+        policy: AdvertisedActionPolicy,
+        output: OutputFormat,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<bool> {
+        let room_id = parse_room(room)?;
+        let mut client = self.client_for_profile(1, None, Some(profile))?;
+        let mut observation = client.observe(&room_id)?;
+        let initial_revision = observation.projection.current_revision;
+        let mut committed_actions = 0_u64;
+        let mut denied_actions = 0_u64;
+        while !cancelled() {
+            if let Some(action_id) = policy
+                .select(&observation, PolicyScope::PlayerGameActions)
+                .map(|action| action.id.clone())
+            {
+                match client.invoke(&observation, &action_id, random_command_id("agent-action")?)? {
+                    DeviceActionResult::Committed { .. } => {
+                        committed_actions = committed_actions.saturating_add(1);
+                    }
+                    DeviceActionResult::Denied { .. } => {
+                        denied_actions = denied_actions.saturating_add(1);
+                    }
+                }
+                observation = client.observe(&room_id)?;
+                continue;
+            }
+            match client.wait(&room_id, observation.projection.current_revision) {
+                Ok(next) => observation = next,
+                Err(DeviceClientError::NoProgress | DeviceClientError::StaleRevision) => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let summary = AgentRunSummary {
+            schema: "poche.cli.agent-run.v1",
+            profile: client.profile().label.clone(),
+            room_id: room_id.as_str().to_owned(),
+            initial_revision,
+            final_revision: observation.projection.current_revision,
+            committed_actions,
+            denied_actions,
+            stop_reason: "cancelled",
+        };
+        let text = format!(
+            "agent {} stopped at revision {} ({} committed, {} denied)",
+            summary.profile,
+            summary.final_revision,
+            summary.committed_actions,
+            summary.denied_actions
+        );
+        emit_value(&summary, &text, output)?;
+        Ok(true)
+    }
+
     fn client(
         &self,
         epoch: u64,
@@ -118,8 +178,17 @@ impl LiveDeviceConfig {
         epoch: u64,
         join_invite: Option<InviteProof>,
     ) -> Result<PlayerDeviceClient<HttpDeviceTransport<ProtectedProfileStore>>> {
+        self.client_for_profile(epoch, join_invite, None)
+    }
+
+    fn client_for_profile(
+        &self,
+        epoch: u64,
+        join_invite: Option<InviteProof>,
+        profile_override: Option<&str>,
+    ) -> Result<PlayerDeviceClient<HttpDeviceTransport<ProtectedProfileStore>>> {
         let store = ProtectedProfileStore::open_default()?;
-        let profile = if let Some(label) = &self.profile {
+        let profile = if let Some(label) = profile_override.or(self.profile.as_deref()) {
             store.load_device(label)?
         } else {
             let mut profiles = store.list_devices()?;
@@ -136,6 +205,18 @@ impl LiveDeviceConfig {
         }
         Ok(PlayerDeviceClient::new(profile, transport)?)
     }
+}
+
+#[derive(Serialize)]
+struct AgentRunSummary {
+    schema: &'static str,
+    profile: String,
+    room_id: String,
+    initial_revision: u64,
+    final_revision: u64,
+    committed_actions: u64,
+    denied_actions: u64,
+    stop_reason: &'static str,
 }
 
 fn parse_room(value: &str) -> Result<RoomId> {

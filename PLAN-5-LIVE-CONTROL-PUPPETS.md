@@ -853,8 +853,23 @@ clears the proof after committed redemption. HTTP request IDs now carry a
 random per-transport namespace so a restarted process cannot collide with an
 earlier exact-retry cache. A real Axum test covers hidden-without-proof,
 invite-bound discovery, committed join, and the joined exact-recipient lobby.
-Persistent agent execution, chat/governance/spectator/capture CLI commands,
-and external graphical convergence remain.
+`poche agent run <profile> <room> first-legal|seeded-random:<seed>` now loads
+the named protected profile, persists as a certified HTTP device, considers
+only advertised player-game actions, waits without busy-spinning when another
+device owns progress, and emits a redacted structured run summary on bounded
+cancellation. The external certified room now enrolls root-signed ephemeral
+authority-clock and game-environment service devices. A bounded scheduler
+observes and invokes their advertised transitions through the ordinary
+device/reducer path; there is no private state-advance port. Runtime acceptance
+proves that this moves a ready room through countdown expiry and deal, then
+stops at the first player turn. The real Axum/socket acceptance now continues
+past join: two independently signed external policy devices seat, ready, arm
+the countdown, and complete the entire Poche game while the certified service
+devices perform every chance/environment transition. Both player projections
+converge at `PostGame`, with more than 100 externally signed player actions and
+non-empty public history. Persistent-agent convergence with graphical peers,
+chat/governance/spectator/capture CLI commands, and external graphical
+convergence remain.
 
 **Work:**
 
