@@ -1051,7 +1051,7 @@ target\debug\poche.exe --output json puppet run two-player-full-round --surface 
 with multiple players/devices using only exact observations and advertised
 actions, without sleeps or a second semantic engine.
 
-### [ ] 4.2 Drive native evidence through cross-device capture requests
+### [x] 4.2 Drive native evidence through cross-device capture requests
 
 **Completion notes:** Cross-device native evidence now spans six semantic
 checkpoints. `poche.exe puppet run ... --surface native` plays the same
@@ -1071,10 +1071,23 @@ the atomic puppet run. The top-level manifest hashes all semantic and
 graphical files with portable paths. A GPU-gated integration test passes at
 revision 159 with seven converged devices, six ordered windowless captures,
 and no visible automation window. `--show-window` is an explicit native-only
-debug escape hatch. Remaining: decide and exercise main-menu/lobby and
-disconnect/reconnect capture boundaries; the native game adapter currently
-requires a seated game projection and therefore cannot honestly claim those
-states.
+debug escape hatch.
+
+The external carrier now closes the remaining custody/process boundary. A
+public `external-devices-full-game --surface native --seed 74` run used one real
+Axum room for all 131 player commands and six native captures. Alice's agent
+requested exact revisions 9, 11, 12, 15, 19, and terminal 158 from Alice's
+separately certified native sibling. The provider polled the HTTP relay,
+rendered without Winit/a window, wrapped independent artifact keys to the
+requester certificate, uploaded bounded encrypted chunks, and never received a
+filesystem path. Only the requester reconstructed bytes; `poche-capture`
+published them into the v3 puppet manifest/contact sheet. All five external
+devices converged at revision 158 with 138 public events, scores `[69, 44]`,
+history hash
+`c24ee84cc227ab036de3b1a276ace3b54fe5355a40978052cfd50727b3a6db5f`,
+and six inspected PNG/manifest pairs. Main-menu/lobby imagery is explicitly not
+applicable to the seated-game native adapter; reconnect and failure behavior is
+assigned to Task 5.3 rather than weakening this completed capture criterion.
 
 **Work:**
 
@@ -1228,10 +1241,12 @@ commands, with all five devices converged, 138 public-history events, scores
 Alice's browser sibling and Bob's native sibling each took an ordinary game
 turn from their own exact observation, proving state/key takeover is
 unnecessary when another certified device begins acting. The run publishes a
-hashed headless manifest and explicitly does not yet claim graphical pixels or
-external capture transfer. The task therefore remains open for exact shared-
-room browser/Bevy capture and lifecycle/disconnect evidence; it no longer lacks
-the complete external multi-player game.
+hashed headless manifest. A second native-surface run at seed 74 additionally
+proved six exact shared-room Bevy captures and full requester/provider encrypted
+relay custody as recorded under Task 4.2. The task therefore remains open only
+for an exact shared-room browser renderer/capture and lifecycle/disconnect
+evidence; it no longer lacks the complete external multi-player game, sibling
+takeover, or Bevy half of the graphical acceptance.
 
 **Work:**
 

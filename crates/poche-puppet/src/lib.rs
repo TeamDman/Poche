@@ -12,6 +12,7 @@ mod artifacts;
 pub mod browser;
 mod catalog;
 mod external;
+mod external_capture;
 mod native;
 mod scenario;
 

@@ -54,3 +54,59 @@ fn certified_graphical_siblings_take_over_one_complete_hosted_game() {
     );
     assert!(report.steps.iter().all(|step| step.observed_by.len() == 5));
 }
+
+#[test]
+#[ignore = "requires a working GPU backend and full external socket acceptance"]
+fn authorized_native_relay_captures_the_same_hosted_game() {
+    let temporary = tempfile::tempdir().expect("temporary external native artifacts");
+    let report = run(&PuppetRunOptions {
+        scenario: EXTERNAL_DEVICES_FULL_GAME.to_owned(),
+        surface: PuppetSurface::Native,
+        transport: PuppetTransport::HttpLoopback,
+        seed: 74,
+        artifact_root: temporary.path().to_path_buf(),
+        per_action_timeout: Duration::from_secs(10),
+        whole_run_timeout: Duration::from_mins(3),
+        ..PuppetRunOptions::default()
+    })
+    .expect("external native full-game puppet");
+
+    assert_eq!(report.status, "complete");
+    assert_eq!(report.final_room_phase, "post_game");
+    assert_eq!(report.final_revision, 158);
+    assert_eq!(report.public_history_events, 138);
+    assert_eq!(report.captures.len(), 6);
+    assert_eq!(
+        report
+            .captures
+            .iter()
+            .map(|capture| capture.label.as_str())
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([
+            "bidding",
+            "card-selection",
+            "score-sheet",
+            "terminal",
+            "trick-in-progress",
+            "trick-resolved",
+        ])
+    );
+    for capture in &report.captures {
+        assert_eq!(capture.status, "complete");
+        assert!(capture.windowless);
+        assert_eq!(capture.requested_revision, capture.captured_revision);
+        assert_eq!(capture.provider_kind, "native_bevy_external_relay");
+        assert!(capture.transferred_bytes > 0);
+        assert!(capture.transfer_chunks > 0);
+        assert!(std::path::Path::new(&capture.manifest_path).is_file());
+    }
+    assert_eq!(
+        report
+            .captures
+            .iter()
+            .find(|capture| capture.label == "terminal")
+            .expect("terminal capture")
+            .captured_revision,
+        report.final_revision
+    );
+}
