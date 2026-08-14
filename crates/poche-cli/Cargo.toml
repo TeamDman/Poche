@@ -17,6 +17,7 @@ path = "src/main.rs"
 eyre = "=0.6.12"
 facet.workspace = true
 figue.workspace = true
+getrandom.workspace = true
 poche-domain = { path = "../poche-domain" }
 poche-native-ui = { path = "../poche-native-ui" }
 poche-player-client = { path = "../poche-player-client", features = ["http", "protected-store"] }

@@ -7,6 +7,7 @@ pub mod desktop;
 pub mod device;
 pub mod game;
 pub mod identity;
+pub(crate) mod live_device;
 pub mod output;
 pub mod puppet;
 pub mod room;
@@ -40,8 +41,12 @@ pub struct GlobalArgs {
     pub log_filter: Option<String>,
     #[facet(args::named)]
     pub log_file: Option<String>,
+    #[facet(args::named)]
+    pub endpoint: Option<String>,
     #[facet(args::named, default)]
     pub output: OutputFormat,
+    #[facet(args::named)]
+    pub profile: Option<String>,
     #[facet(args::named)]
     pub stop_after_ms: Option<u64>,
 }
@@ -245,6 +250,7 @@ mod tests {
         let error = parse_args([
             "room".to_owned(),
             "join".to_owned(),
+            "room-1".to_owned(),
             secret.to_owned(),
             "extra".to_owned(),
         ])
@@ -258,8 +264,8 @@ mod tests {
     fn every_declared_command_round_trips_through_the_schema() {
         let cases: &[(&[&str], (&str, &str))] = &[
             (&["desktop"], ("desktop", "launch")),
-            (&["room", "host"], ("room", "host")),
-            (&["room", "join", "invite"], ("room", "join")),
+            (&["room", "host", "room-1"], ("room", "host")),
+            (&["room", "join", "room-1", "invite"], ("room", "join")),
             (&["room", "show", "r"], ("room", "show")),
             (&["room", "ready", "r"], ("room", "ready")),
             (&["room", "unready", "r"], ("room", "unready")),

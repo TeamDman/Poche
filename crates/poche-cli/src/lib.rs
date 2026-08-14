@@ -63,8 +63,15 @@ pub fn run_from(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
                 command_action = action,
                 "command parsed"
             );
+            let live_config = cli::live_device::LiveDeviceConfig::from_global(&parsed.global);
             let emitted = match parsed.command {
                 cli::Command::Desktop(command) => command.invoke()?,
+                cli::Command::Room(command) => {
+                    command.invoke(&live_config, parsed.global.output)?
+                }
+                cli::Command::Game(command) => {
+                    command.invoke(&live_config, parsed.global.output)?
+                }
                 cli::Command::Transcript(command) => command.invoke(parsed.global.output)?,
                 cli::Command::Governance(command) => command.invoke(parsed.global.output)?,
                 cli::Command::Identity(command) => command.invoke(parsed.global.output)?,

@@ -841,6 +841,20 @@ only redacted public summaries. Memory-vault tests cover collision,
 authentication, signing, traversal-shaped labels, secret mismatch, and public
 file scanning; a Windows-only vault probe stores, reads, and deletes its test
 credential.
+The public Figue layer now also executes certified HTTP behavior instead of
+returning parse-only receipts: global `--endpoint` and `--profile` select a
+transport/profile, `room host|show|ready|unready|countdown|abort|pause|resume|
+leave|close`, and `game observe|actions|bid|play-card` resolve current
+advertised controls and submit signed actions. `room host` now requires the
+explicit room ID. Joining uses a device-signed discovery request that binds the
+exact bearer invite; an unknown principal without that proof receives no join
+action, invites are invalid on waits/pending bootstrap, and the transport
+clears the proof after committed redemption. HTTP request IDs now carry a
+random per-transport namespace so a restarted process cannot collide with an
+earlier exact-retry cache. A real Axum test covers hidden-without-proof,
+invite-bound discovery, committed join, and the joined exact-recipient lobby.
+Persistent agent execution, chat/governance/spectator/capture CLI commands,
+and external graphical convergence remain.
 
 **Work:**
 

@@ -18,9 +18,9 @@ use poche_player_client::{
 use poche_protocol::{
     CaptureProviderAdvertisementWire, CommandPayload, CorrelationId, CountdownToken,
     DeviceActionWire, DeviceCertificateWire, DeviceId, DeviceObservationRequestWire, EventId,
-    GameActionWire, InviteProof, MemberProjection, PROTOCOL_VERSION_V1, ProjectionEnvelope,
-    ProjectionId, ProjectionPayload, RoomId, RoomPhase, SIGNATURE_DOMAIN_V1, SemanticHash,
-    SignatureAlgorithm, SignatureBytes, SignatureMetadata,
+    GameActionWire, InviteProof, MemberProjection, PROTOCOL_VERSION_V1, PrincipalId,
+    ProjectionEnvelope, ProjectionId, ProjectionPayload, RoomId, RoomPhase, SIGNATURE_DOMAIN_V1,
+    SemanticHash, SignatureAlgorithm, SignatureBytes, SignatureMetadata,
     canonical_capture_provider_advertisement_bytes, canonical_capture_request_bytes,
     canonical_capture_response_bytes, canonical_device_action_bytes,
     canonical_device_certificate_bytes, canonical_device_observation_request_bytes,
@@ -593,6 +593,33 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
             .ok()
             .map(|shared| shared.authority.state.room_id.clone())
     }
+
+    /// Check membership by stable player root without projecting private state.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport unavailable if the shared authority lock is poisoned.
+    pub fn player_is_member(&self, player: &PrincipalId) -> Result<bool, DeviceClientError> {
+        let shared = self
+            .shared
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        Ok(shared.authority.state.member(player).is_some())
+    }
+
+    /// Check a bearer proof against current hashed room invite records without
+    /// exposing a verifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns transport unavailable if the shared authority lock is poisoned.
+    pub fn accepts_invite(&self, invite: &InviteProof) -> Result<bool, DeviceClientError> {
+        let shared = self
+            .shared
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        Ok(shared.authority.state.accepts_invite(invite))
+    }
 }
 
 struct CachedRemoteObservation {
@@ -656,9 +683,17 @@ where
             };
         }
         self.validate_room_epoch(&request.room_id, request.session_epoch)?;
+        let is_member = self.adapter.player_is_member(&request.player_id)?;
+        match (&request.join_invite, is_member) {
+            (Some(_), true) => return Err(DeviceClientError::ProtocolViolation),
+            (Some(invite), false) if !self.adapter.accepts_invite(invite)? => {
+                return Err(DeviceClientError::AuthorizationDenied);
+            }
+            _ => {}
+        }
         let profile = self.ensure_enrolled(&request.certificate)?;
         let mut adapter = self.adapter.clone();
-        let observation = match request.mode {
+        let mut observation = match request.mode {
             poche_protocol::DeviceObservationModeWire::Snapshot => {
                 adapter.observe(&profile, &request.room_id)?
             }
@@ -666,6 +701,27 @@ where
                 adapter.wait(&profile, &request.room_id, after_revision)?
             }
         };
+        if let Some(invite) = &request.join_invite {
+            observation.actions.retain(|action| {
+                !matches!(&action.payload, CommandPayload::RedeemInvite { .. })
+                    || matches!(
+                        &action.payload,
+                        CommandPayload::RedeemInvite { invite: advertised }
+                            if advertised == invite
+                    )
+            });
+            if !observation
+                .actions
+                .iter()
+                .any(|action| matches!(&action.payload, CommandPayload::RedeemInvite { .. }))
+            {
+                return Err(DeviceClientError::ProtocolViolation);
+            }
+        } else {
+            observation
+                .actions
+                .retain(|action| !matches!(&action.payload, CommandPayload::RedeemInvite { .. }));
+        }
         if self.observation_cache.len() >= 256 {
             let oldest = self.observation_cache.keys().next().cloned();
             if let Some(oldest) = oldest {

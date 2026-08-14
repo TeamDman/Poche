@@ -107,6 +107,29 @@ pub fn sign_observation_request(
     mode: DeviceObservationModeWire,
     signer: &impl DeviceSigner,
 ) -> Result<DeviceObservationRequestWire, DeviceClientError> {
+    sign_observation_request_with_invite(
+        profile,
+        room_id,
+        session_epoch,
+        request_id,
+        mode,
+        None,
+        signer,
+    )
+}
+
+/// Sign an immediate discovery request that binds a caller-supplied invite.
+/// The ordinary helper above never carries bearer material, and validation
+/// rejects invites on waits or pending-room bootstrap reads.
+pub fn sign_observation_request_with_invite(
+    profile: &DeviceProfile,
+    room_id: &RoomId,
+    session_epoch: u64,
+    request_id: poche_protocol::CorrelationId,
+    mode: DeviceObservationModeWire,
+    join_invite: Option<poche_protocol::InviteProof>,
+    signer: &impl DeviceSigner,
+) -> Result<DeviceObservationRequestWire, DeviceClientError> {
     profile.validate()?;
     let unsigned = UnsignedDeviceObservationRequestWire {
         schema_version: DEVICE_ACTION_SCHEMA_VERSION_V1,
@@ -117,6 +140,7 @@ pub fn sign_observation_request(
         player_id: profile.player_id.clone(),
         device_id: profile.device_id.clone(),
         mode,
+        join_invite,
         signature_intent: DeviceSignatureIntentWire {
             domain_version: DEVICE_ACTION_SIGNATURE_DOMAIN_V1,
             algorithm: SignatureAlgorithm::Ed25519,

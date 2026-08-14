@@ -3,8 +3,8 @@ use core::fmt;
 use facet::Facet;
 use poche_protocol::{
     ChanceWire, CommandId, CommandKind, CommandPayload, CorrelationId, CountdownToken, DenyReason,
-    GameActionWire, GamePublicStateWire, PolicyId, PrincipalId, PublicGameEventWire, RoomId,
-    SemanticHash,
+    GameActionWire, GamePublicStateWire, InviteProof, PolicyId, PrincipalId, PublicGameEventWire,
+    RoomId, SemanticHash,
 };
 
 use crate::PolicyDecision;
@@ -466,6 +466,19 @@ impl<G> SessionState<G> {
     #[must_use]
     pub fn seat_owner(&self, seat: u8) -> Option<&MemberState> {
         self.members.iter().find(|member| member.seat == Some(seat))
+    }
+
+    /// Return whether one bearer invite can currently admit a new principal.
+    /// The verifier remains hashed/redacted and callers receive only a boolean.
+    #[must_use]
+    pub fn accepts_invite(&self, invite: &InviteProof) -> bool {
+        self.members.len() < MAX_MEMBERS
+            && self.invites.iter().any(|record| {
+                record.matches(invite.expose())
+                    && !record.consumed
+                    && !record.revoked
+                    && self.revision <= record.expires_after_revision
+            })
     }
 
     /// Derive a principal kind from authority state rather than a wire claim.

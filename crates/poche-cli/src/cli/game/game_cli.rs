@@ -67,6 +67,46 @@ impl GameArgs {
             GameCommand::Observe { .. } | GameCommand::Actions { .. } => None,
         }
     }
+
+    /// Execute observation/action queries and typed game actions through one
+    /// certified external device client.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted profile, transport, observation, action, or output
+    /// error.
+    pub fn invoke(
+        self,
+        config: &crate::cli::live_device::LiveDeviceConfig,
+        output: crate::cli::output::OutputFormat,
+    ) -> eyre::Result<bool> {
+        match self.command {
+            GameCommand::Observe { room } => config.observe(&room, 1, output),
+            GameCommand::Actions { room } => config.actions(&room, 1, output),
+            GameCommand::Bid { room, tricks } => config.invoke_payload(
+                &room,
+                1,
+                &poche_protocol::CommandPayload::GameAction {
+                    action: GameActionWire::Bid { tricks },
+                },
+                "game-bid",
+                output,
+            ),
+            GameCommand::PlayCard { room, card } => {
+                let card = parse_card_name(&card)
+                    .map_err(|_| eyre::eyre!("card must be a canonical rank-suit name"))?;
+                config.invoke_payload(
+                    &room,
+                    1,
+                    &poche_protocol::CommandPayload::GameAction {
+                        action: GameActionWire::Play { card: card.code() },
+                    },
+                    "game-play",
+                    output,
+                )
+            }
+        }
+    }
 }
 
 #[cfg(test)]

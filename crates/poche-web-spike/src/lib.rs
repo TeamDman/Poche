@@ -1163,9 +1163,9 @@ mod tests {
         DeviceClientError, DeviceProfile, DeviceSigner, HttpDeviceTransport, PlayerDeviceClient,
     };
     use poche_protocol::{
-        CertificateId, CommandId, DeviceCapabilityWire, DeviceCustodyWire, DeviceId, PrincipalId,
-        REPLICATION_SCHEMA_VERSION_V1, REPLICATION_SIGNATURE_DOMAIN_V1, RoomId, SignatureAlgorithm,
-        SignatureBytes, SignatureIntent, UnsignedDeviceCertificateWire,
+        CertificateId, CommandId, DeviceCapabilityWire, DeviceCustodyWire, DeviceId, InviteProof,
+        PrincipalId, REPLICATION_SCHEMA_VERSION_V1, REPLICATION_SIGNATURE_DOMAIN_V1, RoomId,
+        SignatureAlgorithm, SignatureBytes, SignatureIntent, UnsignedDeviceCertificateWire,
         canonical_device_certificate_bytes,
     };
 
@@ -1189,14 +1189,14 @@ mod tests {
         })
     }
 
-    fn certified_http_profile() -> DeviceProfile {
-        let root = SigningKey::from_bytes(&[51; 32]);
-        let device = SigningKey::from_bytes(&[52; 32]);
+    fn certified_http_profile(label: &str, root_seed: u8, device_seed: u8) -> DeviceProfile {
+        let root = SigningKey::from_bytes(&[root_seed; 32]);
+        let device = SigningKey::from_bytes(&[device_seed; 32]);
         let player_id = PrincipalId::new(hex(&root.verifying_key().to_bytes())).unwrap();
         let device_id = DeviceId::new(hex(&device.verifying_key().to_bytes())).unwrap();
         let unsigned = UnsignedDeviceCertificateWire {
             schema_version: REPLICATION_SCHEMA_VERSION_V1,
-            certificate_id: CertificateId::new("web-http-client").unwrap(),
+            certificate_id: CertificateId::new(format!("web-http-{label}")).unwrap(),
             player_id: player_id.clone(),
             device_id: device_id.clone(),
             device_signing_public_key: device_id.as_str().to_owned(),
@@ -1220,11 +1220,11 @@ mod tests {
         .unwrap();
         DeviceProfile {
             schema_version: DeviceProfile::SCHEMA_VERSION_V1,
-            label: "web-http-client".to_owned(),
+            label: label.to_owned(),
             player_id,
             device_id,
             certificate: unsigned.attach_signature(signature).unwrap(),
-            signing_key_handle: "test-protected:web-http-client".to_owned(),
+            signing_key_handle: format!("test-protected:{label}"),
         }
     }
 
@@ -1553,7 +1553,7 @@ mod tests {
                 .expect("certified device test server");
         });
 
-        let profile = certified_http_profile();
+        let profile = certified_http_profile("host", 51, 52);
         let transport = HttpDeviceTransport::new(
             format!("http://{address}"),
             0,
@@ -1584,6 +1584,50 @@ mod tests {
         assert!(lobby.action("room-close").is_some());
         let waited = client.wait(&room_id, 0).expect("strictly later view");
         assert_eq!(waited.projection.current_revision, 1);
+
+        let hidden_join_profile = certified_http_profile("guest", 53, 54);
+        let hidden_join_transport = HttpDeviceTransport::new(
+            format!("http://{address}"),
+            1,
+            TestHttpSigner(SigningKey::from_bytes(&[54; 32])),
+        )
+        .expect("guest transport without invite");
+        let mut hidden_join_client =
+            PlayerDeviceClient::new(hidden_join_profile.clone(), hidden_join_transport).unwrap();
+        let public_only = hidden_join_client
+            .observe(&room_id)
+            .expect("nonmember public discovery");
+        assert!(public_only.action("room-join").is_none());
+
+        let guest_transport = HttpDeviceTransport::new(
+            format!("http://{address}"),
+            1,
+            TestHttpSigner(SigningKey::from_bytes(&[54; 32])),
+        )
+        .expect("guest transport")
+        .with_join_invite(InviteProof::new("certified-device-join-v1").unwrap());
+        let mut guest = PlayerDeviceClient::new(hidden_join_profile, guest_transport).unwrap();
+        let discovered = guest
+            .observe(&room_id)
+            .expect("invite-bound room discovery");
+        assert_eq!(discovered.actions.len(), 1);
+        assert_eq!(discovered.actions[0].id, "room-join");
+        let joined = guest
+            .invoke(
+                &discovered,
+                "room-join",
+                CommandId::new("http-join-room").unwrap(),
+            )
+            .expect("signed invite redemption");
+        assert!(matches!(
+            joined,
+            poche_player_client::DeviceActionResult::Committed { revision: 2, .. }
+        ));
+        let guest_lobby = guest
+            .observe(&room_id)
+            .expect("joined exact-recipient view");
+        assert_eq!(guest_lobby.projection.current_revision, 2);
+        assert!(guest_lobby.action("room-take-seat-0").is_some());
 
         server.abort();
         let _ = server.await;

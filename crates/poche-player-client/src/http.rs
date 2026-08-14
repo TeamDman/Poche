@@ -7,14 +7,14 @@
 use std::{io::Read as _, time::Duration};
 
 use poche_protocol::{
-    CorrelationId, DeviceCertificateWire, DeviceId, DeviceObservationModeWire, RoomId,
+    CorrelationId, DeviceCertificateWire, DeviceId, DeviceObservationModeWire, InviteProof, RoomId,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
     DeviceActionRequest, DeviceActionResult, DeviceClientError, DeviceCooperationRequest,
     DeviceCooperationResult, DeviceObservation, DeviceProfile, DeviceSigner, DeviceTransport,
-    sign_observation_request,
+    sign_observation_request, sign_observation_request_with_invite,
 };
 
 const MAX_HTTP_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
@@ -36,7 +36,9 @@ pub struct HttpDeviceTransport<S> {
     session_epoch: u64,
     signer: S,
     agent: ureq::Agent,
+    request_namespace: String,
     next_request: u64,
+    join_invite: Option<InviteProof>,
 }
 
 impl<S> HttpDeviceTransport<S> {
@@ -56,6 +58,8 @@ impl<S> HttpDeviceTransport<S> {
         if !valid_endpoint(&endpoint) {
             return Err(DeviceClientError::InvalidProfile);
         }
+        let mut namespace = [0_u8; 16];
+        getrandom::fill(&mut namespace).map_err(|_| DeviceClientError::KeyUnavailable)?;
         Ok(Self {
             endpoint: endpoint.trim_end_matches('/').to_owned(),
             session_epoch,
@@ -65,7 +69,13 @@ impl<S> HttpDeviceTransport<S> {
                 .timeout_read(Duration::from_secs(35))
                 .timeout_write(Duration::from_secs(10))
                 .build(),
+            request_namespace: namespace.iter().fold(String::new(), |mut output, byte| {
+                use std::fmt::Write as _;
+                let _ = write!(output, "{byte:02x}");
+                output
+            }),
             next_request: 0,
+            join_invite: None,
         })
     }
 
@@ -84,10 +94,18 @@ impl<S> HttpDeviceTransport<S> {
         self.session_epoch = session_epoch;
     }
 
+    /// Bind one bearer invite into the next signed immediate observation.
+    /// It is cleared after a committed join and is never sent on waits.
+    #[must_use]
+    pub fn with_join_invite(mut self, join_invite: InviteProof) -> Self {
+        self.join_invite = Some(join_invite);
+        self
+    }
+
     fn request_id(&mut self) -> Result<CorrelationId, DeviceClientError> {
         let sequence = self.next_request;
         self.next_request = self.next_request.saturating_add(1);
-        CorrelationId::new(format!("device-http-{sequence}"))
+        CorrelationId::new(format!("device-http-{}-{sequence}", self.request_namespace))
             .map_err(|_| DeviceClientError::ProtocolViolation)
     }
 
@@ -128,12 +146,13 @@ impl<S: DeviceSigner> DeviceTransport for HttpDeviceTransport<S> {
         room_id: &RoomId,
     ) -> Result<DeviceObservation, DeviceClientError> {
         let request_id = self.request_id()?;
-        let request = sign_observation_request(
+        let request = sign_observation_request_with_invite(
             profile,
             room_id,
             self.session_epoch,
             request_id,
             DeviceObservationModeWire::Snapshot,
+            self.join_invite.clone(),
             &self.signer,
         )?;
         self.post("/device/v1/observe", &request)
@@ -146,10 +165,17 @@ impl<S: DeviceSigner> DeviceTransport for HttpDeviceTransport<S> {
     ) -> Result<DeviceActionResult, DeviceClientError> {
         let bootstrap = request.session_epoch == 0
             && matches!(request.payload, poche_protocol::CommandPayload::CreateRoom);
+        let joins = matches!(
+            request.payload,
+            poche_protocol::CommandPayload::RedeemInvite { .. }
+        );
         let signed = request.sign(profile, &self.signer)?;
         let result = self.post("/device/v1/invoke", &signed)?;
         if bootstrap && matches!(result, DeviceActionResult::Committed { .. }) {
             self.session_epoch = 1;
+        }
+        if joins && matches!(result, DeviceActionResult::Committed { .. }) {
+            self.join_invite = None;
         }
         Ok(result)
     }

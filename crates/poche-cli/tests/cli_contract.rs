@@ -69,11 +69,12 @@ fn debug_and_ndjson_logs_never_copy_invite_material() {
             "json",
             "room",
             "join",
+            "room-1",
             invite,
         ])
         .output()
         .expect("poche process should start");
-    assert!(output.status.success());
+    assert!(!output.status.success());
     let ndjson = std::fs::read_to_string(&log_path).expect("NDJSON log should exist");
     let combined = format!(
         "{}{}{}",

@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     CommandId, CommandPayload, CorrelationId, DeviceCapabilityWire, DeviceCertificateWire,
-    DeviceId, DeviceSignatureIntentWire, DeviceSignatureMetadataWire, PrincipalId, RoomId,
-    SemanticHash, SignatureAlgorithm, SignatureBytes,
+    DeviceId, DeviceSignatureIntentWire, DeviceSignatureMetadataWire, InviteProof, PrincipalId,
+    RoomId, SemanticHash, SignatureAlgorithm, SignatureBytes,
 };
 
 pub const DEVICE_ACTION_SCHEMA_VERSION_V1: u16 = 1;
@@ -223,6 +223,8 @@ pub struct UnsignedDeviceObservationRequestWire {
     pub player_id: PrincipalId,
     pub device_id: DeviceId,
     pub mode: DeviceObservationModeWire,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub join_invite: Option<InviteProof>,
     pub signature_intent: DeviceSignatureIntentWire,
 }
 
@@ -236,12 +238,20 @@ impl UnsignedDeviceObservationRequestWire {
         }
         let bootstrap = self.session_epoch == 0
             && matches!(self.mode, DeviceObservationModeWire::Snapshot)
+            && self.join_invite.is_none()
             && self.certificate.valid_from_membership_epoch == 1;
+        let valid_join_discovery = self.join_invite.as_ref().is_none_or(|invite| {
+            self.session_epoch > 0
+                && matches!(self.mode, DeviceObservationModeWire::Snapshot)
+                && !invite.expose().is_empty()
+                && invite.expose().len() <= 256
+        });
         if !self.room_id.validate()
             || !self.request_id.validate()
             || self.player_id != self.certificate.player_id
             || self.device_id != self.certificate.device_id
             || (!bootstrap && !self.certificate.is_valid_at(self.session_epoch))
+            || !valid_join_discovery
             || !self
                 .certificate
                 .has_capability(DeviceCapabilityWire::ReceivePrivateProjection)
@@ -274,6 +284,7 @@ impl UnsignedDeviceObservationRequestWire {
             player_id: self.player_id,
             device_id: self.device_id,
             mode: self.mode,
+            join_invite: self.join_invite,
             signature: DeviceSignatureMetadataWire {
                 domain_version: self.signature_intent.domain_version,
                 algorithm: self.signature_intent.algorithm,
@@ -296,6 +307,8 @@ pub struct DeviceObservationRequestWire {
     pub player_id: PrincipalId,
     pub device_id: DeviceId,
     pub mode: DeviceObservationModeWire,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub join_invite: Option<InviteProof>,
     pub signature: DeviceSignatureMetadataWire,
 }
 
@@ -319,6 +332,7 @@ impl DeviceObservationRequestWire {
             player_id: self.player_id.clone(),
             device_id: self.device_id.clone(),
             mode: self.mode,
+            join_invite: self.join_invite.clone(),
             signature_intent: self.signature.intent(),
         }
     }
@@ -452,6 +466,7 @@ mod tests {
             player_id: action.player_id,
             device_id: action.device_id.clone(),
             mode: DeviceObservationModeWire::Snapshot,
+            join_invite: None,
             signature_intent: DeviceSignatureIntentWire {
                 domain_version: DEVICE_ACTION_SIGNATURE_DOMAIN_V1,
                 algorithm: SignatureAlgorithm::Ed25519,
@@ -469,7 +484,16 @@ mod tests {
         ];
         assert!(allowed.validate().is_ok());
         let snapshot = canonical_device_observation_request_bytes(&allowed).unwrap();
+        allowed.join_invite = Some(InviteProof::new("join-secret").unwrap());
+        let joined = canonical_device_observation_request_bytes(&allowed).unwrap();
+        assert_ne!(joined, snapshot);
         allowed.mode = DeviceObservationModeWire::Wait { after_revision: 7 };
+        assert_eq!(
+            allowed.validate(),
+            Err(DeviceActionWireError::InvalidBinding),
+            "invite material is valid only on a signed immediate discovery request"
+        );
+        allowed.join_invite = None;
         assert_ne!(
             canonical_device_observation_request_bytes(&allowed).unwrap(),
             snapshot

@@ -11,7 +11,7 @@ description = "Transport-neutral exact-recipient Poche device client"
 
 [features]
 default = []
-http = ["dep:serde_json", "dep:ureq"]
+http = ["dep:getrandom", "dep:serde_json", "dep:ureq"]
 protected-store = [
     "dep:directories",
     "dep:ed25519-dalek",
