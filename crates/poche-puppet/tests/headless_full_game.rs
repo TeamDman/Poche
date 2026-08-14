@@ -40,6 +40,7 @@ fn certified_devices_complete_and_witness_the_full_game() {
     let artifact_directory = std::path::Path::new(&report.artifact_directory);
     assert!(artifact_directory.join("run.json").is_file());
     assert!(artifact_directory.join("steps.ndjson").is_file());
+    assert!(artifact_directory.join("lifecycle.ndjson").is_file());
     assert!(artifact_directory.join("manifest.json").is_file());
     assert!(artifact_directory.join("index.html").is_file());
     assert!(temporary.path().join("catalog.json").is_file());

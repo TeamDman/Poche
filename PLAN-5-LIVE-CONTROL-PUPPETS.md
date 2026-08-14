@@ -3,12 +3,12 @@
 **Plan ID:** `poche-phase-5-live-control-puppets`
 **Plan status:** Execution in progress
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
-**Last updated:** 2026-08-13 (America/Toronto)
+**Last updated:** 2026-08-14 (America/Toronto)
 **Intent audit:** Passed 2026-08-12 against the available original Poche/SFM,
 desktop, browser, CLI, computer-player, multi-device, capture, puppet, Figue,
 Veilid, and planning instructions in this task
-**Current implementation focus:** Task 3.2; close the remaining executable
-certified-device governance/cancellation commands before parity acceptance
+**Current implementation focus:** Task 3.3; close player-deduplicated vote-lock
+safety and entry-point parity before the broader Task 5.3 failure matrix
 
 ## How to update this plan
 
@@ -858,9 +858,9 @@ and peer-observation behavior is exercised by the focused live-device tests.
 human actions are visible elsewhere, and a certified sibling device obtains a
 validated captioned capture without Bevy owning file layout or game semantics.
 
-### [~] 3.2 Connect CLI commands and deterministic agents as real devices
+### [x] 3.2 Connect CLI commands and deterministic agents as real devices
 
-**Completion notes:** In progress. The shared player-device client now resolves
+**Completion notes:** Complete. The shared player-device client now resolves
 typed convenience payloads only by finding exactly one matching action in the
 current advertised action set; unavailable actions fail and duplicate semantic
 matches are a protocol violation. It also owns reusable `first-legal` and
@@ -874,10 +874,8 @@ HTTP device adapter and the Axum `/device/v1/observe` plus
 `/device/v1/invoke` endpoints now exercise a real process/socket boundary. A
 real ephemeral-server test signs a pending observation, invokes advertised
 room creation, crosses into epoch one, observes the lobby, performs a
-strictly-later wait, and proves exact retry behavior. Remaining: connect this
-transport to the public Figue execution surface; implement
-chat/governance/spectator and capture commands; and run the persistent agent
-loop against graphical peers. Protected persistence is now concrete:
+strictly-later wait, and proves exact retry behavior. Protected persistence is
+now concrete:
 `poche-player-client` stores root/device Ed25519 secrets only in the platform
 credential vault (Windows Credential Manager on the acceptance platform),
 persists authenticated root/certificate metadata separately, and implements
@@ -915,8 +913,11 @@ past join: two independently signed external policy devices seat, ready, arm
 the countdown, and complete the entire Poche game while the certified service
 devices perform every chance/environment transition. Both player projections
 converge at `PostGame`, with more than 100 externally signed player actions and
-non-empty public history. Persistent-agent convergence with graphical peers,
-governance/capture CLI commands, and external graphical convergence remain.
+non-empty public history. The catalogued external-device puppet closes
+graphical convergence through that same client: policy devices, Alice's
+browser sibling, and Bob's native sibling all take ordinary advertised actions
+against one hosted authority and converge at revision 160. This proves the
+policy seam needs neither local-process control nor renderer-owned mutation.
 Parameterized chat is no longer an unadvertised renderer exception: exact
 device observations carry a bounded `chat-send` template, clients can prepare
 only a nonempty protocol-sized chat payload from that template, and the
@@ -941,6 +942,10 @@ user-visible artifact; durable resume and explicit cancellation remain Task
 5.3. Room `take-seat|release-seat` commands expose the real seated-view
 prerequisite. The real socket test and protected-profile proof in Task 3.1
 cover provider discovery and complete native artifact delivery.
+Together these executable room/game/chat/spectator/capture commands,
+deterministic policy loop, and hosted graphical acceptance satisfy this task's
+completion boundary. Durable transfer resume/cancellation and vote-lock safety
+remain explicitly assigned to Tasks 5.3 and 3.3.
 
 **Work:**
 
@@ -971,7 +976,7 @@ Update argument ordering to the final Figue schema before completion.
 devices observe the results, and a CLI device requests/receives/saves a sibling
 device capture through shared code.
 
-### [ ] 3.3 Prove GUI, CLI, and policy parity plus vote-lock safety
+### [~] 3.3 Prove GUI, CLI, and policy parity plus vote-lock safety
 
 **Completion notes:** In progress. `PlayerDeviceClient::prepare` is now the
 pure canonical request seam beneath invocation, and `prepare_payload` first
@@ -1229,11 +1234,10 @@ compare target-device views, and understand what each artifact proves and omits.
 
 ## Phase 5 — prove complete behavior and failure boundaries
 
-### [ ] 5.1 Run the complete external-device vertical slice
+### [x] 5.1 Run the complete external-device vertical slice
 
-**Completion notes:** Preparatory external-boundary evidence is complete, but
-the task remains unchecked until the multi-player graphical acceptance run.
-The real Axum listener and HTTP device adapter now prove signed
+**Completion notes:** Complete. The real Axum listener and HTTP device adapter
+prove signed
 observe/invoke/wait plus idempotent retry over a process-shaped socket
 boundary, using the same advertised action resolver and authoritative reducer
 as loopback devices. The new catalogued `external-devices-full-game` scenario
@@ -1260,10 +1264,36 @@ wrapped relay. The run reached revision 158 after 131 commands with scores
 and six exact-revision captures, all `windowless=true`. Image-tool inspection
 confirmed the card-selection PNG is a nonblank production tabletop view.
 Browser launch uses `--headless=new` and Windows `CREATE_NO_WINDOW`; normal
-human desktop launch remains windowed. The task therefore remains open only
-for explicit lifecycle/disconnect/rejoin evidence; it no longer lacks the
-complete external multi-player game, sibling takeover, or either graphical
-half of the acceptance.
+human desktop launch remains windowed.
+
+The final lifecycle slice is now part of every external run. Bob's agent route
+disconnects without changing room revision while Bob's native route remains;
+losing that final route commits exactly one public membership disconnect. Both
+devices then rebind without silently regaining player authority, receive a
+public-only observation whose sole action is the ordinary `room-reconnect`
+control, and Bob's native sibling invokes that advertised action before play
+continues. The route request has its own signed domain, exact
+room/session/profile/operation binding, replay cache, and no key movement.
+`lifecycle.ndjson` records all four transitions beside `steps.ndjson` and the
+verified manifest.
+
+Fresh public-CLI runs on 2026-08-14 proved the complete path on all three
+surfaces. Headless seed 80 reached revision 160 after 132 actions with four
+lifecycle transitions and history hash
+`6b4e1afa24b4b3dc65f083f3c58e6d96dde03d108492563873a3c5cefa87a4e3`.
+Native seed 83 reached revision 160, scores `[61, 68]`, and emitted six real
+1280x800 Bevy image-target captures with history hash
+`03e13923c0bddf52c03655084d36c134ee93eff29c52cf52e4001e00ad04b6ab`.
+During the live run Windows reported `poche.exe` `MainWindowHandle = 0`;
+image-tool inspection confirmed the bidding PNG was nonblank. Web seed 84
+reached revision 160, scores `[24, 41]`, and emitted six four-representation
+headless-browser captures with history hash
+`0e5da78f72f117f109b46ded8fcb80e3adff00ffe92f12ccf03bb2001b1aaa96`.
+Every newly launched Edge and Poche process sampled during that run had a zero
+main-window handle. Native launch configuration now represents
+`InteractiveWindow` and `WindowlessImage` as distinct typed modes; puppet and
+capture-provider paths select the latter, while only explicit `--show-window`
+debugging selects the former.
 
 **Work:**
 

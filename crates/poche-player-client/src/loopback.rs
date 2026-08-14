@@ -4,7 +4,7 @@
 
 //! Deterministic no-socket adapter for CI, headless play, and puppet tests.
 
-use poche_protocol::{DeviceId, RoomId};
+use poche_protocol::{DeviceId, DeviceRouteOperationWire, DeviceRouteResultWire, RoomId};
 
 use crate::{
     DeviceActionRequest, DeviceActionResult, DeviceClientError, DeviceCooperationRequest,
@@ -33,6 +33,13 @@ pub trait LoopbackDeviceAuthority {
         room_id: &RoomId,
         after_revision: u64,
     ) -> Result<DeviceObservation, DeviceClientError>;
+
+    fn route(
+        &mut self,
+        profile: &DeviceProfile,
+        room_id: &RoomId,
+        operation: DeviceRouteOperationWire,
+    ) -> Result<DeviceRouteResultWire, DeviceClientError>;
 
     fn cooperate(
         &mut self,
@@ -89,6 +96,15 @@ impl<A: LoopbackDeviceAuthority> DeviceTransport for LoopbackDeviceTransport<A> 
         after_revision: u64,
     ) -> Result<DeviceObservation, DeviceClientError> {
         self.authority.wait(profile, room_id, after_revision)
+    }
+
+    fn route(
+        &mut self,
+        profile: &DeviceProfile,
+        room_id: &RoomId,
+        operation: DeviceRouteOperationWire,
+    ) -> Result<DeviceRouteResultWire, DeviceClientError> {
+        self.authority.route(profile, room_id, operation)
     }
 
     fn cooperate(

@@ -646,6 +646,15 @@ struct AcceptanceReport {
 
 /// Typed launch options shared by the standalone development binary and the
 /// unified `poche desktop` command.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NativeRenderMode {
+    /// Ordinary human-operated desktop window backed by the OS swapchain.
+    #[default]
+    InteractiveWindow,
+    /// GPU-backed image target with no primary window or Winit event loop.
+    WindowlessImage,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct NativeUiLaunchOptions {
     pub play_card: Option<String>,
@@ -653,10 +662,10 @@ pub struct NativeUiLaunchOptions {
     pub acceptance_report: Option<PathBuf>,
     pub exit_after_seconds: Option<f64>,
     pub debug_overlay: bool,
-    /// Render automation/capture workers to an image without creating an OS
-    /// window. This is intentionally separate from ordinary interactive
-    /// desktop launch, which remains windowed.
-    pub hidden_window: bool,
+    /// Select the render destination explicitly. Puppet and capture workers
+    /// use [`NativeRenderMode::WindowlessImage`]; ordinary desktop launch uses
+    /// [`NativeRenderMode::InteractiveWindow`].
+    pub render_mode: NativeRenderMode,
     /// Optional exact-target provider handle owned by this graphical device.
     pub capture_provider: Option<NativeCaptureProvider>,
     /// Exact live projection identity rendered by this window.
@@ -682,15 +691,14 @@ enum NativeRenderSurface {
 }
 
 impl NativeRenderSurface {
-    const fn from_automation(hidden_window: bool) -> Self {
-        if hidden_window {
-            Self::Windowless {
+    const fn from_mode(mode: NativeRenderMode) -> Self {
+        match mode {
+            NativeRenderMode::WindowlessImage => Self::Windowless {
                 width: AUTOMATION_RENDER_WIDTH,
                 height: AUTOMATION_RENDER_HEIGHT,
                 target: None,
-            }
-        } else {
-            Self::Windowed
+            },
+            NativeRenderMode::InteractiveWindow => Self::Windowed,
         }
     }
 
@@ -823,7 +831,7 @@ fn run_with_live_device(
         acceptance_report,
         exit_after_seconds,
         debug_overlay,
-        hidden_window,
+        render_mode,
         capture_provider,
         capture_context,
         external_tracing,
@@ -865,8 +873,9 @@ fn run_with_live_device(
     let debug_overlay = DebugOverlay {
         enabled: acceptance.debug_overlay,
     };
-    let render_surface = NativeRenderSurface::from_automation(hidden_window);
-    let window_plugin = if hidden_window {
+    let windowless = render_mode == NativeRenderMode::WindowlessImage;
+    let render_surface = NativeRenderSurface::from_mode(render_mode);
+    let window_plugin = if windowless {
         WindowPlugin {
             primary_window: None,
             exit_condition: ExitCondition::DontExit,
@@ -883,7 +892,7 @@ fn run_with_live_device(
         }
     };
     let mut default_plugins = DefaultPlugins.set(window_plugin);
-    if hidden_window {
+    if windowless {
         // Winit is the OS-window/event-loop integration. Windowless workers
         // own a GPU image target and a bounded schedule runner instead. Force
         // pipeline compilation to finish in-band so an early offscreen
@@ -901,7 +910,7 @@ fn run_with_live_device(
     } else {
         app.add_plugins(default_plugins);
     }
-    if hidden_window {
+    if windowless {
         app.add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
             1.0 / 60.0,
         )));
@@ -1033,7 +1042,7 @@ pub fn run_fixture_capture_acceptance(
         projection_hash: SemanticHash([1; 32]),
     });
     options.exit_after_seconds.get_or_insert(3.0);
-    options.hidden_window = true;
+    options.render_mode = NativeRenderMode::WindowlessImage;
     run(options)?;
     let bundle = match result_handle
         .poll_capture(&request.request_id)
@@ -1933,17 +1942,20 @@ mod tests {
 
     use super::{
         AUTOMATION_RENDER_HEIGHT, AUTOMATION_RENDER_WIDTH, CAMERA_RESET_SECONDS, CameraRig,
-        CameraView, FONT_BYTES, NativeController, NativeLiveDevice, NativeRenderSurface,
-        NativeUiLaunchOptions, advertised_action_for_play, has_meaningful_render_content,
-        native_controller_from_observation, parse_card_face, replay_fixture_controller,
-        slug_packet_for_text, zone_center_card_bounds,
+        CameraView, FONT_BYTES, NativeController, NativeLiveDevice, NativeRenderMode,
+        NativeRenderSurface, NativeUiLaunchOptions, advertised_action_for_play,
+        has_meaningful_render_content, native_controller_from_observation, parse_card_face,
+        replay_fixture_controller, slug_packet_for_text, zone_center_card_bounds,
     };
 
     #[test]
-    fn automation_defaults_to_a_windowless_image_surface() {
-        assert!(!NativeUiLaunchOptions::default().hidden_window);
+    fn render_mode_makes_windowless_automation_explicit() {
+        assert_eq!(
+            NativeUiLaunchOptions::default().render_mode,
+            NativeRenderMode::InteractiveWindow
+        );
         assert!(matches!(
-            NativeRenderSurface::from_automation(true),
+            NativeRenderSurface::from_mode(NativeRenderMode::WindowlessImage),
             NativeRenderSurface::Windowless {
                 width: AUTOMATION_RENDER_WIDTH,
                 height: AUTOMATION_RENDER_HEIGHT,
@@ -1951,7 +1963,7 @@ mod tests {
             }
         ));
         assert!(matches!(
-            NativeRenderSurface::from_automation(false),
+            NativeRenderSurface::from_mode(NativeRenderMode::InteractiveWindow),
             NativeRenderSurface::Windowed
         ));
     }

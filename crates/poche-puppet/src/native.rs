@@ -20,7 +20,8 @@ use poche_capture::{
     capture_transfer_descriptor,
 };
 use poche_native_ui::{
-    NativeCaptureContext, NativeCaptureProvider, NativeLiveDevice, NativeUiLaunchOptions, run_live,
+    NativeCaptureContext, NativeCaptureProvider, NativeLiveDevice, NativeRenderMode,
+    NativeUiLaunchOptions, run_live,
 };
 use poche_player_client::{
     DeviceClientError, DeviceCooperationRequest, DeviceCooperationResult, DeviceProfile,
@@ -103,7 +104,11 @@ impl RuntimeDeviceCooperationHandler for NativeCaptureHandler {
                 // Leave enough frames after the 900-ms scene warm-up for GPU
                 // readback to complete before the bounded runner exits.
                 exit_after_seconds: Some(3.0),
-                hidden_window: !self.show_window,
+                render_mode: if self.show_window {
+                    NativeRenderMode::InteractiveWindow
+                } else {
+                    NativeRenderMode::WindowlessImage
+                },
                 capture_provider: Some(provider),
                 capture_context: Some(NativeCaptureContext {
                     current_revision: request.observed_revision,

@@ -31,7 +31,7 @@ use poche_capture::{
 use poche_player_client::{DeviceClientError, DeviceProfile, HttpDeviceCooperationCall};
 use poche_protocol::{
     CertificateId, CommandPayload, DeviceActionWire, DeviceCapabilityWire, DeviceCustodyWire,
-    DeviceId, DeviceObservationRequestWire, GatewayAuthorityModeWire,
+    DeviceId, DeviceObservationRequestWire, DeviceRouteRequestWire, GatewayAuthorityModeWire,
     GatewayProjectionProtectionWire, GatewayTrustDisclosureWire, PrincipalId, ProtocolFrame,
     REPLICATION_SCHEMA_VERSION_V1, REPLICATION_SIGNATURE_DOMAIN_V1, RoomId, SignatureAlgorithm,
     SignatureBytes, SignatureIntent, UnsignedDeviceCertificateWire,
@@ -215,6 +215,7 @@ fn router(state: AppState) -> Router {
         .route("/gateway/metrics", get(gateway_metrics))
         .route("/device/v1/observe", post(certified_device_observe))
         .route("/device/v1/invoke", post(certified_device_invoke))
+        .route("/device/v1/route", post(certified_device_route))
         .route("/device/v1/cooperate", post(certified_device_cooperate))
         .route(
             "/device/v1/capture/provider/register",
@@ -271,6 +272,18 @@ async fn certified_device_invoke(
         .lock()
         .map_err(|_| DeviceClientError::TransportUnavailable)
         .and_then(|mut room| room.invoke(&action));
+    device_api_response(result)
+}
+
+async fn certified_device_route(
+    State(state): State<AppState>,
+    Json(request): Json<DeviceRouteRequestWire>,
+) -> Response {
+    let result = state
+        .certified_room
+        .lock()
+        .map_err(|_| DeviceClientError::TransportUnavailable)
+        .and_then(|mut room| room.change_route(request));
     device_api_response(result)
 }
 

@@ -191,6 +191,23 @@ pub struct PuppetDeviceEvidence {
     pub final_room_phase: String,
 }
 
+/// Inspectable operational route transition. These records are distinct from
+/// authoritative [`PuppetStepEvidence`]: disconnect/rebind changes delivery,
+/// while durable membership changes only through public reducer events and
+/// the advertised `Reconnect` command.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PuppetLifecycleEvidence {
+    pub status: String,
+    pub sequence: u32,
+    pub device: String,
+    pub principal_id: String,
+    pub operation: String,
+    pub revision_before: u64,
+    pub revision_after: u64,
+    pub route_connected: bool,
+    pub member_connected: bool,
+}
+
 /// Inspectable binding between one signed cross-device request, its bounded
 /// private transfer, and the artifact later persisted by the requester.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -231,6 +248,7 @@ pub struct PuppetRunReport {
     pub step_count: u32,
     pub devices: Vec<PuppetDeviceEvidence>,
     pub steps: Vec<PuppetStepEvidence>,
+    pub lifecycle: Vec<PuppetLifecycleEvidence>,
     pub captures: Vec<PuppetCaptureEvidence>,
     pub artifact_directory: String,
     pub evidence_boundary: String,
@@ -550,6 +568,7 @@ fn build_report(
         step_count,
         devices,
         steps,
+        lifecycle: Vec::new(),
         captures: Vec::new(),
         artifact_directory: String::new(),
         evidence_boundary: "Headless evidence proves exact observations, advertised actions, reducer commits, and cross-device revision convergence; it contains no graphical-capture claim.".to_owned(),
@@ -575,11 +594,38 @@ pub(crate) const fn room_phase(phase: RoomPhase) -> &'static str {
     }
 }
 
-pub(crate) fn device_error(_: poche_player_client::DeviceClientError) -> PuppetError {
-    PuppetError::new(
-        PuppetErrorCode::DeviceProtocol,
-        "certified device client rejected the puppet operation",
-    )
+pub(crate) const fn device_error(error: poche_player_client::DeviceClientError) -> PuppetError {
+    let message = match error {
+        poche_player_client::DeviceClientError::InvalidProfile => {
+            "certified device profile was invalid"
+        }
+        poche_player_client::DeviceClientError::KeyUnavailable => {
+            "certified device key was unavailable"
+        }
+        poche_player_client::DeviceClientError::SigningFailed => "certified device signing failed",
+        poche_player_client::DeviceClientError::TransportUnavailable => {
+            "certified device transport or route was unavailable"
+        }
+        poche_player_client::DeviceClientError::InvalidObservation => {
+            "certified device observation was invalid"
+        }
+        poche_player_client::DeviceClientError::UnknownAction => {
+            "certified device action was not advertised"
+        }
+        poche_player_client::DeviceClientError::StaleRevision => {
+            "certified device operation targeted a stale revision"
+        }
+        poche_player_client::DeviceClientError::NoProgress => {
+            "certified device wait made no progress"
+        }
+        poche_player_client::DeviceClientError::AuthorizationDenied => {
+            "certified device operation was not authorized"
+        }
+        poche_player_client::DeviceClientError::ProtocolViolation => {
+            "certified device operation violated the shared protocol"
+        }
+    };
+    PuppetError::new(PuppetErrorCode::DeviceProtocol, message)
 }
 
 struct Fixture {

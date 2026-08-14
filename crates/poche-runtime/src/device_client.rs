@@ -17,18 +17,20 @@ use poche_player_client::{
 };
 use poche_protocol::{
     CaptureProviderAdvertisementWire, CommandPayload, CorrelationId, CountdownToken,
-    DeviceActionWire, DeviceCertificateWire, DeviceId, DeviceObservationRequestWire, EventId,
+    DeviceActionWire, DeviceCertificateWire, DeviceId, DeviceObservationRequestWire,
+    DeviceRouteOperationWire, DeviceRouteRequestWire, DeviceRouteResultWire, EventId,
     GameActionWire, InviteProof, MemberProjection, PROTOCOL_VERSION_V1, PrincipalId,
     ProjectionEnvelope, ProjectionId, ProjectionPayload, RoomId, RoomPhase, SIGNATURE_DOMAIN_V1,
     SemanticHash, SignatureAlgorithm, SignatureBytes, SignatureMetadata,
     canonical_capture_provider_advertisement_bytes, canonical_capture_request_bytes,
     canonical_capture_response_bytes, canonical_device_action_bytes,
     canonical_device_certificate_bytes, canonical_device_observation_request_bytes,
+    canonical_device_route_request_bytes,
 };
 use poche_session::{
-    CaptureAuthorizationContext, CaptureReplayWindow, GameTurn, SessionGame, SessionPhase,
-    SessionState, authorize_capture_request_with_provider, authorize_capture_response,
-    project_viewer,
+    CaptureAuthorizationContext, CaptureReplayWindow, ConnectionState, GameTurn, SessionGame,
+    SessionPhase, SessionState, authorize_capture_request_with_provider,
+    authorize_capture_response, project_viewer,
 };
 
 use crate::{
@@ -249,6 +251,17 @@ impl<const PLAYERS: usize> AdvertisedActionSource<crate::OracleSessionGame<PLAYE
                 },
             )]);
         };
+        if member.connection == ConnectionState::Disconnected {
+            return Ok(if matches!(state.phase, SessionPhase::Closed) {
+                Vec::new()
+            } else {
+                vec![Self::advertised(
+                    "room-reconnect",
+                    "Reconnect",
+                    CommandPayload::Reconnect,
+                )]
+            });
+        }
         let mut actions = Vec::new();
         match &state.phase {
             SessionPhase::Lobby => {
@@ -565,6 +578,78 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
         Ok(())
     }
 
+    /// Disconnect or rebind one enrolled device's transport route. A final
+    /// route disconnect enters the trusted transport-loss reducer boundary;
+    /// rebind only restores delivery so the ordinary advertised `Reconnect`
+    /// command can recover durable membership.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unknown devices, duplicate transitions, wrong rooms, or a
+    /// transport/reducer failure.
+    pub fn change_route(
+        &self,
+        profile: &DeviceProfile,
+        room_id: &RoomId,
+        operation: DeviceRouteOperationWire,
+    ) -> Result<DeviceRouteResultWire, DeviceClientError> {
+        profile.validate()?;
+        let mut shared = self
+            .shared
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        if shared.authority.state.room_id != *room_id
+            || shared.profiles.get(&profile.device_id) != Some(profile)
+            || shared.authority.state.member(&profile.player_id).is_none()
+        {
+            return Err(DeviceClientError::AuthorizationDenied);
+        }
+        match operation {
+            DeviceRouteOperationWire::Disconnect => {
+                let client = shared
+                    .clients
+                    .remove(&profile.device_id)
+                    .ok_or(DeviceClientError::TransportUnavailable)?;
+                shared
+                    .authority
+                    .transport
+                    .disconnect(client.connection_id())
+                    .map_err(|_| DeviceClientError::TransportUnavailable)?;
+                shared
+                    .authority
+                    .drive_all()
+                    .map_err(|_| DeviceClientError::ProtocolViolation)?;
+            }
+            DeviceRouteOperationWire::Rebind => {
+                if shared.clients.contains_key(&profile.device_id) {
+                    return Err(DeviceClientError::ProtocolViolation);
+                }
+                let client = shared
+                    .authority
+                    .transport
+                    .connect(profile.player_id.clone())
+                    .map_err(|_| DeviceClientError::TransportUnavailable)?;
+                shared.clients.insert(profile.device_id.clone(), client);
+            }
+        }
+        let member_connected = shared
+            .authority
+            .state
+            .member(&profile.player_id)
+            .is_some_and(|member| member.connection == ConnectionState::Connected);
+        Ok(DeviceRouteResultWire {
+            schema_version: poche_protocol::DEVICE_ACTION_SCHEMA_VERSION_V1,
+            room_id: room_id.clone(),
+            session_epoch: shared.authority.state.session_epoch,
+            player_id: profile.player_id.clone(),
+            device_id: profile.device_id.clone(),
+            operation,
+            authoritative_revision: shared.authority.state.revision,
+            route_connected: matches!(operation, DeviceRouteOperationWire::Rebind),
+            member_connected,
+        })
+    }
+
     /// Register an enrolled target device's signed capture advertisement and
     /// non-authoritative provider handler.
     ///
@@ -723,6 +808,11 @@ struct CachedRemoteAction {
     result: DeviceActionResult,
 }
 
+struct CachedRemoteRoute {
+    request: DeviceRouteRequestWire,
+    result: DeviceRouteResultWire,
+}
+
 /// Process-external certified-device boundary around one real reducer-backed
 /// room adapter. HTTP and Veilid servers may share this service rather than
 /// reimplementing certificate enrollment, signature verification, or replay.
@@ -731,6 +821,7 @@ pub struct CertifiedDeviceRoom<G: SessionGame, A> {
     profiles: BTreeMap<DeviceId, DeviceProfile>,
     observation_cache: BTreeMap<(DeviceId, String), CachedRemoteObservation>,
     action_cache: BTreeMap<(DeviceId, String), CachedRemoteAction>,
+    route_cache: BTreeMap<(DeviceId, String), CachedRemoteRoute>,
     service_profiles: Vec<DeviceProfile>,
     next_service_command: u64,
 }
@@ -776,6 +867,7 @@ where
             profiles: BTreeMap::new(),
             observation_cache: BTreeMap::new(),
             action_cache: BTreeMap::new(),
+            route_cache: BTreeMap::new(),
             service_profiles: Vec::new(),
             next_service_command: 0,
         }
@@ -1066,6 +1158,56 @@ where
         Ok(result)
     }
 
+    /// Verify and apply one signed transport-route disconnect or rebind. The
+    /// operation has its own replay cache and signature domain and cannot be
+    /// confused with an ordinary observation or authoritative room command.
+    ///
+    /// # Errors
+    ///
+    /// Returns stable categories for invalid signatures, unknown enrollment,
+    /// stale room/epoch, conflicting replay, or invalid route state.
+    pub fn change_route(
+        &mut self,
+        request: DeviceRouteRequestWire,
+    ) -> Result<DeviceRouteResultWire, DeviceClientError> {
+        verify_signed_device_route_request(&request)?;
+        let key = (
+            request.device_id.clone(),
+            request.request_id.as_str().to_owned(),
+        );
+        if let Some(cached) = self.route_cache.get(&key) {
+            return if cached.request == request {
+                Ok(cached.result.clone())
+            } else {
+                Err(DeviceClientError::ProtocolViolation)
+            };
+        }
+        self.validate_room_epoch(&request.room_id, request.session_epoch)?;
+        let profile = self
+            .profiles
+            .get(&request.device_id)
+            .filter(|profile| profile.certificate == request.certificate)
+            .cloned()
+            .ok_or(DeviceClientError::AuthorizationDenied)?;
+        let result = self
+            .adapter
+            .change_route(&profile, &request.room_id, request.operation)?;
+        if self.route_cache.len() >= 256 {
+            let oldest = self.route_cache.keys().next().cloned();
+            if let Some(oldest) = oldest {
+                self.route_cache.remove(&oldest);
+            }
+        }
+        self.route_cache.insert(
+            key,
+            CachedRemoteRoute {
+                request,
+                result: result.clone(),
+            },
+        );
+        Ok(result)
+    }
+
     fn validate_room_epoch(
         &self,
         room_id: &RoomId,
@@ -1216,6 +1358,15 @@ where
         } else {
             Ok(observation)
         }
+    }
+
+    fn route(
+        &mut self,
+        profile: &DeviceProfile,
+        room_id: &RoomId,
+        operation: DeviceRouteOperationWire,
+    ) -> Result<DeviceRouteResultWire, DeviceClientError> {
+        self.change_route(profile, room_id, operation)
     }
 
     fn cooperate(
@@ -1412,6 +1563,31 @@ pub fn verify_signed_device_observation_request(
     .ok_or(DeviceClientError::AuthorizationDenied)
 }
 
+/// Verify both certificate and exact-device signatures on a transport-route
+/// transition request.
+///
+/// # Errors
+///
+/// Returns a stable authorization or protocol category without retaining
+/// rejected bytes, keys, or route metadata.
+pub fn verify_signed_device_route_request(
+    request: &DeviceRouteRequestWire,
+) -> Result<(), DeviceClientError> {
+    request
+        .validate()
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    verify_device_certificate(&request.certificate)?;
+    let bytes = canonical_device_route_request_bytes(&request.unsigned())
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    verify_ed25519(
+        &request.certificate.device_signing_public_key,
+        request.signature.signature.as_str(),
+        &bytes,
+    )
+    .then_some(())
+    .ok_or(DeviceClientError::AuthorizationDenied)
+}
+
 fn verify_capture_advertisement(
     advertisement: &CaptureProviderAdvertisementWire,
     certificate: &DeviceCertificateWire,
@@ -1508,9 +1684,14 @@ where
         .map_err(|_| DeviceClientError::TransportUnavailable)?
         .is_some()
     {}
+    let connected_member = shared
+        .authority
+        .state
+        .member(&profile.player_id)
+        .is_some_and(|member| member.connection == ConnectionState::Connected);
     let payload = if profile.player_id == shared.authority.state.game_environment
         || profile.player_id == shared.authority.state.authority_clock
-        || shared.authority.state.member(&profile.player_id).is_none()
+        || !connected_member
     {
         public_unprivileged_projection(&shared.authority.state)?
     } else {
@@ -1685,7 +1866,7 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use poche_player_client::{
         DeviceProfile, DeviceSigner, LoopbackDeviceTransport, PlayerDeviceClient,
-        sign_observation_request,
+        sign_observation_request, sign_route_request,
     };
     use poche_protocol::{
         CaptureArtifactDescriptorWire, CaptureArtifactId, CaptureConsentPolicyWire,
@@ -1694,10 +1875,10 @@ mod tests {
         CaptureViewportWire, CertificateId, CommandId, CommandPayload,
         DEVICE_COOPERATION_SCHEMA_VERSION_V1, DEVICE_COOPERATION_SIGNATURE_DOMAIN_V1,
         DeviceCapabilityWire, DeviceCustodyWire, DeviceObservationModeWire,
-        DeviceSignatureIntentWire, PrincipalId, PublicGamePhase, REPLICATION_SCHEMA_VERSION_V1,
-        REPLICATION_SIGNATURE_DOMAIN_V1, SignatureIntent, UnsignedCaptureProviderAdvertisementWire,
-        UnsignedCaptureRequestWire, UnsignedCaptureResponseWire, UnsignedDeviceCertificateWire,
-        capture_request_hash,
+        DeviceRouteOperationWire, DeviceSignatureIntentWire, PrincipalId, PublicGamePhase,
+        REPLICATION_SCHEMA_VERSION_V1, REPLICATION_SIGNATURE_DOMAIN_V1, SignatureIntent,
+        UnsignedCaptureProviderAdvertisementWire, UnsignedCaptureRequestWire,
+        UnsignedCaptureResponseWire, UnsignedDeviceCertificateWire, capture_request_hash,
     };
 
     use super::*;
@@ -1894,7 +2075,7 @@ mod tests {
 
     #[test]
     fn shared_client_invokes_the_real_reducer_over_loopback() {
-        let state = SessionState::pending(
+        let state: SessionState<OracleSessionGame<2>> = SessionState::pending(
             RoomId::new("device-room").unwrap(),
             PrincipalId::new("clock").unwrap(),
             PrincipalId::new("game").unwrap(),
@@ -2014,6 +2195,105 @@ mod tests {
             verify_signed_device_observation_request(&changed_wait),
             Err(DeviceClientError::AuthorizationDenied)
         );
+
+        let route_request = sign_route_request(
+            &profile,
+            &RoomId::new("external-room").unwrap(),
+            1,
+            CorrelationId::new("external-route").unwrap(),
+            DeviceRouteOperationWire::Disconnect,
+            &TestDeviceSigner(SigningKey::from_bytes(&[22; 32])),
+        )
+        .unwrap();
+        assert_eq!(verify_signed_device_route_request(&route_request), Ok(()));
+        let mut changed_route = route_request;
+        changed_route.operation = DeviceRouteOperationWire::Rebind;
+        assert_eq!(
+            verify_signed_device_route_request(&changed_route),
+            Err(DeviceClientError::AuthorizationDenied)
+        );
+    }
+
+    #[test]
+    fn sibling_routes_require_last_loss_and_ordinary_reconnect() {
+        let root = SigningKey::from_bytes(&[71; 32]);
+        let first_key = SigningKey::from_bytes(&[72; 32]);
+        let second_key = SigningKey::from_bytes(&[73; 32]);
+        let capabilities = vec![
+            DeviceCapabilityWire::Propose,
+            DeviceCapabilityWire::ReceivePrivateProjection,
+        ];
+        let first_profile = signed_profile("route-first", &root, &first_key, capabilities.clone());
+        let second_profile = signed_profile("route-second", &root, &second_key, capabilities);
+        let room_id = RoomId::new("route-lifecycle-room").unwrap();
+        let state: SessionState<OracleSessionGame<2>> = SessionState::pending(
+            room_id.clone(),
+            PrincipalId::new("route-clock").unwrap(),
+            PrincipalId::new("route-environment").unwrap(),
+        );
+        let source =
+            OracleRoomActionSource::new(0x7171, 2, "unused-route-invite", 1, "route-countdown")
+                .unwrap();
+        let adapter =
+            RuntimeLoopbackDeviceAdapter::new(state, source, LoopbackCodec::CanonicalNdjson);
+        adapter.enroll(&first_profile).unwrap();
+        adapter.enroll(&second_profile).unwrap();
+        let mut first =
+            PlayerDeviceClient::new(first_profile, LoopbackDeviceTransport::new(adapter.clone()))
+                .unwrap();
+        let mut second = PlayerDeviceClient::new(
+            second_profile,
+            LoopbackDeviceTransport::new(adapter.clone()),
+        )
+        .unwrap();
+        let create = first.observe(&room_id).unwrap();
+        assert!(matches!(
+            first
+                .invoke(
+                    &create,
+                    "room-create",
+                    CommandId::new("route-create").unwrap(),
+                )
+                .unwrap(),
+            DeviceActionResult::Committed { revision: 1, .. }
+        ));
+
+        let first_down = first.disconnect_route(&room_id).unwrap();
+        assert_eq!(first_down.authoritative_revision, 1);
+        assert!(first_down.member_connected);
+        assert_eq!(
+            first.observe(&room_id),
+            Err(DeviceClientError::TransportUnavailable)
+        );
+        let second_down = second.disconnect_route(&room_id).unwrap();
+        assert_eq!(second_down.authoritative_revision, 2);
+        assert!(!second_down.member_connected);
+
+        let first_up = first.rebind_route(&room_id).unwrap();
+        assert_eq!(first_up.authoritative_revision, 2);
+        assert!(!first_up.member_connected);
+        let reconnect = first.observe(&room_id).unwrap();
+        assert!(reconnect.projection.payload.own_hand.is_none());
+        assert!(reconnect.projection.payload.granted_hands.is_empty());
+        assert_eq!(reconnect.actions.len(), 1);
+        assert_eq!(reconnect.actions[0].id, "room-reconnect");
+        assert!(reconnect.action_templates.is_empty());
+
+        let second_up = second.rebind_route(&room_id).unwrap();
+        assert!(!second_up.member_connected);
+        assert_eq!(second.observe(&room_id).unwrap().actions.len(), 1);
+        assert!(matches!(
+            first
+                .invoke(
+                    &reconnect,
+                    "room-reconnect",
+                    CommandId::new("route-reconnect").unwrap(),
+                )
+                .unwrap(),
+            DeviceActionResult::Committed { revision: 3, .. }
+        ));
+        assert!(first.observe(&room_id).unwrap().actions.len() > 1);
+        assert!(second.observe(&room_id).unwrap().actions.len() > 1);
     }
 
     #[test]

@@ -17,17 +17,17 @@ use poche_player_client::{
     DeviceSigner, DeviceTransport, HttpDeviceTransport, PlayerDeviceClient, PolicyScope,
 };
 use poche_protocol::{
-    CommandId, DeviceCapabilityWire, DeviceCustodyWire, InviteProof, RoomId, RoomPhase,
-    SignatureBytes,
+    CommandId, DeviceCapabilityWire, DeviceCustodyWire, DeviceRouteOperationWire, InviteProof,
+    RoomId, RoomPhase, SignatureBytes,
 };
 
 use crate::{
     PuppetError, PuppetErrorCode, PuppetRunOptions, PuppetSurface, PuppetTransport,
     external_capture::{ExternalCaptureKind, ExternalRelayCaptureSession},
     scenario::{
-        Client, DeviceRevisionEvidence, PuppetDeviceEvidence, PuppetExecution, PuppetRunReport,
-        PuppetStepEvidence, deterministic_key, device_error, hex, invalid_fixture, room_phase,
-        semantic_hash, signed_profile,
+        Client, DeviceRevisionEvidence, PuppetDeviceEvidence, PuppetExecution,
+        PuppetLifecycleEvidence, PuppetRunReport, PuppetStepEvidence, deterministic_key,
+        device_error, hex, invalid_fixture, room_phase, semantic_hash, signed_profile,
     },
 };
 
@@ -130,6 +130,7 @@ pub(crate) fn run_external_full_game(
     let mut devices = external_devices(options.seed, &server.endpoint, &invite)?;
     let started = Instant::now();
     let mut steps = Vec::new();
+    let mut lifecycle = Vec::new();
     let mut captures = Vec::new();
 
     invoke_named(
@@ -194,6 +195,15 @@ pub(crate) fn run_external_full_game(
         RoomPhase::Running,
     )?;
     capture_graphical_checkpoint(&mut graphical_capture, &mut captures)?;
+    exercise_bob_route_lifecycle(
+        options,
+        started,
+        cancelled,
+        &room_id,
+        &mut devices,
+        &mut steps,
+        &mut lifecycle,
+    )?;
 
     let mut alice_graphical_takeover = false;
     let mut bob_graphical_takeover = false;
@@ -244,18 +254,190 @@ pub(crate) fn run_external_full_game(
         session.finish()?;
     }
     let mut report = build_report(options, &room_id, &mut devices, steps)?;
+    report.lifecycle = lifecycle;
     report.captures = captures
         .iter()
         .map(|capture| capture.evidence.clone())
         .collect();
     match options.surface {
-        PuppetSurface::Native => "This run proves one complete game through one real Axum socket authority. Distinct root-certified policy, browser-custody, and native-custody siblings use signed exact-recipient HTTP observations/actions; Alice's requester additionally sends exact-revision same-player capture requests to the native sibling, receives recipient-key-wrapped encrypted chunks over the relay, and alone publishes six real windowless Bevy images through the shared artifact pipeline.",
-        PuppetSurface::Web => "This run proves one complete game through one real Axum socket authority. Distinct root-certified policy, browser-custody, and native-custody siblings use signed exact-recipient HTTP observations/actions; Alice's requester additionally sends exact-revision same-player capture requests to the browser sibling, receives recipient-key-wrapped encrypted PNG, semantic HTML, accessibility, and layout artifacts over the relay, and alone publishes six real headless-browser captures through the shared artifact pipeline.",
-        PuppetSurface::Headless => "This run proves a complete game through one real Axum socket authority: root-certified policy, browser-custody, and native-custody sibling devices use signed exact-recipient HTTP observations and ordinary advertised actions; graphical pixels and external capture transfer are not claimed by this headless slice.",
+        PuppetSurface::Native => "This run proves one complete game through one real Axum socket authority. Distinct root-certified policy, browser-custody, and native-custody siblings use signed exact-recipient HTTP observations/actions; Bob's two routes disconnect, his final route loss commits public membership disconnection, a rebound sibling invokes the only advertised Reconnect action, and both devices converge without key transfer. Alice's requester additionally sends exact-revision same-player capture requests to the native sibling, receives recipient-key-wrapped encrypted chunks over the relay, and alone publishes six real windowless Bevy images through the shared artifact pipeline.",
+        PuppetSurface::Web => "This run proves one complete game through one real Axum socket authority. Distinct root-certified policy, browser-custody, and native-custody siblings use signed exact-recipient HTTP observations/actions; Bob's two routes disconnect, his final route loss commits public membership disconnection, a rebound sibling invokes the only advertised Reconnect action, and both devices converge without key transfer. Alice's requester additionally sends exact-revision same-player capture requests to the browser sibling, receives recipient-key-wrapped encrypted PNG, semantic HTML, accessibility, and layout artifacts over the relay, and alone publishes six real headless-browser captures through the shared artifact pipeline.",
+        PuppetSurface::Headless => "This run proves a complete game through one real Axum socket authority: root-certified policy, browser-custody, and native-custody sibling devices use signed exact-recipient HTTP observations and ordinary advertised actions. Bob's two routes disconnect, his final route loss commits public membership disconnection, a rebound sibling invokes the only advertised Reconnect action, and both devices converge without key transfer; graphical pixels and external capture transfer are not claimed by this headless slice.",
     }
     .clone_into(&mut report.evidence_boundary);
     drop(server);
     Ok(PuppetExecution { report, captures })
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the lifecycle acceptance keeps watchdog, cancellation, exact room/devices, authoritative steps, and non-authoritative route evidence explicit"
+)]
+fn exercise_bob_route_lifecycle(
+    options: &PuppetRunOptions,
+    started: Instant,
+    cancelled: &mut impl FnMut() -> bool,
+    room_id: &RoomId,
+    devices: &mut [ExternalDevice],
+    steps: &mut Vec<PuppetStepEvidence>,
+    lifecycle: &mut Vec<PuppetLifecycleEvidence>,
+) -> Result<(), PuppetError> {
+    for device in [BOB_AGENT, BOB_NATIVE] {
+        change_route(
+            options,
+            started,
+            cancelled,
+            room_id,
+            devices,
+            lifecycle,
+            device,
+            DeviceRouteOperationWire::Disconnect,
+        )?;
+    }
+    let last_disconnect = lifecycle.last().ok_or_else(invalid_fixture)?;
+    if last_disconnect.member_connected
+        || last_disconnect.revision_after != last_disconnect.revision_before.saturating_add(1)
+    {
+        return Err(PuppetError::new(
+            PuppetErrorCode::DeviceProtocol,
+            "the final player route loss did not commit exactly one membership disconnect",
+        ));
+    }
+    change_route(
+        options,
+        started,
+        cancelled,
+        room_id,
+        devices,
+        lifecycle,
+        BOB_NATIVE,
+        DeviceRouteOperationWire::Rebind,
+    )?;
+    let rebound = devices[BOB_NATIVE]
+        .client
+        .observe(room_id)
+        .map_err(device_error)?;
+    if rebound.actions.len() != 1
+        || rebound.actions[0].id != "room-reconnect"
+        || !rebound.action_templates.is_empty()
+    {
+        return Err(PuppetError::new(
+            PuppetErrorCode::DeviceProtocol,
+            "a rebound disconnected member was offered authority beyond Reconnect",
+        ));
+    }
+    change_route(
+        options,
+        started,
+        cancelled,
+        room_id,
+        devices,
+        lifecycle,
+        BOB_AGENT,
+        DeviceRouteOperationWire::Rebind,
+    )?;
+    let rebound_sibling = devices[BOB_AGENT]
+        .client
+        .observe(room_id)
+        .map_err(device_error)?;
+    if rebound_sibling.actions.len() != 1
+        || rebound_sibling.actions[0].id != "room-reconnect"
+        || lifecycle
+            .last()
+            .is_none_or(|evidence| evidence.member_connected)
+    {
+        return Err(PuppetError::new(
+            PuppetErrorCode::DeviceProtocol,
+            "rebound sibling routes gained authority before membership reconnect",
+        ));
+    }
+    invoke_named(
+        options,
+        started,
+        cancelled,
+        room_id,
+        devices,
+        steps,
+        BOB_NATIVE,
+        "room-reconnect",
+    )?;
+    Ok(())
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one route evidence record binds watchdog, exact observer, target device, operation, and before/after authority revisions"
+)]
+fn change_route(
+    options: &PuppetRunOptions,
+    started: Instant,
+    cancelled: &mut impl FnMut() -> bool,
+    room_id: &RoomId,
+    devices: &mut [ExternalDevice],
+    lifecycle: &mut Vec<PuppetLifecycleEvidence>,
+    device_index: usize,
+    operation: DeviceRouteOperationWire,
+) -> Result<(), PuppetError> {
+    ensure_running(options, started, cancelled, lifecycle.len())?;
+    let revision_before = devices[ALICE_AGENT]
+        .client
+        .observe(room_id)
+        .map_err(device_error)?
+        .projection
+        .current_revision;
+    let result = match operation {
+        DeviceRouteOperationWire::Disconnect => devices[device_index]
+            .client
+            .disconnect_route(room_id)
+            .map_err(device_error)?,
+        DeviceRouteOperationWire::Rebind => devices[device_index]
+            .client
+            .rebind_route(room_id)
+            .map_err(device_error)?,
+    };
+    let revision_after = devices[ALICE_AGENT]
+        .client
+        .observe(room_id)
+        .map_err(device_error)?
+        .projection
+        .current_revision;
+    if result.authoritative_revision != revision_after
+        || result.route_connected != matches!(operation, DeviceRouteOperationWire::Rebind)
+    {
+        return Err(PuppetError::new(
+            PuppetErrorCode::DeviceProtocol,
+            "the signed route result disagreed with the authority observation",
+        ));
+    }
+    if matches!(operation, DeviceRouteOperationWire::Disconnect)
+        && devices[device_index].client.observe(room_id).is_ok()
+    {
+        return Err(PuppetError::new(
+            PuppetErrorCode::DeviceProtocol,
+            "a disconnected device route could still obtain a private observation",
+        ));
+    }
+    lifecycle.push(PuppetLifecycleEvidence {
+        status: "complete".to_owned(),
+        sequence: u32::try_from(lifecycle.len()).map_err(|_| step_limit_error())?,
+        device: devices[device_index].label.to_owned(),
+        principal_id: devices[device_index]
+            .client
+            .profile()
+            .player_id
+            .as_str()
+            .to_owned(),
+        operation: match operation {
+            DeviceRouteOperationWire::Disconnect => "disconnect",
+            DeviceRouteOperationWire::Rebind => "rebind",
+        }
+        .to_owned(),
+        revision_before,
+        revision_after,
+        route_connected: result.route_connected,
+        member_connected: result.member_connected,
+    });
+    Ok(())
 }
 
 fn capture_graphical_checkpoint(
@@ -682,6 +864,7 @@ fn build_report(
             })
             .collect(),
         steps,
+        lifecycle: Vec::new(),
         captures: Vec::new(),
         artifact_directory: String::new(),
         evidence_boundary: "This run proves a complete game through one real Axum socket authority: root-certified policy, browser-custody, and native-custody sibling devices use signed exact-recipient HTTP observations and ordinary advertised actions; graphical pixels and external capture transfer are not yet claimed by this headless slice."

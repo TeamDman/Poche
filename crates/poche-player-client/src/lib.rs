@@ -23,13 +23,15 @@ use poche_protocol::{
     CaptureCancelWire, CaptureProviderAdvertisementWire, CaptureRequestWire, CaptureResponseWire,
     CommandId, CommandPayload, DEVICE_ACTION_SCHEMA_VERSION_V1, DEVICE_ACTION_SIGNATURE_DOMAIN_V1,
     DeviceActionWire, DeviceCertificateWire, DeviceId, DeviceObservationModeWire,
-    DeviceObservationRequestWire, DeviceSignatureIntentWire, MAX_CHAT_BYTES, PrincipalId,
+    DeviceObservationRequestWire, DeviceRouteOperationWire, DeviceRouteRequestWire,
+    DeviceRouteResultWire, DeviceSignatureIntentWire, MAX_CHAT_BYTES, PrincipalId,
     ProjectionEnvelope, RoomId, SemanticHash, SignatureAlgorithm, SignatureBytes,
     UnsignedCaptureProviderAdvertisementWire, UnsignedCaptureRequestWire,
     UnsignedCaptureResponseWire, UnsignedDeviceActionWire, UnsignedDeviceObservationRequestWire,
-    canonical_capture_provider_advertisement_bytes, canonical_capture_request_bytes,
-    canonical_capture_response_bytes, canonical_device_action_bytes,
-    canonical_device_observation_request_bytes,
+    UnsignedDeviceRouteRequestWire, canonical_capture_provider_advertisement_bytes,
+    canonical_capture_request_bytes, canonical_capture_response_bytes,
+    canonical_device_action_bytes, canonical_device_observation_request_bytes,
+    canonical_device_route_request_bytes,
 };
 use serde::{Deserialize, Serialize};
 
@@ -213,6 +215,40 @@ pub fn sign_observation_request_with_invite(
         },
     };
     let bytes = canonical_device_observation_request_bytes(&unsigned)
+        .map_err(|_| DeviceClientError::ProtocolViolation)?;
+    unsigned
+        .attach_signature(signer.sign_device_bytes(profile, &bytes)?)
+        .map_err(|_| DeviceClientError::SigningFailed)
+}
+
+/// Sign one transport-route disconnect or rebind request through the exact
+/// device key. Its independent signature domain prevents an observation or
+/// ordinary action from being replayed as a lifecycle transition.
+pub fn sign_route_request(
+    profile: &DeviceProfile,
+    room_id: &RoomId,
+    session_epoch: u64,
+    request_id: poche_protocol::CorrelationId,
+    operation: DeviceRouteOperationWire,
+    signer: &impl DeviceSigner,
+) -> Result<DeviceRouteRequestWire, DeviceClientError> {
+    profile.validate()?;
+    let unsigned = UnsignedDeviceRouteRequestWire {
+        schema_version: DEVICE_ACTION_SCHEMA_VERSION_V1,
+        certificate: profile.certificate.clone(),
+        room_id: room_id.clone(),
+        session_epoch,
+        request_id,
+        player_id: profile.player_id.clone(),
+        device_id: profile.device_id.clone(),
+        operation,
+        signature_intent: DeviceSignatureIntentWire {
+            domain_version: DEVICE_ACTION_SIGNATURE_DOMAIN_V1,
+            algorithm: SignatureAlgorithm::Ed25519,
+            key_id: profile.device_id.clone(),
+        },
+    };
+    let bytes = canonical_device_route_request_bytes(&unsigned)
         .map_err(|_| DeviceClientError::ProtocolViolation)?;
     unsigned
         .attach_signature(signer.sign_device_bytes(profile, &bytes)?)
@@ -527,6 +563,16 @@ pub trait DeviceTransport {
         after_revision: u64,
     ) -> Result<DeviceObservation, DeviceClientError>;
 
+    /// Disconnect or rebind this exact device's transport route. Rebinding
+    /// does not mutate durable membership; a disconnected member must still
+    /// invoke the advertised `Reconnect` action through the ordinary port.
+    fn route(
+        &mut self,
+        profile: &DeviceProfile,
+        room_id: &RoomId,
+        operation: DeviceRouteOperationWire,
+    ) -> Result<DeviceRouteResultWire, DeviceClientError>;
+
     /// Deliver exact-target cooperation without treating it as a game command.
     fn cooperate(
         &mut self,
@@ -560,6 +606,15 @@ impl<T: DeviceTransport + ?Sized> DeviceTransport for Box<T> {
         after_revision: u64,
     ) -> Result<DeviceObservation, DeviceClientError> {
         (**self).wait(profile, room_id, after_revision)
+    }
+
+    fn route(
+        &mut self,
+        profile: &DeviceProfile,
+        room_id: &RoomId,
+        operation: DeviceRouteOperationWire,
+    ) -> Result<DeviceRouteResultWire, DeviceClientError> {
+        (**self).route(profile, room_id, operation)
     }
 
     fn cooperate(
@@ -693,6 +748,39 @@ impl<T: DeviceTransport> PlayerDeviceClient<T> {
         Ok(observation)
     }
 
+    pub fn disconnect_route(
+        &mut self,
+        room_id: &RoomId,
+    ) -> Result<DeviceRouteResultWire, DeviceClientError> {
+        self.change_route(room_id, DeviceRouteOperationWire::Disconnect)
+    }
+
+    pub fn rebind_route(
+        &mut self,
+        room_id: &RoomId,
+    ) -> Result<DeviceRouteResultWire, DeviceClientError> {
+        self.change_route(room_id, DeviceRouteOperationWire::Rebind)
+    }
+
+    fn change_route(
+        &mut self,
+        room_id: &RoomId,
+        operation: DeviceRouteOperationWire,
+    ) -> Result<DeviceRouteResultWire, DeviceClientError> {
+        let result = self.transport.route(&self.profile, room_id, operation)?;
+        result
+            .validate()
+            .map_err(|_| DeviceClientError::ProtocolViolation)?;
+        if result.room_id != *room_id
+            || result.player_id != self.profile.player_id
+            || result.device_id != self.profile.device_id
+            || result.operation != operation
+        {
+            return Err(DeviceClientError::ProtocolViolation);
+        }
+        Ok(result)
+    }
+
     pub fn cooperate(
         &mut self,
         target_device: &DeviceId,
@@ -795,6 +883,25 @@ mod tests {
             _after_revision: u64,
         ) -> Result<DeviceObservation, DeviceClientError> {
             Ok(self.observation.clone())
+        }
+
+        fn route(
+            &mut self,
+            profile: &DeviceProfile,
+            room_id: &RoomId,
+            operation: DeviceRouteOperationWire,
+        ) -> Result<DeviceRouteResultWire, DeviceClientError> {
+            Ok(DeviceRouteResultWire {
+                schema_version: DEVICE_ACTION_SCHEMA_VERSION_V1,
+                room_id: room_id.clone(),
+                session_epoch: self.observation.projection.session_epoch,
+                player_id: profile.player_id.clone(),
+                device_id: profile.device_id.clone(),
+                operation,
+                authoritative_revision: self.observation.projection.current_revision,
+                route_connected: matches!(operation, DeviceRouteOperationWire::Rebind),
+                member_connected: true,
+            })
         }
 
         fn cooperate(

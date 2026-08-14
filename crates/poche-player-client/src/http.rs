@@ -6,13 +6,17 @@
 
 use std::{io::Read as _, time::Duration};
 
-use poche_protocol::{CorrelationId, DeviceId, DeviceObservationModeWire, InviteProof, RoomId};
+use poche_protocol::{
+    CorrelationId, DeviceId, DeviceObservationModeWire, DeviceRouteOperationWire,
+    DeviceRouteResultWire, InviteProof, RoomId,
+};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     DeviceActionRequest, DeviceActionResult, DeviceClientError, DeviceCooperationRequest,
     DeviceCooperationResult, DeviceObservation, DeviceProfile, DeviceSigner, DeviceTransport,
     HttpDeviceCooperationCall, sign_observation_request, sign_observation_request_with_invite,
+    sign_route_request,
 };
 
 const MAX_HTTP_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
@@ -250,6 +254,24 @@ impl<S: DeviceSigner> DeviceTransport for HttpDeviceTransport<S> {
             &self.signer,
         )?;
         self.post("/device/v1/observe", &request)
+    }
+
+    fn route(
+        &mut self,
+        profile: &DeviceProfile,
+        room_id: &RoomId,
+        operation: DeviceRouteOperationWire,
+    ) -> Result<DeviceRouteResultWire, DeviceClientError> {
+        let request_id = self.request_id()?;
+        let request = sign_route_request(
+            profile,
+            room_id,
+            self.session_epoch,
+            request_id,
+            operation,
+            &self.signer,
+        )?;
+        self.post("/device/v1/route", &request)
     }
 
     fn cooperate(

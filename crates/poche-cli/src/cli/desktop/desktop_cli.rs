@@ -1,6 +1,6 @@
 use facet::Facet;
 use figue as args;
-use poche_native_ui::{NativeLiveDevice, NativeUiLaunchOptions};
+use poche_native_ui::{NativeLiveDevice, NativeRenderMode, NativeUiLaunchOptions};
 
 use crate::cli::live_device::LiveDeviceConfig;
 
@@ -44,7 +44,7 @@ impl DesktopArgs {
             acceptance_report: self.acceptance_report.map(Into::into),
             exit_after_seconds: self.exit_after_seconds,
             debug_overlay: self.debug_overlay,
-            hidden_window: false,
+            render_mode: NativeRenderMode::InteractiveWindow,
             capture_provider: None,
             capture_context: None,
             external_tracing: true,

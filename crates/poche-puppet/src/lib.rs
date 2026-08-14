@@ -23,8 +23,8 @@ pub use catalog::{
     EXTERNAL_DEVICES_FULL_GAME, ScenarioDescriptor, TWO_PLAYER_FULL_ROUND, scenario, scenarios,
 };
 pub use scenario::{
-    DeviceRevisionEvidence, PuppetCaptureEvidence, PuppetDeviceEvidence, PuppetRunReport,
-    PuppetStepEvidence,
+    DeviceRevisionEvidence, PuppetCaptureEvidence, PuppetDeviceEvidence, PuppetLifecycleEvidence,
+    PuppetRunReport, PuppetStepEvidence,
 };
 
 /// Supported renderer/presentation targets for a puppet scenario.

@@ -29,7 +29,7 @@ fn certified_graphical_siblings_take_over_one_complete_hosted_game() {
 
     assert_eq!(report.status, "complete");
     assert_eq!(report.final_room_phase, "post_game");
-    assert_eq!(report.final_revision, 158);
+    assert_eq!(report.final_revision, 160);
     assert_eq!(report.public_history_events, 138);
     assert_eq!(report.devices.len(), 5);
     assert_eq!(
@@ -53,6 +53,16 @@ fn certified_graphical_siblings_take_over_one_complete_hosted_game() {
             .any(|step| step.acting_device == "bob-native")
     );
     assert!(report.steps.iter().all(|step| step.observed_by.len() == 5));
+    assert!(
+        report
+            .steps
+            .iter()
+            .any(|step| step.action_id == "room-reconnect" && step.acting_device == "bob-native")
+    );
+    assert_eq!(report.lifecycle.len(), 4);
+    assert!(!report.lifecycle[1].member_connected);
+    assert!(!report.lifecycle[2].member_connected);
+    assert!(!report.lifecycle[3].member_connected);
 }
 
 #[test]
@@ -73,8 +83,9 @@ fn authorized_native_relay_captures_the_same_hosted_game() {
 
     assert_eq!(report.status, "complete");
     assert_eq!(report.final_room_phase, "post_game");
-    assert_eq!(report.final_revision, 158);
+    assert_eq!(report.final_revision, 160);
     assert_eq!(report.public_history_events, 138);
+    assert_eq!(report.lifecycle.len(), 4);
     assert_eq!(report.captures.len(), 6);
     assert_eq!(
         report
@@ -129,8 +140,9 @@ fn authorized_browser_relay_captures_the_same_hosted_game_without_a_window() {
 
     assert_eq!(report.status, "complete");
     assert_eq!(report.final_room_phase, "post_game");
-    assert_eq!(report.final_revision, 158);
+    assert_eq!(report.final_revision, 160);
     assert_eq!(report.public_history_events, 138);
+    assert_eq!(report.lifecycle.len(), 4);
     assert_eq!(report.captures.len(), 6);
     for capture in &report.captures {
         assert_eq!(capture.status, "complete");

@@ -167,9 +167,12 @@ pub(crate) fn persist_run(
     write_json(&report_path, &report)?;
     let steps_path = temporary_path.join("steps.ndjson");
     write_steps(&steps_path, &report)?;
+    let lifecycle_path = temporary_path.join("lifecycle.ndjson");
+    write_lifecycle(&lifecycle_path, &report)?;
     let mut files = vec![
         describe_file(&report_path, "run.json", "application/json")?,
         describe_file(&steps_path, "steps.ndjson", "application/x-ndjson")?,
+        describe_file(&lifecycle_path, "lifecycle.ndjson", "application/x-ndjson")?,
     ];
     files.extend(capture_files);
     let contact_sheet_path = temporary_path.join("index.html");
@@ -298,7 +301,7 @@ fn render_run_contact_sheet(
 ) -> Vec<u8> {
     let cards = captures.iter().map(render_capture_card).collect::<String>();
     format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Poche puppet evidence — {}</title>{}</head><body><header><p class=\"eyebrow\">POCHE PUPPET EVIDENCE</p><h1>{}</h1><p>{} · {} · seed {} · revision {} · {} public events</p><p>{}</p><nav><a href=\"run.json\">run.json</a><a href=\"steps.ndjson\">steps.ndjson</a><a href=\"manifest.json\">manifest.json</a></nav></header><main>{}</main><footer>Formal Alloy/NuSMV/Prolog evidence is release/developer evidence linked by repository revision; it was not executed by this page request.</footer></body></html>",
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Poche puppet evidence — {}</title>{}</head><body><header><p class=\"eyebrow\">POCHE PUPPET EVIDENCE</p><h1>{}</h1><p>{} · {} · seed {} · revision {} · {} public events · {} route transitions</p><p>{}</p><nav><a href=\"run.json\">run.json</a><a href=\"steps.ndjson\">steps.ndjson</a><a href=\"lifecycle.ndjson\">lifecycle.ndjson</a><a href=\"manifest.json\">manifest.json</a></nav></header><main>{}</main><footer>Formal Alloy/NuSMV/Prolog evidence is release/developer evidence linked by repository revision; it was not executed by this page request.</footer></body></html>",
         escape_html(&report.run_id),
         contact_sheet_style(),
         escape_html(&report.scenario),
@@ -307,9 +310,10 @@ fn render_run_contact_sheet(
         report.seed,
         report.final_revision,
         report.public_history_events,
+        report.lifecycle.len(),
         escape_html(&report.evidence_boundary),
         if cards.is_empty() {
-            "<section class=\"empty\"><h2>Headless semantic run</h2><p>This run contains no graphical figures. Use run.json and steps.ndjson for exact device observations and committed actions.</p></section>".to_owned()
+            "<section class=\"empty\"><h2>Headless semantic run</h2><p>This run contains no graphical figures. Use run.json, steps.ndjson, and lifecycle.ndjson for exact device observations, committed actions, and route transitions.</p></section>".to_owned()
         } else {
             cards
         }
@@ -640,6 +644,21 @@ fn write_steps(path: &Path, report: &PuppetRunReport) -> Result<(), PuppetError>
             PuppetError::new(
                 PuppetErrorCode::EvidenceIo,
                 "puppet NDJSON evidence could not be encoded",
+            )
+        })?;
+        writer.write_all(b"\n").map_err(evidence_error)?;
+    }
+    writer.flush().map_err(evidence_error)
+}
+
+fn write_lifecycle(path: &Path, report: &PuppetRunReport) -> Result<(), PuppetError> {
+    let file = create_new(path)?;
+    let mut writer = BufWriter::new(file);
+    for transition in &report.lifecycle {
+        serde_json::to_writer(&mut writer, transition).map_err(|_| {
+            PuppetError::new(
+                PuppetErrorCode::EvidenceIo,
+                "puppet lifecycle NDJSON evidence could not be encoded",
             )
         })?;
         writer.write_all(b"\n").map_err(evidence_error)?;

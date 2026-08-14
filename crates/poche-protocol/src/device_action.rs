@@ -25,6 +25,7 @@ pub const DEVICE_ACTION_SIGNATURE_DOMAIN_V1: u16 = 1;
 
 const DEVICE_ACTION_DOMAIN: &[u8] = b"POCHE\0DEVICE-ACTION\0V1";
 const DEVICE_OBSERVATION_REQUEST_DOMAIN: &[u8] = b"POCHE\0DEVICE-OBSERVATION-REQUEST\0V1";
+const DEVICE_ROUTE_REQUEST_DOMAIN: &[u8] = b"POCHE\0DEVICE-ROUTE-REQUEST\0V1";
 const MAX_ACTION_ID_BYTES: usize = 96;
 
 /// Exact action request before the certified device signature is attached.
@@ -352,6 +353,180 @@ pub fn canonical_device_observation_request_bytes(
     Ok(bytes)
 }
 
+/// Non-authoritative transport-route transition requested by one exact
+/// certified device. `Rebind` makes a route available again; it does not
+/// reconnect durable room membership, which remains an ordinary reducer
+/// command advertised to the rebound device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[repr(u8)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceRouteOperationWire {
+    Disconnect,
+    Rebind,
+}
+
+/// Device-authenticated route transition before its signature is attached.
+#[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnsignedDeviceRouteRequestWire {
+    pub schema_version: u16,
+    pub certificate: DeviceCertificateWire,
+    pub room_id: RoomId,
+    pub session_epoch: u64,
+    pub request_id: CorrelationId,
+    pub player_id: PrincipalId,
+    pub device_id: DeviceId,
+    pub operation: DeviceRouteOperationWire,
+    pub signature_intent: DeviceSignatureIntentWire,
+}
+
+impl UnsignedDeviceRouteRequestWire {
+    pub fn validate(&self) -> Result<(), DeviceActionWireError> {
+        self.certificate
+            .validate()
+            .map_err(|_| DeviceActionWireError::InvalidCertificate)?;
+        if self.schema_version != DEVICE_ACTION_SCHEMA_VERSION_V1 {
+            return Err(DeviceActionWireError::UnknownVersion);
+        }
+        if !self.room_id.validate()
+            || self.session_epoch == 0
+            || !self.request_id.validate()
+            || self.player_id != self.certificate.player_id
+            || self.device_id != self.certificate.device_id
+            || !self.certificate.is_valid_at(self.session_epoch)
+            || !self
+                .certificate
+                .has_capability(DeviceCapabilityWire::ReceivePrivateProjection)
+        {
+            return Err(DeviceActionWireError::InvalidBinding);
+        }
+        if self.signature_intent.domain_version != DEVICE_ACTION_SIGNATURE_DOMAIN_V1
+            || self.signature_intent.algorithm != SignatureAlgorithm::Ed25519
+            || self.signature_intent.key_id != self.device_id
+        {
+            return Err(DeviceActionWireError::InvalidSignatureIntent);
+        }
+        Ok(())
+    }
+
+    pub fn attach_signature(
+        self,
+        signature: SignatureBytes,
+    ) -> Result<DeviceRouteRequestWire, DeviceActionWireError> {
+        self.validate()?;
+        signature
+            .validate()
+            .map_err(|_| DeviceActionWireError::InvalidSignature)?;
+        Ok(DeviceRouteRequestWire {
+            schema_version: self.schema_version,
+            certificate: self.certificate,
+            room_id: self.room_id,
+            session_epoch: self.session_epoch,
+            request_id: self.request_id,
+            player_id: self.player_id,
+            device_id: self.device_id,
+            operation: self.operation,
+            signature: DeviceSignatureMetadataWire {
+                domain_version: self.signature_intent.domain_version,
+                algorithm: self.signature_intent.algorithm,
+                key_id: self.signature_intent.key_id,
+                signature,
+            },
+        })
+    }
+}
+
+/// Root-certified, device-signed route disconnect or rebind request.
+#[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceRouteRequestWire {
+    pub schema_version: u16,
+    pub certificate: DeviceCertificateWire,
+    pub room_id: RoomId,
+    pub session_epoch: u64,
+    pub request_id: CorrelationId,
+    pub player_id: PrincipalId,
+    pub device_id: DeviceId,
+    pub operation: DeviceRouteOperationWire,
+    pub signature: DeviceSignatureMetadataWire,
+}
+
+impl DeviceRouteRequestWire {
+    pub fn validate(&self) -> Result<(), DeviceActionWireError> {
+        self.unsigned().validate()?;
+        self.signature
+            .signature
+            .validate()
+            .map_err(|_| DeviceActionWireError::InvalidSignature)
+    }
+
+    #[must_use]
+    pub fn unsigned(&self) -> UnsignedDeviceRouteRequestWire {
+        UnsignedDeviceRouteRequestWire {
+            schema_version: self.schema_version,
+            certificate: self.certificate.clone(),
+            room_id: self.room_id.clone(),
+            session_epoch: self.session_epoch,
+            request_id: self.request_id.clone(),
+            player_id: self.player_id.clone(),
+            device_id: self.device_id.clone(),
+            operation: self.operation,
+            signature_intent: self.signature.intent(),
+        }
+    }
+}
+
+/// Public acknowledgement of one authenticated route transition. This is
+/// operational evidence, not an authoritative game event or membership
+/// command result.
+#[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceRouteResultWire {
+    pub schema_version: u16,
+    pub room_id: RoomId,
+    pub session_epoch: u64,
+    pub player_id: PrincipalId,
+    pub device_id: DeviceId,
+    pub operation: DeviceRouteOperationWire,
+    pub authoritative_revision: u64,
+    pub route_connected: bool,
+    pub member_connected: bool,
+}
+
+impl DeviceRouteResultWire {
+    pub fn validate(&self) -> Result<(), DeviceActionWireError> {
+        let expected_route = matches!(self.operation, DeviceRouteOperationWire::Rebind);
+        if self.schema_version != DEVICE_ACTION_SCHEMA_VERSION_V1 {
+            return Err(DeviceActionWireError::UnknownVersion);
+        }
+        if !self.room_id.validate()
+            || self.session_epoch == 0
+            || !self.player_id.validate()
+            || !self.device_id.validate()
+            || self.route_connected != expected_route
+        {
+            return Err(DeviceActionWireError::InvalidBinding);
+        }
+        Ok(())
+    }
+}
+
+/// Canonical device-signing bytes for a route transition request. This uses
+/// a distinct domain from observations and ordinary actions so a valid read
+/// can never be replayed as a disconnect.
+pub fn canonical_device_route_request_bytes(
+    request: &UnsignedDeviceRouteRequestWire,
+) -> Result<Vec<u8>, DeviceActionWireError> {
+    request.validate()?;
+    let json = serde_json::to_vec(request).map_err(|_| DeviceActionWireError::Encoding)?;
+    let length = u64::try_from(json.len()).map_err(|_| DeviceActionWireError::Encoding)?;
+    let mut bytes = Vec::with_capacity(DEVICE_ROUTE_REQUEST_DOMAIN.len() + 8 + json.len());
+    bytes.extend_from_slice(DEVICE_ROUTE_REQUEST_DOMAIN);
+    bytes.extend_from_slice(&length.to_be_bytes());
+    bytes.extend_from_slice(&json);
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -498,6 +673,52 @@ mod tests {
         assert_ne!(
             canonical_device_observation_request_bytes(&allowed).unwrap(),
             snapshot
+        );
+    }
+
+    #[test]
+    fn route_request_has_an_independent_domain_and_binds_the_operation() {
+        let action = action();
+        let mut certificate = action.certificate;
+        certificate.capabilities = vec![
+            DeviceCapabilityWire::Propose,
+            DeviceCapabilityWire::ReceivePrivateProjection,
+        ];
+        let mut request = UnsignedDeviceRouteRequestWire {
+            schema_version: DEVICE_ACTION_SCHEMA_VERSION_V1,
+            certificate,
+            room_id: action.room_id,
+            session_epoch: action.session_epoch,
+            request_id: CorrelationId::new("route-1").unwrap(),
+            player_id: action.player_id,
+            device_id: action.device_id.clone(),
+            operation: DeviceRouteOperationWire::Disconnect,
+            signature_intent: DeviceSignatureIntentWire {
+                domain_version: DEVICE_ACTION_SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: action.device_id,
+            },
+        };
+        let disconnected = canonical_device_route_request_bytes(&request).unwrap();
+        request.operation = DeviceRouteOperationWire::Rebind;
+        let rebound = canonical_device_route_request_bytes(&request).unwrap();
+        assert_ne!(disconnected, rebound);
+
+        let observation = UnsignedDeviceObservationRequestWire {
+            schema_version: request.schema_version,
+            certificate: request.certificate.clone(),
+            room_id: request.room_id.clone(),
+            session_epoch: request.session_epoch,
+            request_id: request.request_id.clone(),
+            player_id: request.player_id.clone(),
+            device_id: request.device_id.clone(),
+            mode: DeviceObservationModeWire::Snapshot,
+            join_invite: None,
+            signature_intent: request.signature_intent.clone(),
+        };
+        assert_ne!(
+            canonical_device_observation_request_bytes(&observation).unwrap(),
+            rebound
         );
     }
 }

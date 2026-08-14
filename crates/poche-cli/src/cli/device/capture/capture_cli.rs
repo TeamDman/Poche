@@ -16,7 +16,8 @@ use poche_capture::{
     capture_transfer_descriptor, generate_wrapped_capture_transfer_key,
 };
 use poche_native_ui::{
-    NativeCaptureContext, NativeCaptureProvider, NativeLiveDevice, NativeUiLaunchOptions, run_live,
+    NativeCaptureContext, NativeCaptureProvider, NativeLiveDevice, NativeRenderMode,
+    NativeUiLaunchOptions, run_live,
 };
 use poche_player_client::{
     DeviceCooperationRequest, HttpDeviceTransport, PlayerDeviceClient, ProtectedProfileStore,
@@ -502,7 +503,11 @@ fn serve_native_job(
     if let Err(error) = run_live(
         NativeUiLaunchOptions {
             exit_after_seconds: Some(3.0),
-            hidden_window: !show_window,
+            render_mode: if show_window {
+                NativeRenderMode::InteractiveWindow
+            } else {
+                NativeRenderMode::WindowlessImage
+            },
             capture_provider: Some(provider),
             capture_context: Some(NativeCaptureContext {
                 current_revision: request.observed_revision,
