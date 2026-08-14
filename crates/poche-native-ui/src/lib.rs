@@ -2040,6 +2040,8 @@ mod tests {
                     action: GameActionWire::Play { card: 0 },
                 },
             }],
+            action_templates: Vec::new(),
+            chat_tail: Vec::new(),
         }
     }
 

@@ -23,8 +23,8 @@ use poche_protocol::{
     CaptureCancelWire, CaptureRequestWire, CaptureResponseWire, CommandId, CommandPayload,
     DEVICE_ACTION_SCHEMA_VERSION_V1, DEVICE_ACTION_SIGNATURE_DOMAIN_V1, DeviceActionWire,
     DeviceCertificateWire, DeviceId, DeviceObservationModeWire, DeviceObservationRequestWire,
-    DeviceSignatureIntentWire, PrincipalId, ProjectionEnvelope, RoomId, SemanticHash,
-    SignatureAlgorithm, SignatureBytes, UnsignedDeviceActionWire,
+    DeviceSignatureIntentWire, MAX_CHAT_BYTES, PrincipalId, ProjectionEnvelope, RoomId,
+    SemanticHash, SignatureAlgorithm, SignatureBytes, UnsignedDeviceActionWire,
     UnsignedDeviceObservationRequestWire, canonical_device_action_bytes,
     canonical_device_observation_request_bytes,
 };
@@ -163,18 +163,69 @@ pub struct AdvertisedAction {
     pub payload: CommandPayload,
 }
 
+/// One bounded value-bearing action family advertised beside an exact
+/// projection. Unlike a concrete [`AdvertisedAction`], a template explicitly
+/// identifies the input that a human or CLI may supply after observing it.
+/// The receiving adapter resolves the supplied value against the same current
+/// template before it can reach the reducer.
+#[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdvertisedActionTemplate {
+    pub id: String,
+    pub label: String,
+    pub parameter: AdvertisedActionParameter,
+}
+
+impl AdvertisedActionTemplate {
+    fn validate(&self) -> bool {
+        valid_action_identity(&self.id, &self.label)
+    }
+
+    #[must_use]
+    pub fn accepts(&self, payload: &CommandPayload) -> bool {
+        match (&self.parameter, payload) {
+            (AdvertisedActionParameter::ChatText, CommandPayload::Chat { text }) => {
+                !text.is_empty() && text.len() <= MAX_CHAT_BYTES
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Input shape accepted by one parameterized action template.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[repr(u8)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvertisedActionParameter {
+    ChatText,
+}
+
+/// Public chat evidence retained beside an exact device observation. It is
+/// bounded by the authority's chat-tail policy and carries no draft text,
+/// transport identifiers, or private game projection.
+#[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceChatEntry {
+    pub revision: u64,
+    pub principal_id: PrincipalId,
+    pub text: String,
+}
+
 impl AdvertisedAction {
     fn validate(&self) -> bool {
-        !self.id.is_empty()
-            && self.id.len() <= 96
-            && self
-                .id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-            && !self.label.is_empty()
-            && self.label.len() <= 256
-            && !self.label.chars().any(char::is_control)
+        valid_action_identity(&self.id, &self.label)
     }
+}
+
+fn valid_action_identity(id: &str, label: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 96
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        && !label.is_empty()
+        && label.len() <= 256
+        && !label.chars().any(char::is_control)
 }
 
 /// Exact-recipient observation and action set delivered atomically by an
@@ -185,6 +236,8 @@ pub struct DeviceObservation {
     pub projection: ProjectionEnvelope,
     pub projection_hash: SemanticHash,
     pub actions: Vec<AdvertisedAction>,
+    pub action_templates: Vec<AdvertisedActionTemplate>,
+    pub chat_tail: Vec<DeviceChatEntry>,
 }
 
 impl DeviceObservation {
@@ -197,6 +250,29 @@ impl DeviceObservation {
             || self.projection.principal_id != profile.player_id
             || self.actions.iter().any(|action| !action.validate())
             || !self.actions.windows(2).all(|pair| pair[0].id < pair[1].id)
+            || self
+                .action_templates
+                .iter()
+                .any(|template| !template.validate())
+            || !self
+                .action_templates
+                .windows(2)
+                .all(|pair| pair[0].id < pair[1].id)
+            || self.actions.iter().any(|action| {
+                self.action_templates
+                    .binary_search_by(|template| template.id.as_str().cmp(&action.id))
+                    .is_ok()
+            })
+            || self.chat_tail.iter().any(|entry| {
+                entry.revision > self.projection.current_revision
+                    || entry.text.is_empty()
+                    || entry.text.len() > MAX_CHAT_BYTES
+                    || !entry.principal_id.validate()
+            })
+            || !self
+                .chat_tail
+                .windows(2)
+                .all(|pair| pair[0].revision <= pair[1].revision)
         {
             Err(DeviceClientError::InvalidObservation)
         } else {
@@ -228,6 +304,25 @@ impl DeviceObservation {
             Err(DeviceClientError::ProtocolViolation)
         } else {
             Ok(action)
+        }
+    }
+
+    /// Resolve a value-bearing payload against an action template advertised
+    /// for this exact revision. The template remains opaque to the caller;
+    /// only its bounded parameter type determines whether the payload fits.
+    pub fn template_for_payload(
+        &self,
+        payload: &CommandPayload,
+    ) -> Result<&AdvertisedActionTemplate, DeviceClientError> {
+        let mut matches = self
+            .action_templates
+            .iter()
+            .filter(|template| template.accepts(payload));
+        let template = matches.next().ok_or(DeviceClientError::UnknownAction)?;
+        if matches.next().is_some() {
+            Err(DeviceClientError::ProtocolViolation)
+        } else {
+            Ok(template)
         }
     }
 }
@@ -439,8 +534,8 @@ impl<T: DeviceTransport> PlayerDeviceClient<T> {
         payload: &CommandPayload,
         command_id: CommandId,
     ) -> Result<DeviceActionResult, DeviceClientError> {
-        let action_id = observation.action_for_payload(payload)?.id.clone();
-        self.invoke(observation, &action_id, command_id)
+        let request = self.prepare_payload(observation, payload, command_id)?;
+        self.transport.invoke(&self.profile, request)
     }
 
     /// Prepare a typed convenience action through the same exact advertised
@@ -451,8 +546,22 @@ impl<T: DeviceTransport> PlayerDeviceClient<T> {
         payload: &CommandPayload,
         command_id: CommandId,
     ) -> Result<DeviceActionRequest, DeviceClientError> {
-        let action_id = observation.action_for_payload(payload)?.id.clone();
-        self.prepare(observation, &action_id, command_id)
+        if let Ok(action) = observation.action_for_payload(payload) {
+            return self.prepare(observation, &action.id, command_id);
+        }
+        observation.validate_for(&self.profile, &observation.projection.room_id)?;
+        let template = observation.template_for_payload(payload)?;
+        Ok(DeviceActionRequest {
+            room_id: observation.projection.room_id.clone(),
+            session_epoch: observation.projection.session_epoch,
+            command_id,
+            player_id: self.profile.player_id.clone(),
+            device_id: self.profile.device_id.clone(),
+            expected_revision: observation.projection.current_revision,
+            expected_projection_hash: observation.projection_hash,
+            action_id: template.id.clone(),
+            payload: payload.clone(),
+        })
     }
 
     pub fn wait(
@@ -648,6 +757,8 @@ mod tests {
                 label: "Ready".to_owned(),
                 payload: CommandPayload::Ready,
             }],
+            action_templates: Vec::new(),
+            chat_tail: Vec::new(),
         };
         (profile, observation)
     }
@@ -689,6 +800,50 @@ mod tests {
             SemanticHash([7; 32])
         );
         assert_eq!(transport.invoked[0].device_id.as_str(), "22".repeat(32));
+    }
+
+    #[test]
+    fn parameterized_chat_is_prepared_only_from_an_exact_advertised_template() {
+        let (profile, mut observation) = fixture();
+        observation.action_templates = vec![AdvertisedActionTemplate {
+            id: "chat-send".to_owned(),
+            label: "Send chat".to_owned(),
+            parameter: AdvertisedActionParameter::ChatText,
+        }];
+        let client = PlayerDeviceClient::new(
+            profile,
+            LoopbackDeviceTransport::new(FixtureTransport {
+                observation: observation.clone(),
+                invoked: Vec::new(),
+            }),
+        )
+        .unwrap();
+        let prepared = client
+            .prepare_payload(
+                &observation,
+                &CommandPayload::Chat {
+                    text: "typed at the CLI".to_owned(),
+                },
+                CommandId::new("chat-command").unwrap(),
+            )
+            .unwrap();
+        assert_eq!(prepared.action_id, "chat-send");
+        assert_eq!(
+            prepared.payload,
+            CommandPayload::Chat {
+                text: "typed at the CLI".to_owned()
+            }
+        );
+        assert_eq!(
+            client.prepare_payload(
+                &observation,
+                &CommandPayload::Chat {
+                    text: String::new(),
+                },
+                CommandId::new("empty-chat-command").unwrap(),
+            ),
+            Err(DeviceClientError::UnknownAction)
+        );
     }
 
     #[test]

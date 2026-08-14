@@ -66,6 +66,62 @@ impl LiveDeviceConfig {
         Ok(true)
     }
 
+    pub fn invoke_matching_payload(
+        &self,
+        room: &str,
+        epoch: u64,
+        command_prefix: &str,
+        description: &str,
+        output: OutputFormat,
+        matches: impl Fn(&CommandPayload) -> bool,
+    ) -> Result<bool> {
+        let room_id = parse_room(room)?;
+        let mut client = self.client(epoch)?;
+        let observation = client.observe(&room_id)?;
+        let mut candidates = observation
+            .actions
+            .iter()
+            .filter(|action| matches(&action.payload));
+        let action = candidates
+            .next()
+            .ok_or_else(|| eyre!("{description} is not currently advertised"))?;
+        if candidates.next().is_some() {
+            return Err(eyre!(
+                "{description} is ambiguous in the current advertised action set"
+            ));
+        }
+        let result = client.invoke(&observation, &action.id, random_command_id(command_prefix)?)?;
+        let text = action_result_text(&result);
+        emit_value(&result, &text, output)?;
+        Ok(true)
+    }
+
+    pub fn chat_tail(&self, room: &str, limit: usize, output: OutputFormat) -> Result<bool> {
+        let room_id = parse_room(room)?;
+        let mut client = self.client(1)?;
+        let observation = client.observe(&room_id)?;
+        let start = observation.chat_tail.len().saturating_sub(limit);
+        let entries = &observation.chat_tail[start..];
+        let text = if entries.is_empty() {
+            "No chat messages.".to_owned()
+        } else {
+            entries
+                .iter()
+                .map(|entry| {
+                    format!(
+                        "{} · {}: {}",
+                        entry.revision,
+                        entry.principal_id.as_str(),
+                        entry.text
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        emit_value(entries, &text, output)?;
+        Ok(true)
+    }
+
     pub fn invoke_countdown(&self, room: &str, ticks: u64, output: OutputFormat) -> Result<bool> {
         let room_id = parse_room(room)?;
         let mut client = self.client(1)?;

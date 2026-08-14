@@ -11,9 +11,9 @@ use std::{
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use poche_player_client::{
-    AdvertisedAction, DeviceActionRequest, DeviceActionResult, DeviceClientError,
-    DeviceCooperationRequest, DeviceCooperationResult, DeviceObservation, DeviceProfile,
-    LoopbackDeviceAuthority,
+    AdvertisedAction, AdvertisedActionParameter, AdvertisedActionTemplate, DeviceActionRequest,
+    DeviceActionResult, DeviceChatEntry, DeviceClientError, DeviceCooperationRequest,
+    DeviceCooperationResult, DeviceObservation, DeviceProfile, LoopbackDeviceAuthority,
 };
 use poche_protocol::{
     CaptureProviderAdvertisementWire, CommandPayload, CorrelationId, CountdownToken,
@@ -51,6 +51,22 @@ pub trait AdvertisedActionSource<G: SessionGame>: Send + Sync + 'static {
         state: &SessionState<G>,
         projection: &ProjectionEnvelope,
     ) -> Result<Vec<AdvertisedAction>, DeviceClientError>;
+
+    /// Return the bounded value-bearing action families offered for this exact
+    /// viewer projection. Concrete values are validated against the same
+    /// current template again during invocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable client error when the source cannot derive a complete
+    /// template set for the supplied state and exact projection.
+    fn templates(
+        &self,
+        _state: &SessionState<G>,
+        _projection: &ProjectionEnvelope,
+    ) -> Result<Vec<AdvertisedActionTemplate>, DeviceClientError> {
+        Ok(Vec::new())
+    }
 }
 
 /// Complete player/environment game-action derivation for the Rust Poche
@@ -403,6 +419,28 @@ impl<const PLAYERS: usize> AdvertisedActionSource<crate::OracleSessionGame<PLAYE
             ));
         }
         Ok(actions)
+    }
+
+    fn templates(
+        &self,
+        state: &SessionState<crate::OracleSessionGame<PLAYERS>>,
+        projection: &ProjectionEnvelope,
+    ) -> Result<Vec<AdvertisedActionTemplate>, DeviceClientError> {
+        let can_chat = state
+            .member(&projection.principal_id)
+            .is_some_and(|member| {
+                member.connection == poche_session::ConnectionState::Connected
+                    && !matches!(state.phase, SessionPhase::Closed)
+            });
+        Ok(if can_chat {
+            vec![AdvertisedActionTemplate {
+                id: "chat-send".to_owned(),
+                label: "Send chat".to_owned(),
+                parameter: AdvertisedActionParameter::ChatText,
+            }]
+        } else {
+            Vec::new()
+        })
     }
 }
 
@@ -995,8 +1033,17 @@ where
         }
         let action = current
             .action(&request.action_id)
+            .map(|action| action.payload == request.payload)
+            .or_else(|| {
+                current
+                    .action_templates
+                    .binary_search_by(|template| template.id.as_str().cmp(&request.action_id))
+                    .ok()
+                    .and_then(|index| current.action_templates.get(index))
+                    .map(|template| template.accepts(&request.payload))
+            })
             .ok_or(DeviceClientError::UnknownAction)?;
-        if action.payload != request.payload {
+        if !action {
             return Err(DeviceClientError::ProtocolViolation);
         }
         let client = shared
@@ -1396,11 +1443,49 @@ where
     if !actions.windows(2).all(|pair| pair[0].id < pair[1].id) {
         return Err(DeviceClientError::ProtocolViolation);
     }
+    let (action_templates, chat_tail) = observation_supplements(shared, &projection, &actions)?;
     Ok(DeviceObservation {
         projection,
         projection_hash,
         actions,
+        action_templates,
+        chat_tail,
     })
+}
+
+fn observation_supplements<G, A>(
+    shared: &SharedLoopbackState<G, A>,
+    projection: &ProjectionEnvelope,
+    actions: &[AdvertisedAction],
+) -> Result<(Vec<AdvertisedActionTemplate>, Vec<DeviceChatEntry>), DeviceClientError>
+where
+    G: SessionGame,
+    A: AdvertisedActionSource<G>,
+{
+    let mut templates = shared
+        .action_source
+        .templates(&shared.authority.state, projection)?;
+    templates.sort_by(|left, right| left.id.cmp(&right.id));
+    if !templates.windows(2).all(|pair| pair[0].id < pair[1].id)
+        || actions.iter().any(|action| {
+            templates
+                .binary_search_by(|template| template.id.as_str().cmp(&action.id))
+                .is_ok()
+        })
+    {
+        return Err(DeviceClientError::ProtocolViolation);
+    }
+    let chat = shared
+        .authority
+        .chat_tail()
+        .entries()
+        .map(|entry| DeviceChatEntry {
+            revision: entry.revision,
+            principal_id: entry.principal_id.clone(),
+            text: entry.text.clone(),
+        })
+        .collect();
+    Ok((templates, chat))
 }
 
 /// Public-only projection for authority services and not-yet-enrolled room
@@ -1961,6 +2046,25 @@ mod tests {
 
         invoke!(host, "room-create", "service-create");
         invoke!(guest, "room-join", "service-join");
+        let chat_observation = host.observe(&room_id).unwrap();
+        assert_eq!(chat_observation.action_templates.len(), 1);
+        assert_eq!(chat_observation.action_templates[0].id, "chat-send");
+        assert!(matches!(
+            host.invoke_payload(
+                &chat_observation,
+                &CommandPayload::Chat {
+                    text: "hello from the certified desktop".to_owned(),
+                },
+                CommandId::new("service-chat").unwrap(),
+            )
+            .unwrap(),
+            DeviceActionResult::Committed { .. }
+        ));
+        let guest_chat = guest.observe(&room_id).unwrap();
+        assert!(matches!(
+            guest_chat.chat_tail.as_slice(),
+            [DeviceChatEntry { text, .. }] if text == "hello from the certified desktop"
+        ));
         invoke!(host, "room-take-seat-0", "service-seat-host");
         invoke!(guest, "room-take-seat-1", "service-seat-guest");
         invoke!(host, "room-ready", "service-ready-host");
@@ -1969,7 +2073,7 @@ mod tests {
 
         assert_eq!(certified.drive_authority_services(2).unwrap(), 2);
         let observation = host.observe(&room_id).unwrap();
-        assert_eq!(observation.projection.current_revision, 9);
+        assert_eq!(observation.projection.current_revision, 10);
         assert_eq!(observation.projection.payload.phase, RoomPhase::Running);
         assert!(matches!(
             observation

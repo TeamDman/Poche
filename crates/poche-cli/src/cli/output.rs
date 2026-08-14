@@ -83,7 +83,11 @@ pub fn emit(receipt: &CommandReceipt, format: OutputFormat) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if serialization or stdout writing fails.
-pub fn emit_value<T: Serialize>(value: &T, text: &str, format: OutputFormat) -> Result<()> {
+pub fn emit_value<T: Serialize + ?Sized>(
+    value: &T,
+    text: &str,
+    format: OutputFormat,
+) -> Result<()> {
     let rendered = match format {
         OutputFormat::Text => format!("{text}\n"),
         OutputFormat::Json => format!(

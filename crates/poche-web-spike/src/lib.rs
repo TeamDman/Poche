@@ -1741,6 +1741,26 @@ mod tests {
             .expect("joined exact-recipient view");
         assert_eq!(guest_lobby.projection.current_revision, 2);
         assert!(guest_lobby.action("room-take-seat-0").is_some());
+        assert_eq!(guest_lobby.action_templates[0].id, "chat-send");
+        let chat = guest
+            .invoke_payload(
+                &guest_lobby,
+                &CommandPayload::Chat {
+                    text: "hello across the signed HTTP boundary".to_owned(),
+                },
+                CommandId::new("http-chat-guest").unwrap(),
+            )
+            .expect("parameterized signed chat action");
+        assert!(matches!(
+            chat,
+            poche_player_client::DeviceActionResult::Committed { revision: 3, .. }
+        ));
+        let host_after_chat = client.observe(&room_id).expect("host chat tail");
+        assert!(matches!(
+            host_after_chat.chat_tail.as_slice(),
+            [poche_player_client::DeviceChatEntry { text, .. }]
+                if text == "hello across the signed HTTP boundary"
+        ));
         let unknown_target = DeviceId::new("11".repeat(32)).unwrap();
         let unavailable_capture = UnsignedCaptureRequestWire {
             schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,

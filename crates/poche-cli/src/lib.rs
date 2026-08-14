@@ -74,6 +74,12 @@ pub fn run_from(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
                 cli::Command::Game(command) => {
                     command.invoke(&live_config, parsed.global.output)?
                 }
+                cli::Command::Chat(command) => {
+                    command.invoke(&live_config, parsed.global.output)?
+                }
+                cli::Command::Spectator(command) => {
+                    command.invoke(&live_config, parsed.global.output)?
+                }
                 cli::Command::Transcript(command) => command.invoke(parsed.global.output)?,
                 cli::Command::Governance(command) => command.invoke(parsed.global.output)?,
                 cli::Command::Identity(command) => command.invoke(parsed.global.output)?,
@@ -86,7 +92,6 @@ pub fn run_from(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
                 cli::Command::Puppet(command) => command.invoke(parsed.global.output, || {
                     cancellation.bail_if_cancelled().is_err()
                 })?,
-                _ => false,
             };
             if !emitted {
                 let output = cli::output::CommandReceipt::parsed(group, action);

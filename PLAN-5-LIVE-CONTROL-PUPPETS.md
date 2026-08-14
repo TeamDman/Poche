@@ -3,12 +3,12 @@
 **Plan ID:** `poche-phase-5-live-control-puppets`
 **Plan status:** Execution in progress
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
-**Last updated:** 2026-08-12 (America/Toronto)
+**Last updated:** 2026-08-13 (America/Toronto)
 **Intent audit:** Passed 2026-08-12 against the available original Poche/SFM,
 desktop, browser, CLI, computer-player, multi-device, capture, puppet, Figue,
 Veilid, and planning instructions in this task
-**Current implementation focus:** Task 3.1; turn Bevy into a live certified
-player device and common-contract graphical capture provider
+**Current implementation focus:** Tasks 3.1-3.2; finish the external capture
+carrier and close the remaining executable certified-device commands
 
 ## How to update this plan
 
@@ -883,8 +883,19 @@ the countdown, and complete the entire Poche game while the certified service
 devices perform every chance/environment transition. Both player projections
 converge at `PostGame`, with more than 100 externally signed player actions and
 non-empty public history. Persistent-agent convergence with graphical peers,
-chat/governance/spectator/capture CLI commands, and external graphical
-convergence remain.
+governance/capture CLI commands, and external graphical convergence remain.
+Parameterized chat is no longer an unadvertised renderer exception: exact
+device observations carry a bounded `chat-send` template, clients can prepare
+only a nonempty protocol-sized chat payload from that template, and the
+adapter resolves the same current template again before reducer submission.
+The bounded attributed public chat tail now travels with the exact observation.
+`poche chat send|tail` executes through the selected protected profile and
+signed HTTP transport. A real Axum/socket test proves one independently signed
+device sends arbitrary chat and its peer observes the committed tail.
+`poche spectator request-hand|grant-hand|revoke-hand` now executes too:
+requests use an exact typed payload, while grant/revoke select exactly one
+currently advertised recipient-bound action and fail on zero or ambiguous
+matches. Focused player-client/runtime/CLI tests and strict Clippy pass.
 
 **Work:**
 
