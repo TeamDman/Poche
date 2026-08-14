@@ -11,13 +11,16 @@
 mod artifacts;
 pub mod browser;
 mod catalog;
+mod external;
 mod native;
 mod scenario;
 
 use core::fmt;
 use std::{path::PathBuf, time::Duration};
 
-pub use catalog::{ScenarioDescriptor, TWO_PLAYER_FULL_ROUND, scenario, scenarios};
+pub use catalog::{
+    EXTERNAL_DEVICES_FULL_GAME, ScenarioDescriptor, TWO_PLAYER_FULL_ROUND, scenario, scenarios,
+};
 pub use scenario::{
     DeviceRevisionEvidence, PuppetCaptureEvidence, PuppetDeviceEvidence, PuppetRunReport,
     PuppetStepEvidence,
@@ -37,6 +40,7 @@ pub enum PuppetSurface {
 pub enum PuppetTransport {
     LoopbackTyped,
     LoopbackNdjson,
+    HttpLoopback,
 }
 
 impl PuppetTransport {
@@ -45,6 +49,7 @@ impl PuppetTransport {
         match self {
             Self::LoopbackTyped => "loopback-typed",
             Self::LoopbackNdjson => "loopback-ndjson",
+            Self::HttpLoopback => "http-loopback",
         }
     }
 }
@@ -108,13 +113,30 @@ pub fn run_with_cancel(
     options: &PuppetRunOptions,
     mut cancelled: impl FnMut() -> bool,
 ) -> Result<PuppetRunReport, PuppetError> {
-    if scenario(&options.scenario).is_none() {
-        return Err(PuppetError::new(
+    let descriptor = scenario(&options.scenario).ok_or_else(|| {
+        PuppetError::new(
             PuppetErrorCode::UnknownScenario,
             "puppet scenario is not in the static catalog",
+        )
+    })?;
+    if !descriptor.surfaces.contains(&options.surface.as_str()) {
+        return Err(PuppetError::new(
+            PuppetErrorCode::UnsupportedSurface,
+            "the puppet scenario does not support the requested surface",
         ));
     }
-    let execution = scenario::run_two_player_full_round(options, &mut cancelled)?;
+    if !descriptor.transports.contains(&options.transport.as_str()) {
+        return Err(PuppetError::new(
+            PuppetErrorCode::UnsupportedTransport,
+            "the puppet scenario does not support the requested transport",
+        ));
+    }
+    let execution = match options.scenario.as_str() {
+        catalog::EXTERNAL_DEVICES_FULL_GAME => {
+            external::run_external_full_game(options, &mut cancelled)?
+        }
+        _ => scenario::run_two_player_full_round(options, &mut cancelled)?,
+    };
     artifacts::persist_run(options, execution)
 }
 
@@ -131,6 +153,7 @@ pub fn run(options: &PuppetRunOptions) -> Result<PuppetRunReport, PuppetError> {
 pub enum PuppetErrorCode {
     UnknownScenario,
     UnsupportedSurface,
+    UnsupportedTransport,
     InvalidFixture,
     DeviceProtocol,
     ActionDenied,
@@ -149,6 +172,7 @@ impl PuppetErrorCode {
         match self {
             Self::UnknownScenario => "PUPPET-UNKNOWN-SCENARIO",
             Self::UnsupportedSurface => "PUPPET-UNSUPPORTED-SURFACE",
+            Self::UnsupportedTransport => "PUPPET-UNSUPPORTED-TRANSPORT",
             Self::InvalidFixture => "PUPPET-INVALID-FIXTURE",
             Self::DeviceProtocol => "PUPPET-DEVICE-PROTOCOL",
             Self::ActionDenied => "PUPPET-ACTION-DENIED",

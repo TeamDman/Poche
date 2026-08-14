@@ -1290,6 +1290,48 @@ pub async fn run_from_env() -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// Returns fixture construction or Axum serving failures.
 pub async fn serve(listener: tokio::net::TcpListener) -> Result<(), Box<dyn std::error::Error>> {
+    serve_with_certified_room(listener, CertifiedRoomConfig::default()).await
+}
+
+/// Caller-owned deterministic configuration for the certified-device room
+/// hosted beside the browser surface. Secrets remain outside this value: the
+/// authority service devices are generated inside the serving process and
+/// player devices retain their own protected signers.
+#[derive(Clone, Debug)]
+pub struct CertifiedRoomConfig {
+    pub room_id: String,
+    pub invite: String,
+    pub game_seed: u64,
+    pub seat_count: u8,
+    pub countdown_deadline_tick: u64,
+    pub countdown_token: String,
+}
+
+impl Default for CertifiedRoomConfig {
+    fn default() -> Self {
+        Self {
+            room_id: "certified-device-room".to_owned(),
+            invite: "certified-device-join-v1".to_owned(),
+            game_seed: 0x5eed,
+            seat_count: 2,
+            countdown_deadline_tick: 3,
+            countdown_token: "certified-countdown".to_owned(),
+        }
+    }
+}
+
+/// Serve the complete browser surface with one caller-configured certified
+/// room. This is the process/socket boundary used by external-device puppets;
+/// it does not inject profiles, keys, actions, or reducer access.
+///
+/// # Errors
+///
+/// Returns invalid room configuration, fixture construction, or Axum serving
+/// failures.
+pub async fn serve_with_certified_room(
+    listener: tokio::net::TcpListener,
+    certified_config: CertifiedRoomConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
     let (live_updates, _) = broadcast::channel(LIVE_UPDATE_CAPACITY);
     let (room_updates, _) = broadcast::channel(LIVE_UPDATE_CAPACITY);
     let state = AppState {
@@ -1303,7 +1345,7 @@ pub async fn serve(listener: tokio::net::TcpListener) -> Result<(), Box<dyn std:
         gateway: GatewayLab::new()?,
         gateway_live: Arc::new(Mutex::new(gateway_demo()?)),
         tabletop: Arc::new(Mutex::new(TabletopLab::new()?)),
-        certified_room: Arc::new(Mutex::new(certified_device_room()?)),
+        certified_room: Arc::new(Mutex::new(certified_device_room(&certified_config)?)),
         capture_relay: CaptureRelay::default(),
     };
     let _clock_task = spawn_live_clock(Arc::clone(&state.live), state.live_updates.clone());
@@ -1320,20 +1362,25 @@ fn gateway_demo() -> Result<LiveDemo, String> {
     Ok(demo)
 }
 
-fn certified_device_room() -> Result<WebCertifiedRoom, String> {
-    const INVITE: &str = "certified-device-join-v1";
+fn certified_device_room(config: &CertifiedRoomConfig) -> Result<WebCertifiedRoom, String> {
     let clock = ephemeral_service_profile("certified-authority-clock")?;
     let environment = ephemeral_service_profile("certified-game-environment")?;
     let mut state = SessionState::pending(
-        room("certified-device-room")?,
+        room(&config.room_id)?,
         clock.player_id.clone(),
         environment.player_id.clone(),
     );
     state
         .invites
-        .push(InviteRecord::new(INVITE, u64::MAX).map_err(|error| format!("{error:?}"))?);
-    let actions = OracleRoomActionSource::new(0x5eed, 2, INVITE, 3, "certified-countdown")
-        .map_err(|error| error.to_string())?;
+        .push(InviteRecord::new(&config.invite, u64::MAX).map_err(|error| format!("{error:?}"))?);
+    let actions = OracleRoomActionSource::new(
+        config.game_seed,
+        config.seat_count,
+        &config.invite,
+        config.countdown_deadline_tick,
+        &config.countdown_token,
+    )
+    .map_err(|error| error.to_string())?;
     let mut room = CertifiedDeviceRoom::new(RuntimeLoopbackDeviceAdapter::new(
         state,
         actions,

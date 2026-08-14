@@ -18,7 +18,7 @@ getrandom.workspace = true
 futures-util.workspace = true
 poche-capture = { path = "../poche-capture" }
 poche-native-ui = { path = "../poche-native-ui" }
-poche-player-client = { path = "../poche-player-client" }
+poche-player-client = { path = "../poche-player-client", features = ["http"] }
 poche-protocol = { path = "../poche-protocol" }
 poche-runtime = { path = "../poche-runtime" }
 poche-session = { path = "../poche-session" }

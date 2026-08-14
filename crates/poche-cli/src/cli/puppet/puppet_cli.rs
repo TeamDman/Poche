@@ -4,8 +4,8 @@ use eyre::{Context, Result};
 use facet::Facet;
 use figue as args;
 use poche_puppet::{
-    PuppetRunOptions, PuppetSurface, PuppetTransport, default_artifact_root, run_with_cancel,
-    scenario, scenarios,
+    EXTERNAL_DEVICES_FULL_GAME, PuppetRunOptions, PuppetSurface, PuppetTransport,
+    default_artifact_root, run_with_cancel, scenario, scenarios,
 };
 use serde::Serialize;
 
@@ -96,11 +96,14 @@ impl PuppetArgs {
             }
             PuppetCommand::Run { transport, .. }
                 if transport.as_deref().is_some_and(|transport| {
-                    !matches!(transport, "loopback-typed" | "loopback-ndjson")
+                    !matches!(
+                        transport,
+                        "loopback-typed" | "loopback-ndjson" | "http-loopback"
+                    )
                 }) =>
             {
                 Err(ParseError::new(
-                    "--transport requires loopback-typed or loopback-ndjson",
+                    "--transport requires loopback-typed, loopback-ndjson, or http-loopback",
                 ))
             }
             PuppetCommand::Run {
@@ -160,14 +163,17 @@ impl PuppetArgs {
                 show_window,
             } => {
                 let surfaces = surface_list(surface.as_deref());
+                let transport = match transport.as_deref() {
+                    Some("loopback-ndjson") => PuppetTransport::LoopbackNdjson,
+                    Some("http-loopback") => PuppetTransport::HttpLoopback,
+                    None if scenario == EXTERNAL_DEVICES_FULL_GAME => PuppetTransport::HttpLoopback,
+                    None | Some("loopback-typed") => PuppetTransport::LoopbackTyped,
+                    Some(_) => unreachable!("validated transport"),
+                };
                 let mut options = PuppetRunOptions {
                     scenario,
                     surface: surfaces[0],
-                    transport: match transport.as_deref() {
-                        Some("loopback-ndjson") => PuppetTransport::LoopbackNdjson,
-                        None | Some("loopback-typed") => PuppetTransport::LoopbackTyped,
-                        Some(_) => unreachable!("validated transport"),
-                    },
+                    transport,
                     seed: seed.unwrap_or(1),
                     show_native_window: show_window,
                     ..PuppetRunOptions::default()

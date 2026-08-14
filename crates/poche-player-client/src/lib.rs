@@ -536,6 +536,42 @@ pub trait DeviceTransport {
     ) -> Result<DeviceCooperationResult, DeviceClientError>;
 }
 
+impl<T: DeviceTransport + ?Sized> DeviceTransport for Box<T> {
+    fn observe(
+        &mut self,
+        profile: &DeviceProfile,
+        room_id: &RoomId,
+    ) -> Result<DeviceObservation, DeviceClientError> {
+        (**self).observe(profile, room_id)
+    }
+
+    fn invoke(
+        &mut self,
+        profile: &DeviceProfile,
+        request: DeviceActionRequest,
+    ) -> Result<DeviceActionResult, DeviceClientError> {
+        (**self).invoke(profile, request)
+    }
+
+    fn wait(
+        &mut self,
+        profile: &DeviceProfile,
+        room_id: &RoomId,
+        after_revision: u64,
+    ) -> Result<DeviceObservation, DeviceClientError> {
+        (**self).wait(profile, room_id, after_revision)
+    }
+
+    fn cooperate(
+        &mut self,
+        profile: &DeviceProfile,
+        target_device: &DeviceId,
+        request: DeviceCooperationRequest,
+    ) -> Result<DeviceCooperationResult, DeviceClientError> {
+        (**self).cooperate(profile, target_device, request)
+    }
+}
+
 /// Device client that constrains a UI, CLI, agent, or puppet to advertised
 /// actions from its own exact observation.
 pub struct PlayerDeviceClient<T> {

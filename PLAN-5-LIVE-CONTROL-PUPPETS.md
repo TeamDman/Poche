@@ -1217,9 +1217,21 @@ the task remains unchecked until the multi-player graphical acceptance run.
 The real Axum listener and HTTP device adapter now prove signed
 observe/invoke/wait plus idempotent retry over a process-shaped socket
 boundary, using the same advertised action resolver and authoritative reducer
-as loopback devices. This currently covers single-device room creation only;
-it does not yet claim native/browser peers, protected persistent keys, a full
-game, or cross-device capture over the external carrier.
+as loopback devices. The new catalogued `external-devices-full-game` scenario
+now starts that listener on an ephemeral loopback socket and provisions five
+distinct root-certified devices across two player roots: Alice and Bob policy
+devices plus browser/native-custody siblings. A real public-CLI run at seed 73
+completed one hosted room at revision 158 after 131 externally signed player
+commands, with all five devices converged, 138 public-history events, scores
+`[89, 71]`, and history hash
+`1e7e1e65ade092630cbc24c1ea45e65c2a85247ae961a6bb4aed0cca4fda9728`.
+Alice's browser sibling and Bob's native sibling each took an ordinary game
+turn from their own exact observation, proving state/key takeover is
+unnecessary when another certified device begins acting. The run publishes a
+hashed headless manifest and explicitly does not yet claim graphical pixels or
+external capture transfer. The task therefore remains open for exact shared-
+room browser/Bevy capture and lifecycle/disconnect evidence; it no longer lacks
+the complete external multi-player game.
 
 **Work:**
 
@@ -1245,9 +1257,28 @@ target\debug\poche.exe puppet artifacts path
 and rendered a complete path, shared actions naturally, and exchanged captures
 without local window control.
 
-### [ ] 5.2 Compare headless, web, and native semantic evidence
+### [x] 5.2 Compare headless, web, and native semantic evidence
 
-**Completion notes:** Not started.
+**Completion notes:** Completed 2026-08-13. One current-tree invocation,
+`poche puppet run two-player-full-round --surface headless,web,native
+--transport loopback-ndjson --seed 45`, completed all three surfaces at
+revision 159 with scores `[56, 62]`, 159 semantic steps, eight converged
+devices, 138 public-history events, and the identical BLAKE3 public-history
+hash `3e5e12e472ef317868d49eb48a8e8feecd6c0cd7a9ec45dda665710df061e81b`.
+Headless emitted semantic evidence only; web and native each emitted the same
+six named semantic checkpoints through their renderer-specific capture
+contracts. The verified catalog and contact sheet were written beneath
+`target/poche-puppets-phase5-current`, with executable revision `920b044` and
+contact-sheet hash
+`3e08a56940b296c36bc17ec8ff692b9502075199379029a44646470f0cd0e59e`.
+The manifests explicitly preserve the distinct qualifications: native images
+are real windowless Bevy image-target readbacks; browser images/HTML/a11y/layout
+come from real headless Edge/Chrome contexts; neither pixel stream is treated
+as authority or formal proof. The browser qualification also explicitly says
+its production-shaped UI room is a deterministic parallel authority matched
+by semantic revision, not yet the same certified external room. Closing that
+last identity boundary remains Task 5.1 rather than being hidden by this parity
+result.
 
 **Work:**
 

@@ -19,17 +19,30 @@ pub struct ScenarioDescriptor {
 }
 
 pub const TWO_PLAYER_FULL_ROUND: &str = "two-player-full-round";
+pub const EXTERNAL_DEVICES_FULL_GAME: &str = "external-devices-full-game";
 
-const SCENARIOS: [ScenarioDescriptor; 1] = [ScenarioDescriptor {
-    schema: "poche.puppet.scenario.v1",
-    name: TWO_PLAYER_FULL_ROUND,
-    description: "Create a two-player room and complete the full deterministic Poche schedule through certified devices.",
-    surfaces: &["headless", "native", "web"],
-    transports: &["loopback-typed", "loopback-ndjson"],
-    player_roots: 3,
-    devices: 7,
-    completion: "room reaches post_game and every enrolled device observes the terminal revision",
-}];
+const SCENARIOS: [ScenarioDescriptor; 2] = [
+    ScenarioDescriptor {
+        schema: "poche.puppet.scenario.v1",
+        name: TWO_PLAYER_FULL_ROUND,
+        description: "Create a two-player room and complete the full deterministic Poche schedule through certified devices.",
+        surfaces: &["headless", "native", "web"],
+        transports: &["loopback-typed", "loopback-ndjson"],
+        player_roots: 3,
+        devices: 7,
+        completion: "room reaches post_game and every enrolled device observes the terminal revision",
+    },
+    ScenarioDescriptor {
+        schema: "poche.puppet.scenario.v1",
+        name: EXTERNAL_DEVICES_FULL_GAME,
+        description: "Complete a two-player game through one real Axum socket using independent certified policy and graphical sibling devices.",
+        surfaces: &["headless"],
+        transports: &["http-loopback"],
+        player_roots: 2,
+        devices: 5,
+        completion: "one hosted room reaches post_game, all external devices converge, and browser/native siblings each take over an ordinary player action",
+    },
+];
 
 #[must_use]
 pub const fn scenarios() -> &'static [ScenarioDescriptor] {

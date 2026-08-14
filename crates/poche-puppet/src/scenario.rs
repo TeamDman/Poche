@@ -7,7 +7,7 @@ use std::{fmt::Write as _, time::Instant};
 use ed25519_dalek::{Signer, SigningKey};
 use poche_player_client::{
     AdvertisedAction, AdvertisedActionPolicy, DeviceActionResult, DeviceObservation, DeviceProfile,
-    LoopbackDeviceTransport, PlayerDeviceClient, PolicyScope,
+    DeviceTransport, LoopbackDeviceTransport, PlayerDeviceClient, PolicyScope,
 };
 use poche_protocol::{
     CertificateId, CommandId, CommandPayload, CountdownToken, DeviceCapabilityWire,
@@ -30,7 +30,7 @@ use crate::{
 };
 
 pub(crate) type Adapter = RuntimeLoopbackDeviceAdapter<OracleSessionGame<2>, PuppetActionSource>;
-pub(crate) type Client = PlayerDeviceClient<LoopbackDeviceTransport<Adapter>>;
+pub(crate) type Client = PlayerDeviceClient<Box<dyn DeviceTransport>>;
 
 #[derive(Clone)]
 pub(crate) struct PuppetActionSource {
@@ -556,7 +556,7 @@ fn build_report(
     })
 }
 
-fn semantic_hash(observation: &DeviceObservation) -> String {
+pub(crate) fn semantic_hash(observation: &DeviceObservation) -> String {
     let mut encoded = String::with_capacity(64);
     for byte in observation.projection_hash.0 {
         write!(&mut encoded, "{byte:02x}").expect("writing to a String is infallible");
@@ -564,7 +564,7 @@ fn semantic_hash(observation: &DeviceObservation) -> String {
     encoded
 }
 
-const fn room_phase(phase: RoomPhase) -> &'static str {
+pub(crate) const fn room_phase(phase: RoomPhase) -> &'static str {
     match phase {
         RoomPhase::Lobby => "lobby",
         RoomPhase::Countdown => "countdown",
@@ -575,7 +575,7 @@ const fn room_phase(phase: RoomPhase) -> &'static str {
     }
 }
 
-fn device_error(_: poche_player_client::DeviceClientError) -> PuppetError {
+pub(crate) fn device_error(_: poche_player_client::DeviceClientError) -> PuppetError {
     PuppetError::new(
         PuppetErrorCode::DeviceProtocol,
         "certified device client rejected the puppet operation",
@@ -646,6 +646,7 @@ impl Fixture {
         let codec = match transport {
             PuppetTransport::LoopbackTyped => LoopbackCodec::Typed,
             PuppetTransport::LoopbackNdjson => LoopbackCodec::CanonicalNdjson,
+            PuppetTransport::HttpLoopback => return Err(invalid_fixture()),
         };
         let adapter = RuntimeLoopbackDeviceAdapter::new(state, source, codec);
         let requester_profile = signed_profile(
@@ -756,9 +757,11 @@ impl Fixture {
         let mut devices = Vec::with_capacity(profiles.len());
         for (label, role, profile) in profiles {
             adapter.enroll(&profile).map_err(device_error)?;
-            let client =
-                PlayerDeviceClient::new(profile, LoopbackDeviceTransport::new(adapter.clone()))
-                    .map_err(device_error)?;
+            let client = PlayerDeviceClient::new(
+                profile,
+                Box::new(LoopbackDeviceTransport::new(adapter.clone())) as Box<dyn DeviceTransport>,
+            )
+            .map_err(device_error)?;
             devices.push(HarnessDevice {
                 label,
                 role,
@@ -780,18 +783,18 @@ impl Fixture {
     }
 }
 
-fn deterministic_key(label: &str, seed: u64) -> SigningKey {
+pub(crate) fn deterministic_key(label: &str, seed: u64) -> SigningKey {
     let mut hasher = blake3::Hasher::new_derive_key("poche/puppet-device-key/v1");
     hasher.update(label.as_bytes());
     hasher.update(&seed.to_be_bytes());
     SigningKey::from_bytes(hasher.finalize().as_bytes())
 }
 
-fn principal_for_key(key: &SigningKey) -> Result<PrincipalId, PuppetError> {
+pub(crate) fn principal_for_key(key: &SigningKey) -> Result<PrincipalId, PuppetError> {
     PrincipalId::new(hex(&key.verifying_key().to_bytes())).map_err(|_| invalid_fixture())
 }
 
-fn signed_profile(
+pub(crate) fn signed_profile(
     label: &str,
     root_key: &SigningKey,
     device_key: &SigningKey,
@@ -809,7 +812,9 @@ fn signed_profile(
         player_id: player_id.clone(),
         device_id: device_id.clone(),
         device_signing_public_key: device_public_key,
-        device_encryption_public_key: "ee".repeat(32),
+        device_encryption_public_key: hex(&poche_capture::device_encryption_public_key(
+            device_key.as_bytes(),
+        )),
         sequence: 1,
         valid_from_membership_epoch: 1,
         valid_through_membership_epoch: None,
@@ -837,7 +842,7 @@ fn signed_profile(
     })
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().fold(
         String::with_capacity(bytes.len() * 2),
         |mut output, byte| {
@@ -847,7 +852,7 @@ fn hex(bytes: &[u8]) -> String {
     )
 }
 
-const fn invalid_fixture() -> PuppetError {
+pub(crate) const fn invalid_fixture() -> PuppetError {
     PuppetError::new(
         PuppetErrorCode::InvalidFixture,
         "deterministic puppet fixture is structurally invalid",
