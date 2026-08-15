@@ -1078,7 +1078,7 @@ mod tests {
     }
 
     #[test]
-    fn action_id_and_typed_convenience_prepare_the_identical_request() {
+    fn entry_point_parity_produces_the_identical_canonical_request() {
         let (profile, observation) = fixture();
         let authority = FixtureTransport {
             observation: observation.clone(),
@@ -1100,10 +1100,25 @@ mod tests {
                 CommandId::new("parity-command").unwrap(),
             )
             .unwrap();
+        let selected = AdvertisedActionPolicy::FirstLegal
+            .select(&observation, PolicyScope::AllAdvertised)
+            .unwrap();
+        let by_policy = client
+            .prepare(
+                &observation,
+                &selected.id,
+                CommandId::new("parity-command").unwrap(),
+            )
+            .unwrap();
         assert_eq!(by_id, by_payload);
+        assert_eq!(by_id, by_policy);
         assert_eq!(
             serde_json::to_vec(&by_id).unwrap(),
             serde_json::to_vec(&by_payload).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_vec(&by_id).unwrap(),
+            serde_json::to_vec(&by_policy).unwrap()
         );
     }
 

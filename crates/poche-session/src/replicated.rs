@@ -238,6 +238,9 @@ impl ReplicatedSessionState {
         event: ReplicatedEventWire,
         verifier: &impl ReplicationSignatureVerifier,
     ) -> Result<ReplicatedApplyResult, ReplicatedSessionError> {
+        if !self.forks.is_empty() {
+            return Err(ReplicatedSessionError::Forked);
+        }
         if let Some(last) = &self.last_event
             && event.candidate.body.height == last.candidate.body.height
         {
@@ -261,9 +264,6 @@ impl ReplicatedSessionState {
                 });
                 return Err(ReplicatedSessionError::ForkDetected);
             }
-        }
-        if !self.forks.is_empty() {
-            return Err(ReplicatedSessionError::Forked);
         }
         self.validate_event(&event, verifier)?;
         let before = self.clone();
@@ -560,7 +560,60 @@ impl ReplicatedSessionState {
             .map(|index| &self.epoch_rosters[index])
     }
 
+    fn validate_voting_devices(&self) -> Result<(), ReplicatedSessionError> {
+        for player in &self.players {
+            let mut change_epochs = BTreeSet::from([self.membership_epoch]);
+            for device in &player.devices {
+                if !device.has_capability(DeviceCapabilityWire::Vote) {
+                    continue;
+                }
+                change_epochs.insert(device.valid_from_membership_epoch);
+                if let Some(after) = device
+                    .valid_through_membership_epoch
+                    .and_then(|through| through.checked_add(1))
+                {
+                    change_epochs.insert(after);
+                }
+            }
+            for revocation in self
+                .staged_revocations
+                .iter()
+                .filter(|record| record.revocation.player_id == player.root.player_id)
+            {
+                change_epochs.insert(revocation.revocation.effective_membership_epoch);
+            }
+
+            for epoch in change_epochs {
+                let voting_devices = player
+                    .devices
+                    .iter()
+                    .filter(|device| {
+                        device.has_capability(DeviceCapabilityWire::Vote)
+                            && device.is_valid_at(epoch)
+                            && !self.staged_revocations.iter().any(|record| {
+                                record.revocation.device_id == device.device_id
+                                    && record.revocation.effective_membership_epoch <= epoch
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                if voting_devices.len() > 1 {
+                    return Err(ReplicatedSessionError::MultipleVotingDevices);
+                }
+                if epoch == self.membership_epoch
+                    && player.active
+                    && voting_devices
+                        .first()
+                        .is_none_or(|device| !device.has_capability(DeviceCapabilityWire::Propose))
+                {
+                    return Err(ReplicatedSessionError::MissingVotingDevice);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn validate(&self) -> Result<(), ReplicatedSessionError> {
+        self.validate_voting_devices()?;
         if self.membership_epoch == 0
             || self.active_players().len() < 2
             || self.epoch_rosters.last().is_none_or(|roster| {
@@ -630,6 +683,7 @@ pub enum ReplicatedSessionError {
     DuplicateDevice,
     DeviceLimit,
     MissingVotingDevice,
+    MultipleVotingDevices,
     InvalidRevocation,
     InvalidHeight,
     InvalidEvent,
@@ -653,6 +707,9 @@ impl fmt::Display for ReplicatedSessionError {
             Self::DuplicateDevice => "replicated device/certificate is duplicate or stale",
             Self::DeviceLimit => "replicated player device limit exceeded",
             Self::MissingVotingDevice => "active player lacks a propose/vote device",
+            Self::MultipleVotingDevices => {
+                "player has overlapping devices authorized to vote in one membership epoch"
+            }
             Self::InvalidRevocation => "device revocation is invalid or not next-epoch",
             Self::InvalidHeight => "replicated height is not the next height",
             Self::InvalidEvent => "replicated event does not extend the current head",
@@ -796,6 +853,18 @@ mod tests {
         .unwrap()
     }
 
+    fn non_voting_device(
+        player: &PlayerRootWire,
+        seed: u8,
+        sequence: u64,
+    ) -> DeviceCertificateWire {
+        let mut certificate = device(player, seed, sequence);
+        certificate
+            .capabilities
+            .retain(|capability| *capability != DeviceCapabilityWire::Vote);
+        certificate
+    }
+
     fn fixture_state() -> (
         ReplicatedSessionState,
         Vec<PlayerRootWire>,
@@ -908,24 +977,42 @@ mod tests {
     }
 
     #[test]
-    fn replicated_devices_count_once_and_majority_commits() {
-        let (mut state, players, mut devices) = fixture_state();
+    fn replicated_siblings_add_no_vote_weight_and_unsafe_voter_is_refused() {
+        let (mut state, players, devices) = fixture_state();
         assert_eq!(state.quorum(), 2);
-        let alice_second = device(&players[0], 21, 2);
+        let alice_second_voter = device(&players[0], 21, 2);
+        assert_eq!(
+            state.register_device(alice_second_voter.clone(), &FixtureVerifier),
+            Err(ReplicatedSessionError::MultipleVotingDevices)
+        );
+        let alice_sibling = non_voting_device(&players[0], 22, 2);
         state
-            .register_device(alice_second.clone(), &FixtureVerifier)
+            .register_device(alice_sibling.clone(), &FixtureVerifier)
             .unwrap();
-        devices.push(alice_second.clone());
 
-        let candidate = candidate(&state, &players, &devices[..3], 0, 1, None);
+        let candidate = candidate(&state, &players, &devices, 0, 1, None);
         let duplicate_player_event = event(
             candidate.clone(),
-            &[(&players[0], &devices[0]), (&players[0], &alice_second)],
+            &[
+                (&players[0], &devices[0]),
+                (&players[0], &alice_second_voter),
+            ],
             7,
         );
         assert_eq!(
             state.apply_event(duplicate_player_event, &FixtureVerifier),
             Err(ReplicatedSessionError::InvalidEvent)
+        );
+        assert_eq!(state.height(), 0);
+
+        let sibling_vote = event(
+            candidate.clone(),
+            &[(&players[0], &alice_sibling), (&players[1], &devices[1])],
+            7,
+        );
+        assert_eq!(
+            state.apply_event(sibling_vote, &FixtureVerifier),
+            Err(ReplicatedSessionError::DeviceNotAuthorized)
         );
         assert_eq!(state.height(), 0);
 
@@ -948,10 +1035,6 @@ mod tests {
     #[test]
     fn replicated_revocation_and_membership_change_require_joint_quorum() {
         let (mut state, players, devices) = fixture_state();
-        let alice_second = device(&players[0], 21, 2);
-        state
-            .register_device(alice_second.clone(), &FixtureVerifier)
-            .unwrap();
         let unsigned_revocation = UnsignedDeviceRevocationWire {
             schema_version: REPLICATION_SCHEMA_VERSION_V1,
             player_id: players[2].player_id.clone(),
@@ -973,8 +1056,8 @@ mod tests {
         let alice_revocation = UnsignedDeviceRevocationWire {
             schema_version: REPLICATION_SCHEMA_VERSION_V1,
             player_id: players[0].player_id.clone(),
-            device_id: alice_second.device_id.clone(),
-            certificate_sequence: alice_second.sequence,
+            device_id: devices[0].device_id.clone(),
+            certificate_sequence: devices[0].sequence,
             effective_membership_epoch: 2,
             signature_intent: SignatureIntent {
                 domain_version: REPLICATION_SIGNATURE_DOMAIN_V1,
@@ -988,10 +1071,15 @@ mod tests {
                 &FixtureVerifier,
             )
             .unwrap();
+        let mut alice_replacement = device(&players[0], 21, 2);
+        alice_replacement.valid_from_membership_epoch = 2;
+        state
+            .register_device(alice_replacement.clone(), &FixtureVerifier)
+            .unwrap();
         let transition = MembershipTransitionWire {
             next_membership_epoch: 2,
             active_players: vec![players[0].player_id.clone(), players[1].player_id.clone()],
-            revoked_devices: vec![devices[2].device_id.clone(), alice_second.device_id.clone()],
+            revoked_devices: vec![devices[0].device_id.clone(), devices[2].device_id.clone()],
         };
         let candidate = candidate(&state, &players, &devices, 0, 2, Some(transition));
         let weak = event(candidate.clone(), &[(&players[0], &devices[0])], 8);
@@ -1014,11 +1102,22 @@ mod tests {
         assert_eq!(
             state.require_device(
                 &players[0].player_id,
-                &alice_second.device_id,
+                &devices[0].device_id,
                 DeviceCapabilityWire::Vote,
                 2
             ),
             Err(ReplicatedSessionError::DeviceNotAuthorized)
+        );
+        assert_eq!(
+            state
+                .require_device(
+                    &players[0].player_id,
+                    &alice_replacement.device_id,
+                    DeviceCapabilityWire::Vote,
+                    2
+                )
+                .map(|device| device.device_id.clone()),
+            Ok(alice_replacement.device_id)
         );
     }
 

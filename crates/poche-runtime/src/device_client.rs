@@ -9,7 +9,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use poche_player_client::{
     AdvertisedAction, AdvertisedActionParameter, AdvertisedActionTemplate, DeviceActionRequest,
     DeviceActionResult, DeviceChatEntry, DeviceClientError, DeviceCooperationRequest,
@@ -35,7 +34,7 @@ use poche_session::{
 
 use crate::{
     AuthorityDisposition, ClientPort, InProcessAuthority, InProcessTransport, LoopbackCodec,
-    ScriptedClient,
+    ScriptedClient, signature::verify_ed25519_hex,
 };
 
 /// Derive the opaque action set for one exact projection. Production adapters
@@ -1491,7 +1490,7 @@ impl CaptureContextSnapshot {
 fn verify_device_certificate(certificate: &DeviceCertificateWire) -> Result<(), DeviceClientError> {
     let bytes = canonical_device_certificate_bytes(&certificate.unsigned())
         .map_err(|_| DeviceClientError::InvalidProfile)?;
-    verify_ed25519(
+    verify_ed25519_hex(
         certificate.player_id.as_str(),
         certificate.signature.signature.as_str(),
         &bytes,
@@ -1520,7 +1519,7 @@ pub fn verify_signed_device_action(
     verify_device_certificate(&action.certificate)?;
     let bytes = canonical_device_action_bytes(&action.unsigned())
         .map_err(|_| DeviceClientError::ProtocolViolation)?;
-    if !verify_ed25519(
+    if !verify_ed25519_hex(
         &action.certificate.device_signing_public_key,
         action.signature.signature.as_str(),
         &bytes,
@@ -1554,7 +1553,7 @@ pub fn verify_signed_device_observation_request(
     verify_device_certificate(&request.certificate)?;
     let bytes = canonical_device_observation_request_bytes(&request.unsigned())
         .map_err(|_| DeviceClientError::ProtocolViolation)?;
-    verify_ed25519(
+    verify_ed25519_hex(
         &request.certificate.device_signing_public_key,
         request.signature.signature.as_str(),
         &bytes,
@@ -1579,7 +1578,7 @@ pub fn verify_signed_device_route_request(
     verify_device_certificate(&request.certificate)?;
     let bytes = canonical_device_route_request_bytes(&request.unsigned())
         .map_err(|_| DeviceClientError::ProtocolViolation)?;
-    verify_ed25519(
+    verify_ed25519_hex(
         &request.certificate.device_signing_public_key,
         request.signature.signature.as_str(),
         &bytes,
@@ -1594,7 +1593,7 @@ fn verify_capture_advertisement(
 ) -> Result<(), DeviceClientError> {
     let bytes = canonical_capture_provider_advertisement_bytes(&advertisement.unsigned())
         .map_err(|_| DeviceClientError::ProtocolViolation)?;
-    verify_ed25519(
+    verify_ed25519_hex(
         &certificate.device_signing_public_key,
         advertisement.signature.signature.as_str(),
         &bytes,
@@ -1609,7 +1608,7 @@ fn verify_capture_request(
 ) -> Result<(), DeviceClientError> {
     let bytes = canonical_capture_request_bytes(&request.unsigned())
         .map_err(|_| DeviceClientError::ProtocolViolation)?;
-    verify_ed25519(
+    verify_ed25519_hex(
         &certificate.device_signing_public_key,
         request.signature.signature.as_str(),
         &bytes,
@@ -1624,40 +1623,13 @@ fn verify_capture_response(
 ) -> Result<(), DeviceClientError> {
     let bytes = canonical_capture_response_bytes(&response.unsigned())
         .map_err(|_| DeviceClientError::ProtocolViolation)?;
-    verify_ed25519(
+    verify_ed25519_hex(
         &certificate.device_signing_public_key,
         response.signature.signature.as_str(),
         &bytes,
     )
     .then_some(())
     .ok_or(DeviceClientError::ProtocolViolation)
-}
-
-fn verify_ed25519(public_key: &str, signature: &str, bytes: &[u8]) -> bool {
-    let Some(public_key) = decode_hex::<32>(public_key) else {
-        return false;
-    };
-    let Some(signature) = decode_hex::<64>(signature) else {
-        return false;
-    };
-    let Ok(verifying_key) = VerifyingKey::from_bytes(&public_key) else {
-        return false;
-    };
-    verifying_key
-        .verify(bytes, &Signature::from_bytes(&signature))
-        .is_ok()
-}
-
-fn decode_hex<const BYTES: usize>(encoded: &str) -> Option<[u8; BYTES]> {
-    if encoded.len() != BYTES * 2 {
-        return None;
-    }
-    let mut decoded = [0_u8; BYTES];
-    for (index, byte) in decoded.iter_mut().enumerate() {
-        let offset = index * 2;
-        *byte = u8::from_str_radix(encoded.get(offset..offset + 2)?, 16).ok()?;
-    }
-    Some(decoded)
 }
 
 fn observation<G, A>(
@@ -1865,8 +1837,8 @@ mod tests {
 
     use ed25519_dalek::{Signer, SigningKey};
     use poche_player_client::{
-        DeviceProfile, DeviceSigner, LoopbackDeviceTransport, PlayerDeviceClient,
-        sign_observation_request, sign_route_request,
+        AdvertisedActionPolicy, DeviceProfile, DeviceSigner, LoopbackDeviceTransport,
+        PlayerDeviceClient, PolicyScope, sign_observation_request, sign_route_request,
     };
     use poche_protocol::{
         CaptureArtifactDescriptorWire, CaptureArtifactId, CaptureConsentPolicyWire,
@@ -2128,6 +2100,100 @@ mod tests {
                 .current_revision,
             1
         );
+    }
+
+    #[test]
+    fn entry_point_parity_commits_identical_successors_and_denials() {
+        #[derive(Clone, Copy)]
+        enum Entry {
+            GuiAction,
+            CliPayload,
+            Policy,
+        }
+
+        let room = RoomId::new("entry-parity-room").unwrap();
+        let mut evidence = Vec::new();
+        for entry in [Entry::GuiAction, Entry::CliPayload, Entry::Policy] {
+            let state: SessionState<OracleSessionGame<2>> = SessionState::pending(
+                room.clone(),
+                PrincipalId::new("entry-parity-clock").unwrap(),
+                PrincipalId::new("entry-parity-game").unwrap(),
+            );
+            let adapter = RuntimeLoopbackDeviceAdapter::new(
+                state,
+                CreateRoomActions,
+                LoopbackCodec::CanonicalNdjson,
+            );
+            let profile = device_profile("entry-parity-device", "77");
+            adapter.enroll(&profile).unwrap();
+            let mut client =
+                PlayerDeviceClient::new(profile, LoopbackDeviceTransport::new(adapter.clone()))
+                    .unwrap();
+            let observation = client.observe(&room).unwrap();
+            let command = CommandId::new("entry-parity-create").unwrap();
+            let action_id = match entry {
+                Entry::GuiAction | Entry::CliPayload => "create-room".to_owned(),
+                Entry::Policy => AdvertisedActionPolicy::FirstLegal
+                    .select(&observation, PolicyScope::AllAdvertised)
+                    .unwrap()
+                    .id
+                    .clone(),
+            };
+            let prepared = match entry {
+                Entry::CliPayload => client.prepare_payload(
+                    &observation,
+                    &CommandPayload::CreateRoom,
+                    command.clone(),
+                ),
+                Entry::GuiAction | Entry::Policy => {
+                    client.prepare(&observation, &action_id, command.clone())
+                }
+            }
+            .unwrap();
+            let result = match entry {
+                Entry::CliPayload => client.invoke_payload(
+                    &observation,
+                    &CommandPayload::CreateRoom,
+                    command.clone(),
+                ),
+                Entry::GuiAction | Entry::Policy => {
+                    client.invoke(&observation, &action_id, command.clone())
+                }
+            }
+            .unwrap();
+            let successor = client.observe(&room).unwrap();
+            let stale_result = match entry {
+                Entry::CliPayload => client.invoke_payload(
+                    &observation,
+                    &CommandPayload::CreateRoom,
+                    CommandId::new("entry-parity-stale").unwrap(),
+                ),
+                Entry::GuiAction | Entry::Policy => client.invoke(
+                    &observation,
+                    &action_id,
+                    CommandId::new("entry-parity-stale").unwrap(),
+                ),
+            };
+            evidence.push((
+                serde_json::to_vec(&prepared).unwrap(),
+                result,
+                successor.projection_hash,
+                successor.projection.payload,
+                stale_result,
+                adapter.revision(),
+            ));
+        }
+
+        assert!(evidence.windows(2).all(|pair| pair[0] == pair[1]));
+        assert_eq!(
+            evidence[0].1,
+            DeviceActionResult::Committed {
+                command_id: CommandId::new("entry-parity-create").unwrap(),
+                revision: 1,
+            }
+        );
+        assert_eq!(evidence[0].4, Err(DeviceClientError::StaleRevision));
+        assert_eq!(evidence[0].5, Some(1));
     }
 
     #[test]

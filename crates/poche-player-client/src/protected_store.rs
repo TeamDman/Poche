@@ -255,21 +255,37 @@ impl ProtectedProfileStore {
         let path = self.device_path(device_label);
         self.require_vacant(&path, &handle)?;
 
-        let sequence = self
-            .list_devices()?
-            .into_iter()
+        let existing_devices = self.list_devices()?;
+        let sequence = existing_devices
+            .iter()
             .filter(|profile| profile.player_id == root.root.player_id)
             .map(|profile| profile.certificate.sequence)
             .max()
             .unwrap_or(0)
             .checked_add(1)
             .ok_or(ProfileStoreError::CorruptPublicProfile)?;
+        let issue_vote_capability = !existing_devices.iter().any(|profile| {
+            profile.player_id == root.root.player_id
+                && profile
+                    .certificate
+                    .has_capability(DeviceCapabilityWire::Vote)
+        });
         let seed = random_seed()?;
         let signing = SigningKey::from_bytes(&seed);
         let device_key = hex(&signing.verifying_key().to_bytes());
         let device_encryption_key = hex(&device_encryption_public_key(&seed));
         let device_id = DeviceId::new(device_key.clone())
             .map_err(|_| ProfileStoreError::CorruptPublicProfile)?;
+        let mut capabilities = vec![DeviceCapabilityWire::Propose];
+        if issue_vote_capability {
+            capabilities.push(DeviceCapabilityWire::Vote);
+        }
+        capabilities.extend([
+            DeviceCapabilityWire::ReceivePrivateProjection,
+            DeviceCapabilityWire::RequestDeviceChange,
+            DeviceCapabilityWire::RequestCapture,
+            DeviceCapabilityWire::ProvideCapture,
+        ]);
         let unsigned = UnsignedDeviceCertificateWire {
             schema_version: REPLICATION_SCHEMA_VERSION_V1,
             certificate_id: CertificateId::new(format!("device-{device_label}"))
@@ -281,14 +297,7 @@ impl ProtectedProfileStore {
             sequence,
             valid_from_membership_epoch: 1,
             valid_through_membership_epoch: None,
-            capabilities: vec![
-                DeviceCapabilityWire::Propose,
-                DeviceCapabilityWire::Vote,
-                DeviceCapabilityWire::ReceivePrivateProjection,
-                DeviceCapabilityWire::RequestDeviceChange,
-                DeviceCapabilityWire::RequestCapture,
-                DeviceCapabilityWire::ProvideCapture,
-            ],
+            capabilities,
             custody: DeviceCustodyWire::NativeLocal,
             signature_intent: SignatureIntent {
                 domain_version: REPLICATION_SIGNATURE_DOMAIN_V1,
@@ -746,6 +755,54 @@ mod tests {
         assert_eq!(
             validate_label("../escape"),
             Err(ProfileStoreError::InvalidLabel)
+        );
+    }
+
+    #[test]
+    fn sibling_profiles_retain_agency_without_minting_player_vote_weight() {
+        let (_directory, store, _vault) = fixture_store();
+        store.create_player_root("alice").unwrap();
+        let first = store.create_device("alice", "alice-native").unwrap();
+        let sibling = store.create_device("alice", "alice-browser").unwrap();
+
+        assert!(first.certificate.has_capability(DeviceCapabilityWire::Vote));
+        assert!(
+            !sibling
+                .certificate
+                .has_capability(DeviceCapabilityWire::Vote)
+        );
+        for profile in [&first, &sibling] {
+            assert!(
+                profile
+                    .certificate
+                    .has_capability(DeviceCapabilityWire::Propose)
+            );
+            assert!(
+                profile
+                    .certificate
+                    .has_capability(DeviceCapabilityWire::ReceivePrivateProjection)
+            );
+            assert!(
+                profile
+                    .certificate
+                    .has_capability(DeviceCapabilityWire::RequestCapture)
+            );
+            assert!(
+                profile
+                    .certificate
+                    .has_capability(DeviceCapabilityWire::ProvideCapture)
+            );
+        }
+        assert_eq!(
+            store
+                .list_devices()
+                .unwrap()
+                .iter()
+                .filter(|profile| profile
+                    .certificate
+                    .has_capability(DeviceCapabilityWire::Vote))
+                .count(),
+            1
         );
     }
 

@@ -20,6 +20,7 @@ mod device_client;
 mod in_process;
 mod oracle_session;
 mod replicated;
+mod signature;
 mod smoke;
 mod spatial;
 mod text;

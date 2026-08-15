@@ -7,8 +7,83 @@
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
-use poche_protocol::{DeviceId, PrincipalId, SemanticHash, replicated_quorum};
+use poche_protocol::{
+    ConsensusCandidateWire, ConsensusVoteWire, DeviceCertificateWire, DeviceId,
+    DeviceRevocationWire, PlayerRootWire, PrincipalId, SemanticHash,
+    canonical_consensus_candidate_bytes, canonical_consensus_vote_bytes,
+    canonical_device_certificate_bytes, canonical_device_revocation_bytes, replicated_quorum,
+};
+use poche_session::ReplicationSignatureVerifier;
 use serde::{Deserialize, Serialize};
+
+use crate::signature::verify_ed25519_hex;
+
+/// Production verifier for the domain-separated replicated-session wire
+/// objects. The pure session reducer owns authorization and quorum semantics;
+/// this adapter proves that every accepted certificate, revocation, proposal,
+/// and vote was signed by the exact root or device key bound into that object.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Ed25519ReplicationVerifier;
+
+impl ReplicationSignatureVerifier for Ed25519ReplicationVerifier {
+    fn verify_device_certificate(
+        &self,
+        root: &PlayerRootWire,
+        certificate: &DeviceCertificateWire,
+    ) -> bool {
+        certificate.player_id == root.player_id
+            && canonical_device_certificate_bytes(&certificate.unsigned()).is_ok_and(|bytes| {
+                verify_ed25519_hex(
+                    &root.signing_public_key,
+                    certificate.signature.signature.as_str(),
+                    &bytes,
+                )
+            })
+    }
+
+    fn verify_device_revocation(
+        &self,
+        root: &PlayerRootWire,
+        revocation: &DeviceRevocationWire,
+    ) -> bool {
+        revocation.player_id == root.player_id
+            && canonical_device_revocation_bytes(&revocation.unsigned()).is_ok_and(|bytes| {
+                verify_ed25519_hex(
+                    &root.signing_public_key,
+                    revocation.signature.signature.as_str(),
+                    &bytes,
+                )
+            })
+    }
+
+    fn verify_candidate(
+        &self,
+        certificate: &DeviceCertificateWire,
+        candidate: &ConsensusCandidateWire,
+    ) -> bool {
+        candidate.body.proposer_player_id == certificate.player_id
+            && candidate.body.proposer_device_id == certificate.device_id
+            && canonical_consensus_candidate_bytes(&candidate.unsigned()).is_ok_and(|bytes| {
+                verify_ed25519_hex(
+                    &certificate.device_signing_public_key,
+                    candidate.signature.signature.as_str(),
+                    &bytes,
+                )
+            })
+    }
+
+    fn verify_vote(&self, certificate: &DeviceCertificateWire, vote: &ConsensusVoteWire) -> bool {
+        vote.voter_player_id == certificate.player_id
+            && vote.voter_device_id == certificate.device_id
+            && canonical_consensus_vote_bytes(&vote.unsigned()).is_ok_and(|bytes| {
+                verify_ed25519_hex(
+                    &certificate.device_signing_public_key,
+                    vote.signature.signature.as_str(),
+                    &bytes,
+                )
+            })
+    }
+}
 
 /// Registered finite runtime scope.
 pub const REPLICATED_MICRO_SCOPE: &str =
@@ -901,7 +976,261 @@ fn hash_hex(hash: SemanticHash) -> String {
 
 #[cfg(test)]
 mod tests {
+    use ed25519_dalek::{Signer, SigningKey};
+    use poche_protocol::{
+        CertificateId, CommandId, CommitCertificateWire, ConsensusCandidateBodyWire,
+        ConsensusCandidateWire, ConsensusValueWire, ConsensusVotePhaseWire, DeviceCapabilityWire,
+        DeviceCustodyWire, DeviceSignatureIntentWire, REPLICATION_SCHEMA_VERSION_V1,
+        REPLICATION_SIGNATURE_DOMAIN_V1, ReplicatedCommandRefWire, ReplicatedEventWire, RoomId,
+        SignatureAlgorithm, SignatureBytes, SignatureIntent, UnsignedConsensusCandidateWire,
+        UnsignedConsensusVoteWire, UnsignedDeviceCertificateWire, consensus_candidate_hash,
+        derive_replicated_event_id, derive_replicated_proposal_id,
+    };
+    use poche_session::{ReplicatedSessionError, ReplicatedSessionState};
+
     use super::*;
+
+    struct SignedIdentity {
+        root_key: SigningKey,
+        device_key: SigningKey,
+        root: PlayerRootWire,
+        device: DeviceCertificateWire,
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().fold(String::new(), |mut output, byte| {
+            use core::fmt::Write as _;
+            write!(output, "{byte:02x}").expect("writing to String cannot fail");
+            output
+        })
+    }
+
+    fn signed(bytes: &[u8], key: &SigningKey) -> SignatureBytes {
+        SignatureBytes::new(hex(&key.sign(bytes).to_bytes())).expect("valid Ed25519 signature")
+    }
+
+    fn signed_identity(root_seed: u8, device_seed: u8) -> SignedIdentity {
+        let root_key = SigningKey::from_bytes(&[root_seed; 32]);
+        let device_key = SigningKey::from_bytes(&[device_seed; 32]);
+        let root_public = hex(&root_key.verifying_key().to_bytes());
+        let device_public = hex(&device_key.verifying_key().to_bytes());
+        let root = PlayerRootWire {
+            schema_version: REPLICATION_SCHEMA_VERSION_V1,
+            player_id: PrincipalId::new(root_public.clone()).expect("valid root principal"),
+            signing_public_key: root_public,
+        };
+        let unsigned = UnsignedDeviceCertificateWire {
+            schema_version: REPLICATION_SCHEMA_VERSION_V1,
+            certificate_id: CertificateId::new(format!("certificate-{root_seed}"))
+                .expect("valid certificate id"),
+            player_id: root.player_id.clone(),
+            device_id: DeviceId::new(device_public.clone()).expect("valid device id"),
+            device_signing_public_key: device_public,
+            device_encryption_public_key: hex(&[device_seed.wrapping_add(97); 32]),
+            sequence: 1,
+            valid_from_membership_epoch: 1,
+            valid_through_membership_epoch: None,
+            capabilities: vec![
+                DeviceCapabilityWire::Propose,
+                DeviceCapabilityWire::Vote,
+                DeviceCapabilityWire::ReceivePrivateProjection,
+            ],
+            custody: DeviceCustodyWire::NativeLocal,
+            signature_intent: SignatureIntent {
+                domain_version: REPLICATION_SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: root.player_id.clone(),
+            },
+        };
+        let bytes = canonical_device_certificate_bytes(&unsigned).expect("canonical certificate");
+        let device = unsigned
+            .attach_signature(signed(&bytes, &root_key))
+            .expect("signed certificate");
+        SignedIdentity {
+            root_key,
+            device_key,
+            root,
+            device,
+        }
+    }
+
+    fn signed_candidate(
+        state: &ReplicatedSessionState,
+        identities: &[SignedIdentity],
+        round: u32,
+        command_byte: u8,
+    ) -> ConsensusCandidateWire {
+        let proposer = state
+            .proposer_for(1, round)
+            .expect("registered proposer")
+            .clone();
+        let identity = identities
+            .iter()
+            .find(|identity| identity.root.player_id == proposer)
+            .expect("proposer identity");
+        let body = ConsensusCandidateBodyWire {
+            schema_version: REPLICATION_SCHEMA_VERSION_V1,
+            room_id: RoomId::new("signed-fork-room").expect("valid room"),
+            membership_epoch: 1,
+            parent_event_id: None,
+            parent_event_hash: SemanticHash([0; 32]),
+            height: 1,
+            round,
+            proposer_player_id: proposer,
+            proposer_device_id: identity.device.device_id.clone(),
+            ordered_commands: vec![ReplicatedCommandRefWire {
+                command_id: CommandId::new(format!("command-{command_byte}"))
+                    .expect("valid command"),
+                semantic_hash: SemanticHash([command_byte; 32]),
+            }],
+            membership_transition: None,
+        };
+        let unsigned = UnsignedConsensusCandidateWire {
+            proposal_id: derive_replicated_proposal_id(&body).expect("derived proposal"),
+            body,
+            signature_intent: DeviceSignatureIntentWire {
+                domain_version: REPLICATION_SIGNATURE_DOMAIN_V1,
+                algorithm: SignatureAlgorithm::Ed25519,
+                key_id: identity.device.device_id.clone(),
+            },
+        };
+        let bytes =
+            canonical_consensus_candidate_bytes(&unsigned).expect("canonical candidate bytes");
+        unsigned
+            .attach_signature(signed(&bytes, &identity.device_key))
+            .expect("signed candidate")
+    }
+
+    fn signed_event(
+        candidate: ConsensusCandidateWire,
+        voters: &[&SignedIdentity],
+        successor_byte: u8,
+    ) -> ReplicatedEventWire {
+        let candidate_hash =
+            consensus_candidate_hash(&candidate.body).expect("candidate semantic hash");
+        let precommits = voters
+            .iter()
+            .map(|identity| {
+                let unsigned = UnsignedConsensusVoteWire {
+                    schema_version: REPLICATION_SCHEMA_VERSION_V1,
+                    room_id: candidate.body.room_id.clone(),
+                    membership_epoch: candidate.body.membership_epoch,
+                    height: candidate.body.height,
+                    round: candidate.body.round,
+                    phase: ConsensusVotePhaseWire::Precommit,
+                    value: ConsensusValueWire::Candidate(candidate_hash),
+                    voter_player_id: identity.root.player_id.clone(),
+                    voter_device_id: identity.device.device_id.clone(),
+                    lock_round: None,
+                    lock_proof_hash: None,
+                    signature_intent: DeviceSignatureIntentWire {
+                        domain_version: REPLICATION_SIGNATURE_DOMAIN_V1,
+                        algorithm: SignatureAlgorithm::Ed25519,
+                        key_id: identity.device.device_id.clone(),
+                    },
+                };
+                let bytes =
+                    canonical_consensus_vote_bytes(&unsigned).expect("canonical vote bytes");
+                unsigned
+                    .attach_signature(signed(&bytes, &identity.device_key))
+                    .expect("signed vote")
+            })
+            .collect();
+        ReplicatedEventWire {
+            schema_version: REPLICATION_SCHEMA_VERSION_V1,
+            event_id: derive_replicated_event_id(candidate_hash).expect("derived event"),
+            certificate: CommitCertificateWire {
+                schema_version: REPLICATION_SCHEMA_VERSION_V1,
+                room_id: candidate.body.room_id.clone(),
+                membership_epoch: candidate.body.membership_epoch,
+                height: candidate.body.height,
+                round: candidate.body.round,
+                candidate_hash,
+                precommits,
+            },
+            candidate,
+            successor_state_hash: SemanticHash([successor_byte; 32]),
+        }
+    }
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the real-signature fork fixture keeps identities, both certificates, and retained evidence together"
+    )]
+    fn real_ed25519_equivocation_is_rejected_and_retained_as_fork_evidence() {
+        let mut identities = vec![
+            signed_identity(1, 11),
+            signed_identity(2, 12),
+            signed_identity(3, 13),
+        ];
+        identities.sort_by(|left, right| left.root.player_id.cmp(&right.root.player_id));
+        let roots = identities
+            .iter()
+            .map(|identity| identity.root.clone())
+            .collect::<Vec<_>>();
+        let devices = identities
+            .iter()
+            .map(|identity| identity.device.clone())
+            .collect::<Vec<_>>();
+        let mut state = ReplicatedSessionState::new(
+            RoomId::new("signed-fork-room").expect("valid room"),
+            roots,
+            devices,
+            &Ed25519ReplicationVerifier,
+        )
+        .expect("all root certificates have real signatures");
+
+        let first = signed_event(
+            signed_candidate(&state, &identities, 0, 1),
+            &[&identities[0], &identities[1]],
+            9,
+        );
+        let second = signed_event(
+            signed_candidate(&state, &identities, 1, 2),
+            &[&identities[1], &identities[2]],
+            10,
+        );
+        state
+            .apply_event(first.clone(), &Ed25519ReplicationVerifier)
+            .expect("first real certificate commits");
+
+        let mut unsigned_conflict = second.clone();
+        unsigned_conflict.candidate.signature.signature =
+            SignatureBytes::new("00".repeat(64)).expect("shaped invalid signature");
+        assert_eq!(
+            state.apply_event(unsigned_conflict, &Ed25519ReplicationVerifier),
+            Err(ReplicatedSessionError::BadSignature)
+        );
+        assert!(state.forks().is_empty());
+
+        assert_eq!(
+            state.apply_event(second.clone(), &Ed25519ReplicationVerifier),
+            Err(ReplicatedSessionError::ForkDetected)
+        );
+        assert_eq!(state.height(), 1);
+        assert_eq!(state.forks().len(), 1);
+        let proof = &state.forks()[0];
+        assert_eq!(proof.first_event, first.event_id);
+        assert_eq!(proof.second_event, second.event_id);
+        assert_ne!(proof.first_candidate_hash, proof.second_candidate_hash);
+        assert_eq!(
+            state.apply_event(first, &Ed25519ReplicationVerifier),
+            Err(ReplicatedSessionError::Forked)
+        );
+
+        // Keep the root key alive in this fixture and prove the verifier does
+        // not accidentally accept a device certificate signed by another
+        // player's root key.
+        let mut wrong_root_certificate = identities[0].device.clone();
+        let unsigned = wrong_root_certificate.unsigned();
+        let bytes = canonical_device_certificate_bytes(&unsigned).expect("canonical certificate");
+        wrong_root_certificate.signature.signature = signed(&bytes, &identities[1].root_key);
+        assert!(
+            !Ed25519ReplicationVerifier
+                .verify_device_certificate(&identities[0].root, &wrong_root_certificate)
+        );
+    }
 
     #[test]
     fn replicated_micro_converges_and_retains_assumption_counterexample() {

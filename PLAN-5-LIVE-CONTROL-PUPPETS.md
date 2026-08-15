@@ -7,8 +7,9 @@
 **Intent audit:** Passed 2026-08-12 against the available original Poche/SFM,
 desktop, browser, CLI, computer-player, multi-device, capture, puppet, Figue,
 Veilid, and planning instructions in this task
-**Current implementation focus:** Task 3.3; close player-deduplicated vote-lock
-safety and entry-point parity before the broader Task 5.3 failure matrix
+**Current implementation focus:** Task 5.3; exercise the cross-surface failure,
+resume, cancellation, and artifact-integrity matrix now that player-device
+entry parity and vote-lock safety are closed
 
 ## How to update this plan
 
@@ -976,17 +977,33 @@ Update argument ordering to the final Figue schema before completion.
 devices observe the results, and a CLI device requests/receives/saves a sibling
 device capture through shared code.
 
-### [~] 3.3 Prove GUI, CLI, and policy parity plus vote-lock safety
+### [x] 3.3 Prove GUI, CLI, and policy parity plus vote-lock safety
 
-**Completion notes:** In progress. `PlayerDeviceClient::prepare` is now the
-pure canonical request seam beneath invocation, and `prepare_payload` first
-resolves a typed convenience payload to exactly one advertised opaque action.
-A parity test proves action-ID and convenience entry points produce identical
-structured requests and serialized bytes for the same command ID; another
-proves duplicate semantic controls fail closed instead of choosing one by
-order. Remaining: exercise the actual GUI and persistent policy adapters
-against this seam, compare reducer dispositions/successor hashes and stable
-denials, and complete the replicated per-player vote-lock cases.
+**Completion notes:** Completed 2026-08-14. `PlayerDeviceClient::prepare` is the
+pure canonical request seam beneath every action invocation, while
+`prepare_payload` resolves a UI/CLI convenience payload to exactly one opaque
+action advertised for that projection. The parity fixtures drive direct
+graphical action identity, typed CLI payload, and deterministic policy
+selection through independent canonical-NDJSON authority instances and prove
+identical request bytes, disposition, revision, successor projection/hash, and
+stale denial. Duplicate semantic controls fail closed. The surrounding client,
+runtime, session, and UI suites retain unavailable-action, signed mutation,
+duplicate retry, disconnect/rebind/reconnect, public-only reconnect,
+wrong-device, and private-projection negative controls.
+
+Protected player-root enrollment now delegates `Vote` to exactly the first
+device; sibling devices keep proposal, private-projection, device-management,
+and capture agency without increasing player vote weight. Replicated-session
+validation rejects overlapping Vote certificates in every effective epoch,
+permits an explicitly staged old-voter revocation plus next-epoch replacement,
+and continues to deduplicate quorum by player. The production
+`Ed25519ReplicationVerifier` strictly verifies each domain-separated root
+certificate, revocation, candidate, and vote. A real three-player test commits
+one Ed25519-certified value, presents a second conflicting majority whose only
+voter intersection actually signed both values, rejects an unsigned forgery,
+retains both candidate hashes as fork evidence, and proves the reducer refuses
+all later input after the fork. That fixture exposed and fixed duplicate replay
+being accepted before the fail-stop guard.
 
 **Work:**
 
@@ -1004,7 +1021,9 @@ denials, and complete the replicated per-player vote-lock cases.
 
 ```powershell
 cargo test --locked -p poche-player-client -p poche-ui -p poche-runtime --offline parity
+cargo test --locked -p poche-player-client --features protected-store --offline sibling_profiles
 cargo test --locked -p poche-session --offline replicated
+cargo test --locked -p poche-runtime --offline real_ed25519_equivocation
 ```
 
 **Completion criteria:** All legitimate entry points converge at one player
