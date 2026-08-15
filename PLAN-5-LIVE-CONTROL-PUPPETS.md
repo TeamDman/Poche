@@ -1,15 +1,14 @@
 # Poche phase 5: unified executable, device orchestration, captures, and puppets
 
 **Plan ID:** `poche-phase-5-live-control-puppets`
-**Plan status:** Execution in progress
+**Plan status:** Execution complete
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
-**Last updated:** 2026-08-14 (America/Toronto)
+**Last updated:** 2026-08-15 (America/Toronto)
 **Intent audit:** Passed 2026-08-12 against the available original Poche/SFM,
 desktop, browser, CLI, computer-player, multi-device, capture, puppet, Figue,
 Veilid, and planning instructions in this task
-**Current implementation focus:** Task 6.2; all implementation, release,
-cross-surface, publication, and literal intent gates are closed, and only the
-explicitly authorized final push remains
+**Current implementation focus:** Complete; all implementation, release,
+cross-surface, publication, repository, and literal intent gates are closed
 
 ## How to update this plan
 
@@ -1521,9 +1520,9 @@ git diff --check
 CLI/GUI/agent, request a sibling capture, run puppets, and inspect evidence
 without confusing a device request with game authority.
 
-### [~] 6.2 Perform release validation and the final intent audit
+### [x] 6.2 Perform release validation and the final intent audit
 
-**Completion notes:** In progress 2026-08-14. `cargo fmt --all --check`, the entire
+**Completion notes:** Completed 2026-08-15. `cargo fmt --all --check`, the entire
 locked offline workspace test suite, and strict all-target workspace Clippy
 passed. The suite executed the installed Alloy 6.2.0, NuSMV 2.7.1, and Scryer
 Prolog tools as part of the conformance gates; the explicit final
@@ -1564,13 +1563,15 @@ seven architecture gates, 19 implementation tasks, and the retained deferred
 follow-up. Pages source generation, a deterministic CI-shaped headless puppet
 receipt, real browser navigation, one-executable PowerShell/redirected output,
 protected-profile Windows tests, and ignored-artifact checks all passed. The
-final intentional plan/evidence commit exists locally. The first remote Pages
+final intentional plan/evidence commit was published. The first remote Pages
 run, [`31861986664`](https://github.com/TeamDman/Poche/actions/runs/31861986664),
 reached the new CI-generated puppet receipt but failed while compiling
 `libudev-sys`: the Ubuntu image did not provide `libudev.pc`. The workflow now
-installs `libudev-dev` alongside its required fonts. Publication of that focused
-fix and the pending phase-five commits, a successful replacement Pages run,
-and the closing local/remote equality check remain before completion.
+installs `libudev-dev` alongside its required fonts. Replacement Pages run
+[`31863732582`](https://github.com/TeamDman/Poche/actions/runs/31863732582)
+passed its complete 9m03s build, CI-generated headless puppet receipt, artifact
+upload, and deployment. The final plan-only push left a clean worktree with
+local `HEAD` equal to `origin/model-checking`.
 
 **Work:**
 
@@ -1626,7 +1627,7 @@ worktree is clean, and local/remote commits match.
   accurately distinguished; screenshots are never treated as formal proof.
 - [x] Deterministic CI is network-free; guarded public Veilid evidence remains
   explicit, and supported surfaces/transports have measured acceptance.
-- [ ] Documentation, Pages artifacts, dependency/license/privacy checks,
+- [x] Documentation, Pages artifacts, dependency/license/privacy checks,
   Windows one-executable UX, commit/push, and the literal final three-pass
   intent audit all have evidence.
 
