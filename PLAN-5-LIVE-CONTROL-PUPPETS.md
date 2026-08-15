@@ -1,15 +1,14 @@
 # Poche phase 5: unified executable, device orchestration, captures, and puppets
 
 **Plan ID:** `poche-phase-5-live-control-puppets`
-**Plan status:** Execution in progress
+**Plan status:** Execution complete
 **Primary implementation root:** `D:\Repos\Games\poche-3` on `model-checking`
 **Last updated:** 2026-08-14 (America/Toronto)
 **Intent audit:** Passed 2026-08-12 against the available original Poche/SFM,
 desktop, browser, CLI, computer-player, multi-device, capture, puppet, Figue,
 Veilid, and planning instructions in this task
-**Current implementation focus:** Task 6.2; run the complete release gate and
-literal three-pass intent audit, repair every discrepancy, then verify a clean
-local/remote checkpoint
+**Current implementation focus:** Complete; the release, cross-surface,
+publication, and literal three-pass intent gates are closed
 
 ## How to update this plan
 
@@ -1521,9 +1520,52 @@ git diff --check
 CLI/GUI/agent, request a sibling capture, run puppets, and inspect evidence
 without confusing a device request with game authority.
 
-### [ ] 6.2 Perform release validation and the final intent audit
+### [x] 6.2 Perform release validation and the final intent audit
 
-**Completion notes:** Not started.
+**Completion notes:** Completed 2026-08-14. `cargo fmt --all --check`, the entire
+locked offline workspace test suite, and strict all-target workspace Clippy
+passed. The suite executed the installed Alloy 6.2.0, NuSMV 2.7.1, and Scryer
+Prolog tools as part of the conformance gates; the explicit final
+`compare all --scope micro` then returned 15 Alloy results, 46 NuSMV results,
+16 Prolog results, 431,800 Rust states, 549,896 Rust transitions, nine verified
+BLAKE3 source families, and zero unclassified differences. `oracle report`
+retained 61 rules across four complete tracks with zero TODO or missing-rule
+gaps. The audit found and repaired current conformance/toolchain digest drift
+in `docs/acceptance-matrix.md`; the historical Phase 3 receipt remains intact.
+
+A fresh unified-executable seed-91 acceptance drove the same externally hosted
+game through real headless-browser and windowless-Bevy devices. Both surfaces
+reached `post_game` at revision 160 with scores `[45, 57]`, 132 committed
+steps, five converged certified devices, four route lifecycle transitions, six
+signed same-player captures, 138 public events, and identical history hash
+`fa679b0ea74dd59a41e3dfc3babf54e85261a8bbb7807bd8b8eaec6d94fff92a`.
+The verified two-run catalog/contact sheet is under ignored
+`target/poche-phase5-final`; image-tool inspection confirmed nonblank browser
+and native card-selection views. The running `poche.exe` had no main window,
+and the spawned browser path used its documented headless mode. The complete
+headless workspace fixture independently passed with cancellation/deadline and
+typed/NDJSON parity cases.
+
+The dependency audit inspected 1,054 locked packages and found zero missing
+licenses and zero external local paths. All 26 workspace packages identify as
+MPL-2.0. The tracked high-risk-secret scan returned zero matches; public Pages,
+PDF, and target artifact directories are ignored and zero generated paths are
+tracked. Source/dependency inspection found no Vox, named-pipe, or local-
+instance implementation; the sole source-text match is an explanatory comment
+stating that the live adapter is not local-instance control. The deterministic
+local Veilid topology/semantic gate passed earlier in this current source
+sequence; public-network acceptance was correctly left behind its explicit
+opt-in, and no public capture-transfer claim was introduced.
+
+The phase-five guidance audit passed literal extraction, one-to-one
+traceability, and adversarial omission passes for all 17 active requirements,
+seven architecture gates, 19 implementation tasks, and the retained deferred
+follow-up. Pages source generation, a deterministic CI-shaped headless puppet
+receipt, real browser navigation, one-executable PowerShell/redirected output,
+protected-profile Windows tests, and ignored-artifact checks all passed. The
+final intentional plan/evidence commit was pushed to `model-checking`; the
+closing repository check requires a clean worktree and equal local/remote
+revisions before the active goal is marked complete.
 
 **Work:**
 
@@ -1556,30 +1598,30 @@ worktree is clean, and local/remote commits match.
 
 ## Overall completion criteria
 
-- [ ] One installed `poche.exe` supplies graphical, CLI/device-agent, capture,
+- [x] One installed `poche.exe` supplies graphical, CLI/device-agent, capture,
   and puppet workflows with preserved text/JSON/NDJSON behavior.
-- [ ] No Vox, local-instance discovery, named-pipe authority, resident-window
+- [x] No Vox, local-instance discovery, named-pipe authority, resident-window
   proxy, or copied device key is required for gameplay, agents, or puppets.
-- [ ] GUI, browser, CLI, and policy processes use distinct certified devices,
+- [x] GUI, browser, CLI, and policy processes use distinct certified devices,
   exact-recipient observations, ordinary actions, independent revocation, and
   at most one vote per player.
-- [ ] Actions from one device are naturally perceived by other room devices
+- [x] Actions from one device are naturally perceived by other room devices
   through committed history and no renderer/automation path has privileged
   mutation authority.
-- [ ] Same-player devices exchange signed, target-specific, replay-resistant,
+- [x] Same-player devices exchange signed, target-specific, replay-resistant,
   policy/consent-aware capture requests without changing room history.
-- [ ] Bevy and browser providers return raw pixels/structure through one common
+- [x] Bevy and browser providers return raw pixels/structure through one common
   capture/artifact/transfer/persistence contract; unsupported browser capture
   fails explicitly.
-- [ ] One puppet invocation fans out as distinct devices for multiple players
+- [x] One puppet invocation fans out as distinct devices for multiple players
   and drives headless, real-browser, and Bevy surfaces through shared APIs.
-- [ ] Captioned images, structural attachments, hashes, privacy scans,
+- [x] Captioned images, structural attachments, hashes, privacy scans,
   manifests, and contact sheets are durable and directly inspectable.
-- [ ] Runtime, visual, release-formal, and optional checked-now evidence are
+- [x] Runtime, visual, release-formal, and optional checked-now evidence are
   accurately distinguished; screenshots are never treated as formal proof.
-- [ ] Deterministic CI is network-free; guarded public Veilid evidence remains
+- [x] Deterministic CI is network-free; guarded public Veilid evidence remains
   explicit, and supported surfaces/transports have measured acceptance.
-- [ ] Documentation, Pages artifacts, dependency/license/privacy checks,
+- [x] Documentation, Pages artifacts, dependency/license/privacy checks,
   Windows one-executable UX, commit/push, and the literal final three-pass
   intent audit all have evidence.
 
