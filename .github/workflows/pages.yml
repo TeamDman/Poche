@@ -51,10 +51,10 @@ jobs:
       - name: Check out model-checking
         uses: actions/checkout@v7
 
-      - name: Install required fonts
+      - name: Install required system packages
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends fonts-texgyre
+          sudo apt-get install --yes --no-install-recommends fonts-texgyre libudev-dev
           fc-match "TeX Gyre Termes" | grep --ignore-case texgyretermes
           fc-match "TeX Gyre Cursor" | grep --ignore-case texgyrecursor
 

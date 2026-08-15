@@ -1564,11 +1564,13 @@ seven architecture gates, 19 implementation tasks, and the retained deferred
 follow-up. Pages source generation, a deterministic CI-shaped headless puppet
 receipt, real browser navigation, one-executable PowerShell/redirected output,
 protected-profile Windows tests, and ignored-artifact checks all passed. The
-final intentional plan/evidence commit exists locally. Publication to the
-verified `https://github.com/TeamDman/Poche.git` `model-checking` branch is the
-only remaining step; the environment requires a fresh explicit user approval
-for that exact push. The closing equality check and active-goal completion must
-follow the authorized push.
+final intentional plan/evidence commit exists locally. The first remote Pages
+run, [`31861986664`](https://github.com/TeamDman/Poche/actions/runs/31861986664),
+reached the new CI-generated puppet receipt but failed while compiling
+`libudev-sys`: the Ubuntu image did not provide `libudev.pc`. The workflow now
+installs `libudev-dev` alongside its required fonts. Publication of that focused
+fix and the pending phase-five commits, a successful replacement Pages run,
+and the closing local/remote equality check remain before completion.
 
 **Work:**
 
