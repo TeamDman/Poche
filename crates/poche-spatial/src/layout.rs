@@ -313,7 +313,10 @@ pub fn registered_layout(table_id: TableId, id: LayoutId) -> Result<SpatialLayou
     let score_sheet = SceneObject {
         id: ObjectId::ScoreSheet,
         kind: SceneObjectKind::ScoreSheet,
-        pose: pose(265, 24, 0, 90_000)?,
+        // The registered home view looks toward the table from +Z. Keep the
+        // sheet's X columns horizontal and its Z rows vertical in that view;
+        // rotating the paper 90 degrees also rotated every attached text run.
+        pose: pose(265, 24, 0, 0)?,
         half_extents: HalfExtentsMm::new(100, 1, 145),
     };
 
@@ -525,6 +528,13 @@ mod tests {
                     assert!(!left.outer.intersects(right.outer));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn score_sheet_rows_face_the_registered_home_view() {
+        for layout in every_registered_layout() {
+            assert_eq!(layout.score_sheet().pose.yaw.get(), 0);
         }
     }
 

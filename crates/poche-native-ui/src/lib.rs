@@ -52,8 +52,8 @@ use poche_protocol::{
     UnsignedCaptureRequestWire,
 };
 use poche_slug::{
-    DEFAULT_BAND_SIZE_FONT_UNITS, GlyphGeometry, SlugError, SlugFont, build_directional_bands,
-    build_gpu_glyph_metadata,
+    DEFAULT_BAND_SIZE_FONT_UNITS, DirectionalBands, GlyphGeometry, Point, SlugError, SlugFont,
+    build_directional_bands, build_gpu_glyph_metadata, coverage_banded,
 };
 use poche_spatial::{
     AabbMm, AnimationEndpoint, CardFace, CardLocation, CardObjectId, HalfExtentsMm, LayoutId,
@@ -77,8 +77,8 @@ pub use native_live::*;
 pub const FONT_BYTES: &[u8] = include_bytes!("../assets/CaskaydiaCove-Regular.ttf");
 
 const METRES_PER_MILLIMETRE: f32 = 0.001;
-const SLUG_FONT_UNIT_METRES: f32 = 0.000_028;
-const SLUG_CURVE_STEPS: u32 = 7;
+const SLUG_RASTER_PIXELS_PER_EM: f32 = 96.0;
+const SLUG_RASTER_PADDING_PIXELS: u32 = 2;
 const CAMERA_MOVE_METRES_PER_SECOND: f32 = 0.8;
 const CAMERA_ROTATE_RADIANS_PER_SECOND: f32 = 1.35;
 const CAMERA_MOUSE_PAN_METRES_PER_PIXEL: f32 = 0.002_2;
@@ -477,13 +477,6 @@ struct DraggableCard(CardObjectId);
 #[derive(Component, Clone, Copy, Debug, Default)]
 struct DragPreview {
     pixels: Vec2,
-}
-
-#[derive(Component)]
-struct SlugRun {
-    binding: TextBinding,
-    glyphs: Vec<GlyphGeometry>,
-    packet: SlugGpuPacket,
 }
 
 #[derive(Resource, Default)]
@@ -933,7 +926,6 @@ fn run_with_live_device(
                 keyboard_input,
                 camera_input,
                 apply_mirrored_transforms,
-                draw_slug_text,
                 draw_spatial_debug,
                 update_status,
                 poll_live_device,
@@ -1091,11 +1083,188 @@ fn setup_native_render_target(
     *target = Some(images.add(image));
 }
 
+struct RasterGlyph {
+    cursor: f32,
+    geometry: GlyphGeometry,
+    bands: DirectionalBands,
+}
+
+struct SlugRaster {
+    image: Image,
+    design_width: f32,
+    design_height: f32,
+}
+
+struct SlugTextLayout {
+    width: f32,
+    height: f32,
+    anchor_offset_x: f32,
+}
+
+const fn slug_text_color(binding: TextBinding) -> [u8; 3] {
+    match binding {
+        TextBinding::CardFace(_) | TextBinding::PlayerName(_) => [0, 0, 0],
+        TextBinding::PlayerScore(_) => [165, 0, 0],
+    }
+}
+
+fn slug_text_layout(binding: TextBinding, design_width: f32, design_height: f32) -> SlugTextLayout {
+    let (width, height, left_anchored) = match binding {
+        TextBinding::CardFace(_) => {
+            let scale = (0.044 / design_width)
+                .min(0.032 / design_height)
+                .max(f32::EPSILON);
+            (design_width * scale, design_height * scale, false)
+        }
+        // A fixed-height score row remains readable from the home camera.
+        // Long monospace names may condense horizontally inside their column,
+        // but must not shrink the entire run into a few screen pixels.
+        TextBinding::PlayerName(_) => {
+            let height = 0.026;
+            (
+                (design_width / design_height * height).min(0.090),
+                height,
+                true,
+            )
+        }
+        TextBinding::PlayerScore(_) => {
+            let height = 0.026;
+            (
+                (design_width / design_height * height).min(0.032),
+                height,
+                false,
+            )
+        }
+    };
+    SlugTextLayout {
+        width,
+        height,
+        anchor_offset_x: if left_anchored { width * 0.5 } else { 0.0 },
+    }
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "validated finite positive Slug bounds are explicitly rasterized into bounded pixel extents"
+)]
+fn rasterize_slug_text(
+    font: &SlugFont<'_>,
+    text: &str,
+    color: [u8; 3],
+) -> Result<SlugRaster, SlugError> {
+    const MAXIMUM_RASTER_WIDTH: f32 = 1_024.0;
+
+    let metrics = font.metrics();
+    let mut glyphs = Vec::with_capacity(text.chars().count());
+    let mut cursor = 0.0_f32;
+    let mut minimum_x = 0.0_f32;
+    let mut maximum_x = 0.0_f32;
+    let mut minimum_y = metrics.descender;
+    let mut maximum_y = metrics.ascender;
+    for character in text.chars() {
+        let geometry = font.glyph_geometry(character)?;
+        minimum_x = minimum_x.min(cursor + geometry.bounds.min_x);
+        maximum_x = maximum_x.max(cursor + geometry.bounds.max_x);
+        minimum_y = minimum_y.min(geometry.bounds.min_y);
+        maximum_y = maximum_y.max(geometry.bounds.max_y);
+        let bands = build_directional_bands(
+            &geometry.curves,
+            geometry.bounds,
+            DEFAULT_BAND_SIZE_FONT_UNITS,
+        )?;
+        let advance = geometry.advance;
+        glyphs.push(RasterGlyph {
+            cursor,
+            geometry,
+            bands,
+        });
+        cursor += advance;
+        maximum_x = maximum_x.max(cursor);
+    }
+
+    let content_width = (maximum_x - minimum_x).max(1.0);
+    let content_height = (maximum_y - minimum_y).max(1.0);
+    if !content_width.is_finite() || !content_height.is_finite() {
+        return Err(SlugError::InvalidBounds);
+    }
+    let nominal_pixels_per_font_unit = SLUG_RASTER_PIXELS_PER_EM / f32::from(metrics.units_per_em);
+    let available_width = MAXIMUM_RASTER_WIDTH - 2.0 * SLUG_RASTER_PADDING_PIXELS as f32;
+    let pixels_per_font_unit = nominal_pixels_per_font_unit
+        .min(available_width / content_width)
+        .max(f32::EPSILON);
+    let padding_units = SLUG_RASTER_PADDING_PIXELS as f32 / pixels_per_font_unit;
+    let canvas_minimum_x = minimum_x - padding_units;
+    let canvas_maximum_y = maximum_y + padding_units;
+    let width = ((content_width * pixels_per_font_unit).ceil() as u32)
+        .saturating_add(SLUG_RASTER_PADDING_PIXELS * 2)
+        .max(1);
+    let height = ((content_height * pixels_per_font_unit).ceil() as u32)
+        .saturating_add(SLUG_RASTER_PADDING_PIXELS * 2)
+        .max(1);
+    let byte_count = usize::try_from(width)
+        .expect("bounded raster width fits usize")
+        .checked_mul(usize::try_from(height).expect("bounded raster height fits usize"))
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or(SlugError::CountOverflow("native Slug raster"))?;
+    let mut bytes = vec![0_u8; byte_count];
+
+    for pixel_y in 0..height {
+        let sample_y = canvas_maximum_y - (pixel_y as f32 + 0.5) / pixels_per_font_unit;
+        for pixel_x in 0..width {
+            let sample_x = canvas_minimum_x + (pixel_x as f32 + 0.5) / pixels_per_font_unit;
+            let mut coverage = 0.0_f32;
+            for glyph in &glyphs {
+                let local_x = sample_x - glyph.cursor;
+                if local_x < glyph.geometry.bounds.min_x
+                    || local_x > glyph.geometry.bounds.max_x
+                    || sample_y < glyph.geometry.bounds.min_y
+                    || sample_y > glyph.geometry.bounds.max_y
+                {
+                    continue;
+                }
+                coverage = coverage.max(coverage_banded(
+                    &glyph.geometry.curves,
+                    &glyph.bands,
+                    Point::new(local_x, sample_y),
+                    pixels_per_font_unit,
+                )?);
+            }
+            let alpha = (coverage.clamp(0.0, 1.0) * 255.0).round() as u8;
+            if alpha == 0 {
+                continue;
+            }
+            let pixel_index = usize::try_from(pixel_y * width + pixel_x)
+                .expect("bounded raster index fits usize")
+                * 4;
+            bytes[pixel_index..pixel_index + 3].copy_from_slice(&color);
+            bytes[pixel_index + 3] = alpha;
+        }
+    }
+
+    Ok(SlugRaster {
+        image: Image::new(
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            bytes,
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::RENDER_WORLD,
+        ),
+        design_width: width as f32 / pixels_per_font_unit,
+        design_height: height as f32 / pixels_per_font_unit,
+    })
+}
+
 #[allow(clippy::too_many_lines)]
 fn setup_native_scene(
     mut commands: Commands,
     controller: Res<NativeController>,
     surface: Res<NativeRenderSurface>,
+    mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -1225,22 +1394,25 @@ fn setup_native_scene(
 
     let slug_font = SlugFont::parse(FONT_BYTES, 0, '?').expect("checked native font");
     for run in &controller.scene.text {
-        let glyphs = run
-            .text
-            .chars()
-            .map(|character| slug_font.glyph_geometry(character))
-            .collect::<Result<Vec<_>, _>>()
-            .expect("validated Slug text");
-        let packet = slug_packet_for_text(&run.text).expect("validated Slug packet");
+        let raster = rasterize_slug_text(&slug_font, &run.text, slug_text_color(run.binding))
+            .expect("validated Slug text raster");
+        let layout = slug_text_layout(run.binding, raster.design_width, raster.design_height);
+        let texture = images.add(raster.image);
+        let material = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(texture),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        });
+        let mut translation = point_to_vec3(run.local_pose.translation);
+        translation.x += layout.anchor_offset_x;
         let entity = commands
             .spawn((
-                Transform::from_translation(point_to_vec3(run.local_pose.translation))
+                Mesh3d(meshes.add(Plane3d::default().mesh().size(layout.width, layout.height))),
+                MeshMaterial3d(material),
+                Transform::from_translation(translation)
                     .with_rotation(yaw_rotation(run.local_pose.yaw)),
-                SlugRun {
-                    binding: run.binding,
-                    glyphs,
-                    packet,
-                },
                 Pickable::IGNORE,
             ))
             .id();
@@ -1458,37 +1630,6 @@ fn apply_mirrored_transforms(
             pose.translation += Vec3::new(preview.pixels.x, 30.0, -preview.pixels.y) * 0.000_55;
         }
         *transform = pose;
-    }
-}
-
-fn draw_slug_text(mut gizmos: Gizmos, runs: Query<(&SlugRun, &GlobalTransform)>) {
-    for (run, transform) in &runs {
-        let mut cursor = 0.0_f32;
-        let color = match run.binding {
-            TextBinding::CardFace(_) => Color::srgb(0.06, 0.05, 0.04),
-            TextBinding::PlayerName(_) => Color::srgb(0.08, 0.10, 0.17),
-            TextBinding::PlayerScore(_) => Color::srgb(0.55, 0.05, 0.04),
-        };
-        debug_assert_eq!(run.glyphs.len(), run.packet.instances.len());
-        for geometry in &run.glyphs {
-            for curve in &geometry.curves {
-                let mut previous = slug_point(transform, cursor, curve.p0.x, curve.p0.y);
-                for step in 1..=SLUG_CURVE_STEPS {
-                    let t = step as f32 / SLUG_CURVE_STEPS as f32;
-                    let inverse = 1.0 - t;
-                    let x = inverse * inverse * curve.p0.x
-                        + 2.0 * inverse * t * curve.p1.x
-                        + t * t * curve.p2.x;
-                    let y = inverse * inverse * curve.p0.y
-                        + 2.0 * inverse * t * curve.p1.y
-                        + t * t * curve.p2.y;
-                    let point = slug_point(transform, cursor, x, y);
-                    gizmos.line(previous, point, color);
-                    previous = point;
-                }
-            }
-            cursor += geometry.advance * SLUG_FONT_UNIT_METRES;
-        }
     }
 }
 
@@ -1887,14 +2028,6 @@ fn millimetres(value: u32) -> f32 {
     value as f32 * METRES_PER_MILLIMETRE
 }
 
-fn slug_point(transform: &GlobalTransform, cursor: f32, x: f32, y: f32) -> Vec3 {
-    transform.transform_point(Vec3::new(
-        cursor + x * SLUG_FONT_UNIT_METRES,
-        0.001,
-        -y * SLUG_FONT_UNIT_METRES,
-    ))
-}
-
 fn draw_aabb(gizmos: &mut Gizmos, bounds: AabbMm, color: Color) {
     let min = point_to_vec3(bounds.min);
     let max = point_to_vec3(bounds.max);
@@ -1949,7 +2082,8 @@ mod tests {
         CameraView, FONT_BYTES, NativeController, NativeLiveDevice, NativeRenderMode,
         NativeRenderSurface, NativeUiLaunchOptions, advertised_action_for_play,
         has_meaningful_render_content, native_controller_from_observation, parse_card_face,
-        replay_fixture_controller, slug_packet_for_text, zone_center_card_bounds,
+        rasterize_slug_text, replay_fixture_controller, slug_packet_for_text, slug_text_color,
+        slug_text_layout, zone_center_card_bounds,
     };
 
     #[test]
@@ -1970,6 +2104,61 @@ mod tests {
             NativeRenderSurface::from_mode(NativeRenderMode::InteractiveWindow),
             NativeRenderSurface::Windowed
         ));
+    }
+
+    #[test]
+    fn slug_surface_is_filled_antialiased_and_fitted_to_its_binding() {
+        let font = SlugFont::parse(FONT_BYTES, 0, '?').expect("checked font");
+        let controller = replay_fixture_controller().expect("fixture controller");
+        let card_binding = controller
+            .scene
+            .text
+            .iter()
+            .find_map(|run| matches!(run.binding, TextBinding::CardFace(_)).then_some(run.binding))
+            .expect("visible card text");
+        let raster = rasterize_slug_text(&font, "8♣", slug_text_color(card_binding))
+            .expect("filled Slug raster");
+        let bytes = raster.image.data.as_ref().expect("resident raster bytes");
+        let alphas = bytes.chunks_exact(4).map(|pixel| pixel[3]);
+        let (transparent, antialiased, opaque) = alphas.fold(
+            (0_usize, 0_usize, 0_usize),
+            |(transparent, antialiased, opaque), alpha| match alpha {
+                0 => (transparent + 1, antialiased, opaque),
+                255 => (transparent, antialiased, opaque + 1),
+                _ => (transparent, antialiased + 1, opaque),
+            },
+        );
+        assert!(transparent > 0, "the run needs a transparent background");
+        assert!(antialiased > 0, "edge pixels need analytic coverage");
+        assert!(opaque > 0, "glyph interiors must be filled, not outlined");
+
+        let card_layout = slug_text_layout(card_binding, raster.design_width, raster.design_height);
+        assert!(card_layout.width <= 0.044);
+        assert!(card_layout.height <= 0.032);
+        assert!(card_layout.anchor_offset_x.abs() < f32::EPSILON);
+
+        let name_binding = controller
+            .scene
+            .text
+            .iter()
+            .find_map(|run| {
+                matches!(run.binding, TextBinding::PlayerName(_)).then_some(run.binding)
+            })
+            .expect("player name text");
+        let name_raster = rasterize_slug_text(
+            &font,
+            "A deliberately long player name",
+            slug_text_color(name_binding),
+        )
+        .expect("bounded name raster");
+        let name_layout = slug_text_layout(
+            name_binding,
+            name_raster.design_width,
+            name_raster.design_height,
+        );
+        assert!(name_layout.width <= 0.090);
+        assert!((name_layout.height - 0.026).abs() < f32::EPSILON);
+        assert!((name_layout.anchor_offset_x - name_layout.width * 0.5).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -2542,7 +2731,7 @@ mod tests {
         }));
         assert_eq!(
             poche_spatial::spatial_scene_hash_hex(&before).expect("canonical scene hash"),
-            "0a6de46fd21791260bb57c8516ce9ef5e1666e03e17d29cf6f8cda746c07baee"
+            "d1216416d9fe0fdad1412512a2b5cf273b883843276ec77113931b6e1b4e0576"
         );
     }
 }
