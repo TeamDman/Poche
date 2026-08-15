@@ -2,8 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-// Extracted from Teamy Terminal revision 8aede3a196d46354e253ecc0e9446fd4ff00fe74.
-// See ../PROVENANCE.md for file hashes and extraction notes.
+// Originally extracted from Teamy Terminal revision
+// 8aede3a196d46354e253ecc0e9446fd4ff00fe74, then synchronized with the
+// Teamy-Slug correctness reference. See ../PROVENANCE.md for revision details.
 
 //! Renderer-neutral outline geometry and analytic Slug-style coverage.
 //!
@@ -35,6 +36,12 @@ pub const GPU_FONT_METRICS_WORDS: usize = 4;
 pub const GPU_GLYPH_FLAG_FALLBACK: u32 = 1;
 
 const COVERAGE_EPSILON: f32 = 1.0 / 65_536.0;
+// Font outlines contain many straight edges represented as degenerate
+// quadratics. Their second-difference is not exactly zero after subtracting a
+// pixel sample at large design coordinates, so use a scale-sized tolerance for
+// the linear fallback instead of letting rows flip between quadratic and line
+// solving due to floating-point cancellation.
+const QUADRATIC_LINEAR_EPSILON: f32 = 0.015_625;
 const DEFAULT_CUBIC_TOLERANCE: f32 = 0.25;
 const MAX_CUBIC_SUBDIVISION_DEPTH: u32 = 8;
 
@@ -1481,7 +1488,7 @@ fn quadratic_axis_roots(first: f32, control: f32, last: f32) -> QuadraticRoots {
     let a = first - (2.0 * control) + last;
     let b = 2.0 * (control - first);
     let c = first;
-    if a.abs() <= COVERAGE_EPSILON {
+    if a.abs() <= QUADRATIC_LINEAR_EPSILON {
         if b.abs() <= COVERAGE_EPSILON {
             return QuadraticRoots::default();
         }
@@ -1607,5 +1614,16 @@ mod tests {
             .min()
             .expect("fixture has candidates");
         assert_eq!(chosen_worst, brute_worst);
+    }
+
+    #[test]
+    fn sub_font_unit_quadratic_residual_uses_the_linear_root() {
+        // This is the scale of second-difference left by cancellation when a
+        // design-space straight edge is translated around a pixel sample. A
+        // general quadratic solve invents two crossings at approximately
+        // 0.113 and 0.887; the stable line interpretation has one crossing.
+        let roots = quadratic_axis_roots(0.001, -0.004, 0.001);
+        assert_eq!(roots.count, 1);
+        assert!((roots.values[0] - 0.1).abs() <= COVERAGE_EPSILON);
     }
 }
