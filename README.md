@@ -13,6 +13,7 @@ symbolic, queried, sampled, experimental, or merely empirical.
 - [Completed spatial tabletop and distributed-agency plan](PLAN-3-DISTRIBUTED-TABLETOP-SPATIAL.md)
 - [Completed player-facing web plan](PLAN-4-PLAYER-WEB-EXPERIENCE.md)
 - [Active unified executable, device-orchestration, capture, and puppet plan](PLAN-5-LIVE-CONTROL-PUPPETS.md)
+- [Unified executable, device, capture, agent, and puppet guide](docs/live-control-puppets.md)
 - [Contributor and evidence guide](CONTRIBUTING.md)
 - [Architecture decision index](docs/decisions/README.md)
 - [Phase 3 release summary and machine receipt](docs/phase-3-release.md)
@@ -138,6 +139,34 @@ cargo run -p poche-xtask -- multiplayer smoke --transport in-process
 cargo run -p poche-cli -- --output text transcript replay tests/fixtures/protocol/session-micro-v1.script.ndjson
 ```
 
+## One executable, several certified devices
+
+`poche.exe` now opens the native graphical client with no arguments and also
+provides the command-line, persistent-agent, cross-device capture, transcript,
+and puppet workflows. A CLI or policy is its own root-certified device; it does
+not find and remote-control a resident window or borrow that window's key.
+
+```powershell
+cargo build --locked --offline -p poche-cli
+target\debug\poche.exe
+target\debug\poche.exe identity create alice
+target\debug\poche.exe device create alice alice-desktop
+target\debug\poche.exe device create alice alice-agent
+target\debug\poche.exe --output json puppet list
+target\debug\poche.exe --output json puppet run two-player-full-round --surface headless --transport loopback-ndjson --seed 1
+target\debug\poche.exe puppet artifacts open
+```
+
+Native and browser puppets are windowless by default. Native capture uses a
+Bevy image target without a primary window; browser capture uses headless
+browser mode. Pass `--show-window` only for interactive native debugging.
+Successful runs publish a verified HTML contact sheet, manifest, exact semantic
+steps, lifecycle evidence, and any surface captures under ignored `target/`
+storage. See the [phase-five workflow guide](docs/live-control-puppets.md) for
+protected profiles, live GUI/CLI/agent participation, sibling-device capture,
+artifact inspection, puppet authoring, and the precise transport/privacy
+qualifications.
+
 ## Play in two browser tabs
 
 Run the local server, then open `http://127.0.0.1:4174/`:
@@ -170,12 +199,14 @@ the browser-device gateway, Veilid, replicated authority, and production invite
 semantics remain separately scoped experiments. See
 [player-web-client.md](docs/player-web-client.md).
 
-The CLI schema includes `room`, `game`, `chat`, `spectator`, `transcript`, and
-`identity` commands with text/JSON/NDJSON output. Transcript commands execute
-locally today; the other groups are a typed, secret-safe client boundary used
-by tests and future packaged clients, not a claim that a standalone CLI process
-already joins a live Veilid room. Run `cargo run -p poche-cli -- --help` for the
-complete command vocabulary.
+The same executable includes `room`, `game`, `chat`, `spectator`, `transcript`,
+`identity`, `device`, `agent`, and `puppet` commands with text/JSON/NDJSON
+output. The live device commands are packaged against the disclosed HTTP
+gateway endpoint and use protected, independently certified profiles. This is
+not a claim that the CLI currently joins through public Veilid: native/public
+Veilid lifecycle acceptance remains a separately guarded transport test, and
+public Veilid capture transfer is not advertised. Run `poche.exe --help` for
+the complete command vocabulary.
 
 The checked script is the most inspectable lifecycle: host and join, seat and
 ready, abort and re-arm a countdown, start, pause by Alice, resume by Bob, chat,
@@ -220,11 +251,12 @@ is a packaged live client or a production security claim.
 | Mode | What is proven | Privacy and operational boundary |
 | --- | --- | --- |
 | GitHub Pages replay | Static rulebook and exact checked projections | No live room, authority, identity, or network |
-| Native Veilid protocol | Guarded two-process public DHT/private-route lifecycle, stable keys, signed commands/events, encrypted recipient projections | No packaged player client; Veilid peers can observe network metadata; the host sees all hands |
+| Native Veilid protocol | Guarded two-process public DHT/private-route lifecycle, stable keys, signed commands/events, encrypted recipient projections | The packaged live CLI currently uses HTTP/gateway rather than Veilid; public capture transfer is unqualified; Veilid peers can observe network metadata; the host sees all hands |
 | Direct browser Veilid | Not supported with Veilid 0.5.7 from a Pages HTTPS origin | Public WSS bootstrap still resets before TLS; upstream deprecated WSS and the replacement WebTransport checklist remains open; no companion app is implied |
 | Self-hosted Datastar demo | Host-colocated Axum authority and accessible semantic HTML work on loopback | Development invite/viewer routes are not production authentication; the operator sees connection metadata and, as host, all state |
 | Signed browser-device gateway lab | Browser-local WebCrypto key, signed bounded typed HTTP, idempotent receipts, reconnectable exact-recipient SSE, and independent device revocation work on loopback | Still host-authoritative and plaintext to the gateway; lab enrollment is not the replicated root-certificate path |
-| Native spatial mirror | Bevy 0.19 renders the checked exact-recipient scene, Slug card/score outlines, typed/drag parity, deterministic tween, and audit bounds in a real release window | Checked replay checkpoint only; not yet a live Veilid player client, physics authority, polished renderer, or input-to-photon measurement |
+| Native spatial mirror | Bevy 0.19 renders checked and live exact-recipient scenes, Slug card/score outlines, typed/drag parity, deterministic tween, and real windowless capture targets | The live carrier is currently HTTP/gateway, not a packaged Veilid player; this is not physics authority, polished rendering, or input-to-photon evidence |
+| Unified device and puppet workflows | One `poche.exe`, protected sibling profiles, GUI/CLI/policy parity, same-player capture, and full headless/browser/native multi-device runs | Captures are presentation evidence, not state authority or formal proof; public Veilid capture transfer is unsupported |
 | Semantic HTML tabletop | Ordinary landmarks, tables, lists, POST forms, keyboard controls, optional drag/drop, exact-recipient privacy, audit, governance, and reconnect run over the same spatial semantics | Loopback development identities are not production authentication; live authority remains host-colocated and trusted |
 | Published spatial evidence | One checked 185-record NDJSON stream, native/HTML scene fingerprint, Rust-rendered endpoint, and retained bounded Alloy overlap witness | Static composition of registered fixtures and reducers; not one atomic network execution, a live authority, or an unbounded spatial theorem |
 | Experimental replicated log | Multi-device certificates, player-deduplicated quorum, deterministic ordering, snapshot/tail replay, fork evidence, and four-model micro-scope agreement | In-process/formal experiment under majority and non-equivocation assumptions; not Byzantine fault tolerance or a deployed transport |

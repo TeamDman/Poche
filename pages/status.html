@@ -815,6 +815,15 @@
 
           <article class="card">
             <div class="card-head">
+              <h3>Unified executable and puppets</h3>
+              <span class="badge pass">Cross-surface pass</span>
+            </div>
+            <p>One <code>poche.exe</code> now launches the native game and supplies protected device profiles, live CLI/policy actions, same-player capture requests, and full multi-device puppets. Native and browser puppet renderers are windowless by default.</p>
+            <p class="result"><strong>Inspect:</strong> <a href="puppets/">open the CI-generated headless receipt</a>. Browser/native captures are presentation evidence; public Veilid capture transfer remains unsupported.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
               <h3>Audit and game governance</h3>
               <span class="badge pass">Checked overlay</span>
             </div>
@@ -972,6 +981,7 @@
           <div class="command"><span>Hidden-card dropout recovery</span><code>cargo run -p poche-xtask --offline -- trustless smoke --scenario dropout</code></div>
           <div class="command"><span>Spatial vertical slice</span><code>cargo run -p poche-xtask --offline -- spatial vertical-slice</code></div>
           <div class="command"><span>No-socket full lifecycle</span><code>cargo run -p poche-xtask --offline -- multiplayer smoke --transport in-process</code></div>
+          <div class="command"><span>Certified-device puppet</span><code>poche.exe --output json puppet run two-player-full-round --surface headless --transport loopback-ndjson --seed 1</code></div>
           <div class="command"><span>Static native replay</span><code>cargo run --release -p poche-ui --bin poche-replay</code></div>
           <div class="command"><span>Hostable browser demo</span><code>cargo run --locked --release -p poche-web-spike</code></div>
           <div class="command"><span>RL semantic contract</span><code>cargo run -p poche-xtask --offline -- rl spec</code></div>
@@ -983,6 +993,7 @@
           <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/session-coverage.md">Session coverage matrix</a>
           <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/deployment-modes.md">Deployment modes</a>
           <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/veilid-native-acceptance.md">Native Veilid evidence</a>
+          <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/live-control-puppets.md">Device/capture/puppet guide</a>
           <a href="https://github.com/TeamDman/Poche/blob/model-checking/docs/decisions/README.md">Architecture decisions</a>
           <a href="evidence/phase-3-release.json">Phase 3 machine receipt</a>
         </div>

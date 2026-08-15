@@ -1,9 +1,10 @@
 # Rulebook publication
 
 The public “pretty view” is <https://teamdman.github.io/Poche/>. GitHub Pages
-serves a small landing page, a PDF compiled from `docs/main.typ`, and the static
-exact-projection egui/WASM replay, engineering status, and checked spatial/
-release evidence; no generated artifact is committed to Git.
+serves a small landing page, a PDF compiled from `docs/main.typ`, the static
+exact-projection egui/WASM replay, engineering status, checked spatial/release
+evidence, and a deterministic headless certified-device puppet receipt; no
+generated artifact is committed to Git.
 
 ## Format decision
 
@@ -13,6 +14,7 @@ release evidence; no generated artifact is committed to Git.
 | Landing HTML | Published | Hand-authored, accessible navigation to the generated PDF, Typst source, and formal-evidence matrix. CI stamps it with the exact source commit and event time. |
 | Static egui/WASM replay | Published | Rust 1.96.0 and `wasm-bindgen` 0.2.126 build the checked exact-recipient fixture into `replay/`. It contains no authority, room transport, or live Veilid node. |
 | Static spatial evidence | Published | The Rust Pages builder injects the checked typed/drag endpoint and bounded Alloy overlap witness into accessible HTML, then copies only the registered safe JSON receipts. |
+| Headless puppet evidence | Published | CI runs a complete deterministic multi-player game through distinct certified devices and publishes its verified contact sheet, manifest, semantic steps, and lifecycle stream. It contains no graphical-capture or external-network claim. |
 | Live multiplayer | Not hosted by Pages | Direct HTTPS/WSS Veilid failed the G26 gate. The host-colocated Datastar authority is a separately run server; the current deterministic demo is not authenticated production multiplayer. |
 | Native Typst HTML | Evaluated and rejected for this milestone | `typst compile --features html --format html` warns that HTML is experimental and drops the template's page setup, two-column layout, title placement, vertical/horizontal spacing, and explicit alignment. Publishing it would not be a faithful pretty view. |
 
@@ -35,8 +37,9 @@ experimental and warns that templates may not render properly:
   build.
 - The Pages artifact contains the landing/status/spatial pages,
   `poche-rules.pdf`, MPL-2.0 license, three checked safe JSON evidence files,
-  and generated `replay/` HTML/JS/WASM. It contains no live backend, Veilid
-  bundle, invitation, room state, private hand transcript, or private user
+  generated `replay/` HTML/JS/WASM, and the generated `puppets/` headless
+  contact sheet/manifest/semantic streams. It contains no live backend, Veilid
+  bundle, invitation, private capture, private hand transcript, or private user
   data. The `site/` build directory and `docs/main.pdf` are ignored.
 
 ## Local reproduction
@@ -59,6 +62,16 @@ Local replay reproduction requires Rust 1.96.0, the
 ```pwsh
 pwsh crates/poche-ui/web/build.ps1 -OutputDirectory site/replay
 ```
+
+The Pages puppet receipt is also generated rather than committed:
+
+```pwsh
+cargo run --locked -p poche-cli -- --output json puppet run two-player-full-round --surface headless --transport loopback-ndjson --seed 1 --output-dir site/puppets
+```
+
+Its contact sheet explicitly says that headless evidence establishes device
+observations, advertised actions, reducer commits, and convergence—not pixels,
+layout, external delivery, or a fresh Alloy/NuSMV/Prolog run.
 
 The deployment and trust distinctions are kept in
 [`deployment-modes.md`](deployment-modes.md).

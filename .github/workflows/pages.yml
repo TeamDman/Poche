@@ -12,10 +12,15 @@ on:
       - crates/poche-domain/**
       - crates/poche-environment/**
       - crates/poche-conformance/**
+      - crates/poche-capture/**
+      - crates/poche-cli/**
       - crates/poche-model/**
       - crates/poche-native-tools/**
+      - crates/poche-native-ui/**
       - crates/poche-oracle-rust/**
       - crates/poche-protocol/**
+      - crates/poche-player-client/**
+      - crates/poche-puppet/**
       - crates/poche-rl/**
       - crates/poche-runtime/**
       - crates/poche-session/**
@@ -80,6 +85,7 @@ jobs:
           PUBLICATION_TIME: ${{ github.event.head_commit.timestamp }}
         run: |
           cargo run --locked -p poche-xtask -- pages build --output site
+          cargo run --locked -p poche-cli -- --output json puppet run two-player-full-round --surface headless --transport loopback-ndjson --seed 1 --output-dir site/puppets
           "$TYPST_BIN" compile --root . docs/main.typ site/poche-rules.pdf
           test -s site/poche-rules.pdf
           pwsh crates/poche-ui/web/build.ps1 -OutputDirectory site/replay
@@ -89,6 +95,10 @@ jobs:
           test -s site/evidence/spatial-vertical-slice.json
           test -s site/evidence/alloy-overlap-negative-control-v1.json
           test -s site/evidence/phase-3-release.json
+          test -s site/puppets/index.html
+          test -s site/puppets/catalog.json
+          test -s site/puppets/two-player-full-round-seed-1/manifest.json
+          test -s site/puppets/two-player-full-round-seed-1/steps.ndjson
           test -s site/replay/index.html
           test -s site/replay/pkg/poche_ui.js
           test -s site/replay/pkg/poche_ui_bg.wasm

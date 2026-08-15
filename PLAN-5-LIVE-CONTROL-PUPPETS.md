@@ -7,9 +7,9 @@
 **Intent audit:** Passed 2026-08-12 against the available original Poche/SFM,
 desktop, browser, CLI, computer-player, multi-device, capture, puppet, Figue,
 Veilid, and planning instructions in this task
-**Current implementation focus:** Task 6.1; document the completed unified
-executable, certified-device, capture, agent, and puppet workflows with precise
-surface and transport qualifications
+**Current implementation focus:** Task 6.2; run the complete release gate and
+literal three-pass intent audit, repair every discrepancy, then verify a clean
+local/remote checkpoint
 
 ## How to update this plan
 
@@ -1468,9 +1468,34 @@ evidence rather than inference.
 
 ## Phase 6 — document, publish, and audit
 
-### [ ] 6.1 Document device, capture, agent, and puppet workflows
+### [x] 6.1 Document device, capture, agent, and puppet workflows
 
-**Completion notes:** Not started.
+**Completion notes:** Completed 2026-08-14. Added
+`docs/live-control-puppets.md` as the runnable phase-five guide. It covers one-
+executable desktop/structured invocation; protected player-root and sibling-
+device enrollment; current HTTP/gateway room participation; GUI, typed CLI, and
+baseline-policy parity; same-player signed capture discovery/request/provider
+flows; browser consent/unavailability; bounded encrypted transfer and durable
+ciphertext resume; windowless native/browser puppets; scenario-authoring rules;
+artifact opening; and the evidence/deployment matrix. It explicitly rejects
+Vox/local-window authority and does not imply public Veilid capture support.
+
+`README.md` now presents the executable, default-windowless puppet behavior,
+and guide near the primary inspection workflow, and removes its stale claim
+that live CLI groups are merely future boundaries. Native/public Veilid is
+still correctly separated from the packaged HTTP/gateway client. The Pages
+landing/status/publication documentation links the new phase-five evidence.
+CI now runs the deterministic complete headless certified-device game into
+ignored `site/puppets`, verifies its contact sheet/catalog/manifest/semantic
+steps, and publishes them without committing generated captures or PDFs.
+
+Local reproduction generated the three existing Pages source pages plus the
+seed-1 headless run at revision 159, with 159 steps, eight converged devices,
+138 public events, and a verified manifest. In-app-browser inspection followed
+the landing-page puppet link to the generated catalog, found the qualified
+headless run, found the new status-page entry/link, and reported no page console
+errors. The catalog correctly says that it contains no graphical captures and
+does not upgrade semantic evidence into presentation or formal proof.
 
 **Work:**
 
