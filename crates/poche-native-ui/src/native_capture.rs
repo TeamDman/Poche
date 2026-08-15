@@ -11,6 +11,8 @@ use poche_protocol::{
     CaptureRequestId, CaptureRequestWire, SemanticHash,
 };
 
+const MAX_RETAINED_NATIVE_CAPTURE_JOBS: usize = 64;
+
 /// Exact live projection identity paired with the Bevy leaf adapter.
 #[derive(Clone, Copy, Debug, Resource)]
 pub struct NativeCaptureContext {
@@ -30,6 +32,7 @@ enum NativeCaptureState {
 #[derive(Debug, Default)]
 struct NativeCaptureShared {
     jobs: BTreeMap<CaptureRequestId, NativeCaptureState>,
+    shutdown: bool,
 }
 
 /// Nonblocking Bevy capture provider handle shared with the render world.
@@ -76,6 +79,32 @@ impl NativeCaptureProvider {
         } else {
             NativeCaptureState::Denied(CaptureDenialReasonWire::ConsentDenied)
         };
+        Ok(())
+    }
+
+    /// Mark the renderer unavailable and terminally deny every unfinished
+    /// job. Existing ready/denied results remain inspectable by requesters.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable storage-state failure if the shared provider state is
+    /// unavailable.
+    pub fn shutdown(&self) -> Result<(), CapturePipelineError> {
+        let mut shared = self
+            .shared
+            .lock()
+            .map_err(|_| CapturePipelineError::Storage)?;
+        shared.shutdown = true;
+        for state in shared.jobs.values_mut() {
+            if matches!(
+                state,
+                NativeCaptureState::AwaitingConsent(_)
+                    | NativeCaptureState::Queued(_)
+                    | NativeCaptureState::Capturing
+            ) {
+                *state = NativeCaptureState::Denied(CaptureDenialReasonWire::ProviderUnavailable);
+            }
+        }
         Ok(())
     }
 
@@ -189,6 +218,30 @@ impl CaptureProvider for NativeCaptureProvider {
         if shared.jobs.contains_key(&request.request_id) {
             return Err(CapturePipelineError::DuplicateId);
         }
+        if shared.jobs.len() >= MAX_RETAINED_NATIVE_CAPTURE_JOBS {
+            let terminal_denial = shared.jobs.iter().find_map(|(request_id, state)| {
+                matches!(state, NativeCaptureState::Denied(_)).then(|| request_id.clone())
+            });
+            if let Some(request_id) = terminal_denial {
+                shared.jobs.remove(&request_id);
+            } else {
+                return Err(CapturePipelineError::Busy);
+            }
+        }
+        let state = if shared.shutdown {
+            NativeCaptureState::Denied(CaptureDenialReasonWire::ProviderUnavailable)
+        } else if shared.jobs.values().any(|state| {
+            matches!(
+                state,
+                NativeCaptureState::AwaitingConsent(_)
+                    | NativeCaptureState::Queued(_)
+                    | NativeCaptureState::Capturing
+            )
+        }) {
+            NativeCaptureState::Denied(CaptureDenialReasonWire::Busy)
+        } else {
+            state
+        };
         shared.jobs.insert(request.request_id, state);
         Ok(())
     }
@@ -212,7 +265,11 @@ impl CaptureProvider for NativeCaptureProvider {
             NativeCaptureState::Queued(_) | NativeCaptureState::Capturing => {
                 CaptureProviderPoll::Pending(CaptureProgressStageWire::Capturing)
             }
-            NativeCaptureState::Denied(reason) => CaptureProviderPoll::Denied(*reason),
+            NativeCaptureState::Denied(reason) => {
+                let reason = *reason;
+                shared.jobs.remove(request_id);
+                CaptureProviderPoll::Denied(reason)
+            }
             NativeCaptureState::Ready(_) => {
                 let NativeCaptureState::Ready(bundle) = shared
                     .jobs
@@ -382,6 +439,48 @@ mod tests {
             provider.poll_capture(&request.request_id),
             Ok(CaptureProviderPoll::Denied(
                 CaptureDenialReasonWire::Cancelled
+            ))
+        );
+    }
+
+    #[test]
+    fn consent_denial_busy_and_renderer_shutdown_are_explicit() {
+        let (mut provider, first) = fixture(CaptureConsentPolicyWire::UserConfirmation);
+        provider.begin_capture(first.clone()).unwrap();
+        let mut second = first.clone();
+        second.request_id = CaptureRequestId::new("capture-native-2").unwrap();
+        second.replay_nonce = "native-capture-nonce-2".to_owned();
+        provider.begin_capture(second.clone()).unwrap();
+        assert_eq!(
+            provider.poll_capture(&second.request_id),
+            Ok(CaptureProviderPoll::Denied(CaptureDenialReasonWire::Busy))
+        );
+        provider.decide_consent(&first.request_id, false).unwrap();
+        assert_eq!(
+            provider.poll_capture(&first.request_id),
+            Ok(CaptureProviderPoll::Denied(
+                CaptureDenialReasonWire::ConsentDenied
+            ))
+        );
+
+        let (mut renderer, pending) = fixture(CaptureConsentPolicyWire::Automatic);
+        renderer.begin_capture(pending.clone()).unwrap();
+        assert_eq!(renderer.take_queued(), Ok(Some(pending.clone())));
+        renderer.shutdown().unwrap();
+        assert_eq!(
+            renderer.poll_capture(&pending.request_id),
+            Ok(CaptureProviderPoll::Denied(
+                CaptureDenialReasonWire::ProviderUnavailable
+            ))
+        );
+        let mut after_shutdown = pending;
+        after_shutdown.request_id = CaptureRequestId::new("capture-native-3").unwrap();
+        after_shutdown.replay_nonce = "native-capture-nonce-3".to_owned();
+        renderer.begin_capture(after_shutdown.clone()).unwrap();
+        assert_eq!(
+            renderer.poll_capture(&after_shutdown.request_id),
+            Ok(CaptureProviderPoll::Denied(
+                CaptureDenialReasonWire::ProviderUnavailable
             ))
         );
     }

@@ -609,6 +609,190 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one table-like fixture keeps every stable capture authorization denial and redaction assertion together"
+    )]
+    fn capture_authorization_failure_matrix_is_exact_and_redacted() {
+        let (request, requester, provider) = fixture();
+        let room = RoomId::new("room-1").unwrap();
+        let authorize = |candidate: &CaptureRequestWire,
+                         candidate_room: &RoomId,
+                         epoch: u64,
+                         revision: u64,
+                         now: u64,
+                         requester_certificate: &DeviceCertificateWire,
+                         provider_certificate: &DeviceCertificateWire,
+                         requester_revoked: bool,
+                         provider_revoked: bool| {
+            authorize_capture_request(
+                candidate,
+                &CaptureAuthorizationContext {
+                    room_id: candidate_room,
+                    membership_epoch: epoch,
+                    current_revision: revision,
+                    now_unix_ms: now,
+                    requester_certificate,
+                    provider_certificate,
+                    requester_revoked,
+                    provider_revoked,
+                },
+            )
+        };
+
+        let other_room = RoomId::new("room-2").unwrap();
+        assert_eq!(
+            authorize(
+                &request,
+                &other_room,
+                1,
+                12,
+                10_000,
+                &requester,
+                &provider,
+                false,
+                false
+            ),
+            Err(CaptureAuthorizationError::WrongRoom)
+        );
+        assert_eq!(
+            authorize(
+                &request, &room, 2, 12, 10_000, &requester, &provider, false, false
+            ),
+            Err(CaptureAuthorizationError::WrongMembershipEpoch)
+        );
+
+        let mut wrong_device = request.clone();
+        wrong_device.provider_device_id = DeviceId::new(key(7)).unwrap();
+        assert_eq!(
+            authorize(
+                &wrong_device,
+                &room,
+                1,
+                12,
+                10_000,
+                &requester,
+                &provider,
+                false,
+                false
+            ),
+            Err(CaptureAuthorizationError::WrongDevice)
+        );
+
+        let other_player = PrincipalId::new(key(8)).unwrap();
+        let other_provider =
+            certificate(&other_player, 9, vec![DeviceCapabilityWire::ProvideCapture]);
+        assert_eq!(
+            authorize(
+                &request,
+                &room,
+                1,
+                12,
+                10_000,
+                &requester,
+                &other_provider,
+                false,
+                false
+            ),
+            Err(CaptureAuthorizationError::WrongPlayer)
+        );
+        assert_eq!(
+            authorize(
+                &request, &room, 1, 12, 10_000, &requester, &provider, true, false
+            ),
+            Err(CaptureAuthorizationError::RevokedDevice)
+        );
+
+        let mut not_yet_valid = provider.clone();
+        not_yet_valid.valid_from_membership_epoch = 2;
+        assert_eq!(
+            authorize(
+                &request,
+                &room,
+                1,
+                12,
+                10_000,
+                &requester,
+                &not_yet_valid,
+                false,
+                false
+            ),
+            Err(CaptureAuthorizationError::ExpiredCertificate)
+        );
+        let mut requester_without_capability = requester.clone();
+        requester_without_capability.capabilities = vec![DeviceCapabilityWire::Propose];
+        assert_eq!(
+            authorize(
+                &request,
+                &room,
+                1,
+                12,
+                10_000,
+                &requester_without_capability,
+                &provider,
+                false,
+                false
+            ),
+            Err(CaptureAuthorizationError::MissingCapability)
+        );
+        let mut provider_without_capability = provider.clone();
+        provider_without_capability.capabilities = vec![DeviceCapabilityWire::Propose];
+        assert_eq!(
+            authorize(
+                &request,
+                &room,
+                1,
+                12,
+                10_000,
+                &requester,
+                &provider_without_capability,
+                false,
+                false
+            ),
+            Err(CaptureAuthorizationError::MissingCapability)
+        );
+
+        let mut expired_request = request.clone();
+        expired_request.expires_at_unix_ms = 9_999;
+        assert_eq!(
+            authorize(
+                &expired_request,
+                &room,
+                1,
+                12,
+                10_000,
+                &requester,
+                &provider,
+                false,
+                false
+            ),
+            Err(CaptureAuthorizationError::ExpiredRequest)
+        );
+        assert_eq!(
+            authorize(
+                &request, &room, 1, 13, 10_000, &requester, &provider, false, false
+            ),
+            Err(CaptureAuthorizationError::StaleRevision)
+        );
+        for error in [
+            CaptureAuthorizationError::WrongRoom,
+            CaptureAuthorizationError::WrongMembershipEpoch,
+            CaptureAuthorizationError::WrongPlayer,
+            CaptureAuthorizationError::WrongDevice,
+            CaptureAuthorizationError::RevokedDevice,
+            CaptureAuthorizationError::ExpiredCertificate,
+            CaptureAuthorizationError::MissingCapability,
+            CaptureAuthorizationError::ExpiredRequest,
+            CaptureAuthorizationError::StaleRevision,
+        ] {
+            let displayed = error.to_string();
+            assert!(!displayed.contains(request.player_id.as_str()));
+            assert!(!displayed.contains(request.room_id.as_str()));
+            assert!(!displayed.contains(request.replay_nonce.as_str()));
+        }
+    }
+
+    #[test]
     fn replay_corpus_rejects_duplicate_conflict_and_overflow() {
         let (request, requester, provider) = fixture();
         let room = RoomId::new("room-1").unwrap();

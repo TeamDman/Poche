@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, fmt};
+use std::{
+    collections::BTreeMap,
+    fmt, fs,
+    path::{Path, PathBuf},
+};
 
 use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
@@ -192,6 +196,188 @@ pub struct CaptureTransferReceiver {
     complete: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CaptureTransferCheckpoint {
+    schema_version: u16,
+    descriptor: CaptureTransferDescriptorWire,
+    request_hash: SemanticHash,
+    expires_at_unix_ms: u64,
+}
+
+/// Process-restart-safe receiver checkpoint for private artifact transfer.
+///
+/// Only authenticated encrypted chunks and public transfer metadata are
+/// retained on disk. The transfer key remains caller-owned and must be
+/// reacquired from protected device custody after restart; every retained
+/// chunk is decrypted and authenticated again before resume is allowed.
+pub struct DurableCaptureTransferReceiver {
+    directory: PathBuf,
+    receiver: CaptureTransferReceiver,
+}
+
+impl DurableCaptureTransferReceiver {
+    /// Create a new private checkpoint. An existing transfer ID/request pair
+    /// must be resumed explicitly and is never overwritten.
+    pub fn create(
+        staging_root: impl AsRef<Path>,
+        descriptor: CaptureTransferDescriptorWire,
+        request_hash: SemanticHash,
+        expires_at_unix_ms: u64,
+        key: CaptureTransferKey,
+    ) -> Result<Self, CaptureTransferError> {
+        let receiver = CaptureTransferReceiver::new(
+            descriptor.clone(),
+            request_hash,
+            expires_at_unix_ms,
+            key,
+        )?;
+        let root = staging_root.as_ref();
+        fs::create_dir_all(root).map_err(|_| CaptureTransferError::Storage)?;
+        let directory = checkpoint_directory(root, &descriptor.transfer_id, request_hash);
+        if directory.exists() {
+            return Err(CaptureTransferError::ResumeConflict);
+        }
+        let temporary = tempfile::Builder::new()
+            .prefix(".poche-transfer-new-")
+            .tempdir_in(root)
+            .map_err(|_| CaptureTransferError::Storage)?;
+        let checkpoint = CaptureTransferCheckpoint {
+            schema_version: 1,
+            descriptor,
+            request_hash,
+            expires_at_unix_ms,
+        };
+        let bytes = serde_json::to_vec(&checkpoint).map_err(|_| CaptureTransferError::Encoding)?;
+        fs::write(temporary.path().join("checkpoint.json"), bytes)
+            .map_err(|_| CaptureTransferError::Storage)?;
+        let temporary_path = temporary.keep();
+        if fs::rename(&temporary_path, &directory).is_err() {
+            let _ = fs::remove_dir_all(&temporary_path);
+            return Err(CaptureTransferError::Storage);
+        }
+        Ok(Self {
+            directory,
+            receiver,
+        })
+    }
+
+    /// Reopen a retained checkpoint with a freshly reacquired content key.
+    /// Every contiguous ciphertext chunk is authenticated before any resume
+    /// index is returned.
+    pub fn resume(
+        staging_root: impl AsRef<Path>,
+        descriptor: &CaptureTransferDescriptorWire,
+        request_hash: SemanticHash,
+        expires_at_unix_ms: u64,
+        now_unix_ms: u64,
+        key: CaptureTransferKey,
+    ) -> Result<Self, CaptureTransferError> {
+        let directory =
+            checkpoint_directory(staging_root.as_ref(), &descriptor.transfer_id, request_hash);
+        let checkpoint_bytes = fs::read(directory.join("checkpoint.json"))
+            .map_err(|_| CaptureTransferError::Storage)?;
+        let checkpoint: CaptureTransferCheckpoint = serde_json::from_slice(&checkpoint_bytes)
+            .map_err(|_| CaptureTransferError::Encoding)?;
+        if checkpoint.schema_version != 1
+            || &checkpoint.descriptor != descriptor
+            || checkpoint.request_hash != request_hash
+            || checkpoint.expires_at_unix_ms != expires_at_unix_ms
+        {
+            return Err(CaptureTransferError::ResumeConflict);
+        }
+        let mut receiver = CaptureTransferReceiver::new(
+            descriptor.clone(),
+            request_hash,
+            expires_at_unix_ms,
+            key,
+        )?;
+        let mut first_missing = None;
+        for index in 0..descriptor.chunk_count {
+            let path = checkpoint_chunk_path(&directory, index);
+            if !path.exists() {
+                first_missing = Some(index);
+                break;
+            }
+            let ciphertext = fs::read(path).map_err(|_| CaptureTransferError::Storage)?;
+            let plaintext_length = ciphertext
+                .len()
+                .checked_sub(AEAD_TAG_BYTES)
+                .and_then(|length| u32::try_from(length).ok())
+                .ok_or(CaptureTransferError::InvalidChunk)?;
+            receiver.accept(
+                now_unix_ms,
+                &EncryptedCaptureChunk {
+                    transfer_id: descriptor.transfer_id.clone(),
+                    request_hash,
+                    chunk_index: index,
+                    chunk_count: descriptor.chunk_count,
+                    plaintext_length,
+                    ciphertext,
+                },
+            )?;
+        }
+        if let Some(first_missing) = first_missing
+            && ((first_missing + 1)..descriptor.chunk_count)
+                .any(|index| checkpoint_chunk_path(&directory, index).exists())
+        {
+            return Err(CaptureTransferError::OutOfOrder);
+        }
+        Ok(Self {
+            directory,
+            receiver,
+        })
+    }
+
+    #[must_use]
+    pub const fn resume_index(&self) -> u32 {
+        self.receiver.resume_index()
+    }
+
+    /// Authenticate one chunk before atomically retaining its ciphertext.
+    pub fn accept(
+        &mut self,
+        now_unix_ms: u64,
+        chunk: &EncryptedCaptureChunk,
+    ) -> Result<CaptureChunkDisposition, CaptureTransferError> {
+        let disposition = self.receiver.accept(now_unix_ms, chunk)?;
+        if matches!(disposition, CaptureChunkDisposition::Duplicate { .. }) {
+            return Ok(disposition);
+        }
+        let destination = checkpoint_chunk_path(&self.directory, chunk.chunk_index);
+        let temporary = self
+            .directory
+            .join(format!(".chunk-{:08}.tmp", chunk.chunk_index));
+        if fs::write(&temporary, &chunk.ciphertext).is_err()
+            || fs::rename(&temporary, &destination).is_err()
+        {
+            let _ = fs::remove_file(&temporary);
+            self.receiver.cancel();
+            return Err(CaptureTransferError::Storage);
+        }
+        Ok(disposition)
+    }
+
+    /// Verify the complete plaintext and remove the encrypted checkpoint
+    /// before returning publishable bytes.
+    pub fn finish(&mut self) -> Result<Vec<u8>, CaptureTransferError> {
+        let bytes = self.receiver.finish()?;
+        if fs::remove_dir_all(&self.directory).is_err() {
+            return Err(CaptureTransferError::Storage);
+        }
+        Ok(bytes)
+    }
+
+    /// Erase in-memory plaintext and the retained encrypted checkpoint.
+    pub fn cancel(&mut self) -> Result<(), CaptureTransferError> {
+        self.receiver.cancel();
+        if self.directory.exists() {
+            fs::remove_dir_all(&self.directory).map_err(|_| CaptureTransferError::Storage)?;
+        }
+        Ok(())
+    }
+}
+
 impl CaptureTransferReceiver {
     pub fn new(
         descriptor: CaptureTransferDescriptorWire,
@@ -311,6 +497,8 @@ pub enum CaptureTransferError {
     AlreadyComplete,
     Crypto,
     Integrity,
+    Encoding,
+    Storage,
 }
 
 impl fmt::Display for CaptureTransferError {
@@ -328,8 +516,27 @@ impl fmt::Display for CaptureTransferError {
             Self::AlreadyComplete => "capture transfer is already complete",
             Self::Crypto => "capture transfer cryptography failed",
             Self::Integrity => "capture transfer integrity check failed",
+            Self::Encoding => "capture transfer checkpoint encoding failed",
+            Self::Storage => "capture transfer checkpoint storage failed",
         })
     }
+}
+
+fn checkpoint_directory(
+    root: &Path,
+    transfer_id: &CaptureTransferId,
+    request_hash: SemanticHash,
+) -> PathBuf {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"POCHE\0CAPTURE-CHECKPOINT\0V1");
+    hasher.update(transfer_id.as_str().as_bytes());
+    hasher.update(&request_hash.0);
+    let token = hasher.finalize().to_hex();
+    root.join(format!(".poche-transfer-{}", &token[..32]))
+}
+
+fn checkpoint_chunk_path(directory: &Path, index: u32) -> PathBuf {
+    directory.join(format!("chunk-{index:08}.bin"))
 }
 
 impl std::error::Error for CaptureTransferError {}
@@ -592,6 +799,135 @@ mod tests {
             receiver.finish(),
             Err(CaptureTransferError::AlreadyComplete)
         );
+    }
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the durable restart fixture keeps ciphertext inspection, wrong-key refusal, resume, completion, and cancellation contiguous"
+    )]
+    fn encrypted_checkpoint_resumes_after_restart_and_cleans_up_terminally() {
+        let marker = b"PRIVATE-PLAINTEXT-MUST-NOT-ENTER-THE-CHECKPOINT";
+        let source = marker
+            .iter()
+            .copied()
+            .cycle()
+            .take(90_000)
+            .collect::<Vec<_>>();
+        let descriptor = capture_transfer_descriptor(
+            CaptureTransferId::new("durable-transfer").unwrap(),
+            &source,
+            24_000,
+        )
+        .unwrap();
+        let request_hash = SemanticHash([17; 32]);
+        let staging = tempfile::tempdir().unwrap();
+        let mut sender = CaptureTransferSender::new(
+            descriptor.clone(),
+            request_hash,
+            20_000,
+            source.clone(),
+            CaptureTransferKey::new([19; 32]),
+            1,
+        )
+        .unwrap();
+        let mut receiver = DurableCaptureTransferReceiver::create(
+            staging.path(),
+            descriptor.clone(),
+            request_hash,
+            20_000,
+            CaptureTransferKey::new([19; 32]),
+        )
+        .unwrap();
+        let first = sender.next_chunk(10_000).unwrap().unwrap();
+        let CaptureChunkDisposition::Accepted { ciphertext_hash } =
+            receiver.accept(10_000, &first).unwrap()
+        else {
+            unreachable!();
+        };
+        sender
+            .acknowledge(first.chunk_index, ciphertext_hash)
+            .unwrap();
+        assert_eq!(receiver.resume_index(), 1);
+        drop(receiver);
+
+        let retained = fs::read_dir(staging.path())
+            .unwrap()
+            .flat_map(|entry| fs::read_dir(entry.unwrap().path()).unwrap())
+            .filter_map(Result::ok)
+            .map(|entry| fs::read(entry.path()).unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            retained
+                .iter()
+                .all(|bytes| !bytes.windows(marker.len()).any(|window| window == marker))
+        );
+        assert_eq!(
+            DurableCaptureTransferReceiver::resume(
+                staging.path(),
+                &descriptor,
+                request_hash,
+                20_000,
+                10_000,
+                CaptureTransferKey::new([20; 32]),
+            )
+            .err(),
+            Some(CaptureTransferError::Integrity)
+        );
+
+        let mut receiver = DurableCaptureTransferReceiver::resume(
+            staging.path(),
+            &descriptor,
+            request_hash,
+            20_000,
+            10_000,
+            CaptureTransferKey::new([19; 32]),
+        )
+        .unwrap();
+        assert_eq!(receiver.resume_index(), 1);
+        let mut restarted_sender = CaptureTransferSender::new(
+            descriptor,
+            request_hash,
+            20_000,
+            source.clone(),
+            CaptureTransferKey::new([19; 32]),
+            1,
+        )
+        .unwrap();
+        restarted_sender
+            .resume_from(receiver.resume_index())
+            .unwrap();
+        while let Some(chunk) = restarted_sender.next_chunk(10_000).unwrap() {
+            let CaptureChunkDisposition::Accepted { ciphertext_hash } =
+                receiver.accept(10_000, &chunk).unwrap()
+            else {
+                unreachable!();
+            };
+            restarted_sender
+                .acknowledge(chunk.chunk_index, ciphertext_hash)
+                .unwrap();
+        }
+        assert_eq!(receiver.finish().unwrap(), source);
+        assert_eq!(fs::read_dir(staging.path()).unwrap().count(), 0);
+
+        let cancel_source = vec![42; 32_000];
+        let cancel_descriptor = capture_transfer_descriptor(
+            CaptureTransferId::new("cancel-durable-transfer").unwrap(),
+            &cancel_source,
+            24_000,
+        )
+        .unwrap();
+        let mut cancelled = DurableCaptureTransferReceiver::create(
+            staging.path(),
+            cancel_descriptor,
+            SemanticHash([21; 32]),
+            20_000,
+            CaptureTransferKey::new([22; 32]),
+        )
+        .unwrap();
+        assert_eq!(fs::read_dir(staging.path()).unwrap().count(), 1);
+        cancelled.cancel().unwrap();
+        assert_eq!(fs::read_dir(staging.path()).unwrap().count(), 0);
     }
 
     fn publish_verified_bytes(bytes: &[u8], expected_hash: SemanticHash) {

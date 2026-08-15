@@ -7,9 +7,9 @@
 **Intent audit:** Passed 2026-08-12 against the available original Poche/SFM,
 desktop, browser, CLI, computer-player, multi-device, capture, puppet, Figue,
 Veilid, and planning instructions in this task
-**Current implementation focus:** Task 5.3; exercise the cross-surface failure,
-resume, cancellation, and artifact-integrity matrix now that player-device
-entry parity and vote-lock safety are closed
+**Current implementation focus:** Task 6.1; document the completed unified
+executable, certified-device, capture, agent, and puppet workflows with precise
+surface and transport qualifications
 
 ## How to update this plan
 
@@ -1385,9 +1385,53 @@ cargo test --workspace --locked --offline
 surfaces, visual differences are qualified, and screenshots are not mislabeled
 as formal proof.
 
-### [ ] 5.3 Exercise device, capture, lifecycle, and transport failures
+### [x] 5.3 Exercise device, capture, lifecycle, and transport failures
 
-**Completion notes:** Not started.
+**Completion notes:** Completed 2026-08-14. The signed capture authorization
+matrix now exercises exact room, session, membership epoch, player, requester
+device, target device, certificate validity/revocation, both endpoint
+capabilities, request expiry, and authority revision. Its stable failures omit
+room, player, and replay-nonce secrets. Provider lifecycle tests distinguish
+consent denial, busy renderer, caller cancellation, and renderer shutdown; job
+retention is bounded and terminal denials are consumed. Runtime route tests
+prove an exact target disconnect fails without invoking the provider and that
+the same not-yet-accepted signed request succeeds after that certified device
+rebinds. Replay tests retain exact-duplicate, conflicting-replay, and bounded-
+window cases without turning a cooperation request into game authority.
+
+Large transfer tests cover multi-megabyte encrypted chunks, backpressure,
+duplicate/reordered/tampered chunks, wrong keys, expiry, cancellation, length
+and content-hash integrity. The new durable receiver atomically checkpoints
+only authenticated ciphertext plus public transfer metadata, reacquires the
+protected key after restart, reauthenticates every retained chunk, resumes at
+the exact contiguous boundary, and removes its private staging directory on
+completion or cancellation. Disk failure, unsafe paths, duplicate artifact
+names, privacy-scan failure, failed publication cleanup, and zero-deadline
+puppet publication are explicit negative cases. A plaintext sentinel scan
+proves the interrupted checkpoint does not retain the capture bytes.
+
+The completed Task 3.3 fixtures supply stale-action, independent sibling-device
+takeover, player vote deduplication, real Ed25519 equivocation, and reducer
+fail-stop coverage. Task 5.1 supplies route disconnect/rebind, public-only
+readmission, graphical takeover, concurrent device profiles, and windowless
+native/browser lifecycle evidence. The current local Veilid 0.5.7 probe passed
+its isolated semantic gate and reported the expected zero-peer public-topology
+limit. The guarded public-network command was deliberately not rerun without
+the required acknowledgement. Existing public Veilid evidence qualifies game
+lifecycle only; public Veilid capture transfer is not advertised as supported.
+The implemented capture carriers are the measured in-process/loopback and HTTP
+gateway paths.
+
+The unified Windows executable was rebuilt and invoked directly from
+PowerShell: JSON `puppet list` parsed two scenarios and an NDJSON transcript was
+successfully consumed through a redirected pipeline. Earlier Task 1.3 and 5.1
+acceptance covers no-argument Explorer/desktop launch, the installed executable,
+concurrent protected profiles, and zero-window puppet renderers. The ordinary
+capture/session/runtime/native suites, the four-case headless puppet suite, and
+strict affected-crate Clippy all pass offline. Repeated deterministic in-process
+smoke runs exposed stale checked evidence rather than semantic drift; the two
+reproducible transcript/public hashes were refreshed while all counts, scores,
+decisions, and formal-gate outcomes remained unchanged.
 
 **Work:**
 

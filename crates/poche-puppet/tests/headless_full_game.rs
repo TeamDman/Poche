@@ -110,3 +110,18 @@ fn cancellation_prevents_partial_publication() {
         0
     );
 }
+
+#[test]
+fn zero_run_deadline_is_attributable_and_prevents_partial_publication() {
+    let temporary = tempfile::tempdir().expect("temporary artifacts");
+    let mut expired = options(temporary.path(), 1);
+    expired.whole_run_timeout = Duration::ZERO;
+    let error = run(&expired).expect_err("expired run must fail");
+    assert_eq!(error.code(), PuppetErrorCode::RunTimeout);
+    assert_eq!(
+        std::fs::read_dir(temporary.path())
+            .expect("artifact root")
+            .count(),
+        0
+    );
+}

@@ -20,8 +20,8 @@
       "reconnect",
       "transcript-replay"
     ],
-    "transcript_hash": "ab90ff79acb755d72defaef22a37369a71a9125df64c91a8645260254934a075",
-    "final_public_hash": "be439108bb7ddb5695232faa074cb9180d1b34df6a1748598ad6e19c6f9759dd"
+    "transcript_hash": "47fd32eb99baa77efbce70b15d6ddb390ac5590886cb20c12baa600c6b29830e",
+    "final_public_hash": "6bd9d5a5e16c598ae42cf15be880a3f8544129aa0dba4f23c97a0fe23656a65f"
   },
   "gates": [
     "protocol-replay",

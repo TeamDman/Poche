@@ -271,6 +271,7 @@ pub enum CapturePipelineError {
     PrivateData,
     Oversize,
     Cancelled,
+    Busy,
     Encoding,
     Storage,
 }
@@ -287,6 +288,7 @@ impl fmt::Display for CapturePipelineError {
             Self::PrivateData => "capture contains private data",
             Self::Oversize => "capture exceeds the artifact limit",
             Self::Cancelled => "capture was cancelled",
+            Self::Busy => "capture provider is busy",
             Self::Encoding => "capture encoding failed",
             Self::Storage => "capture storage failed",
         })
@@ -714,5 +716,16 @@ mod tests {
                     .to_string_lossy()
                     .starts_with(".poche-capture-"))
         );
+
+        let storage_root = root.path().join("not-a-directory");
+        fs::write(&storage_root, b"occupied by a file").unwrap();
+        assert_eq!(
+            CapturePipeline::new(&storage_root).persist(&bundle(
+                "storage-failure",
+                CaptureProviderKindWire::NativeBevy
+            )),
+            Err(CapturePipelineError::Storage)
+        );
+        assert!(storage_root.is_file());
     }
 }

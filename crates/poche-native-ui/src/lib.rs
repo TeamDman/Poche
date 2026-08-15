@@ -946,6 +946,7 @@ fn run_with_live_device(
             "native capture provider and projection context must be supplied together".to_owned(),
         );
     }
+    let shutdown_provider = capture_provider.clone();
     if let Some(provider) = capture_provider {
         app.insert_resource(provider);
         app.add_systems(Update, native_capture_driver.after(update_status));
@@ -957,6 +958,9 @@ fn run_with_live_device(
         app.insert_resource(live_device);
     }
     app.run();
+    if let Some(provider) = shutdown_provider {
+        let _ = provider.shutdown();
+    }
     Ok(())
 }
 

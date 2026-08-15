@@ -1394,6 +1394,11 @@ where
                 .get(target_device)
                 .cloned()
                 .ok_or(DeviceClientError::AuthorizationDenied)?;
+            if !shared.clients.contains_key(&requester.device_id)
+                || !shared.clients.contains_key(&provider.device_id)
+            {
+                return Err(DeviceClientError::TransportUnavailable);
+            }
             let registered = shared
                 .capture_providers
                 .get(target_device)
@@ -2716,6 +2721,17 @@ mod tests {
         ));
         assert_eq!(adapter.revision(), revision_before);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let mut after_disconnect_unsigned = request.unsigned();
+        after_disconnect_unsigned.request_id =
+            CaptureRequestId::new("signed-capture-after-disconnect").unwrap();
+        after_disconnect_unsigned.replay_nonce = "signed-capture-after-disconnect-nonce".to_owned();
+        let after_disconnect_signature = wire_signature(
+            &canonical_capture_request_bytes(&after_disconnect_unsigned).unwrap(),
+            &requester_key,
+        );
+        let after_disconnect = after_disconnect_unsigned
+            .attach_signature(after_disconnect_signature)
+            .unwrap();
         assert_eq!(
             certified.cooperate(
                 &requester.certificate,
@@ -2725,5 +2741,39 @@ mod tests {
             Err(DeviceClientError::AuthorizationDenied)
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        adapter
+            .change_route(
+                &provider,
+                &after_disconnect.room_id,
+                DeviceRouteOperationWire::Disconnect,
+            )
+            .unwrap();
+        assert_eq!(
+            certified.cooperate(
+                &requester.certificate,
+                &provider.device_id,
+                DeviceCooperationRequest::Capture(after_disconnect.clone())
+            ),
+            Err(DeviceClientError::TransportUnavailable)
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        adapter
+            .change_route(
+                &provider,
+                &after_disconnect.room_id,
+                DeviceRouteOperationWire::Rebind,
+            )
+            .unwrap();
+        assert!(
+            certified
+                .cooperate(
+                    &requester.certificate,
+                    &provider.device_id,
+                    DeviceCooperationRequest::Capture(after_disconnect)
+                )
+                .is_ok()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 }
