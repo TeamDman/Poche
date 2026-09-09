@@ -96,8 +96,16 @@ impl Plugin for DesktopMenuPlugin {
             .add_systems(
                 Update,
                 (buttons, clipboard_result, connection, status_text).chain(),
-            )
-            .add_systems(
+            );
+    }
+}
+
+/// The actual game controls are shared by menu-launched and directly attached
+/// live devices, including windowless captures.
+pub struct DesktopLiveControlsPlugin;
+impl Plugin for DesktopLiveControlsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Clipboard>().add_systems(
                 Update,
                 (live_action_buttons, refresh_live_controls, live_finding_text)
                     .chain()

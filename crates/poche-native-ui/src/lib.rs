@@ -1052,6 +1052,7 @@ fn run_with_live_device(
             .insert_resource(validator)
             .add_plugins(desktop_menu::DesktopMenuPlugin);
     }
+    app.add_plugins(desktop_menu::DesktopLiveControlsPlugin);
     app.insert_resource(debug_overlay)
         .insert_resource(render_surface)
         .insert_resource(acceptance)
