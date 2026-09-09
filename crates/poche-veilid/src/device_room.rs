@@ -22,6 +22,7 @@ pub struct DesktopRoomGenesis {
     room_id: RoomId,
     seed: u64,
     admission_proof: String,
+    invitation: String,
     clock: DeviceProfile,
     environment: DeviceProfile,
 }
@@ -35,6 +36,14 @@ struct DesktopRoomRecovery {
 
 impl DesktopRoomGenesis {
     pub fn room_id(&self) -> &RoomId { &self.room_id }
+    /// Private invitation recovered for the same room, not a new invitation.
+    pub fn invitation(&self, now_unix_ms: u64) -> Result<crate::RoomCode, DeviceClientError> {
+        let code = crate::RoomCode::decode(&self.invitation, now_unix_ms).map_err(|_| DeviceClientError::ProtocolViolation)?;
+        if code.admission_proof().map_err(|_| DeviceClientError::ProtocolViolation)?.expose() != self.admission_proof {
+            return Err(DeviceClientError::ProtocolViolation);
+        }
+        Ok(code)
+    }
     /// Encode authority-only material for immediate encrypted persistence.
     /// Caller must not log the returned bytes or expose them to player devices.
     pub fn encode_recovery(&self, room: &poche_runtime::CertifiedRoomRecovery) -> Result<Vec<u8>, DeviceClientError> {
@@ -52,6 +61,7 @@ impl DesktopRoomGenesis {
     }
     fn configuration(&self) -> Result<(SessionState<OracleSessionGame<2>>, OracleRoomActionSource), DeviceClientError> {
         if self.schema_version != 1 { return Err(DeviceClientError::ProtocolViolation); }
+        self.invitation(0)?;
         self.clock.validate()?;
         self.environment.validate()?;
         let mut state = SessionState::pending(self.room_id.clone(), self.clock.player_id.clone(), self.environment.player_id.clone());
@@ -163,7 +173,8 @@ async fn publish_device_room_inner(
             .room_code()
             .admission_proof()
             .map_err(|_| DeviceClientError::ProtocolViolation)?;
-        let genesis = DesktopRoomGenesis { schema_version: 1, room_id, seed,
+        let invitation = published.room_code().encode().map_err(|_| DeviceClientError::ProtocolViolation)?.expose().to_owned();
+        let genesis = DesktopRoomGenesis { schema_version: 1, room_id, seed, invitation,
             admission_proof: proof.expose().to_owned(), clock, environment };
         let room = genesis.fresh_room()?;
         let service = VeilidDeviceService::new(room);
@@ -242,9 +253,11 @@ mod recovery_tests {
 
     #[test]
     fn desktop_genesis_restores_service_configuration_without_regeneration() {
+        let code = crate::RoomCode::issue(RoomNetwork::VeilidLocal, "test-record-key", poche_protocol::PrincipalId::new("ab".repeat(32)).unwrap(), u64::MAX, 0).unwrap();
         let genesis = DesktopRoomGenesis {
             schema_version: 1, room_id: RoomId::new("desktop-recovery").unwrap(),
-            seed: 9381, admission_proof: "private-admission".to_owned(),
+            seed: 9381, admission_proof: code.admission_proof().unwrap().expose().to_owned(),
+            invitation: code.encode().unwrap().expose().to_owned(),
             clock: authority_profile("clock").unwrap(), environment: authority_profile("game").unwrap(),
         };
         let room = genesis.fresh_room().unwrap();
@@ -264,6 +277,9 @@ mod recovery_tests {
         assert!(DesktopRoomGenesis::decode_recovery(&serde_json::to_vec(&invalid).unwrap()).is_err());
         invalid["genesis"]["schema_version"] = 1.into();
         invalid["genesis"]["room_id"] = "different-room".into();
+        assert!(DesktopRoomGenesis::decode_recovery(&serde_json::to_vec(&invalid).unwrap()).is_err());
+        invalid["genesis"]["room_id"] = "desktop-recovery".into();
+        invalid["genesis"]["admission_proof"] = "different-proof".into();
         assert!(DesktopRoomGenesis::decode_recovery(&serde_json::to_vec(&invalid).unwrap()).is_err());
     }
 }

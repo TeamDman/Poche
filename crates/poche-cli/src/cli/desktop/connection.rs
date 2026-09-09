@@ -157,7 +157,7 @@ fn connect(
                     let bytes = zeroize::Zeroizing::new(genesis.encode_recovery(recovery)?);
                     recovery_store.lock()
                         .map_err(|_| poche_player_client::DeviceClientError::TransportUnavailable)?
-                        .save_authority_recovery(&recovery_label, genesis.room_id().as_str(), &bytes)
+                        .save_authority_recovery(&recovery_label, "active-room", &bytes)
                         .map_err(|error| {
                             eprintln!("poche: protected room checkpoint failed: {error}");
                             poche_player_client::DeviceClientError::TransportUnavailable
