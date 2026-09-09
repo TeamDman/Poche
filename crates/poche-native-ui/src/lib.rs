@@ -1061,6 +1061,12 @@ fn run_with_live_device(
         .init_resource::<LaunchClock>()
         .add_plugins((MeshPickingPlugin, FrameTimeDiagnosticsPlugin::default()))
         .add_systems(
+            PreUpdate,
+            image_target_pointer_rays
+                .after(bevy::picking::backend::ray::RayMap::repopulate)
+                .in_set(bevy::picking::PickingSystems::ProcessInput),
+        )
+        .add_systems(
             Startup,
             (
                 setup_native_render_target,
@@ -1667,6 +1673,26 @@ fn rotate_drag_pose(mut rotation: [i32; 3], horizontal_pixels: f32, axes: [bool;
         }
     }
     rotation
+}
+
+// Bevy's Location::is_in_viewport currently requires a primary window even
+// for image targets. Supply those rays without creating a dummy OS window.
+fn image_target_pointer_rays(
+    mut rays: ResMut<bevy::picking::backend::ray::RayMap>,
+    cameras: Query<(Entity, &Camera, &GlobalTransform, &RenderTarget), Or<(With<TabletopCamera>, With<HandCamera>)>>,
+    pointers: Query<(&bevy::picking::pointer::PointerId, &bevy::picking::pointer::PointerLocation)>,
+) {
+    for (entity, camera, transform, target) in &cameras {
+        if !matches!(target, RenderTarget::Image(_)) { continue; }
+        for (id, pointer) in &pointers {
+            let Some(location) = pointer.location() else { continue; };
+            if select_drag_camera(std::iter::once((camera, transform, target)), location, None).is_some()
+                && let Ok(ray) = camera.viewport_to_world(transform, location.position)
+            {
+                rays.map.insert(bevy::picking::backend::ray::RayId::new(entity, *id), ray);
+            }
+        }
+    }
 }
 
 fn select_drag_camera<'a>(
@@ -2441,7 +2467,7 @@ mod tests {
     #[test]
     fn dragged_card_stops_occluding_drop_targets_and_restores_picking() {
         use bevy::{camera::RenderTarget, picking::pointer::{Location, PointerId}, prelude::*};
-        use bevy::picking::{backend::{PointerHits, ray::{RayMap, RayId}}, mesh_picking::{MeshPickingSettings, update_hits, ray_cast::RayCastVisibility}};
+        use bevy::picking::{backend::{PointerHits, ray::RayMap}, mesh_picking::{MeshPickingSettings, update_hits, ray_cast::RayCastVisibility}};
         use bevy::camera::primitives::Aabb;
         let controller = replay_fixture_controller().unwrap();
         let card_id = controller.scene.cards[0].id;
@@ -2451,7 +2477,7 @@ mod tests {
         let mesh = meshes.add(Cuboid::new(0.2, 0.01, 0.3));
         app.insert_resource(meshes).insert_resource(MeshPickingSettings {
             ray_cast_visibility: RayCastVisibility::Any, ..default()
-        }).add_message::<PointerHits>().add_systems(Update, update_hits);
+        }).add_message::<PointerHits>().add_systems(Update, (RayMap::repopulate, super::image_target_pointer_rays, update_hits).chain());
         let bounds = Aabb::from_min_max(Vec3::new(-0.1, -0.005, -0.15), Vec3::new(0.1, 0.005, 0.15));
         let card = app.world_mut().spawn((
             super::DraggableCard(card_id), super::DragPreview::default(), Pickable::default(),
@@ -2460,20 +2486,23 @@ mod tests {
         )).observe(super::on_drag_start).observe(super::on_drag_end).id();
         let play = app.world_mut().spawn((Mesh3d(mesh), bounds, GlobalTransform::IDENTITY, Pickable::default(),
             InheritedVisibility::VISIBLE, ViewVisibility::default())).id();
-        let camera = app.world_mut().spawn(Camera::default()).id();
-        let mut rays = RayMap::default();
-        rays.map.insert(RayId::new(camera, PointerId::Mouse), Ray3d::new(Vec3::Y, Dir3::NEG_Y));
-        app.insert_resource(rays);
+        let target = RenderTarget::Image(Handle::<Image>::default().into());
+        let mut camera = Camera::default();
+        camera.computed.target_info = Some(bevy::camera::RenderTargetInfo { physical_size: UVec2::new(800, 600), scale_factor: 1.0 });
+        let mut projection = Projection::Perspective(PerspectiveProjection::default());
+        projection.update(800.0, 600.0);
+        camera.computed.clip_from_view = projection.get_clip_from_view();
+        app.world_mut().spawn((camera, target.clone(), super::TabletopCamera,
+            GlobalTransform::from(Transform::from_xyz(0.0, 1.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z))));
+        let location = Location { target: target.normalize(None).unwrap(), position: Vec2::new(400.0, 300.0) };
+        app.world_mut().spawn((PointerId::Mouse, bevy::picking::pointer::PointerLocation::new(location.clone())));
+        app.init_resource::<RayMap>();
         let hits = |app: &mut App| {
             app.update();
             app.world_mut().resource_mut::<Messages<PointerHits>>().drain()
                 .flat_map(|message| message.picks.into_iter().map(|(entity, _)| entity)).collect::<Vec<_>>()
         };
         assert_eq!(hits(&mut app), vec![card], "resting card is the nearest blocking mesh");
-        let location = Location {
-            target: RenderTarget::Image(Handle::<Image>::default().into()).normalize(None).unwrap(),
-            position: Vec2::ZERO,
-        };
         app.world_mut().trigger(Pointer::new(PointerId::Mouse, location.clone(), DragStart {
             button: PointerButton::Primary,
             hit: bevy::picking::backend::HitData::new(card, 0.0, None, None),
