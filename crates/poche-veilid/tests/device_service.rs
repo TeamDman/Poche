@@ -197,41 +197,22 @@ fn device_dispatch_authenticates_before_returning_observations() {
             VeilidDeviceReply::decode(&response).unwrap(),
             VeilidDeviceReply::Observation(_)
         ));
-        let resolved = joiner
-            .resolve_room(published.room_code(), 101)
-            .await
-            .unwrap();
-        let transport = VeilidDeviceTransport::from_node(
-            client_node.clone(),
-            resolved,
-            TestSigner(SigningKey::from_bytes(&[32; 32])),
-            0,
-            None,
-        )
-        .unwrap();
+        let creator_node = client_node.clone();
+        let creator_invitation = published.room_code().encode().unwrap();
         // Match NativeLiveDevice's ordinary worker thread, not a nested Tokio
         // block_on inside a runtime task.
         let guest_room = room_id.clone();
         tokio::task::spawn_blocking(move || {
             std::thread::spawn(move || {
-                let mut device = PlayerDeviceClient::new(profile, transport).unwrap();
-                let observation = device.observe(&room_id).unwrap();
-                let action = observation
-                    .actions
-                    .iter()
-                    .find(|action| matches!(action.payload, CommandPayload::CreateRoom))
-                    .unwrap();
-                let action_id = action.id.clone();
-                assert!(matches!(
-                    device
-                        .invoke(
-                            &observation,
-                            &action_id,
-                            CommandId::new("rpc-create").unwrap()
-                        )
-                        .unwrap(),
-                    DeviceActionResult::Committed { .. }
-                ));
+                let (mut device, created_room) = poche_veilid::create_device(
+                    creator_node,
+                    profile,
+                    TestSigner(SigningKey::from_bytes(&[32; 32])),
+                    creator_invitation.expose(),
+                    101,
+                )
+                .unwrap();
+                assert_eq!(created_room, room_id);
                 let created = device.observe(&room_id).unwrap();
                 assert_eq!(created.projection.current_revision, 1);
                 let seat_action = created
