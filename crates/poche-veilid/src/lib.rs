@@ -30,7 +30,11 @@ mod transport;
 #[cfg(feature = "device-transport")]
 pub use device_transport::*;
 #[cfg(feature = "device-service")]
+mod device_room;
+#[cfg(feature = "device-service")]
 mod device_service;
+#[cfg(feature = "device-service")]
+pub use device_room::*;
 #[cfg(feature = "device-service")]
 pub use device_service::*;
 

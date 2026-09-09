@@ -156,8 +156,8 @@ fn device_dispatch_authenticates_before_returning_observations() {
         let remote = client.import_remote_private_route(route.blob).unwrap();
         use poche_player_client::{DeviceActionResult, PlayerDeviceClient};
         use poche_veilid::{
-            ApplicationIdentity, IdentityStoragePolicy, PublicRoomMetadata, RoomNetwork,
-            VeilidDeviceTransport, VeilidProtectedIdentityStore, VeilidRendezvous,
+            ApplicationIdentity, IdentityStoragePolicy, RoomNetwork, VeilidDeviceTransport,
+            VeilidProtectedIdentityStore, VeilidRendezvous,
         };
         let identity = ApplicationIdentity::load_or_create(
             &VeilidProtectedIdentityStore::new(server.clone()),
@@ -165,24 +165,31 @@ fn device_dispatch_authenticates_before_returning_observations() {
         )
         .await
         .unwrap();
-        let publisher = VeilidRendezvous::new(server.clone()).unwrap();
-        let published = publisher
-            .publish_room(
-                &identity,
-                RoomNetwork::VeilidLocal,
-                room_id.clone(),
-                PublicRoomMetadata::new("RPC room", 2, true).unwrap(),
-                1,
-                1,
-                10_000,
-                100,
+        let (published, handler) = poche_veilid::publish_device_room(
+            &server_node,
+            &identity,
+            RoomNetwork::VeilidLocal,
+            "RPC room",
+            100,
+            receive,
+        )
+        .await
+        .unwrap();
+        let room_id = published.record().room_id.clone();
+        let bytes = VeilidDeviceRequest::Observe(
+            sign_observation_request(
+                &profile,
+                &room_id,
+                0,
+                CorrelationId::new("published-observe").unwrap(),
+                DeviceObservationModeWire::Snapshot,
+                &TestSigner(SigningKey::from_bytes(&[32; 32])),
             )
-            .await
-            .unwrap();
+            .unwrap(),
+        )
+        .encode()
+        .unwrap();
         let joiner = VeilidRendezvous::new(client.clone()).unwrap();
-        let admission = published.room_code().admission_proof().unwrap();
-        let service = room_service(&room_id, admission.expose());
-        let handler = service.serve(server_node.clone(), receive);
         let response = tokio::time::timeout(
             Duration::from_secs(5),
             client
