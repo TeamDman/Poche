@@ -102,7 +102,10 @@ impl InviteRecord {
     }
 
     /// A lobby code may admit multiple participants until revoked or expired.
-    /// Keep new() single-use for existing callers and explicit one-shot codes.
+    /// Keep `new()` single-use for existing callers and explicit one-shot codes.
+    ///
+    /// # Errors
+    /// Rejects empty or oversized verifier text, like the single-use constructor.
     pub fn new_reusable(
         verifier: impl Into<String>,
         expires_after_revision: u64,

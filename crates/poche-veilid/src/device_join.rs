@@ -27,12 +27,17 @@ pub fn create_device<S: DeviceSigner>(
     let resolved = node
         .runtime()
         .block_on(adapter.resolve_room(&code, now_unix_ms))
-        .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        .map_err(|_| {
+            eprintln!("poche creator initialization: rendezvous resolution failed");
+            DeviceClientError::TransportUnavailable
+        })?;
     let room_id = resolved.record().room_id.clone();
     let principal = profile.player_id.clone();
     let transport = VeilidDeviceTransport::from_node(node, resolved, signer, 0, None)?;
     let mut client = PlayerDeviceClient::new(profile, transport)?;
-    let pending = client.observe(&room_id)?;
+    let pending = client.observe(&room_id).inspect_err(|error| {
+        eprintln!("poche creator initialization: initial observation failed ({error})");
+    })?;
     let action = pending
         .actions
         .iter()
@@ -43,12 +48,18 @@ pub fn create_device<S: DeviceSigner>(
     let command = CommandId::new(format!("create-{}", data_encoding::HEXLOWER.encode(&bytes)))
         .map_err(|_| DeviceClientError::ProtocolViolation)?;
     if !matches!(
-        client.invoke(&pending, &action.id, command)?,
+        client
+            .invoke(&pending, &action.id, command)
+            .inspect_err(|error| {
+                eprintln!("poche creator initialization: Create invocation failed ({error})");
+            })?,
         DeviceActionResult::Committed { .. }
     ) {
         return Err(DeviceClientError::AuthorizationDenied);
     }
-    let created = client.observe(&room_id)?;
+    let created = client.observe(&room_id).inspect_err(|error| {
+        eprintln!("poche creator initialization: confirmation failed ({error})");
+    })?;
     if created.projection.payload.phase != RoomPhase::Lobby
         || !created
             .projection

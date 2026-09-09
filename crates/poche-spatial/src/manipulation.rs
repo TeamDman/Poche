@@ -59,6 +59,9 @@ pub struct CardManipulation {
 
 impl CardManipulation {
     /// Initialize from an accepted snapshot, not untrusted pose traffic.
+    ///
+    /// # Errors
+    /// Rejects positions outside the bounded shared world.
     pub fn new(
         card: CardObjectId,
         pose: ManipulationPose,
@@ -90,6 +93,10 @@ impl CardManipulation {
     /// produces an intent edge, not a logical transition. Merely advancing a
     /// turn while the card stays inside the region produces no new attempt.
     /// `inside_play` must be computed by the receiver from validated geometry.
+    ///
+    /// # Errors
+    /// Rejects another lease, a non-increasing sequence, or an out-of-world
+    /// position without changing the accepted pose or region occupancy.
     pub fn update(
         &mut self,
         lease_epoch: u64,
@@ -115,6 +122,9 @@ impl CardManipulation {
 
     /// Called only after the session accepts a new device's manipulation
     /// lease. Preserve pose and region occupancy: handoff is not a play.
+    ///
+    /// # Errors
+    /// Rejects a lease epoch that does not strictly advance the current epoch.
     pub fn change_lease(&mut self, lease_epoch: u64) -> Result<(), ManipulationError> {
         if lease_epoch <= self.lease_epoch {
             return Err(ManipulationError::StaleLease);
