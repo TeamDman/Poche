@@ -596,6 +596,7 @@ struct LaunchClock {
     first_update: Option<Duration>,
     frame_samples: Vec<f64>,
     screenshot_requested: bool,
+    screenshot_completed: bool,
     report_written: bool,
 }
 
@@ -606,6 +607,7 @@ impl Default for LaunchClock {
             first_update: None,
             frame_samples: Vec::new(),
             screenshot_requested: false,
+            screenshot_completed: false,
             report_written: false,
         }
     }
@@ -961,11 +963,11 @@ fn run_with_live_device(
                 draw_spatial_debug,
                 update_status,
                 poll_live_device,
-                acceptance_driver,
             )
                 .chain()
                 .run_if(resource_exists::<NativeController>),
-        );
+        )
+        .add_systems(Update, acceptance_driver.after(update_status));
     if capture_provider.is_some() != capture_context.is_some() {
         return Err(
             "native capture provider and projection context must be supplied together".to_owned(),
@@ -1938,7 +1940,7 @@ fn acceptance_driver(
     mut commands: Commands,
     time: Res<Time>,
     options: Res<AcceptanceOptions>,
-    controller: Res<NativeController>,
+    controller: Option<Res<NativeController>>,
     debug: Res<DebugOverlay>,
     surface: Res<NativeRenderSurface>,
     provider: Option<Res<NativeCaptureProvider>>,
@@ -1961,7 +1963,12 @@ fn acceptance_driver(
         if let Some(screenshot) = surface.screenshot() {
             commands
                 .spawn(screenshot)
-                .observe(save_to_disk(path.clone()));
+                .observe(save_to_disk(path.clone()))
+                .observe(
+                    |_: On<ScreenshotCaptured>, mut clock: ResMut<LaunchClock>| {
+                        clock.screenshot_completed = true;
+                    },
+                );
             clock.screenshot_requested = true;
         }
     }
@@ -1975,12 +1982,13 @@ fn acceptance_driver(
         provider.terminal_result_available().unwrap_or(false)
             || elapsed >= exit_after.saturating_add(Duration::from_secs(10))
     } else {
-        elapsed >= exit_after
+        (elapsed >= exit_after && (options.screenshot.is_none() || clock.screenshot_completed))
+            || elapsed >= exit_after.saturating_add(Duration::from_secs(10))
     };
     if !should_exit || clock.report_written {
         return;
     }
-    if let Some(path) = &options.report {
+    if let (Some(path), Some(controller)) = (&options.report, controller.as_ref()) {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }

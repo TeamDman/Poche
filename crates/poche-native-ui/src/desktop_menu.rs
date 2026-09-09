@@ -110,9 +110,13 @@ fn refresh_live_controls(
     live: Option<Res<crate::NativeLiveDevice>>,
     mut revision: Local<Option<u64>>,
     old: Query<Entity, With<LiveControls>>,
+    cameras: Query<Entity, With<crate::TabletopCamera>>,
     mut commands: Commands,
 ) {
     let Some(live) = live else {
+        return;
+    };
+    let Ok(camera) = cameras.single() else {
         return;
     };
     let current = live.observation().projection.current_revision;
@@ -126,6 +130,7 @@ fn refresh_live_controls(
     commands
         .spawn((
             LiveControls,
+            UiTargetCamera(camera),
             Node {
                 position_type: PositionType::Absolute,
                 bottom: px(0.),
@@ -274,9 +279,11 @@ fn setup(mut commands: Commands, surface: Res<crate::NativeRenderSurface>) {
     if let Some(target) = surface.render_target() {
         camera.insert(target);
     }
+    let camera = camera.id();
     commands
         .spawn((
             DesktopMenuRoot,
+            UiTargetCamera(camera),
             Node {
                 width: percent(100.),
                 height: percent(100.),
@@ -308,7 +315,7 @@ fn setup(mut commands: Commands, surface: Res<crate::NativeRenderSurface>) {
             ));
             for (label, action) in [
                 ("Create lobby", Action::Create),
-                ("Join lobby — read invitation from clipboard", Action::Paste),
+                ("Paste invitation from clipboard", Action::Paste),
             ] {
                 parent
                     .spawn((
@@ -400,7 +407,7 @@ fn buttons(
             Action::Paste => unreachable!(),
         }
         status.busy = true;
-        status.message = "Connecting…".to_owned();
+        status.message = "Connecting...".to_owned();
     }
 }
 
