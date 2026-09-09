@@ -1606,6 +1606,8 @@ fn spawn_scene_objects(
             entity
                 .insert(bevy::camera::visibility::RenderLayers::layer(0).with(1))
                 .insert(DraggableCard(card.id))
+                .insert(Pickable::default())
+                .observe(on_drag_start)
                 .observe(on_drag_card)
                 .observe(on_drag_end);
         }
@@ -1681,6 +1683,17 @@ fn select_drag_camera<'a>(
         })
         .max_by_key(|(camera, _, _)| camera.order)
         .map(|(camera, transform, _)| (camera, transform))
+}
+
+fn on_drag_start(
+    drag: On<Pointer<DragStart>>,
+    mut cards: Query<&mut Pickable, With<DraggableCard>>,
+) {
+    if let Ok(mut pickable) = cards.get_mut(drag.entity) {
+        // The pointer keeps its captured drag target. Let subsequent hit tests
+        // reach the drop zone rather than being occluded by the moving card.
+        *pickable = Pickable::IGNORE;
+    }
 }
 
 fn on_drag_card(
@@ -1767,11 +1780,12 @@ fn on_drag_card(
 
 fn on_drag_end(
     drag: On<Pointer<DragEnd>>,
-    mut previews: Query<&mut DragPreview>,
+    mut previews: Query<(&mut DragPreview, &mut Pickable), With<DraggableCard>>,
     windows: Query<Entity, With<PrimaryWindow>>,
     mut commands: Commands,
 ) {
-    if let Ok(mut preview) = previews.get_mut(drag.entity) {
+    if let Ok((mut preview, mut pickable)) = previews.get_mut(drag.entity) {
+        *pickable = Pickable::default();
         preview.pixels = Vec2::ZERO;
         preview.physical_claimed = false;
         preview.physical_origin = None;
@@ -2424,6 +2438,32 @@ fn zone_center_card_bounds(layout: &SpatialLayout, id: ZoneId) -> Result<AabbMm,
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dragged_card_stops_occluding_drop_targets_and_restores_picking() {
+        use bevy::{camera::RenderTarget, picking::pointer::{Location, PointerId}, prelude::*};
+        let controller = replay_fixture_controller().unwrap();
+        let card_id = controller.scene.cards[0].id;
+        let mut app = App::new();
+        let card = app.world_mut().spawn((
+            super::DraggableCard(card_id), super::DragPreview::default(), Pickable::default(),
+        )).observe(super::on_drag_start).observe(super::on_drag_end).id();
+        let location = Location {
+            target: RenderTarget::Image(Handle::<Image>::default().into()).normalize(None).unwrap(),
+            position: Vec2::ZERO,
+        };
+        app.world_mut().trigger(Pointer::new(PointerId::Mouse, location.clone(), DragStart {
+            button: PointerButton::Primary,
+            hit: bevy::picking::backend::HitData::new(card, 0.0, None, None),
+        }, card));
+        let picking = app.world().get::<Pickable>(card).unwrap();
+        assert!(!picking.should_block_lower && !picking.is_hoverable);
+        app.world_mut().trigger(Pointer::new(PointerId::Mouse, location, DragEnd {
+            button: PointerButton::Primary, distance: Vec2::new(20.0, 10.0),
+        }, card));
+        let picking = app.world().get::<Pickable>(card).unwrap();
+        assert!(picking.should_block_lower && picking.is_hoverable);
+    }
+
     #[test]
     fn drag_camera_selection_respects_target_dpi_overlap_and_activity() {
         use bevy::{camera::{RenderTarget, RenderTargetInfo, Viewport}, prelude::*};
