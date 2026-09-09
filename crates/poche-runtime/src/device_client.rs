@@ -495,6 +495,7 @@ struct SharedLoopbackState<G: SessionGame, A> {
     next_projection: u64,
     physical_secret: Option<[u8; 32]>,
     physical_poses: BTreeMap<String, poche_player_client::PhysicalPoseState>,
+    physical_pose_epoch: Option<u64>,
 }
 
 struct RegisteredCaptureProvider {
@@ -569,6 +570,7 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
                 next_projection: 0,
                 physical_secret: None,
                 physical_poses: BTreeMap::new(),
+                physical_pose_epoch: None,
             })),
         }
     }
@@ -1011,7 +1013,14 @@ where
         {
             return Err(DeviceClientError::AuthorizationDenied);
         }
-        let previous = shared.physical_poses.get(&request.card_id);
+        let round = view.projection.payload.public_game_state.as_ref()
+            .ok_or(DeviceClientError::InvalidObservation)?.round_index;
+        let pose_epoch = shared.authority.latest_game_start_revision()
+            .ok_or(DeviceClientError::InvalidObservation)?
+            .checked_mul(65_536).and_then(|epoch| epoch.checked_add(u64::from(round)))
+            .ok_or(DeviceClientError::ProtocolViolation)?;
+        let previous = shared.physical_poses.get(&request.card_id)
+            .filter(|_| shared.physical_pose_epoch == Some(pose_epoch));
         let current_generation = previous.map_or(0, |pose| pose.generation);
         if request.generation != current_generation {
             return Err(DeviceClientError::StaleRevision);
@@ -1040,11 +1049,13 @@ where
             position_mm: request.position_mm,
             rotation_millidegrees: request.rotation_millidegrees,
         };
-        // This initial channel retains hand poses only; full deck/play pose
-        // lifecycle is a separate integration requirement, not an implicit reveal.
-        shared
-            .physical_poses
-            .retain(|id, _| view.physical_hands.iter().any(|card| &card.id == id));
+        // Preserve accepted poses when cards leave hands. Only a new deal
+        // identity epoch invalidates the old deck's poses (at most 52 entries).
+        // Publication of played-card poses remains a separate privacy boundary.
+        if shared.physical_pose_epoch != Some(pose_epoch) {
+            shared.physical_poses.clear();
+            shared.physical_pose_epoch = Some(pose_epoch);
+        }
         shared
             .physical_poses
             .insert(request.card_id.clone(), accepted.clone());
