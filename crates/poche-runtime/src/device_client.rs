@@ -478,10 +478,35 @@ impl<const PLAYERS: usize> AdvertisedActionSource<crate::OracleSessionGame<PLAYE
 fn game_action_identity(action: &GameActionWire) -> (String, String) {
     match action {
         GameActionWire::Bid { tricks } => {
-            (format!("game-bid-{tricks}"), format!("Bid {tricks} tricks"))
+            (
+                format!("game-bid-{tricks}"),
+                format!("Bid {tricks} {}", if *tricks == 1 { "Trick" } else { "Tricks" }),
+            )
         }
-        GameActionWire::Play { card } => (format!("game-play-{card}"), format!("Play card {card}")),
+        GameActionWire::Play { card } => (
+            format!("game-play-{card}"),
+            format!(
+                "Play {}",
+                poche_spatial::CardFace::new(*card).map_or_else(
+                    || "unknown card".to_owned(),
+                    poche_spatial::CardFace::label,
+                )
+            ),
+        ),
     }
+}
+
+#[test]
+fn advertised_game_labels_name_cards_without_changing_action_identity() {
+    for card in 0..52 {
+        let (id, label) = game_action_identity(&GameActionWire::Play { card });
+        assert_eq!(id, format!("game-play-{card}"));
+        assert_eq!(label, format!("Play {}", poche_spatial::CardFace::new(card).unwrap().label()));
+    }
+    assert_eq!(game_action_identity(&GameActionWire::Play { card: 18 }).1, "Play 7♦");
+    assert_eq!(game_action_identity(&GameActionWire::Play { card: 255 }).1, "Play unknown card");
+    assert_eq!(game_action_identity(&GameActionWire::Bid { tricks: 0 }).1, "Bid 0 Tricks");
+    assert_eq!(game_action_identity(&GameActionWire::Bid { tricks: 1 }).1, "Bid 1 Trick");
 }
 
 struct SharedLoopbackState<G: SessionGame, A> {
