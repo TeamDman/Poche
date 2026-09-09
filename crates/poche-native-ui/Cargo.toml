@@ -9,7 +9,7 @@ repository.workspace = true
 description = "Bevy leaf adapter for Poche's canonical spatial presentation"
 
 [dependencies]
-bevy.workspace = true
+bevy = { workspace = true, features = ["ui"] }
 blake3.workspace = true
 image.workspace = true
 poche-capture = { path = "../poche-capture" }

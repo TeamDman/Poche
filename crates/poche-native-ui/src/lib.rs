@@ -20,6 +20,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub mod desktop_menu;
+
 use bevy::{
     app::ScheduleRunnerPlugin,
     asset::RenderAssetUsages,
