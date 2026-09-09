@@ -508,6 +508,8 @@ pub struct AuthorityCheckpoint<G: SessionGame> {
     chat_tail: ChatTail,
     next_delivery: u64,
     committed_events: Vec<CommittedAuthorityEvent<G>>,
+    next_connection: u64,
+    next_observation: u64,
 }
 
 /// Central authority composing the existing pure reducer with loopback ports.
@@ -528,12 +530,16 @@ impl<G: SessionGame> InProcessAuthority<G> {
             state: self.state.clone(), clock: self.clock.clone(),
             chat_tail: self.chat_tail.clone(), next_delivery: self.next_delivery,
             committed_events: self.committed_events.clone(),
+            next_connection: self.transport.next_connection,
+            next_observation: self.transport.next_observation,
         }
     }
 
     /// Restore an internally constructed checkpoint onto fresh transport ports.
     /// This is not a durable storage or untrusted-deserialization API.
-    pub fn from_checkpoint(checkpoint: AuthorityCheckpoint<G>, transport: InProcessTransport) -> Self {
+    pub fn from_checkpoint(checkpoint: AuthorityCheckpoint<G>, mut transport: InProcessTransport) -> Self {
+        transport.next_connection = transport.next_connection.max(checkpoint.next_connection);
+        transport.next_observation = transport.next_observation.max(checkpoint.next_observation);
         Self { state: checkpoint.state, clock: checkpoint.clock, transport,
             chat_tail: checkpoint.chat_tail, next_delivery: checkpoint.next_delivery,
             committed_events: checkpoint.committed_events }
@@ -1152,5 +1158,19 @@ mod tests {
         let client = transport.restore_route(principal("offline"), false).unwrap();
         assert!(!client.route_connected(&transport));
         assert!(transport.receive().is_none());
+    }
+
+    #[test]
+    fn restored_transport_does_not_reuse_disconnect_event_ids() {
+        let mut authority = InProcessAuthority::new(state(), InProcessTransport::default());
+        let first = authority.transport.connect(principal("host")).unwrap();
+        authority.transport.disconnect(first.connection_id()).unwrap();
+        let Some(AuthenticatedIngress::Disconnected { observation_id: old, .. }) = authority.transport.receive() else { panic!("disconnect expected") };
+        let mut restored = InProcessAuthority::from_checkpoint(authority.checkpoint(), InProcessTransport::default());
+        let second = restored.transport.connect(principal("host")).unwrap();
+        assert_ne!(first.connection_id(), second.connection_id());
+        restored.transport.disconnect(second.connection_id()).unwrap();
+        let Some(AuthenticatedIngress::Disconnected { observation_id: new, .. }) = restored.transport.receive() else { panic!("disconnect expected") };
+        assert_ne!(old, new);
     }
 }
