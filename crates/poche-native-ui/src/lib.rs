@@ -2441,12 +2441,35 @@ mod tests {
     #[test]
     fn dragged_card_stops_occluding_drop_targets_and_restores_picking() {
         use bevy::{camera::RenderTarget, picking::pointer::{Location, PointerId}, prelude::*};
+        use bevy::picking::{backend::{PointerHits, ray::{RayMap, RayId}}, mesh_picking::{MeshPickingSettings, update_hits, ray_cast::RayCastVisibility}};
+        use bevy::camera::primitives::Aabb;
         let controller = replay_fixture_controller().unwrap();
         let card_id = controller.scene.cards[0].id;
         let mut app = App::new();
+        app.add_plugins(bevy::app::TaskPoolPlugin::default());
+        let mut meshes = Assets::<Mesh>::default();
+        let mesh = meshes.add(Cuboid::new(0.2, 0.01, 0.3));
+        app.insert_resource(meshes).insert_resource(MeshPickingSettings {
+            ray_cast_visibility: RayCastVisibility::Any, ..default()
+        }).add_message::<PointerHits>().add_systems(Update, update_hits);
+        let bounds = Aabb::from_min_max(Vec3::new(-0.1, -0.005, -0.15), Vec3::new(0.1, 0.005, 0.15));
         let card = app.world_mut().spawn((
             super::DraggableCard(card_id), super::DragPreview::default(), Pickable::default(),
+            Mesh3d(mesh.clone()), bounds, GlobalTransform::from_xyz(0.0, 0.3, 0.0),
+            InheritedVisibility::VISIBLE, ViewVisibility::default(),
         )).observe(super::on_drag_start).observe(super::on_drag_end).id();
+        let play = app.world_mut().spawn((Mesh3d(mesh), bounds, GlobalTransform::IDENTITY, Pickable::default(),
+            InheritedVisibility::VISIBLE, ViewVisibility::default())).id();
+        let camera = app.world_mut().spawn(Camera::default()).id();
+        let mut rays = RayMap::default();
+        rays.map.insert(RayId::new(camera, PointerId::Mouse), Ray3d::new(Vec3::Y, Dir3::NEG_Y));
+        app.insert_resource(rays);
+        let hits = |app: &mut App| {
+            app.update();
+            app.world_mut().resource_mut::<Messages<PointerHits>>().drain()
+                .flat_map(|message| message.picks.into_iter().map(|(entity, _)| entity)).collect::<Vec<_>>()
+        };
+        assert_eq!(hits(&mut app), vec![card], "resting card is the nearest blocking mesh");
         let location = Location {
             target: RenderTarget::Image(Handle::<Image>::default().into()).normalize(None).unwrap(),
             position: Vec2::ZERO,
@@ -2457,11 +2480,13 @@ mod tests {
         }, card));
         let picking = app.world().get::<Pickable>(card).unwrap();
         assert!(!picking.should_block_lower && !picking.is_hoverable);
+        assert_eq!(hits(&mut app), vec![play], "actual mesh backend reaches PLAY during drag");
         app.world_mut().trigger(Pointer::new(PointerId::Mouse, location, DragEnd {
             button: PointerButton::Primary, distance: Vec2::new(20.0, 10.0),
         }, card));
         let picking = app.world().get::<Pickable>(card).unwrap();
         assert!(picking.should_block_lower && picking.is_hoverable);
+        assert_eq!(hits(&mut app), vec![card], "released card becomes pickable again");
     }
 
     #[test]
