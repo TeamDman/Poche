@@ -189,10 +189,16 @@ impl<S> VeilidDeviceTransport<S> {
             return Err(DeviceClientError::TransportUnavailable);
         }
         let bytes = encode(&request)?;
-        let reply = self
-            .runtime
-            .block_on(self.adapter.app_call(&self.room, bytes))
-            .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        let call = || {
+            self.runtime
+                .block_on(self.adapter.app_call(&self.room, bytes.clone()))
+                .map_err(|_| DeviceClientError::TransportUnavailable)
+        };
+        let reply = if matches!(request, VeilidDeviceRequest::Observe(_)) {
+            retry_observation(call)?
+        } else {
+            call()?
+        };
         match decode(&reply)? {
             VeilidDeviceReply::Denied => Err(DeviceClientError::AuthorizationDenied),
             VeilidDeviceReply::NoProgress => Err(DeviceClientError::NoProgress),
@@ -201,6 +207,21 @@ impl<S> VeilidDeviceTransport<S> {
             reply => Ok(reply),
         }
     }
+}
+
+pub(crate) fn retry_observation<T>(
+    mut read: impl FnMut() -> Result<T, DeviceClientError>,
+) -> Result<T, DeviceClientError> {
+    for attempt in 0..3 {
+        match read() {
+            Err(DeviceClientError::TransportUnavailable) if attempt < 2 => {
+                eprintln!("poche: observation RPC unavailable; retrying read");
+                std::thread::sleep(std::time::Duration::from_millis(250 * (attempt + 1)));
+            }
+            result => return result,
+        }
+    }
+    unreachable!("last read always returns")
 }
 
 impl<S: DeviceSigner> DeviceTransport for VeilidDeviceTransport<S> {

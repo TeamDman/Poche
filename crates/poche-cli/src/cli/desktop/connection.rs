@@ -2,6 +2,10 @@ use poche_native_ui::{
     NativeLiveDevice,
     desktop_menu::{DesktopConnectionWorker, DesktopMenuRequest, InvitationValidator},
 };
+
+#[cfg(test)]
+#[path = "process_probe.rs"]
+mod process_probe;
 use poche_player_client::ProtectedProfileStore;
 use poche_veilid::{
     ApplicationIdentity, IdentityStoragePolicy, PublishedRoom, RoomCode, RoomNetwork,

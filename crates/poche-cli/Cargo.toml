@@ -35,5 +35,8 @@ teamy-cancellation = { git = "https://github.com/TeamDman/teamy-cancellation.git
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

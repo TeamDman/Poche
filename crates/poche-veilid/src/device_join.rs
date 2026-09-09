@@ -73,6 +73,41 @@ pub fn create_device<S: DeviceSigner>(
     Ok((client, room_id))
 }
 
+#[cfg(test)]
+mod startup_read_tests {
+    use super::*;
+    use crate::device_transport::retry_observation as initial_observation;
+
+    #[test]
+    fn retries_are_bounded_and_do_not_retry_authorization_failures() {
+        let mut calls = 0;
+        let result = initial_observation(|| {
+            calls += 1;
+            if calls < 3 {
+                Err(DeviceClientError::TransportUnavailable)
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(result, Ok(()));
+        assert_eq!(calls, 3);
+        calls = 0;
+        let result: Result<(), _> = initial_observation(|| {
+            calls += 1;
+            Err(DeviceClientError::AuthorizationDenied)
+        });
+        assert_eq!(result, Err(DeviceClientError::AuthorizationDenied));
+        assert_eq!(calls, 1);
+        calls = 0;
+        let result: Result<(), _> = initial_observation(|| {
+            calls += 1;
+            Err(DeviceClientError::TransportUnavailable)
+        });
+        assert_eq!(result, Err(DeviceClientError::TransportUnavailable));
+        assert_eq!(calls, 3);
+    }
+}
+
 /// Resolve and join an invitation on an ordinary connection worker. The node
 /// must already be attached. Never call this blocking operation in Bevy Update
 /// or within Tokio; success retains the node in the returned client.
