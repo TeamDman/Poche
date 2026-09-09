@@ -1667,10 +1667,26 @@ fn rotate_drag_pose(mut rotation: [i32; 3], horizontal_pixels: f32, axes: [bool;
     rotation
 }
 
+fn select_drag_camera<'a>(
+    cameras: impl Iterator<Item = (&'a Camera, &'a GlobalTransform, &'a RenderTarget)>,
+    location: &bevy::picking::pointer::Location,
+    primary_window: Option<Entity>,
+) -> Option<(&'a Camera, &'a GlobalTransform)> {
+    cameras
+        .filter(|(camera, _, target)| {
+            camera.is_active
+                && target.normalize(primary_window).as_ref() == Some(&location.target)
+                && camera.logical_viewport_rect()
+                    .is_some_and(|rect| rect.contains(location.position))
+        })
+        .max_by_key(|(camera, _, _)| camera.order)
+        .map(|(camera, transform, _)| (camera, transform))
+}
+
 fn on_drag_card(
     drag: On<Pointer<Drag>>,
     mut previews: Query<(&mut DragPreview, &CanonicalMirror, &GlobalTransform)>,
-    cameras: Query<(&Camera, &GlobalTransform), Or<(With<TabletopCamera>, With<HandCamera>)>>,
+    cameras: Query<(&Camera, &GlobalTransform, &RenderTarget), Or<(With<TabletopCamera>, With<HandCamera>)>>,
     keys: Res<ButtonInput<KeyCode>>,
     mut controller: ResMut<NativeController>,
     live: Option<ResMut<NativeLiveDevice>>,
@@ -1694,15 +1710,9 @@ fn on_drag_card(
                 })
                 .map(|card| card.id.clone());
             if let Some(identity) = identity
-                && let Some((camera, camera_transform)) = cameras
-                    .iter()
-                    .filter(|(camera, _)| {
-                        camera.is_active
-                            && camera
-                                .logical_viewport_rect()
-                                .is_some_and(|rect| rect.contains(drag.pointer_location.position))
-                    })
-                    .max_by_key(|(camera, _)| camera.order)
+                && let Some((camera, camera_transform)) = select_drag_camera(
+                    cameras.iter(), &drag.pointer_location, windows.single().ok(),
+                )
                 && let Ok(ray) =
                     camera.viewport_to_world(camera_transform, drag.pointer_location.position)
             {
@@ -2414,6 +2424,45 @@ fn zone_center_card_bounds(layout: &SpatialLayout, id: ZoneId) -> Result<AabbMm,
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn drag_camera_selection_respects_target_dpi_overlap_and_activity() {
+        use bevy::{camera::{RenderTarget, RenderTargetInfo, Viewport}, prelude::*};
+        let mut world = World::new();
+        let window = world.spawn_empty().id();
+        let other_window = world.spawn_empty().id();
+        let target = RenderTarget::Window(bevy::window::WindowRef::Entity(window));
+        let wrong_target = RenderTarget::Window(bevy::window::WindowRef::Entity(other_window));
+        let mut table = Camera::default();
+        table.computed.target_info = Some(RenderTargetInfo {
+            physical_size: UVec2::new(1000, 800), scale_factor: 2.0,
+        });
+        let mut hand = table.clone();
+        hand.order = 1;
+        hand.viewport = Some(Viewport {
+            physical_position: UVec2::new(400, 400),
+            physical_size: UVec2::new(400, 200),
+            ..default()
+        });
+        let mut unrelated = table.clone();
+        unrelated.order = 99;
+        let transform = GlobalTransform::default();
+        let select = |position, hand: &Camera| {
+            let location = bevy::picking::pointer::Location {
+                target: target.normalize(None).unwrap(), position,
+            };
+            super::select_drag_camera([
+                (&table, &transform, &target),
+                (hand, &transform, &target),
+                (&unrelated, &transform, &wrong_target),
+            ].into_iter(), &location, None).map(|(camera, _)| camera.order)
+        };
+        assert_eq!(select(Vec2::new(300.0, 250.0), &hand), Some(1));
+        assert_eq!(select(Vec2::new(300.0, 199.0), &hand), Some(0));
+        assert_eq!(select(Vec2::new(501.0, 250.0), &hand), None);
+        hand.is_active = false;
+        assert_eq!(select(Vec2::new(300.0, 250.0), &hand), Some(0));
+    }
+
     #[test]
     fn hand_camera_fits_full_default_hand_in_narrow_and_wide_viewports() {
         let fov = std::f32::consts::FRAC_PI_4;
