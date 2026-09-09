@@ -13,6 +13,7 @@ description = "Transport-neutral exact-recipient Poche device client"
 default = []
 http = ["dep:getrandom", "dep:poche-capture", "dep:ureq"]
 protected-store = [
+    "dep:chacha20poly1305",
     "dep:directories",
     "dep:ed25519-dalek",
     "dep:getrandom",
@@ -23,6 +24,7 @@ protected-store = [
 ]
 
 [dependencies]
+chacha20poly1305 = { workspace = true, optional = true }
 blake3.workspace = true
 directories = { workspace = true, optional = true }
 ed25519-dalek = { workspace = true, optional = true }

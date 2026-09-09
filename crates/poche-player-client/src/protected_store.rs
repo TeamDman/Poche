@@ -4,6 +4,8 @@
 
 //! Protected player-root and independently certified device persistence.
 
+mod recovery;
+
 use core::fmt;
 use std::{
     fs,
@@ -37,6 +39,7 @@ const KEYRING_APPLICATION: &str = "TeamDman.Poche";
 const ROOT_KEY_SERVICE: &str = "player-root-v1";
 const DEVICE_KEY_SERVICE: &str = "device-key-v1";
 const TRANSPORT_KEY_SERVICE: &str = "transport-password-v1";
+const RECOVERY_KEY_SERVICE: &str = "authority-recovery-v1";
 
 /// Public selector and stable root identity. The key handle is an opaque
 /// locator into protected storage, never secret key material.
@@ -591,7 +594,7 @@ fn parse_handle(handle: &str) -> Option<(&str, &str)> {
     let (service, label) = value.split_once(':')?;
     if matches!(
         service,
-        ROOT_KEY_SERVICE | DEVICE_KEY_SERVICE | TRANSPORT_KEY_SERVICE
+        ROOT_KEY_SERVICE | DEVICE_KEY_SERVICE | TRANSPORT_KEY_SERVICE | RECOVERY_KEY_SERVICE
     ) && validate_label(label).is_ok()
     {
         Some((service, label))
@@ -759,6 +762,42 @@ mod tests {
             vault: Box::new(vault.clone()),
         };
         (directory, store, vault)
+    }
+
+    #[test]
+    fn authority_recovery_is_encrypted_scoped_and_replaceable() {
+        let (_directory, store, _vault) = fixture_store();
+        assert!(store.load_authority_recovery("owner", "room-a").unwrap().is_none());
+        let private = b"private hand: ace of spades";
+        store.save_authority_recovery("owner", "room-a", private).unwrap();
+        let path = fs::read_dir(store.public_root.join("authority-recovery")).unwrap().next().unwrap().unwrap().path();
+        let first = fs::read(&path).unwrap();
+        assert!(!first.windows(private.len()).any(|window| window == private));
+        assert_eq!(store.load_authority_recovery("owner", "room-a").unwrap().unwrap().as_slice(), private);
+        store.save_authority_recovery("owner", "room-a", private).unwrap();
+        assert_ne!(first, fs::read(&path).unwrap(), "fresh nonces for repeated saves");
+        store.save_authority_recovery("owner", "room-a", b"next revision").unwrap();
+        assert_eq!(store.load_authority_recovery("owner", "room-a").unwrap().unwrap().as_slice(), b"next revision");
+        // Re-labeling a valid envelope cannot authenticate under another room.
+        let aad = b"poche.authority-recovery.v1\0owner\0room-b";
+        let other = store.public_root.join("authority-recovery").join(format!("{}.sealed", blake3::hash(aad).to_hex()));
+        fs::copy(&path, &other).unwrap();
+        assert!(matches!(store.load_authority_recovery("owner", "room-b"), Err(ProfileStoreError::CorruptPublicProfile)));
+        let mut corrupt = fs::read(&path).unwrap();
+        *corrupt.last_mut().unwrap() ^= 1;
+        fs::write(&path, corrupt).unwrap();
+        assert!(matches!(store.load_authority_recovery("owner", "room-a"), Err(ProfileStoreError::CorruptPublicProfile)));
+    }
+
+    #[test]
+    fn authority_recovery_missing_key_never_replaces_existing_checkpoint() {
+        let (_directory, store, vault) = fixture_store();
+        store.save_authority_recovery("owner", "room", b"checkpoint").unwrap();
+        vault.delete(&key_handle(RECOVERY_KEY_SERVICE, "owner")).unwrap();
+        assert!(matches!(store.load_authority_recovery("owner", "room"), Err(ProfileStoreError::NotFound)));
+        assert!(matches!(store.save_authority_recovery("owner", "room", b"replacement"), Err(ProfileStoreError::NotFound)));
+        assert!(vault.0.lock().unwrap().is_empty());
+        assert!(store.save_authority_recovery("../escape", "room", b"data").is_err());
     }
 
     #[test]
