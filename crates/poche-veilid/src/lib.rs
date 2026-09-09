@@ -34,6 +34,10 @@ mod device_room;
 #[cfg(feature = "device-service")]
 mod device_service;
 #[cfg(feature = "device-service")]
+mod recovery_presence;
+#[cfg(feature = "device-service")]
+pub use recovery_presence::*;
+#[cfg(feature = "device-service")]
 pub use device_room::*;
 #[cfg(feature = "device-service")]
 pub use device_service::*;
