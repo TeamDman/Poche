@@ -11,6 +11,7 @@ publish = false
 [features]
 default = []
 veilid = ["dep:veilid-core"]
+device-transport = ["veilid", "dep:tokio", "dep:poche-player-client"]
 # Separate build configuration: the upstream mock replaces the network API.
 # Never enable this feature in a production desktop build.
 veilid-mock-test = ["veilid", "veilid-core/mock-api"]
@@ -41,6 +42,7 @@ getrandom.workspace = true
 poche-environment = { path = "../poche-environment", optional = true }
 poche-oracle-rust = { path = "../poche-oracle-rust", optional = true }
 poche-protocol = { path = "../poche-protocol" }
+poche-player-client = { path = "../poche-player-client", optional = true }
 poche-runtime = { path = "../poche-runtime", optional = true }
 poche-session = { path = "../poche-session", optional = true }
 serde.workspace = true

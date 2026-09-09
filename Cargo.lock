@@ -8816,6 +8816,7 @@ dependencies = [
  "getrandom 0.3.4",
  "poche-environment",
  "poche-oracle-rust",
+ "poche-player-client",
  "poche-protocol",
  "poche-runtime",
  "poche-session",

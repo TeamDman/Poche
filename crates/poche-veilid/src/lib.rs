@@ -9,6 +9,8 @@
 //! deliberately non-default; pure game, session, CLI, and RL paths never load
 //! the network stack.
 
+#[cfg(feature = "device-transport")]
+mod device_transport;
 mod identity;
 mod membership;
 mod projection_packet;
@@ -17,6 +19,8 @@ mod room_code;
 mod room_route_code;
 mod store;
 mod transport;
+#[cfg(feature = "device-transport")]
+pub use device_transport::*;
 
 pub use identity::*;
 pub use membership::*;
