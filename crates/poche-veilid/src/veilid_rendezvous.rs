@@ -580,6 +580,29 @@ impl VeilidRendezvous {
         result
     }
 
+    /// Refresh an already trusted room after a lost read. Never switch host,
+    /// room, network or session, and never roll its route epoch backwards.
+    pub async fn refresh_resolved_room(&self, room: &mut ResolvedRoom, now_unix_ms: u64) -> Result<(), VeilidRendezvousError> {
+        let value = self.routing.get_dht_value(room.record_key.clone(), RENDEZVOUS_DHT_SUBKEY, true).await
+            .map_err(|_| VeilidRendezvousError::Unavailable)?.ok_or(VeilidRendezvousError::NotFound)?;
+        let record = RendezvousRecord::decode(value.data())?;
+        if record.room_id != room.record.room_id || record.host_identity != room.record.host_identity
+            || record.network != room.record.network || record.session_epoch != room.record.session_epoch
+            || record.route_epoch < room.record.route_epoch || record.expires_at_unix_ms <= now_unix_ms {
+            return Err(VeilidRendezvousError::InvalidMembership);
+        }
+        if record.route_epoch == room.record.route_epoch {
+            if record.private_route_blob()? != room.record.private_route_blob()? { return Err(VeilidRendezvousError::InvalidRecord); }
+            return Ok(());
+        }
+        let route_id = self.api.import_remote_private_route(record.private_route_blob()?)
+            .map_err(|_| VeilidRendezvousError::InvalidRecord)?;
+        let previous = std::mem::replace(&mut room.route_id, route_id);
+        room.record = record;
+        if previous != room.route_id { let _ = self.api.release_private_route(previous); }
+        Ok(())
+    }
+
     /// Install or renew a non-authoritative DHT watch for the open rendezvous
     /// record. Every notification must still trigger a fresh validated read.
     ///

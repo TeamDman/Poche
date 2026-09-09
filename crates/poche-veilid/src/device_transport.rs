@@ -184,7 +184,7 @@ impl<S> VeilidDeviceTransport<S> {
     }
 
     fn exchange(
-        &self,
+        &mut self,
         request: VeilidDeviceRequest,
     ) -> Result<VeilidDeviceReply, DeviceClientError> {
         // Handle::block_on would panic inside a runtime. The UI bridge already
@@ -199,7 +199,20 @@ impl<S> VeilidDeviceTransport<S> {
                 .map_err(|_| DeviceClientError::TransportUnavailable)
         };
         let reply = if matches!(request, VeilidDeviceRequest::Observe(_)) {
-            retry_observation(call)?
+            match retry_observation(call) {
+                Err(DeviceClientError::TransportUnavailable) => {
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                        .ok().and_then(|time| u64::try_from(time.as_millis()).ok())
+                        .ok_or(DeviceClientError::TransportUnavailable)?;
+                    self.runtime.block_on(self.adapter.refresh_resolved_room(&mut self.room, now))
+                        .map_err(|_| DeviceClientError::TransportUnavailable)?;
+                    // Retry only the identical signed observation, never a
+                    // write whose first outcome may have been committed.
+                    retry_observation(|| self.runtime.block_on(self.adapter.app_call(&self.room, bytes.clone()))
+                        .map_err(|_| DeviceClientError::TransportUnavailable))?
+                }
+                result => result?,
+            }
         } else {
             call()?
         };

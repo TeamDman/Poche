@@ -82,7 +82,7 @@ async fn two_mock_nodes_share_dht_but_not_device_secrets() {
         )
         .await
         .unwrap();
-    let resolved = joiner
+    let mut resolved = joiner
         .resolve_room(published.room_code(), 101)
         .await
         .unwrap();
@@ -94,6 +94,13 @@ async fn two_mock_nodes_share_dht_but_not_device_secrets() {
         reader.release_private_route(route).is_err(),
         "publication cleanup must release its private route before shutdown"
     );
+    let old_epoch = resolved.record().route_epoch;
+    let resumed = host.resume_host_room(&host_identity, &resolved.record().room_id, 10_000, 102).await.unwrap();
+    joiner.refresh_resolved_room(&mut resolved, 103).await.unwrap();
+    assert!(resolved.record().route_epoch > old_epoch);
+    assert_eq!(resolved.record().route_epoch, resumed.record().route_epoch);
+    assert!(joiner.refresh_resolved_room(&mut resolved, 10_000).await.is_err(), "expired route must not refresh");
+    resumed.close(&reader).await.unwrap();
 
     reader.shutdown().await;
     writer.shutdown().await;
