@@ -12,7 +12,8 @@ symbolic, queried, sampled, experimental, or merely empirical.
 - [Completed multiplayer, rendering, and RL plan](PLAN-2-MULTIPLAYER-RL-RENDERING.md)
 - [Completed spatial tabletop and distributed-agency plan](PLAN-3-DISTRIBUTED-TABLETOP-SPATIAL.md)
 - [Completed player-facing web plan](PLAN-4-PLAYER-WEB-EXPERIENCE.md)
-- [Active unified executable, device-orchestration, capture, and puppet plan](PLAN-5-LIVE-CONTROL-PUPPETS.md)
+- [Active desktop Veilid, shared card movement, and recovery plan](PLAN-6-DESKTOP-VEILID.md) — implementation in progress; not yet a playable Veilid desktop release.
+- [Previous unified executable, device-orchestration, capture, and puppet plan](PLAN-5-LIVE-CONTROL-PUPPETS.md)
 - [Unified executable, device, capture, agent, and puppet guide](docs/live-control-puppets.md)
 - [Contributor and evidence guide](CONTRIBUTING.md)
 - [Architecture decision index](docs/decisions/README.md)

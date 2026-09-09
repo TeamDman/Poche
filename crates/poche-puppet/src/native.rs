@@ -125,7 +125,12 @@ impl RuntimeDeviceCooperationHandler for NativeCaptureHandler {
             .map_err(|_| DeviceClientError::ProtocolViolation)?
         {
             CaptureProviderPoll::Ready(bundle) => *bundle,
-            CaptureProviderPoll::Pending(_) | CaptureProviderPoll::Denied(_) => {
+            CaptureProviderPoll::Pending(_) => {
+                eprintln!("native capture stage=readback outcome=pending-after-run");
+                return Err(DeviceClientError::NoProgress);
+            }
+            CaptureProviderPoll::Denied(reason) => {
+                eprintln!("native capture stage=readback outcome=denied reason={reason:?}");
                 return Err(DeviceClientError::ProtocolViolation);
             }
         };
@@ -532,10 +537,23 @@ pub(crate) fn sign(key: &SigningKey, bytes: &[u8]) -> Result<SignatureBytes, Dev
     SignatureBytes::new(encoded).map_err(|_| DeviceClientError::SigningFailed)
 }
 
-fn device_error(_: DeviceClientError) -> PuppetError {
+fn device_error(error: DeviceClientError) -> PuppetError {
     PuppetError::new(
         PuppetErrorCode::DeviceProtocol,
-        "certified native capture device rejected the puppet operation",
+        match error {
+            DeviceClientError::NoProgress => "native capture device made no progress",
+            DeviceClientError::TransportUnavailable => {
+                "native capture transport or renderer unavailable"
+            }
+            DeviceClientError::StaleRevision => "native capture targets a stale revision",
+            DeviceClientError::AuthorizationDenied => "native capture authorization denied",
+            DeviceClientError::ProtocolViolation => "native capture adapter violated protocol",
+            DeviceClientError::InvalidObservation => "native capture observation invalid",
+            DeviceClientError::InvalidProfile => "native capture profile invalid",
+            DeviceClientError::KeyUnavailable => "native capture key unavailable",
+            DeviceClientError::SigningFailed => "native capture signing failed",
+            DeviceClientError::UnknownAction => "native capture action not advertised",
+        },
     )
 }
 
@@ -544,4 +562,21 @@ const fn invalid_capture() -> PuppetError {
         PuppetErrorCode::DeviceProtocol,
         "puppet capture evidence violated its protocol binding",
     )
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn capture_diagnostics_preserve_failure_class_without_payloads() {
+        let stale = device_error(DeviceClientError::StaleRevision).to_string();
+        let unavailable = device_error(DeviceClientError::TransportUnavailable).to_string();
+        let denied = device_error(DeviceClientError::AuthorizationDenied).to_string();
+        assert!(stale.contains("stale revision"));
+        assert!(unavailable.contains("unavailable"));
+        assert!(denied.contains("authorization denied"));
+        assert_ne!(stale, unavailable);
+        assert_ne!(denied, unavailable);
+    }
 }

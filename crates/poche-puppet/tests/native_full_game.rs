@@ -15,16 +15,22 @@ use poche_puppet::{PuppetRunOptions, PuppetSurface, TWO_PLAYER_FULL_ROUND, run};
 #[ignore = "requires a working GPU backend"]
 fn authorized_windowless_native_capture_survives_the_full_game() {
     let temporary = tempfile::tempdir().expect("temporary native artifacts");
+    // Opt-in durable evidence for visual inspection; default tests still clean
+    // up their isolated temporary artifacts. The pipeline validates paths.
+    let artifact_root = std::env::var_os("POCHE_NATIVE_EVIDENCE_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| temporary.path().to_path_buf());
     let report = run(&PuppetRunOptions {
         scenario: TWO_PLAYER_FULL_ROUND.to_owned(),
         surface: PuppetSurface::Native,
         seed: 29,
-        artifact_root: temporary.path().to_path_buf(),
+        artifact_root,
         per_action_timeout: Duration::from_secs(3),
         whole_run_timeout: Duration::from_mins(2),
         ..PuppetRunOptions::default()
     })
     .expect("native full-game puppet");
+    eprintln!("native evidence: {}", report.artifact_directory);
 
     assert_eq!(report.status, "complete");
     assert_eq!(report.final_room_phase, "post_game");
