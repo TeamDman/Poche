@@ -99,7 +99,7 @@ impl Plugin for DesktopMenuPlugin {
             )
             .add_systems(
                 Update,
-                (live_action_buttons, refresh_live_controls)
+                (live_action_buttons, refresh_live_controls, live_finding_text)
                     .chain()
                     .after(crate::poll_live_device),
             );
@@ -145,6 +145,13 @@ fn refresh_live_controls(
         ))
         .with_children(|bar| {
             bar.spawn((
+                LiveFinding,
+                Text::new(""),
+                TextFont { font_size: FontSize::Px(16.0), ..default() },
+                TextColor(Color::srgb(1.0, 0.9, 0.65)),
+                Node { width: percent(100.), ..default() },
+            ));
+            bar.spawn((
                 Text::new("Drag a hand card to move it. While dragging: Shift = yaw, Ctrl = pitch, Alt = roll."),
                 TextFont { font_size: FontSize::Px(14.0), ..default() },
                 Node { width: percent(100.), ..default() },
@@ -174,6 +181,28 @@ fn refresh_live_controls(
                 .with_child(Text::new(&action.label));
             }
         });
+}
+
+#[derive(Component)]
+struct LiveFinding;
+
+fn live_finding_text(controller: Option<Res<crate::NativeController>>, mut labels: Query<&mut Text, With<LiveFinding>>) {
+    let Some(controller) = controller else { return; };
+    for mut text in &mut labels {
+        if text.0 != controller.last_finding { text.0.clone_from(&controller.last_finding); }
+    }
+}
+
+#[test]
+fn live_findings_are_visible_without_window_title_or_debug_overlay() {
+    let mut app = App::new();
+    let mut controller = crate::replay_fixture_controller().unwrap();
+    controller.last_finding = "Not played: not your turn. Physical position is unchanged.".to_owned();
+    app.insert_resource(controller);
+    let label = app.world_mut().spawn((LiveFinding, Text::new(""))).id();
+    app.add_systems(Update, live_finding_text);
+    app.update();
+    assert_eq!(app.world().get::<Text>(label).unwrap().0, "Not played: not your turn. Physical position is unchanged.");
 }
 
 fn live_action_buttons(

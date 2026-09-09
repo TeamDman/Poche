@@ -1783,7 +1783,8 @@ fn on_drag_drop(
         return;
     };
     let result = zone_center_card_bounds(controller.layout(), ZoneId::Play)
-        .and_then(|bounds| if live.is_some() { controller.prepare_drag(card.0, bounds) } else { controller.commit_drag(card.0, bounds) }.map_err(|_| ()));
+        .map_err(|_| "PLAY zone is unavailable".to_owned())
+        .and_then(|bounds| if live.is_some() { controller.prepare_drag(card.0, bounds) } else { controller.commit_drag(card.0, bounds) });
     match result {
         Ok(committed) => {
             if let Some(mut live) = live
@@ -1792,9 +1793,8 @@ fn on_drag_drop(
                 controller.last_finding = format!("live play queue rejected: {error}");
             }
         }
-        Err(()) => {
-            "drag release did not classify as a legal PLAY"
-                .clone_into(&mut controller.last_finding);
+        Err(reason) => {
+            controller.last_finding = format!("Not played: {reason}. Physical position is unchanged.");
         }
     }
     event.propagate(false);
