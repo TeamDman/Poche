@@ -428,6 +428,13 @@ impl<const PLAYERS: usize> AdvertisedActionSource<crate::OracleSessionGame<PLAYE
                 "Close room",
                 CommandPayload::CloseRoom,
             ));
+        }
+        if member.host && state.members.len() == 1 && !matches!(&state.phase, SessionPhase::Closed) {
+            actions.push(Self::advertised(
+                "room-leave",
+                "Leave and disband room",
+                CommandPayload::Leave,
+            ));
         } else if !member.host
             && (member.seat.is_none()
                 || matches!(
@@ -2680,6 +2687,30 @@ mod tests {
                 .current_revision,
             1
         );
+    }
+
+    #[test]
+    fn final_member_can_invoke_advertised_leave_to_disband() {
+        let room = RoomId::new("final-leave-room").unwrap();
+        let state: SessionState<OracleSessionGame<2>> = SessionState::pending(
+            room.clone(), PrincipalId::new("clock").unwrap(), PrincipalId::new("game").unwrap(),
+        );
+        let source = super::OracleRoomActionSource::new(1, 2, "invite", 30, "countdown").unwrap();
+        let adapter = RuntimeLoopbackDeviceAdapter::new(state, source, LoopbackCodec::CanonicalNdjson);
+        let profile = device_profile("last-desktop", "22");
+        adapter.enroll(&profile).unwrap();
+        let mut client = PlayerDeviceClient::new(profile, LoopbackDeviceTransport::new(adapter)).unwrap();
+        let pending = client.observe(&room).unwrap();
+        let create = pending.actions.iter().find(|action| matches!(action.payload, CommandPayload::CreateRoom)).unwrap();
+        client.invoke(&pending, &create.id, CommandId::new("create-final-room").unwrap()).unwrap();
+        let lobby = client.observe(&room).unwrap();
+        let leave = lobby.actions.iter().find(|action| action.id == "room-leave").expect("UI leave entrypoint");
+        assert_eq!(leave.label, "Leave and disband room");
+        assert!(matches!(client.invoke(&lobby, &leave.id, CommandId::new("leave-final-room").unwrap()).unwrap(),
+            DeviceActionResult::Committed { .. }));
+        let closed = client.observe(&room).unwrap();
+        assert_eq!(closed.projection.payload.phase, poche_protocol::RoomPhase::Closed);
+        assert!(closed.actions.is_empty());
     }
 
     #[test]

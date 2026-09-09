@@ -868,6 +868,11 @@ fn decide_leave<G: SessionGame>(
 ) -> Result<Vec<SessionEventKind<G>>, SessionError<G::Error>> {
     let member = require_member(state, &command.principal_id)?;
     if member.host {
+        // The final participant's explicit departure terminates this room.
+        // Retain the closed record for replay; it is not an active membership.
+        if state.members.len() == 1 {
+            return decide_close(state);
+        }
         return denied(DenyReason::DenyPolicy);
     }
     // A spectator owns no hand, turn, or occupied game seat, so ending that

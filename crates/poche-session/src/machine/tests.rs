@@ -225,6 +225,17 @@ fn created_room() -> SessionState<TestGame> {
     created
 }
 
+#[test]
+fn final_coordinator_leave_disbands_and_cannot_rejoin_closed_room() {
+    let state = created_room();
+    let leave = signed(&state, principal("host"), "last-leave", CommandPayload::Leave);
+    let (closed, events) = execute(&state, &leave);
+    assert!(matches!(closed.phase, SessionPhase::Closed));
+    assert!(events.iter().any(|event| matches!(event.kind, SessionEventKind::RoomClosed)));
+    let reconnect = signed(&closed, principal("host"), "after-last-leave", CommandPayload::Reconnect);
+    assert_eq!(deny_reason(&authorize(&closed, &reconnect)), DenyReason::Closed);
+}
+
 fn two_player_lobby() -> SessionState<TestGame> {
     let mut state = created_room();
     state
