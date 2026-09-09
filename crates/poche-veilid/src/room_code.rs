@@ -211,6 +211,17 @@ impl RoomCode {
         &self.host_principal
     }
 
+    /// Derive the secret session-admission capability from this exact code.
+    /// The creator installs only its InviteRecord hash; joiners submit the
+    /// proof through the authenticated private-route request. This is a bearer
+    /// secret, not a player identity or a public room identifier. Expiry and
+    /// revocation must also be enforced by the receiving session.
+    pub fn admission_proof(&self) -> Result<poche_protocol::InviteProof, RoomCodeError> {
+        let encoded = self.encode()?;
+        let proof = blake3::derive_key("poche room admission v1", encoded.expose().as_bytes());
+        poche_protocol::InviteProof::new(hex(&proof)).map_err(|_| RoomCodeError::InvalidFormat)
+    }
+
     /// Borrow the encrypted Veilid record key only inside an explicit closure.
     ///
     /// # Panics
@@ -398,6 +409,23 @@ mod tests {
         assert_eq!(decoded.host_principal(), &principal(0x2a));
         decoded.with_encrypted_record_key(|key| assert_eq!(key, RECORD_KEY));
         assert_eq!(decoded.encode().unwrap().expose(), text.expose());
+        assert_eq!(
+            decoded.admission_proof().unwrap(),
+            code.admission_proof().unwrap()
+        );
+        let other = RoomCode::from_secret(
+            RoomNetwork::VeilidLocal,
+            RECORD_KEY,
+            principal(0x2a),
+            20_000,
+            10_000,
+            [8_u8; 32],
+        )
+        .unwrap();
+        assert_ne!(
+            other.admission_proof().unwrap(),
+            code.admission_proof().unwrap()
+        );
     }
 
     #[test]
