@@ -62,6 +62,7 @@ pub struct InviteRecord {
     pub expires_after_revision: u64,
     pub consumed: bool,
     pub revoked: bool,
+    pub reusable: bool,
 }
 
 impl fmt::Debug for InviteRecord {
@@ -72,6 +73,7 @@ impl fmt::Debug for InviteRecord {
             .field("expires_after_revision", &self.expires_after_revision)
             .field("consumed", &self.consumed)
             .field("revoked", &self.revoked)
+            .field("reusable", &self.reusable)
             .finish()
     }
 }
@@ -95,7 +97,19 @@ impl InviteRecord {
             expires_after_revision,
             consumed: false,
             revoked: false,
+            reusable: false,
         })
+    }
+
+    /// A lobby code may admit multiple participants until revoked or expired.
+    /// Keep new() single-use for existing callers and explicit one-shot codes.
+    pub fn new_reusable(
+        verifier: impl Into<String>,
+        expires_after_revision: u64,
+    ) -> Result<Self, SessionInvariantError> {
+        let mut record = Self::new(verifier, expires_after_revision)?;
+        record.reusable = true;
+        Ok(record)
     }
 
     pub(crate) fn matches(&self, candidate: &str) -> bool {

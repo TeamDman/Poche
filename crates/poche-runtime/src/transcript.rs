@@ -1030,6 +1030,10 @@ struct SemanticInvite {
     expires_after_revision: u64,
     consumed: bool,
     revoked: bool,
+    // Preserve legacy single-use transcript hashes while distinguishing the
+    // new behavior when a room opts into reusable admission.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    reusable: bool,
 }
 
 #[derive(Serialize)]
@@ -1080,6 +1084,7 @@ fn state_hash(state: &SessionState<TranscriptGame>) -> Result<String, String> {
                 expires_after_revision: invite.expires_after_revision,
                 consumed: invite.consumed,
                 revoked: invite.revoked,
+                reusable: invite.reusable,
             })
             .collect(),
         processed: state

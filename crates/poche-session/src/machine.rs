@@ -1135,7 +1135,7 @@ fn apply_kind<G: SessionGame>(
             if invite.consumed || invite.revoked {
                 return denied(DenyReason::Revoked);
             }
-            invite.consumed = true;
+            invite.consumed = !invite.reusable;
             state.members.push(MemberState {
                 principal_id: principal.clone(),
                 membership_epoch: state.session_epoch,

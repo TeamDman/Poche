@@ -65,7 +65,7 @@ pub async fn publish_device_room(
             PrincipalId::new("game").map_err(|_| DeviceClientError::ProtocolViolation)?,
         );
         state.invites.push(
-            InviteRecord::new(proof.expose(), u64::MAX)
+            InviteRecord::new_reusable(proof.expose(), u64::MAX)
                 .map_err(|_| DeviceClientError::ProtocolViolation)?,
         );
         let actions = OracleRoomActionSource::new(seed, 2, proof.expose(), 30, "countdown")?;

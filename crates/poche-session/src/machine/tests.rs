@@ -1414,6 +1414,39 @@ fn active_spectator_can_end_membership_without_stranding_a_game_seat() {
     )));
 }
 
+#[test]
+fn reusable_room_code_allows_spectator_leave_and_return_until_revoked() {
+    let mut state = running_via_expiry();
+    state
+        .invites
+        .push(InviteRecord::new_reusable("room-code", u64::MAX).unwrap());
+    for (index, who) in ["bob", "carol", "bob"].into_iter().enumerate() {
+        let join = signed(
+            &state,
+            principal(who),
+            &format!("reusable-join-{index}"),
+            CommandPayload::RedeemInvite {
+                invite: InviteProof::new("room-code").unwrap(),
+            },
+        );
+        state = execute(&state, &join).0;
+        assert!(state.member(&principal(who)).is_some());
+        if index == 0 {
+            let leave = signed(
+                &state,
+                principal(who),
+                "reusable-leave",
+                CommandPayload::Leave,
+            );
+            state = execute(&state, &leave).0;
+        }
+    }
+    let invite = state.invites.last_mut().unwrap();
+    assert!(!invite.consumed);
+    invite.revoked = true;
+    assert!(!state.accepts_invite(&InviteProof::new("room-code").unwrap()));
+}
+
 fn grant_host_hand_to(
     state: &SessionState<TestGame>,
     spectator: &str,

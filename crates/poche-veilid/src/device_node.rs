@@ -82,6 +82,31 @@ impl VeilidDeviceNode {
         &self.0.runtime
     }
 
+    /// Attach and wait for actual public-network readiness, with a bounded
+    /// deadline. A successful attach request alone does not mean the node can
+    /// publish DHT records/private routes. Call through the connection worker.
+    pub async fn attach_public(&self, timeout: std::time::Duration) -> Result<(), &'static str> {
+        tokio::time::timeout(timeout, async {
+            self.api()
+                .attach()
+                .await
+                .map_err(|_| "network attachment failed")?;
+            loop {
+                let state = self
+                    .api()
+                    .get_state()
+                    .await
+                    .map_err(|_| "network state unavailable")?;
+                if state.attachment.public_internet_ready {
+                    return Ok(());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .map_err(|_| "network readiness timed out")?
+    }
+
     /// Wait for clean shutdown when this is the final owner. Ordinary Drop is
     /// nonblocking; acceptance harnesses use this to verify shutdown completed.
     pub fn shutdown(self) -> Result<(), &'static str> {
@@ -116,7 +141,7 @@ mod tests {
         drop(node);
         survivor
             .runtime()
-            .block_on(survivor.api().attach())
+            .block_on(survivor.attach_public(std::time::Duration::from_secs(2)))
             .unwrap();
         survivor.shutdown().unwrap();
         let restarted = VeilidDeviceNode::start(config, Arc::new(drop)).unwrap();
