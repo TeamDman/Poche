@@ -49,21 +49,21 @@ pub enum ManipulationError {
 /// logical location nor face is stored here. Each lease has one authorized
 /// device writer, allocated externally in accepted session order.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CardManipulation {
-    card: CardObjectId,
+pub struct CardManipulation<I = CardObjectId> {
+    card: I,
     pose: ManipulationPose,
     lease_epoch: u64,
     sequence: u64,
     inside_play: bool,
 }
 
-impl CardManipulation {
+impl<I: Copy> CardManipulation<I> {
     /// Initialize from an accepted snapshot, not untrusted pose traffic.
     ///
     /// # Errors
     /// Rejects positions outside the bounded shared world.
     pub fn new(
-        card: CardObjectId,
+        card: I,
         pose: ManipulationPose,
         lease_epoch: u64,
     ) -> Result<Self, ManipulationError> {
@@ -80,7 +80,7 @@ impl CardManipulation {
     }
 
     #[must_use]
-    pub const fn card(&self) -> CardObjectId {
+    pub const fn card(&self) -> I {
         self.card
     }
 

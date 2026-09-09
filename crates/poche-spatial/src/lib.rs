@@ -16,6 +16,7 @@ mod identity;
 mod interaction;
 mod layout;
 mod manipulation;
+mod physical_identity;
 mod realization;
 mod scene;
 mod units;
@@ -35,6 +36,7 @@ pub use layout::{
 pub use manipulation::{
     CardManipulation, ManipulationError, ManipulationPose, RotationMilliDegrees, hand_owner,
 };
+pub use physical_identity::{PhysicalCardId, PhysicalCardManipulation, PhysicalDeckIdentity};
 pub use realization::{
     PlayedCardProjection, PlayerSpatialProjection, RealizationError, RevealedWonCard,
     ScoreSheetError, ViewerSpatialProjection, interpret_score_sheet, realize_viewer_scene,
