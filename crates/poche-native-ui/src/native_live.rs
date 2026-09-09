@@ -13,6 +13,12 @@ use poche_protocol::{CommandId, RoomId};
 use crate::{CommittedPresentation, advertised_action_for_play};
 
 enum NativeWorkerCommand {
+    Pose {
+        card_id: String,
+        claim: bool,
+        position_mm: [i32; 3],
+        rotation_millidegrees: [i32; 3],
+    },
     Invoke {
         observation: DeviceObservation,
         action_id: String,
@@ -65,14 +71,80 @@ impl NativeLiveDevice {
         let (event_tx, event_rx) = mpsc::sync_channel(8);
         let initial_revision = observation.projection.current_revision;
         let initial_hands = observation.physical_hands.clone();
+        let initial_epoch = observation.projection.session_epoch;
         thread::Builder::new()
             .name("poche-native-device".to_owned())
             .spawn(move || {
                 let mut latest_revision = initial_revision;
                 let mut latest_hands = initial_hands;
+                let mut latest_epoch = initial_epoch;
+                let mut force_snapshot = false;
                 let mut retry_delay = Duration::from_millis(50);
                 loop {
                     match command_rx.recv_timeout(retry_delay) {
+                        Ok(NativeWorkerCommand::Pose {
+                            card_id,
+                            claim,
+                            position_mm,
+                            rotation_millidegrees,
+                        }) => {
+                            let result = (|| {
+                                let card = latest_hands
+                                    .iter()
+                                    .find(|card| card.id == card_id && card.face.is_some())
+                                    .ok_or(DeviceClientError::AuthorizationDenied)?;
+                                let previous = card.pose.as_ref();
+                                if !claim
+                                    && previous.is_none_or(|pose| {
+                                        pose.device != client.profile().device_id
+                                    })
+                                {
+                                    return Err(DeviceClientError::AuthorizationDenied);
+                                }
+                                let request = poche_player_client::PhysicalPoseRequest {
+                                    certificate: client.profile().certificate.clone(),
+                                    room_id: room_id.clone(),
+                                    session_epoch: latest_epoch,
+                                    card_id: card_id.clone(),
+                                    claim,
+                                    generation: previous.map_or(0, |pose| pose.generation),
+                                    sequence: if claim {
+                                        1
+                                    } else {
+                                        previous
+                                            .unwrap()
+                                            .sequence
+                                            .checked_add(1)
+                                            .ok_or(DeviceClientError::ProtocolViolation)?
+                                    },
+                                    position_mm,
+                                    rotation_millidegrees,
+                                };
+                                client.physical_pose(request)
+                            })();
+                            match result {
+                                Ok(pose) => {
+                                    if let Some(card) =
+                                        latest_hands.iter_mut().find(|card| card.id == card_id)
+                                    {
+                                        card.pose = Some(pose);
+                                    }
+                                    // Force the next snapshot through to the UI even
+                                    // though the worker already knows its own receipt.
+                                    force_snapshot = true;
+                                }
+                                Err(error) => {
+                                    if event_tx
+                                        .send(NativeWorkerEvent::Failed(format!(
+                                            "physical motion rejected: {error}"
+                                        )))
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                         Ok(NativeWorkerCommand::Invoke {
                             observation,
                             action_id,
@@ -84,6 +156,8 @@ impl NativeLiveDevice {
                                     Ok(observation) => {
                                         retry_delay = Duration::from_millis(50);
                                         latest_revision = observation.projection.current_revision;
+                                        latest_epoch = observation.projection.session_epoch;
+                                        force_snapshot = false;
                                         latest_hands = observation.physical_hands.clone();
                                         if event_tx
                                             .send(NativeWorkerEvent::Updated {
@@ -128,12 +202,17 @@ impl NativeLiveDevice {
                             match client.observe(&room_id) {
                                 Ok(observation) => {
                                     retry_delay = Duration::from_millis(50);
-                                    if latest_revision == observation.projection.current_revision
+                                    if !force_snapshot
+                                        && latest_epoch == observation.projection.session_epoch
+                                        && latest_revision
+                                            == observation.projection.current_revision
                                         && latest_hands == observation.physical_hands
                                     {
                                         continue;
                                     }
                                     latest_revision = observation.projection.current_revision;
+                                    latest_epoch = observation.projection.session_epoch;
+                                    force_snapshot = false;
                                     latest_hands = observation.physical_hands.clone();
                                     if event_tx
                                         .send(NativeWorkerEvent::Observed(Box::new(observation)))
@@ -172,6 +251,41 @@ impl NativeLiveDevice {
             command_namespace,
             last_result: None,
         })
+    }
+
+    /// Queue physical movement independently of a logical play. Claims are
+    /// explicit; subsequent samples cannot take over another device's lease.
+    ///
+    /// # Errors
+    /// Returns an error for an unavailable private card or worker queue.
+    pub fn submit_pose(
+        &mut self,
+        card_id: &str,
+        claim: bool,
+        position_mm: [i32; 3],
+        rotation_millidegrees: [i32; 3],
+    ) -> Result<(), String> {
+        if !self
+            .observation
+            .physical_hands
+            .iter()
+            .any(|card| card.id == card_id && card.face.is_some())
+        {
+            return Err("physical card is not in this viewer's hand".to_owned());
+        }
+        self.commands
+            .try_send(NativeWorkerCommand::Pose {
+                card_id: card_id.to_owned(),
+                claim,
+                position_mm,
+                rotation_millidegrees,
+            })
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) => "physical motion queue is busy".to_owned(),
+                mpsc::TrySendError::Disconnected(_) => {
+                    "native device worker is unavailable".to_owned()
+                }
+            })
     }
 
     /// Borrow the exact projection currently rendered by the native adapter.
