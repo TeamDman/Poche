@@ -557,6 +557,9 @@ struct TweenClock {
 #[derive(Component)]
 struct TabletopCamera;
 
+#[derive(Component)]
+struct HandCamera;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct CameraView {
     target: Vec3,
@@ -1022,6 +1025,7 @@ fn run_with_live_device(
                 keyboard_input,
                 camera_input,
                 apply_mirrored_transforms,
+                update_hand_camera,
                 draw_spatial_debug,
                 update_status,
                 poll_live_device,
@@ -1366,6 +1370,20 @@ fn setup_native_scene(mut commands: Commands, surface: Res<NativeRenderSurface>)
     if let Some(target) = surface.render_target() {
         camera.insert(target);
     }
+    let mut hand = commands.spawn((
+        Camera3d::default(),
+        Camera {
+            order: 1,
+            is_active: false,
+            ..default()
+        },
+        HandCamera,
+        bevy::camera::visibility::RenderLayers::layer(1),
+        Transform::default(),
+    ));
+    if let Some(target) = surface.render_target() {
+        hand.insert(target);
+    }
     commands.spawn((
         DirectionalLight {
             illuminance: 8_000.0,
@@ -1380,6 +1398,42 @@ fn setup_native_scene(mut commands: Commands, surface: Res<NativeRenderSurface>)
         affects_lightmapped_meshes: true,
     });
     commands.run_system_cached(spawn_scene_objects);
+}
+
+fn update_hand_camera(
+    controller: Res<NativeController>,
+    surface: Res<NativeRenderSurface>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut cameras: Query<(&mut Camera, &mut Transform), With<HandCamera>>,
+) {
+    let size = match &*surface {
+        NativeRenderSurface::Windowless { width, height, .. } => UVec2::new(*width, *height),
+        NativeRenderSurface::Windowed => {
+            let Ok(window) = windows.single() else {
+                return;
+            };
+            UVec2::new(window.physical_width(), window.physical_height())
+        }
+    };
+    let cards: Vec<_> = controller.scene.cards.iter().filter(|card| matches!(card.location, CardLocation::Hand {seat, ..} if Some(seat) == controller.issuing_seat)).collect();
+    for (mut camera, mut transform) in &mut cameras {
+        camera.is_active = !cards.is_empty() && size.x >= 10 && size.y >= 10;
+        if !camera.is_active {
+            continue;
+        }
+        let center = cards
+            .iter()
+            .map(|card| point_to_vec3(card.pose.translation))
+            .sum::<Vec3>()
+            / cards.len() as f32;
+        *transform =
+            Transform::from_translation(center + Vec3::Y * 0.45).looking_at(center, Vec3::Z);
+        camera.viewport = Some(bevy::camera::Viewport {
+            physical_position: UVec2::new(size.x / 5, size.y * 3 / 5),
+            physical_size: UVec2::new(size.x * 3 / 5, size.y / 5),
+            ..default()
+        });
+    }
 }
 
 /// Replace viewer-specific geometry independently of cameras and lighting.
@@ -1491,6 +1545,7 @@ fn spawn_scene_objects(
             )
         {
             entity
+                .insert(bevy::camera::visibility::RenderLayers::layer(0).with(1))
                 .insert(DraggableCard(card.id))
                 .observe(on_drag_card)
                 .observe(on_drag_end);
@@ -1527,6 +1582,9 @@ fn spawn_scene_objects(
             .get(&run.attached_to.object)
             .copied()
             .expect("validated text attachment parent");
+        if controller.scene.cards.iter().any(|card| ObjectId::Card(card.id) == run.attached_to.object && matches!(card.location, CardLocation::Hand {seat, ..} if Some(seat) == controller.issuing_seat)) {
+            commands.entity(entity).insert(bevy::camera::visibility::RenderLayers::layer(0).with(1));
+        }
         commands.entity(parent).add_child(entity);
     }
 }
@@ -1553,7 +1611,7 @@ fn rotate_drag_pose(mut rotation: [i32; 3], horizontal_pixels: f32, axes: [bool;
 fn on_drag_card(
     drag: On<Pointer<Drag>>,
     mut previews: Query<(&mut DragPreview, &CanonicalMirror, &GlobalTransform)>,
-    cameras: Query<(&Camera, &GlobalTransform), With<TabletopCamera>>,
+    cameras: Query<(&Camera, &GlobalTransform), Or<(With<TabletopCamera>, With<HandCamera>)>>,
     keys: Res<ButtonInput<KeyCode>>,
     mut controller: ResMut<NativeController>,
     live: Option<ResMut<NativeLiveDevice>>,
@@ -1577,7 +1635,15 @@ fn on_drag_card(
                 })
                 .map(|card| card.id.clone());
             if let Some(identity) = identity
-                && let Ok((camera, camera_transform)) = cameras.single()
+                && let Some((camera, camera_transform)) = cameras
+                    .iter()
+                    .filter(|(camera, _)| {
+                        camera.is_active
+                            && camera
+                                .logical_viewport_rect()
+                                .is_some_and(|rect| rect.contains(drag.pointer_location.position))
+                    })
+                    .max_by_key(|(camera, _)| camera.order)
                 && let Ok(ray) =
                     camera.viewport_to_world(camera_transform, drag.pointer_location.position)
             {
