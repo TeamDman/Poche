@@ -823,6 +823,7 @@ pub struct CertifiedDeviceRoom<G: SessionGame, A> {
     route_cache: BTreeMap<(DeviceId, String), CachedRemoteRoute>,
     service_profiles: Vec<DeviceProfile>,
     next_service_command: u64,
+    countdown_started: Option<(u64, std::time::Duration)>,
 }
 
 /// Already-authenticated cooperation route that can execute without holding
@@ -869,6 +870,7 @@ where
             route_cache: BTreeMap::new(),
             service_profiles: Vec::new(),
             next_service_command: 0,
+            countdown_started: None,
         }
     }
 
@@ -913,6 +915,55 @@ where
         &mut self,
         max_actions: usize,
     ) -> Result<usize, DeviceClientError> {
+        self.drive_authority_services_gated(max_actions, true)
+    }
+
+    /// Scheduler-supplied monotonic elapsed time; no wall clock enters the reducer.
+    /// A fresh countdown (even with a reused token) receives the full duration.
+    /// The first scheduler observation starts the delay, so scheduling latency
+    /// may lengthen but never shorten the opportunity to abort.
+    ///
+    /// # Errors
+    /// Returns a transport error for poisoned state or the ordinary service
+    /// dispatch error if an enrolled service cannot commit its advertised action.
+    pub fn drive_authority_services_elapsed(
+        &mut self,
+        max_actions: usize,
+        now: std::time::Duration,
+        countdown_duration: std::time::Duration,
+    ) -> Result<usize, DeviceClientError> {
+        let generation = self
+            .adapter
+            .shared
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?
+            .authority
+            .current_countdown_revision();
+        let ready = match generation {
+            None => {
+                self.countdown_started = None;
+                false
+            }
+            Some(revision) => {
+                if self
+                    .countdown_started
+                    .is_none_or(|(previous, _)| previous != revision)
+                {
+                    self.countdown_started = Some((revision, now));
+                }
+                let (_, started) = self.countdown_started.expect("countdown initialized");
+                now.checked_sub(started)
+                    .is_some_and(|elapsed| elapsed >= countdown_duration)
+            }
+        };
+        self.drive_authority_services_gated(max_actions, ready)
+    }
+
+    fn drive_authority_services_gated(
+        &mut self,
+        max_actions: usize,
+        expire_countdown: bool,
+    ) -> Result<usize, DeviceClientError> {
         let room_id = self
             .adapter
             .room_id()
@@ -929,6 +980,11 @@ where
                 let Some(action) = observation.actions.first() else {
                     continue;
                 };
+                if matches!(action.payload, CommandPayload::CountdownExpired { .. })
+                    && !expire_countdown
+                {
+                    continue;
+                }
                 let sequence = self.next_service_command;
                 self.next_service_command = self.next_service_command.saturating_add(1);
                 let request = DeviceActionRequest {
@@ -2564,9 +2620,43 @@ mod tests {
         invoke!(guest, "room-ready", "service-ready-guest");
         invoke!(host, "countdown-arm", "service-countdown-arm");
 
-        assert_eq!(certified.drive_authority_services(2).unwrap(), 2);
+        let duration = std::time::Duration::from_secs(3);
+        assert_eq!(
+            certified
+                .drive_authority_services_elapsed(2, std::time::Duration::ZERO, duration)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            certified
+                .drive_authority_services_elapsed(2, std::time::Duration::from_secs(2), duration)
+                .unwrap(),
+            0
+        );
+        invoke!(guest, "countdown-abort", "service-abort");
+        invoke!(host, "countdown-arm", "service-rearm");
+        // Even if the scheduler did not see the intermediate Lobby, the new
+        // arm event has a distinct generation and gets its own full delay.
+        assert_eq!(
+            certified
+                .drive_authority_services_elapsed(2, std::time::Duration::from_secs(2), duration)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            certified
+                .drive_authority_services_elapsed(2, std::time::Duration::from_secs(3), duration)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            certified
+                .drive_authority_services_elapsed(2, std::time::Duration::from_secs(5), duration)
+                .unwrap(),
+            2
+        );
         let observation = host.observe(&room_id).unwrap();
-        assert_eq!(observation.projection.current_revision, 10);
+        assert_eq!(observation.projection.current_revision, 12);
         assert_eq!(observation.projection.payload.phase, RoomPhase::Running);
         assert!(matches!(
             observation

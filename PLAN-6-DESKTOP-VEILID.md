@@ -82,7 +82,9 @@ Working support assumption: Windows desktop first (two local independent process
 
 All commands run from the primary root. Commands below are existing package surfaces, not claimed successful results. Add exact new test/launch commands alongside implementation before marking done; never invent a passing future harness invocation.
 
-### [~] T1 Update Bevy and establish baseline
+### [x] T1 Update Bevy and establish baseline
+
+Completion disposition: Bevy 0.19.1 is locked and compiles through the desktop CLI; baseline suites and inspected windowless captures are recorded below. The intermittent old capture rejection remains an explicit T6 risk, not a claimed fix. Baseline establishment is complete; integration focus is T2. Later notes below are historical checkpoints, not current process handles.
 
 Completion notes: goal activated September 9 after explicit user approval. Starting tree contains only this newly authored plan as untracked work. Root Bevy pin updated to 0.19.1; lock resolution and tests pending. User permits updating local Bevy reference checkout, but preserve its untracked assets and do not use a local path dependency.
 
@@ -102,7 +104,13 @@ Validation: `cargo test --locked -p poche-native-ui -p poche-puppet -p poche-cap
 
 Complete when patch is locked, source builds, baseline results and any failures are recorded with exact commands. No claim of upgrade verification from manifest edit alone.
 
-### [ ] T2 Establish Veilid device transport
+### [~] T2 Establish Veilid device transport
+
+Automatic countdown/deal integration: published rooms now enroll freshly certified internal clock/environment principals. The owned service runs bounded scheduler ticks (at most four transitions per 50 ms), through the existing advertised-action/reducer path. Reversible desktop countdown default is three seconds from scheduler observation of the arm event; this may lengthen, never shorten, the abort window. A committed arm revision identifies a new countdown even when its token is reused and an abort/rearm occurs between polls. No wall clock is read by the reducer. Internal service identities remain local/ephemeral: this is not creator recovery or distributed scheduling.
+
+Strict lint audit attempted with `cargo clippy --locked -p poche-veilid --features device-service --offline --lib -- -D warnings`; stopped in existing `poche-spatial/src/manipulation.rs` missing Errors documentation on new/update/change_lease. Not a passing lint gate; fix and rerun during T6 before release.
+
+Validation: `cargo test --locked -p poche-runtime --offline --lib` passed all 34 tests, including delayed expiry and abort/rearm generation reset. `cargo test --locked -p poche-veilid --features device-service,veilid-mock-test --offline --test device_service` passed (3.94s): the assembled published room, two certified clients, seat/ready/start actions and automatic expiry plus dealt private hand traverse mock private-route RPCs. `cargo check --locked -p poche-cli --offline` passed with non-mock features. This supersedes the older missing-driver notes below; real protected two-process startup, menu input, replicated recovery, and final-departure teardown remain unproven. Next focus: exercise the actual protected desktop connection path in an external/windowless harness, not a second fixture assembly.
 
 Live-network evidence: approved non-mock `POCHE_ALLOW_VEILID_PUBLIC_TEST=I_ACCEPT_PUBLIC_NETWORK_TRAFFIC; cargo run --locked -p poche-veilid --features veilid-public-test --offline --bin poche-veilid-public-probe` passed: dht=true, private_route=true, app_call=true, host_peers=64/client_peers=64. This is the legacy two-node/single-process probe with temporary insecure test storage, not the protected desktop path or two-process goal acceptance. Node now exposes bounded attach_public that waits for public_internet_ready rather than mistaking attach acknowledgement for usable networking; its mock lifecycle test passed.
 
@@ -151,6 +159,8 @@ Validation: `cargo test --locked -p poche-native-ui -p poche-player-client`; par
 Complete when two game instances join through the presented menu, not a privileged fixture route.
 
 ### [ ] T4 Ground lobby and private-hand interactions
+
+Native projection refresh (`ca4ac98`): changed live projections rebuild viewer-scoped roots, text, materials and drag authority while preserving camera/render target/lighting. Renderer-world regression verifies removed cards do not survive and the camera does; 19 native library tests passed. Current whole-scene rebuilding is not optimized pose streaming or live two-process input evidence.
 
 Unseated-viewer correction: native_controller_from_observation previously rejected every viewer without a seat, including a newly created lobby. NativeController now represents issuing_seat as Option<SeatId>; existing seated constructor delegates to try_new_viewer. Unseated viewers receive no first-owned card, cannot commit named/drag plays, and get lobby/spectator guidance instead of card-play instructions. Native regression executes CreateRoom -> TakeSeat -> ReleaseSeat through the device client and constructs the projection at each step, verifying optional seat authority and unseated play denial. All 18 native lib tests passed; final CLI check passed after guidance-text adjustment. This fixes the data-path blocker but is not yet a captured successful menu-to-lobby transition, spectator capsule implementation or pointer-input acceptance.
 
@@ -203,12 +213,6 @@ Validation: `cargo test --workspace --locked`; `cargo run --locked -p poche-xtas
 Complete when all tasks/gates have evidence, failures are resolved or honestly scoped, fresh captures inspected, docs reproduce two-window play and recovery, and final three-pass audit is recorded.
 
 ## Acceptance matrix and risks
-
-### Native projection refresh checkpoint (2026-09-09)
-
-- Fixed scene lifecycle: changed live projections rebuild viewer-scoped object roots, attached text, materials, and drag authority while preserving the camera/render target and lighting. Previously only transforms of startup entities changed, leaving membership and labels stale after seating/dealing.
-- Added a renderer-world regression which replaces a projection containing cards with one without cards, verifies old roots are destroyed, and verifies the camera survives. Native library suite: 19 passed. This is not live two-process, graphical input, or crash recovery evidence; those gates remain pending.
-- Current implementation rebuilds the scene on projection changes; incremental asset reuse/performance remains a follow-up, not a claim of optimized continuous pose synchronization.
 
 | Surface | Required evidence | Current evidence |
 | --- | --- | --- |

@@ -5,8 +5,8 @@ use crate::{
     ApplicationIdentity, PublicRoomMetadata, PublishedRoom, RoomNetwork, RunningDeviceService,
     VeilidDeviceNode, VeilidDeviceService, VeilidRendezvous,
 };
-use poche_player_client::DeviceClientError;
-use poche_protocol::{PrincipalId, RoomId};
+use poche_player_client::{DeviceClientError, DeviceProfile};
+use poche_protocol::RoomId;
 use poche_runtime::{
     CertifiedDeviceRoom, LoopbackCodec, OracleRoomActionSource, OracleSessionGame,
     RuntimeLoopbackDeviceAdapter,
@@ -55,23 +55,30 @@ pub async fn publish_device_room(
         .await
         .map_err(|_| DeviceClientError::TransportUnavailable)?;
     let service = (|| {
+        let clock = authority_profile("clock")?;
+        let environment = authority_profile("game")?;
         let proof = published
             .room_code()
             .admission_proof()
             .map_err(|_| DeviceClientError::ProtocolViolation)?;
         let mut state = SessionState::<OracleSessionGame<2>>::pending(
             room_id,
-            PrincipalId::new("clock").map_err(|_| DeviceClientError::ProtocolViolation)?,
-            PrincipalId::new("game").map_err(|_| DeviceClientError::ProtocolViolation)?,
+            clock.player_id.clone(),
+            environment.player_id.clone(),
         );
         state.invites.push(
             InviteRecord::new_reusable(proof.expose(), u64::MAX)
                 .map_err(|_| DeviceClientError::ProtocolViolation)?,
         );
         let actions = OracleRoomActionSource::new(seed, 2, proof.expose(), 30, "countdown")?;
-        Ok::<_, DeviceClientError>(VeilidDeviceService::new(CertifiedDeviceRoom::new(
-            RuntimeLoopbackDeviceAdapter::new(state, actions, LoopbackCodec::CanonicalNdjson),
-        )))
+        let mut room = CertifiedDeviceRoom::new(RuntimeLoopbackDeviceAdapter::new(
+            state,
+            actions,
+            LoopbackCodec::CanonicalNdjson,
+        ));
+        room.enroll_authority_service(&clock)?;
+        room.enroll_authority_service(&environment)?;
+        Ok::<_, DeviceClientError>(VeilidDeviceService::new(room))
     })();
     match service {
         Ok(service) => Ok((published, service.serve(node.clone(), incoming))),
@@ -80,4 +87,59 @@ pub async fn publish_device_room(
             Err(error)
         }
     }
+}
+
+// Internal reducer services, not recoverable player identities or network
+// signers. Their certificates only authorize the bounded local scheduler.
+fn authority_profile(label: &str) -> Result<DeviceProfile, DeviceClientError> {
+    use ed25519_dalek::{Signer as _, SigningKey};
+    use poche_protocol::*;
+    let key = || -> Result<SigningKey, DeviceClientError> {
+        let mut seed = [0; 32];
+        getrandom::fill(&mut seed).map_err(|_| DeviceClientError::KeyUnavailable)?;
+        Ok(SigningKey::from_bytes(&seed))
+    };
+    let root = key()?;
+    let device = key()?;
+    let encryption = key()?;
+    let hex = |bytes: &[u8]| data_encoding::HEXLOWER.encode(bytes);
+    let invalid = |_| DeviceClientError::InvalidProfile;
+    let player_id = PrincipalId::new(hex(&root.verifying_key().to_bytes())).map_err(invalid)?;
+    let device_public = hex(&device.verifying_key().to_bytes());
+    let device_id = DeviceId::new(device_public.clone()).map_err(invalid)?;
+    let unsigned = UnsignedDeviceCertificateWire {
+        schema_version: REPLICATION_SCHEMA_VERSION_V1,
+        certificate_id: CertificateId::new(format!("service-{label}")).map_err(invalid)?,
+        player_id: player_id.clone(),
+        device_id: device_id.clone(),
+        device_signing_public_key: device_public,
+        device_encryption_public_key: hex(
+            &curve25519_dalek::montgomery::MontgomeryPoint::mul_base_clamped(encryption.to_bytes())
+                .to_bytes(),
+        ),
+        sequence: 1,
+        valid_from_membership_epoch: 1,
+        valid_through_membership_epoch: None,
+        capabilities: vec![DeviceCapabilityWire::Propose],
+        custody: DeviceCustodyWire::NativeLocal,
+        signature_intent: SignatureIntent {
+            domain_version: REPLICATION_SIGNATURE_DOMAIN_V1,
+            algorithm: SignatureAlgorithm::Ed25519,
+            key_id: player_id.clone(),
+        },
+    };
+    let bytes = canonical_device_certificate_bytes(&unsigned)
+        .map_err(|_| DeviceClientError::InvalidProfile)?;
+    let signature = SignatureBytes::new(hex(&root.sign(&bytes).to_bytes()))
+        .map_err(|_| DeviceClientError::InvalidProfile)?;
+    Ok(DeviceProfile {
+        schema_version: DeviceProfile::SCHEMA_VERSION_V1,
+        label: label.to_owned(),
+        player_id,
+        device_id,
+        certificate: unsigned
+            .attach_signature(signature)
+            .map_err(|_| DeviceClientError::InvalidProfile)?,
+        signing_key_handle: format!("ephemeral-authority-service:{label}"),
+    })
 }

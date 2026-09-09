@@ -60,8 +60,22 @@ where
         let api = node.api().clone();
         let task = node.runtime().spawn(async move {
             let mut calls = tokio::task::JoinSet::new();
+            let started = std::time::Instant::now();
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tokio::select! {
+                    _ = interval.tick() => {
+                        // No player command is invented here. Only explicitly
+                        // enrolled clock/environment services can act.
+                        let result = self.room.lock()
+                            .map_err(|_| DeviceClientError::TransportUnavailable)
+                            .and_then(|mut room| room.drive_authority_services_elapsed(
+                                4, started.elapsed(), std::time::Duration::from_secs(3)));
+                        if result.is_err() {
+                            eprintln!("poche: authority service tick failed");
+                        }
+                    }
                     call = incoming.recv(), if calls.len() < 4 => {
                         let Some(call) = call else { break; };
                         let service = self.clone();

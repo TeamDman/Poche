@@ -539,6 +539,24 @@ impl<G: SessionGame> InProcessAuthority<G> {
             .collect()
     }
 
+    /// Identity of the current countdown, including repeated uses of a token.
+    #[must_use]
+    pub fn current_countdown_revision(&self) -> Option<u64> {
+        if !matches!(
+            self.state.phase,
+            poche_session::SessionPhase::Countdown { .. }
+        ) {
+            return None;
+        }
+        self.committed_events.iter().rev().find_map(|entry| {
+            matches!(
+                entry.event.kind,
+                poche_session::SessionEventKind::CountdownArmed { .. }
+            )
+            .then_some(entry.revision)
+        })
+    }
+
     /// Process at most one authenticated transport input.
     ///
     /// # Errors

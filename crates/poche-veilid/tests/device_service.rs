@@ -273,6 +273,7 @@ fn device_dispatch_authenticates_before_returning_observations() {
         .unwrap();
         let invitation = published.room_code().encode().unwrap();
         let guest_node = client_node.clone();
+        let creator_node = server_node.clone();
         tokio::task::spawn_blocking(move || {
             std::thread::spawn(move || {
                 let guest_profile = test_profile(41);
@@ -329,12 +330,74 @@ fn device_dispatch_authenticates_before_returning_observations() {
                     103,
                 )
                 .unwrap();
-                let resumed = resumed.observe(&guest_room).unwrap();
-                assert!(resumed.projection.payload.members.iter().any(
-                    |member| member.principal_id == guest_id
-                        && member.connected
-                        && member.seat == Some(1)
-                ));
+                let resumed_view = resumed.observe(&guest_room).unwrap();
+                assert!(
+                    resumed_view
+                        .projection
+                        .payload
+                        .members
+                        .iter()
+                        .any(|member| member.principal_id == guest_id
+                            && member.connected
+                            && member.seat == Some(1))
+                );
+                let (mut creator, _) = poche_veilid::join_device(
+                    creator_node,
+                    test_profile(31),
+                    TestSigner(SigningKey::from_bytes(&[32; 32])),
+                    invitation.expose(),
+                    104,
+                )
+                .unwrap();
+                for (is_creator, action, command) in [
+                    (false, "room-ready", "guest-ready"),
+                    (true, "room-ready", "creator-ready"),
+                    (true, "countdown-arm", "creator-arm"),
+                ] {
+                    let client = if is_creator {
+                        &mut creator
+                    } else {
+                        &mut resumed
+                    };
+                    let view = client.observe(&guest_room).unwrap();
+                    assert!(matches!(
+                        client
+                            .invoke(&view, action, CommandId::new(command).unwrap())
+                            .unwrap(),
+                        DeviceActionResult::Committed { .. }
+                    ));
+                }
+                assert_eq!(
+                    resumed
+                        .observe(&guest_room)
+                        .unwrap()
+                        .projection
+                        .payload
+                        .phase,
+                    poche_protocol::RoomPhase::Countdown
+                );
+                let deadline = std::time::Instant::now() + Duration::from_secs(8);
+                loop {
+                    let view = resumed.observe(&guest_room).unwrap();
+                    if view.projection.payload.phase == poche_protocol::RoomPhase::Running {
+                        // The scheduler also drives the environment's deal;
+                        // wait for an actual hand, not merely GameStarted.
+                        if view
+                            .projection
+                            .payload
+                            .own_hand
+                            .as_ref()
+                            .is_some_and(|hand| !hand.cards.is_empty())
+                        {
+                            break;
+                        }
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "assembled service did not expire countdown and deal"
+                    );
+                    std::thread::sleep(Duration::from_millis(20));
+                }
             })
             .join()
             .unwrap();
