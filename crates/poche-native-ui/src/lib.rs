@@ -299,6 +299,30 @@ impl NativeController {
         self.accept_resolved(resolved, started)
     }
 
+    /// Resolve a live play proposal without changing presentation generation
+    /// or starting a committed animation. Authority observation owns acceptance.
+    pub fn prepare_drag(&self, object: CardObjectId, released_bounds: AabbMm) -> Result<CommittedPresentation, String> {
+        let play = resolve_drag_play(&self.layout, &self.scene,
+            self.issuing_seat.ok_or("unseated viewers cannot play cards")?, object, released_bounds)
+            .map_err(|finding| format!("{finding:?}"))?;
+        self.prepare_resolved(play)
+    }
+
+    pub fn prepare_named(&self, face: CardFace) -> Result<CommittedPresentation, String> {
+        let play = resolve_card_play(&self.layout, &self.scene,
+            self.issuing_seat.ok_or("unseated viewers cannot play cards")?, face)
+            .map_err(|finding| format!("{finding:?}"))?;
+        self.prepare_resolved(play)
+    }
+
+    fn prepare_resolved(&self, play: ResolvedCardPlay) -> Result<CommittedPresentation, String> {
+        if self.legal_plays.as_ref().is_some_and(|legal| !legal.contains(&play.face.code())) {
+            return Err(format!("{} was not advertised for this exact projection", play.face.label()));
+        }
+        let endpoint = reconstruct_animation_endpoint(&self.layout, play.record).map_err(|finding| format!("{finding:?}"))?;
+        Ok(CommittedPresentation { play, endpoint, generation: self.generation.saturating_add(1) })
+    }
+
     /// Return the first viewer-authorized card in the issuing hand.
     #[must_use]
     pub fn first_owned_face(&self) -> Option<CardFace> {
@@ -1755,7 +1779,7 @@ fn on_drag_drop(
         return;
     };
     let result = zone_center_card_bounds(controller.layout(), ZoneId::Play)
-        .and_then(|bounds| controller.commit_drag(card.0, bounds).map_err(|_| ()));
+        .and_then(|bounds| if live.is_some() { controller.prepare_drag(card.0, bounds) } else { controller.commit_drag(card.0, bounds) }.map_err(|_| ()));
     match result {
         Ok(committed) => {
             if let Some(mut live) = live
@@ -1783,7 +1807,8 @@ fn keyboard_input(
     }
     if keys.just_pressed(KeyCode::KeyP) {
         if let Some(face) = controller.first_owned_face() {
-            match controller.commit_named(face) {
+            let proposal = if live.is_some() { controller.prepare_named(face) } else { controller.commit_named(face) };
+            match proposal {
                 Ok(committed) => {
                     if let Some(mut live) = live
                         && let Err(error) = live.submit_play(&committed)
@@ -3014,6 +3039,13 @@ mod tests {
             .id;
         let bounds =
             zone_center_card_bounds(controller.layout(), ZoneId::Play).expect("play bounds");
+        let before_generation = controller.generation;
+        let before_finding = controller.last_finding.clone();
+        let proposed = controller.prepare_drag(object, bounds).expect("live drag proposal");
+        assert_eq!(proposed.play, controller.prepare_named(face).unwrap().play);
+        assert_eq!(controller.generation, before_generation);
+        assert_eq!(controller.last_finding, before_finding);
+        assert!(controller.committed.is_none(), "preparing a live proposal must not start a committed tween");
         let mut named = NativeController::try_new(
             controller.layout().clone(),
             controller.scene().clone(),
