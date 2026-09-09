@@ -89,6 +89,35 @@ fn room_service(
 }
 
 #[test]
+fn persistence_precedes_reply_and_failure_freezes_service_clones() {
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    let saves = Arc::new(AtomicUsize::new(0));
+    let saved = saves.clone();
+    let room_id = RoomId::new("durable-service").unwrap();
+    let service = room_service(&room_id, "test-invite").with_recovery_sink(move |snapshot| {
+        // Exercise the real serializable boundary; no private bytes are logged.
+        let bytes = serde_json::to_vec(snapshot).unwrap();
+        assert!(!bytes.is_empty());
+        if saved.fetch_add(1, Ordering::SeqCst) < 2 { Ok(()) }
+        else { Err(DeviceClientError::TransportUnavailable) }
+    }).unwrap();
+    assert_eq!(saves.load(Ordering::SeqCst), 1, "genesis saved before serving");
+    let clone = service.clone();
+    let profile = test_profile(31);
+    let request = sign_observation_request(
+        &profile, &room_id, 0, CorrelationId::new("durable-read").unwrap(),
+        DeviceObservationModeWire::Snapshot, &TestSigner(SigningKey::from_bytes(&[32; 32])),
+    ).unwrap();
+    let bytes = VeilidDeviceRequest::Observe(request).encode().unwrap();
+    assert!(matches!(VeilidDeviceReply::decode(&service.dispatch(&bytes).unwrap()).unwrap(), VeilidDeviceReply::Observation(_)));
+    assert_eq!(saves.load(Ordering::SeqCst), 2, "read replay state saved before response");
+    assert!(matches!(VeilidDeviceReply::decode(&service.dispatch(&bytes).unwrap()).unwrap(), VeilidDeviceReply::Unavailable));
+    assert!(matches!(VeilidDeviceReply::decode(&clone.dispatch(&bytes).unwrap()).unwrap(), VeilidDeviceReply::Unavailable));
+    assert_eq!(saves.load(Ordering::SeqCst), 3, "failed service cannot silently resume saving");
+    assert!(room_service(&room_id, "test-invite").with_recovery_sink(|_| Err(DeviceClientError::TransportUnavailable)).is_err());
+}
+
+#[test]
 fn device_dispatch_authenticates_before_returning_observations() {
     let profile = test_profile(31);
     let room_id = RoomId::new("device-service-test").unwrap();

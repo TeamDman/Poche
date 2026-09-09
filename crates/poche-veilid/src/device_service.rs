@@ -3,9 +3,11 @@
 
 use crate::{VeilidDeviceReply, VeilidDeviceRequest};
 use poche_player_client::DeviceClientError;
-use poche_runtime::{AdvertisedActionSource, CertifiedDeviceRoom};
+use poche_runtime::{AdvertisedActionSource, CertifiedDeviceRoom, CertifiedRoomRecovery};
 use poche_session::SessionGame;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+
+type RecoverySink = dyn Fn(&CertifiedRoomRecovery) -> Result<(), DeviceClientError> + Send + Sync;
 
 /// Lifetime of a bounded service task. Keep this beside the room, not the
 /// menu. Dropping it stops accepting calls and cancels the async handlers.
@@ -26,12 +28,16 @@ impl Drop for RunningDeviceService {
 /// observation requests while it fulfills a capture request.
 pub struct VeilidDeviceService<G: SessionGame, A> {
     room: Arc<Mutex<CertifiedDeviceRoom<G, A>>>,
+    recovery_sink: Option<Arc<RecoverySink>>,
+    recovery_failed: Arc<AtomicBool>,
 }
 
 impl<G: SessionGame, A> Clone for VeilidDeviceService<G, A> {
     fn clone(&self) -> Self {
         Self {
             room: Arc::clone(&self.room),
+            recovery_sink: self.recovery_sink.clone(),
+            recovery_failed: Arc::clone(&self.recovery_failed),
         }
     }
 }
@@ -45,7 +51,35 @@ where
     pub fn new(room: CertifiedDeviceRoom<G, A>) -> Self {
         Self {
             room: Arc::new(Mutex::new(room)),
+            recovery_sink: None,
+            recovery_failed: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Attach private durable storage before serving any requests. The initial
+    /// checkpoint must save successfully. A later failure freezes all clones;
+    /// only recovery from authenticated storage may start a new service.
+    pub fn with_recovery_sink(mut self, sink: impl Fn(&CertifiedRoomRecovery) -> Result<(), DeviceClientError> + Send + Sync + 'static) -> Result<Self, DeviceClientError> {
+        self.recovery_sink = Some(Arc::new(sink));
+        self.with_room(|_| Ok(()))?;
+        Ok(self)
+    }
+
+    fn with_room<T>(&self, operation: impl FnOnce(&mut CertifiedDeviceRoom<G, A>) -> Result<T, DeviceClientError>) -> Result<T, DeviceClientError> {
+        let mut room = self.room.lock().map_err(|_| DeviceClientError::TransportUnavailable)?;
+        if self.recovery_failed.load(Ordering::Acquire) {
+            return Err(DeviceClientError::TransportUnavailable);
+        }
+        let result = operation(&mut room);
+        // Persist even a denied operation: enrollment/replay metadata can have
+        // changed before rejection. Never release the lock before saving.
+        if let Some(sink) = &self.recovery_sink {
+            if room.durable_recovery().and_then(|snapshot| sink(&snapshot)).is_err() {
+                self.recovery_failed.store(true, Ordering::Release);
+                return Err(DeviceClientError::TransportUnavailable);
+            }
+        }
+        result
     }
 
     /// Serve a bounded callback queue with at most four concurrent calls.
@@ -68,9 +102,7 @@ where
                     _ = interval.tick() => {
                         // No player command is invented here. Only explicitly
                         // enrolled clock/environment services can act.
-                        let result = self.room.lock()
-                            .map_err(|_| DeviceClientError::TransportUnavailable)
-                            .and_then(|mut room| room.drive_authority_services_elapsed(
+                        let result = self.with_room(|room| room.drive_authority_services_elapsed(
                                 4, started.elapsed(), std::time::Duration::from_secs(3)));
                         if result.is_err() {
                             eprintln!("poche: authority service tick failed");
@@ -118,36 +150,16 @@ where
     pub fn dispatch(&self, bytes: &[u8]) -> Result<Vec<u8>, DeviceClientError> {
         let request = VeilidDeviceRequest::decode(bytes)?;
         let result = match request {
-            VeilidDeviceRequest::PhysicalPose(request) => self
-                .room
-                .lock()
-                .map_err(|_| DeviceClientError::TransportUnavailable)?
-                .physical_pose(&request)
+            VeilidDeviceRequest::PhysicalPose(request) => self.with_room(|room| room.physical_pose(&request))
                 .map(VeilidDeviceReply::PhysicalPose),
-            VeilidDeviceRequest::Observe(request) => self
-                .room
-                .lock()
-                .map_err(|_| DeviceClientError::TransportUnavailable)?
-                .observe(request)
+            VeilidDeviceRequest::Observe(request) => self.with_room(|room| room.observe(request))
                 .map(VeilidDeviceReply::Observation),
-            VeilidDeviceRequest::Invoke(request) => self
-                .room
-                .lock()
-                .map_err(|_| DeviceClientError::TransportUnavailable)?
-                .invoke(&request)
+            VeilidDeviceRequest::Invoke(request) => self.with_room(|room| room.invoke(&request))
                 .map(VeilidDeviceReply::Action),
-            VeilidDeviceRequest::Route(request) => self
-                .room
-                .lock()
-                .map_err(|_| DeviceClientError::TransportUnavailable)?
-                .change_route(request)
+            VeilidDeviceRequest::Route(request) => self.with_room(|room| room.change_route(request))
                 .map(VeilidDeviceReply::Route),
             VeilidDeviceRequest::Cooperate(call) => {
-                let prepared = self
-                    .room
-                    .lock()
-                    .map_err(|_| DeviceClientError::TransportUnavailable)?
-                    .prepare_cooperation(&call.certificate, &call.target_device, call.request);
+                let prepared = self.with_room(|room| room.prepare_cooperation(&call.certificate, &call.target_device, call.request));
                 prepared
                     .and_then(|prepared| prepared.execute())
                     .map(VeilidDeviceReply::Cooperation)
