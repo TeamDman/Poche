@@ -1391,6 +1391,7 @@ fn setup_native_scene(mut commands: Commands, surface: Res<NativeRenderSurface>)
             ..default()
         },
         Transform::from_xyz(-0.5, 1.8, 0.8).looking_at(Vec3::ZERO, Vec3::Y),
+        bevy::camera::visibility::RenderLayers::layer(0).with(1),
     ));
     commands.insert_resource(GlobalAmbientLight {
         color: Color::srgb(0.85, 0.88, 1.0),
@@ -1427,7 +1428,7 @@ fn update_hand_camera(
             .sum::<Vec3>()
             / cards.len() as f32;
         *transform =
-            Transform::from_translation(center + Vec3::Y * 0.45).looking_at(center, Vec3::Z);
+            Transform::from_translation(center + Vec3::Y * 0.15).looking_at(center, Vec3::Z);
         camera.viewport = Some(bevy::camera::Viewport {
             physical_position: UVec2::new(size.x / 5, size.y * 3 / 5),
             physical_size: UVec2::new(size.x * 3 / 5, size.y / 5),
