@@ -146,7 +146,7 @@ fn refresh_live_controls(
         .with_children(|bar| {
             bar.spawn((
                 Text::new("Drag a hand card to move it. While dragging: Shift = yaw, Ctrl = pitch, Alt = roll."),
-                TextFont { font_size: 14.0, ..default() },
+                TextFont { font_size: FontSize::Px(14.0), ..default() },
                 Node { width: percent(100.), ..default() },
             ));
             if live.room_invitation().is_some() {
