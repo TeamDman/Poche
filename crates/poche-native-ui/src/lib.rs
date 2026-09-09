@@ -1587,26 +1587,29 @@ fn poll_live_device(
     let Some(mut live) = live else {
         return;
     };
-    match live.poll() {
-        Ok(true) => match native_controller_from_observation(live.observation()) {
-            Ok(mut next) => {
-                let scene_changed =
-                    controller.scene != next.scene || controller.issuing_seat != next.issuing_seat;
-                next.last_finding = format!(
-                    "live device synchronized authority revision {}",
-                    live.observation().projection.current_revision
-                );
-                *controller = next;
-                if scene_changed {
-                    // Attached text is despawned with its parent. Keep the camera,
-                    // render target, lighting, and action controls intact.
-                    commands.run_system_cached(spawn_scene_objects);
-                }
+    let finding = match live.poll() {
+        Ok(false) => return,
+        Ok(true) => format!(
+            "live device synchronized authority revision {}",
+            live.observation().projection.current_revision
+        ),
+        // Poll may have received a newer valid projection before the error.
+        // Render that snapshot while retaining the visible failure message.
+        Err(error) => format!("live device error: {error}"),
+    };
+    match native_controller_from_observation(live.observation()) {
+        Ok(mut next) => {
+            let scene_changed =
+                controller.scene != next.scene || controller.issuing_seat != next.issuing_seat;
+            next.last_finding = finding;
+            *controller = next;
+            if scene_changed {
+                // Attached text is despawned with its parent. Keep the camera,
+                // render target, lighting, and action controls intact.
+                commands.run_system_cached(spawn_scene_objects);
             }
-            Err(error) => controller.last_finding = format!("live projection rejected: {error}"),
-        },
-        Ok(false) => {}
-        Err(error) => controller.last_finding = format!("live device error: {error}"),
+        }
+        Err(error) => controller.last_finding = format!("live projection rejected: {error}"),
     }
 }
 
@@ -2753,6 +2756,80 @@ mod tests {
             controller.commit_named(CardFace::new(12).expect("ace clubs")),
             Err("A♣ was not advertised for this exact projection".to_owned())
         );
+    }
+
+    #[test]
+    fn stale_native_action_does_not_kill_subsequent_observations() {
+        let (state, actor) = running_play_state();
+        let room = state.room_id.clone();
+        let other = state
+            .members
+            .iter()
+            .find(|member| member.principal_id != actor)
+            .unwrap()
+            .principal_id
+            .clone();
+        let profile = certified_profile(&actor, "stale-native", "66");
+        let sibling = certified_profile(&actor, "stale-sibling", "77");
+        let peer = certified_profile(&other, "stale-peer", "88");
+        let adapter = RuntimeLoopbackDeviceAdapter::new(
+            state,
+            OracleGameActionSource::default(),
+            LoopbackCodec::Typed,
+        );
+        for profile in [&profile, &sibling, &peer] {
+            adapter.enroll(profile).unwrap();
+        }
+        let mut live = NativeLiveDevice::connect(
+            PlayerDeviceClient::new(profile, LoopbackDeviceTransport::new(adapter.clone()))
+                .unwrap(),
+            room.clone(),
+        )
+        .unwrap();
+        let mut sibling =
+            PlayerDeviceClient::new(sibling, LoopbackDeviceTransport::new(adapter.clone()))
+                .unwrap();
+        let mut peer =
+            PlayerDeviceClient::new(peer, LoopbackDeviceTransport::new(adapter)).unwrap();
+        let stale_action = live.observation().actions[0].id.clone();
+        let view = sibling.observe(&room).unwrap();
+        sibling
+            .invoke(
+                &view,
+                &stale_action,
+                CommandId::new("sibling-first").unwrap(),
+            )
+            .unwrap();
+        // Deliberately do not poll the native projection before submitting.
+        live.submit_action(&stale_action).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Err(error) = live.poll() {
+                assert!(error.contains("stale"), "unexpected worker error: {error}");
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let next = peer.observe(&room).unwrap();
+        let result = peer
+            .invoke(
+                &next,
+                &next.actions[0].id,
+                CommandId::new("peer-after-stale").unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            result,
+            poche_player_client::DeviceActionResult::Committed { .. }
+        ));
+        let expected = peer.observe(&room).unwrap().projection.current_revision;
+        while live.observation().projection.current_revision < expected {
+            live.poll().expect("worker survives rejected stale command");
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(live.observation().projection.current_revision, expected);
     }
 
     #[test]

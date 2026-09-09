@@ -68,8 +68,9 @@ impl NativeLiveDevice {
             .name("poche-native-device".to_owned())
             .spawn(move || {
                 let mut latest_revision = initial_revision;
+                let mut retry_delay = Duration::from_millis(50);
                 loop {
-                    match command_rx.recv_timeout(Duration::from_millis(50)) {
+                    match command_rx.recv_timeout(retry_delay) {
                         Ok(NativeWorkerCommand::Invoke {
                             observation,
                             action_id,
@@ -79,6 +80,7 @@ impl NativeLiveDevice {
                             match result {
                                 Ok(result) => match client.observe(&room_id) {
                                     Ok(observation) => {
+                                        retry_delay = Duration::from_millis(50);
                                         latest_revision = observation.projection.current_revision;
                                         if event_tx
                                             .send(NativeWorkerEvent::Updated {
@@ -91,21 +93,35 @@ impl NativeLiveDevice {
                                         }
                                     }
                                     Err(error) => {
-                                        let _ = event_tx
-                                            .send(NativeWorkerEvent::Failed(error.to_string()));
-                                        break;
+                                        if event_tx
+                                            .send(NativeWorkerEvent::Failed(error.to_string()))
+                                            .is_err()
+                                            || !retryable_observation_error(error)
+                                        {
+                                            break;
+                                        }
+                                        retry_delay = Duration::from_millis(500);
                                     }
                                 },
                                 Err(error) => {
-                                    let _ =
-                                        event_tx.send(NativeWorkerEvent::Failed(error.to_string()));
-                                    break;
+                                    // Never replay a possibly committed write.
+                                    // Resume reads and let the user act on the
+                                    // refreshed authority projection instead.
+                                    if event_tx
+                                        .send(NativeWorkerEvent::Failed(error.to_string()))
+                                        .is_err()
+                                        || !retryable_observation_error(error)
+                                    {
+                                        break;
+                                    }
+                                    retry_delay = Duration::from_millis(500);
                                 }
                             }
                         }
                         Err(mpsc::RecvTimeoutError::Timeout) => {
                             match client.wait(&room_id, latest_revision) {
                                 Ok(observation) => {
+                                    retry_delay = Duration::from_millis(50);
                                     latest_revision = observation.projection.current_revision;
                                     if event_tx
                                         .send(NativeWorkerEvent::Observed(Box::new(observation)))
@@ -119,9 +135,14 @@ impl NativeLiveDevice {
                                     | DeviceClientError::StaleRevision,
                                 ) => {}
                                 Err(error) => {
-                                    let _ =
-                                        event_tx.send(NativeWorkerEvent::Failed(error.to_string()));
-                                    break;
+                                    if event_tx
+                                        .send(NativeWorkerEvent::Failed(error.to_string()))
+                                        .is_err()
+                                        || !retryable_observation_error(error)
+                                    {
+                                        break;
+                                    }
+                                    retry_delay = Duration::from_millis(500);
                                 }
                             }
                         }
@@ -239,4 +260,14 @@ impl NativeLiveDevice {
     pub const fn last_result(&self) -> Option<&DeviceActionResult> {
         self.last_result.as_ref()
     }
+}
+
+// Authentication and protocol failures must not be treated as network jitter.
+fn retryable_observation_error(error: DeviceClientError) -> bool {
+    matches!(
+        error,
+        DeviceClientError::TransportUnavailable
+            | DeviceClientError::StaleRevision
+            | DeviceClientError::NoProgress
+    )
 }
