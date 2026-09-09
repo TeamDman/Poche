@@ -1036,6 +1036,19 @@ where
         })
     }
 
+    /// Remaining peer identities from recovered reducer membership, not the
+    /// enrollment cache. Disconnected members may prove survival by a fresh
+    /// signed handshake; departed members and authority services cannot.
+    pub fn recovery_peers(&self, creator: &PrincipalId) -> Result<Vec<PrincipalId>, DeviceClientError> {
+        let shared = self.adapter.shared.lock().map_err(|_| DeviceClientError::TransportUnavailable)?;
+        let state = &shared.authority.state;
+        if matches!(state.phase, SessionPhase::Closed)
+            || !state.members.iter().any(|member| member.host && &member.principal_id == creator) {
+            return Err(DeviceClientError::AuthorizationDenied);
+        }
+        Ok(state.members.iter().filter(|member| &member.principal_id != creator).map(|member| member.principal_id.clone()).collect())
+    }
+
     /// Decode only after storage authentication. Genesis and action-source
     /// configuration belong to the enclosing versioned room format.
     pub fn from_durable_recovery(initial: SessionState<G>, action_source: A, recovery: CertifiedRoomRecovery, codec: LoopbackCodec) -> Result<Self, DeviceClientError> {
@@ -3027,6 +3040,7 @@ mod tests {
         adapter.enable_physical_identities([92; 32]).unwrap();
         adapter.enroll(&host_profile).unwrap();
         adapter.enroll(&guest_profile).unwrap();
+        let recovery_creator = host_profile.player_id.clone();
         let mut host =
             PlayerDeviceClient::new(host_profile, LoopbackDeviceTransport::new(adapter.clone()))
                 .unwrap();
@@ -3082,7 +3096,10 @@ mod tests {
         }
 
         invoke!(host, "room-create", "service-create");
+        assert!(certified.recovery_peers(&recovery_creator).unwrap().is_empty(), "enrollment alone is not membership");
         invoke!(guest, "room-join", "service-join");
+        assert_eq!(certified.recovery_peers(&recovery_creator).unwrap(), vec![guest_profile.player_id.clone()]);
+        assert!(certified.recovery_peers(&guest_profile.player_id).is_err(), "a guest cannot claim creator recovery");
         let chat_observation = host.observe(&room_id).unwrap();
         assert_eq!(chat_observation.action_templates.len(), 1);
         assert_eq!(chat_observation.action_templates[0].id, "chat-send");

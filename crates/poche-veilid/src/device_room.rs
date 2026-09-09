@@ -35,6 +35,22 @@ struct DesktopRoomRecovery {
 }
 
 impl DesktopRoomGenesis {
+    /// Assemble a gated recovered service without publishing its route. The
+    /// caller must authenticate/decrypt storage and own the original route
+    /// capability; expiry/disband persistence remains the lifecycle owner's job.
+    pub fn recovered_service(bytes: &[u8], creator: &poche_protocol::PrincipalId, grace: std::time::Duration,
+        writer: impl Fn(&DesktopRoomGenesis, &poche_runtime::CertifiedRoomRecovery) -> Result<(), DeviceClientError> + Send + Sync + 'static,
+    ) -> Result<(Self, VeilidDeviceService<OracleSessionGame<2>, OracleRoomActionSource>), DeviceClientError> {
+        let (genesis, room) = Self::decode_recovery(bytes)?;
+        let peers = room.recovery_peers(creator)?;
+        if peers.is_empty() { return Err(DeviceClientError::AuthorizationDenied); }
+        let presence = crate::RecoveryPresence::new(creator, peers, std::time::Duration::ZERO, grace)?;
+        let saved_genesis = genesis.clone();
+        let service = VeilidDeviceService::new(room)
+            .with_recovery_sink(move |recovery| writer(&saved_genesis, recovery))?
+            .awaiting_survivor(presence)?;
+        Ok((genesis, service))
+    }
     pub fn room_id(&self) -> &RoomId { &self.room_id }
     /// Private invitation recovered for the same room, not a new invitation.
     pub fn invitation(&self, now_unix_ms: u64) -> Result<crate::RoomCode, DeviceClientError> {
@@ -263,6 +279,10 @@ mod recovery_tests {
         let room = genesis.fresh_room().unwrap();
         let before = room.durable_recovery().unwrap();
         let encoded = genesis.encode_recovery(&before).unwrap();
+        assert!(DesktopRoomGenesis::recovered_service(&encoded,
+            &poche_protocol::PrincipalId::new("not-the-creator").unwrap(), std::time::Duration::from_secs(60),
+            |_, _| panic!("invalid recovery must not persist or start serving"),
+        ).is_err());
         let (restored_genesis, restored) = DesktopRoomGenesis::decode_recovery(&encoded).unwrap();
         assert!(serde_json::to_value(&genesis).unwrap() == serde_json::to_value(&restored_genesis).unwrap());
         let mut original = serde_json::to_value(&before).unwrap();
