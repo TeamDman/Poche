@@ -1052,13 +1052,8 @@ where
         // Preserve accepted poses when cards leave hands. Only a new deal
         // identity epoch invalidates the old deck's poses (at most 52 entries).
         // Publication of played-card poses remains a separate privacy boundary.
-        if shared.physical_pose_epoch != Some(pose_epoch) {
-            shared.physical_poses.clear();
-            shared.physical_pose_epoch = Some(pose_epoch);
-        }
-        shared
-            .physical_poses
-            .insert(request.card_id.clone(), accepted.clone());
+        let SharedLoopbackState { physical_poses, physical_pose_epoch, .. } = &mut *shared;
+        retain_accepted_pose(physical_poses, physical_pose_epoch, pose_epoch, request.card_id.clone(), accepted.clone());
         Ok(accepted)
     }
 
@@ -1966,6 +1961,20 @@ where
     })
 }
 
+fn retain_accepted_pose(
+    poses: &mut BTreeMap<String, poche_player_client::PhysicalPoseState>,
+    current_epoch: &mut Option<u64>,
+    epoch: u64,
+    card: String,
+    pose: poche_player_client::PhysicalPoseState,
+) {
+    if *current_epoch != Some(epoch) {
+        poses.clear();
+        *current_epoch = Some(epoch);
+    }
+    poses.insert(card, pose);
+}
+
 fn physical_hands<G: SessionGame, A>(
     shared: &SharedLoopbackState<G, A>,
     projection: &ProjectionEnvelope,
@@ -2107,6 +2116,25 @@ fn denial_code(reason: poche_protocol::DenyReason) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn accepted_pose_retention_is_deal_scoped_not_hand_scoped() {
+        let pose = poche_player_client::PhysicalPoseState {
+            device: poche_protocol::DeviceId::new("pose-device").unwrap(),
+            generation: 1, sequence: 1,
+            position_mm: [100, 200, 300], rotation_millidegrees: [10, 20, 30],
+        };
+        let mut poses = std::collections::BTreeMap::new();
+        let mut epoch = None;
+        super::retain_accepted_pose(&mut poses, &mut epoch, 7, "played-card".to_owned(), pose.clone());
+        super::retain_accepted_pose(&mut poses, &mut epoch, 7, "hand-card".to_owned(), pose.clone());
+        assert_eq!(poses.len(), 2);
+        assert_eq!(poses.get("played-card"), Some(&pose));
+        super::retain_accepted_pose(&mut poses, &mut epoch, 8, "new-deal-card".to_owned(), pose.clone());
+        assert_eq!(poses.len(), 1);
+        assert!(!poses.contains_key("played-card"));
+        assert_eq!(epoch, Some(8));
+    }
+
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use ed25519_dalek::{Signer, SigningKey};
