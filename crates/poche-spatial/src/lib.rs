@@ -15,6 +15,7 @@ mod hash;
 mod identity;
 mod interaction;
 mod layout;
+mod manipulation;
 mod realization;
 mod scene;
 mod units;
@@ -30,6 +31,9 @@ pub use interaction::{
 };
 pub use layout::{
     LayoutError, SeatPlacement, SpatialLayout, ZoneClassification, ZoneVolume, registered_layout,
+};
+pub use manipulation::{
+    CardManipulation, ManipulationError, ManipulationPose, RotationMilliDegrees, hand_owner,
 };
 pub use realization::{
     PlayedCardProjection, PlayerSpatialProjection, RealizationError, RevealedWonCard,

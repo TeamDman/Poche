@@ -1,0 +1,173 @@
+# Desktop Veilid lobby and recovery
+
+**Plan status:** Active; user authorized goal execution
+**Primary implementation root:** `D:\Repos\Games\poche-3`, `model-checking`
+**Last updated:** 2026-09-09
+**Intent audit:** Three passes completed for the September restart; scope gates pending
+
+## Authorized execution contract
+
+User explicitly requested setting the goal and proceeding after the final scope summary. G1 uses automatic protected same-device identity recovery; recovery-code export is outside this goal. G3 uses strict hand privacy in this desktop slice; retain legacy grant experiments without exposing them here. G4 requires two real desktop processes, create/join/seats/deal, synchronized full position/rotation manipulation and cross-viewport dragging, successful legal play and denied out-of-turn play without logical mutation, reveal, or forced snap-back. A complete trick is a validation witness, not a promise to finish all remaining full-game UX. G2's lifetime decision is confirmed; implement and document failure-detection and replication details before claiming recovery. These resolutions supersede the alternative proposals in the historical gate rows below. No further user approval is required for reversible internal choices within this scope.
+
+Execution audit: rechecked U1-U17 extraction against the available September exchange; mapped each to tasks/gates; checked inverse scope for web removal, recovery export, shared versus local motion, physical/logical independence, and privacy. User approval closes product-scope questions; technical gates remain evidence obligations, not requests to reopen the agreed goal.
+
+## How to update this plan
+
+- `[ ]` Not started; `[~]` in progress; `[x]` complete; `[!]` blocked with evidence and unblock condition.
+- Update task headings and completion notes together. Keep one implementation focus.
+- Record actual commands, outcomes, decisions, commits, and exceptions under their task, not in a detached log.
+- A phase is complete only when all its tasks are complete. Do not infer completion from older plans.
+- The plan is only ready once we have literally triple checked that no intent from the user has been omitted without explicit direction from the user.
+
+## Intent audit evidence
+
+1. Extraction: inspected the available September research/restart messages through the crash-rejoin suggestion. Captured desktop preference, corrected reference path, Bevy patch request, clipboard qualifier, spatial agency, spectators, recovery, and the tentative nature of name/secret authentication as U1-U12.
+2. Traceability: every row below maps to a task or gate. Recommendations (one-trick slice, recovery-code design, Windows-first support) are explicitly not user-approved requirements.
+3. Adversarial review: checked that leaving is not permanent, an invitation is not a player credential, multiple devices retain agency, mock nodes do not connect separate processes, and a camera layer does not provide secrecy. Preserved prior work rather than declaring all historic features deleted.
+Source boundary: the September user messages are available. Prior requirements remain in the existing plans, especially PLAN-5-LIVE-CONTROL-PUPPETS.md; its ledger was inspected. This is not a new certification of every historic implementation or an exhaustive re-audit of all five plans.
+
+Amendment audit (September 9): extraction added U13 from the explicit everyone-leaves clarification; traceability maps it to G2/T5; adversarial review preserves crash recovery while peers remain, distinguishes intentional departure from temporary loss, and does not infer that cached DHT data resurrects a disbanded room. Rechecked U1-U12 mappings; other gates remain open.
+
+Movement amendment audit: extraction added U14-U17 from the user's correction of the proposed legal-play-only/local-rearrangement scope. Traceability maps these to T4a/T4b and G4. Adversarial pass rechecked all ledger mappings and preserved cross-client (not merely local) motion, rotation as well as position, one shared world across viewports, and the tentative 'perhaps' concerning denied-play physical pose. No implementation/proof is claimed by this audit.
+
+## Purpose and guidance ledger
+
+Create a coherent desktop experience: independently launched games create/join a lobby, occupy seats around a table, and recover player identity after a crash. Preserve the independently executable rules and formal evidence.
+
+| ID | Guidance and qualifier | Coverage |
+| --- | --- | --- |
+| U1 | Prioritize desktop; dropping web support may be best. | T1/T6: desktop is this slice; preserve existing web sources, do not silently delete or promise maintenance. |
+| U2 | Bevy stays; update to 0.19.1. | T1 |
+| U3 | Understand transport abstraction and exploit new Veilid local testing. | T2; one real adapter exercised by mock and live core; retain device semantics. |
+| U4 | Open two games to a main menu; Create lobby produces a code with Copy. | T3/T6; distinct profiles for two local players. |
+| U5 | Join lobby reads clipboard and prefills a text area iff expected format matches; user clicks Join. | T3; no automatic joining or logging arbitrary clipboard content. |
+| U6 | Both windows show a table, seats, and seat-taking. | T4/T6; seat conflicts explicitly rejected. |
+| U7 | Tabletop-style object actions have permissions; Poche forbids spawning after initial deck and revealing hand cards except by playing. | T4/G3; no unrestricted spawn endpoint; independent validation, not only disabled controls. |
+| U8 | Cards grounded in 3D; knowing faces and positioning cards are engine permissions. A second camera may show the hand at the bottom without background clutter. | T4; camera is an optional rendering technique, not secrecy; shared identity, no duplicate canonical cards. |
+| U9 | Spectators are spatial participants, e.g. capsules around the room until seated. | T4 |
+| U10 | Crash must allow rejoining; perhaps use the same name and secret. | G1/G2/T5; required recovery outcome, tentative credential mechanism. |
+| U11 | Research paths: D:\Repos\rust\veilid, D:\Repos\rust\makepad, D:\Repos\Games\bevy, corrected D:\Repos\Games\bevy_veilid, G:\Programming\Repos\ash. bevy_veilid is reference-only, not a dependency. | T1/T2; Bevy selected, alternatives not an implementation obligation. |
+| U12 | Use G:\Programming\Repos\skills\.github\skills\resumable-implementation-plans\SKILL.md to stay on track. | This living contract and T6 audit. |
+| U13 | If everyone leaves the lobby it gets disbanded. | G2/T5: no requirement to restore an empty room later; credentials do not resurrect a disbanded room. |
+| U14 | Physical location is position plus rotation; logical location is hand, deck at index n, or in play. Rules use logical location. | T4a; supersedes agent suggestion to restrict movement to legal play/local-only arrangement. |
+| U15 | Wiggling a hand card in one client must be visible in the other client. | T4a/T6; shared authorized poses even when logical state does not change; hidden faces remain hidden. |
+| U16 | Dragging hand-to-table crosses camera viewports whose projections map to the same 3D space. | T4b; continuous same-card drag, no canonical duplication or unrelated local coordinate state. |
+| U17 | Entering the play area attempts a rules action; if not the player's turn, perhaps logical position stays unchanged even though physical position changed. | T4a/T4b; separate pose acceptance and play acceptance. Proposed MVP preserves allowed pose on denial with explicit status; no implicit reveal. |
+
+Inherited constraints: MPL-2.0; one poche executable with CLI and GUI; Figue/Teamy CLI conventions; no Vox/local-instance control foundation; distinct authorized device keys per player, no extra votes from extra devices; typed observations/actions; same-player capture protocol; windowless puppets; preserve model scopes and independent oracles. Previous leave clarification remains: voluntary leavers may rejoin as spectators and take a seat at an appropriate phase; crash reconnect is distinct from voluntary leave, kick, or revoked credentials.
+
+## Verified foundation, not fresh test evidence
+
+- Workspace pins Bevy `=0.19.0`; lockfile agrees. crates.io API reports stable 0.19.1 on September 9.
+- `crates/poche-native-ui/src/native_live.rs`: worker-thread bridge generic over DeviceTransport. CLI `cli/live_device.rs` concretely selects HTTP today.
+- `crates/poche-runtime/src/oracle_session.rs`: pure rules adapter; renderer does not own legality or scoring.
+- `crates/poche-player-client/src/protected_store.rs`: public profiles reference protected key storage; existing API deliberately has no secret export. Name/password recovery does not already exist merely because profiles do.
+- `crates/poche-veilid`: optional native probes, not the default GUI transport.
+- Veilid upstream 99c9616295f9195c97bf2f5f6b43f0d220ac5d8b has mock-api and faults; published core is still 0.5.7. Mock shared state is process-local; separate game processes require actual networking.
+- PLAN-5 is marked complete historically. Previously reported external full-game PUPPET-NO-ACTION needs fresh reproduction; do not claim it fixed or assign a cause without evidence.
+- No build or test was run while creating this document.
+
+## Gates: close before affected implementation
+
+| Gate | Required choice / proposed default | Acceptance consequence |
+| --- | --- | --- |
+| G1 Recovery UX | Recommend automatic same-device recovery from protected persistent profile; optional generated high-entropy recovery code for lost profile/new device, not a user-chosen password. Name is a label. User's name+secret proposal remains tentative. | Restore same principal without name impersonation; lost-secret behavior, credential scope, export consent, revocation and device enrollment tests. Never silently add export to existing non-exportable keys. |
+| G2 Failure contract — lifetime scope settled, protocol details open | U13: everyone leaving disbands the lobby; durable all-peer shutdown/resume is not required. Participant crash recovery remains required while peers retain the room, including creator failure. Proposed policy: explicit final departure closes immediately; unexpected loss uses a bounded reconnect grace period, not instantaneous disbanding on a missed message. Choose timeout, partition-safe membership/expiry rules, seat retention, absence progression, snapshot verification and replay deduplication before implementation. | Killed process rejoins with correct entitled state while room survives; final departure and timeout cases cannot revive a closed room through stale invitations/DHT records. Revoked devices denied; creator failure covered without claiming consensus/failover already solved. |
+| G3 Reveal policy | Latest Poche example disallows hand reveal except play; earlier plans supported spectator hand grants. Confirm strict default Poche mode versus removing grants entirely. | No newly enabled reveal bypass; do not silently remove previous policy features or equate render visibility with authorization. |
+| G4 Slice endpoint — movement clarified | User requires two instances create/join and move cards, specifically synchronized physical poses distinct from logical rules state (U14-U17). Include ready/deal to exercise hand-to-play valid and out-of-turn attempts; one complete trick remains an agent-proposed acceptance witness, not a full-game promise. | Local-only wiggle or legal-action-only dragging does not pass. End-to-end acceptance covers accepted pose with rejected play as well as a successful play. |
+
+Working support assumption: Windows desktop first (two local independent processes); no web acceptance in this slice, no Makepad/ash migration, no generalized tabletop editor, new RL learner, or new mental-poker protocol. Network transport is not itself decentralized game authority. Preserve existing consensus/security work without claiming it production-ready.
+
+## Tasks and validation
+
+All commands run from the primary root. Commands below are existing package surfaces, not claimed successful results. Add exact new test/launch commands alongside implementation before marking done; never invent a passing future harness invocation.
+
+### [~] T1 Update Bevy and establish baseline
+
+Completion notes: goal activated September 9 after explicit user approval. Starting tree contains only this newly authored plan as untracked work. Root Bevy pin updated to 0.19.1; lock resolution and tests pending. User permits updating local Bevy reference checkout, but preserve its untracked assets and do not use a local path dependency.
+
+Dependency resolution: sandbox network attempt failed; approved network retry `cargo update -p bevy --precise 0.19.1` succeeded, updating the Bevy family and adding its clipboard transitive packages. `cargo test --locked -p poche-native-ui -p poche-puppet -p poche-capture` is building (terminal session 80091); not yet a passing result.
+
+Baseline result: session 80091 completed successfully: capture 8, native UI 14, headless puppet 4 passed; six browser/external/GPU tests explicitly ignored. This proves baseline source compatibility, not real Veilid or GPU rendering. Session 19407 `cargo test --locked -p poche-spatial --offline` completed: 31 passed including all three new manipulation tests. Windowless GPU acceptance launched separately; T1 remains in progress pending capture inspection and remaining baseline checks.
+
+T2 reconnaissance while baseline compiles: `replicated.rs` requires strict player-majority and joint membership quorums; in a two-player room one survivor cannot finalize new logical actions alone. Preserve safety: recovery may retain the room while waiting for the other player; do not silently lower quorum to claim availability. Creator restart must not depend on the creator retaining the only copy of accepted state. `bin/native_smoke.rs` currently has a HostRuntime with one InProcessAuthority and is not failover evidence. Resolve and test the replica/recovery path before T2 completion.
+
+Work: inspect current dirty state, workflow `.github/workflows/pages.yml`, dependency pins, and native captures. Update root Cargo.toml/lockfile to 0.19.1 without sibling path dependencies. Reproduce historical puppet failure separately.
+
+Validation: `cargo test --locked -p poche-native-ui -p poche-puppet -p poche-capture`; `cargo run --locked -p poche-cli -- --help`. Inspect fresh windowless captures via view_image. Network dependency download may be required; do not force offline before cache exists.
+
+Complete when patch is locked, source builds, baseline results and any failures are recorded with exact commands. No claim of upgrade verification from manifest edit alone.
+
+### [ ] T2 Establish Veilid device transport
+
+Work: close G2 architecture portion; adapt poche-player-client/poche-veilid boundary without Bevy dependencies in protocol/core. Pin reviewed upstream mock-capable revision; isolate mock feature builds from real builds. Background service owns networking; typed proposals/observations cross the UI boundary. Read bevy_veilid only for task/event bridging inspiration.
+
+Validation: `cargo test --locked -p poche-player-client -p poche-veilid`; add adapter tests for distinct devices, exact-recipient views, stale/duplicate actions, injected failures and recovery. Record actual mock-feature command once implemented. Separate opted-in two-process real-network acceptance from offline mock harness; respect existing public-network opt-in guards.
+
+Complete when same adapter passes mock tests and actual two-process exchange, with topology documented. HTTP tests alone do not satisfy it.
+
+### [ ] T3 Implement desktop menu and invitation contract
+
+Work: name/profile selection, Create, Join, Copy, shape-gated clipboard prefill, explicit Join, connecting/error states. Invitation distinct from player recovery secret. Validate length/version/encoding before network use. Two instances can select independent profiles without accidentally sharing identity.
+
+Validation: `cargo test --locked -p poche-native-ui -p poche-player-client`; parser tests for malformed/oversized/unsupported codes; UI-input puppet tests for create/copy/prefill/join and clipboard refusal without secret logging.
+
+Complete when two game instances join through the presented menu, not a privileged fixture route.
+
+### [ ] T4 Ground lobby and private-hand interactions
+
+Work: close G3/G4. Table, seat claims, spectator capsules, local camera, ready/deal/actions as agreed. Card views share logical identity; render-layer proxies allowed. Authority checks movement/reveal/spawn separately. Render back-only opponent observations; never send faces and hide them with camera layers. Preserve action palette/CLI access beside spatial affordances.
+
+Validation: `cargo test --locked -p poche-session -p poche-runtime -p poche-spatial -p poche-native-ui`; `cargo run --locked -p poche-xtask -- coverage audit --all`. Add seat-race, illegal spawn/reveal, privacy and UI action tests. Update formal models/coverage for changed semantics with explicit scopes; screenshots do not prove secrecy.
+
+Complete when two windows agree on seating/public state while private hands and actions obey policy; actual input and captured output meet G4 endpoint.
+
+### [ ] T4a Separate shared poses from logical rules transitions
+
+Work: audit current poche-spatial refinement assumptions before changing them: geometry must no longer require logical location to follow every pose. Keep stable opaque card IDs, logical location (including deck index), and separately authorized world position/rotation. A pose update is not a bid/play/ownership change. Check manipulation permission independently from turn legality; disallow moving opponents' cards absent a grant. Pose traffic needs per-object/device ordering, bounded rate/coalescing, finite bounded coordinates and a convergent latest accepted pose; do not route every mouse sample through the scoring log. Record final accepted poses for reconnect. Resolve competing devices through explicit manipulation ownership/ordering, not packet-arrival accidents.
+
+Source inspection note: current `PoseMm` in `units.rs` supports yaw only. Introduce an explicit full-orientation manipulation representation rather than silently interpreting the user's rotation requirement as yaw alone; preserve v1 fixtures through an adapter/version boundary. `abstract_viewer_scene` already reads typed card locations but invokes scene validation: audit those validation assumptions before overlaying arbitrary permitted poses.
+
+Initial implementation (while T1 build runs): added `manipulation.rs` physical overlay with full yaw/pitch/roll, bounded position, monotonic per-lease sample sequence, explicit lease changes and play-region entry edges. It stores no card face/logical location and does not authenticate network senders: authorization must remain in the eventual transport/session integration. Added three unit tests for rejection atomicity, stale writers/samples, and no delayed automatic play. Not yet integrated into GUI/network; T4a remains incomplete. Spatial test command is waiting on the baseline build lock (session 19407); native baseline session 80091 has reached native UI compilation. Reference Bevy checkout now detached at b56fc29d3016e641754765244b5ba3f9cc504671 with untracked assets preserved.
+
+Validation: `cargo test --locked -p poche-spatial -p poche-session -p poche-runtime -p poche-player-client`; add invariants that pose-only actions leave logical rules state unchanged; stale/out-of-order packets cannot revert the settled pose; unauthorized poses are rejected. Two-client puppet wiggles position AND rotation during another player's turn and observes motion before drag release, with the remote side receiving only a back/opaque identity. Test convergence after reconnect.
+
+Complete when physical motion is shared without turn advancement, card reveal, ownership change or mutation of the rules-engine state. Update formal abstractions to represent pose-only stuttering of logical state; bounded geometry models and input/render tests provide separate evidence, not a proof of arbitrary continuous geometry.
+
+### [ ] T4b Bridge viewports and attempt play separately
+
+Work: use the hand and table cameras to project/unproject onto the same world with stable drag ownership and offset across the viewport boundary. Proxies may render the same card but must not create another logical object. Entering the play region creates a uniquely identified play attempt tied to the relevant rules revision; define edge-trigger/rearm behavior so holding a card there does not spam commands or automatically play it when the turn later changes. Proposed MVP default (from user's tentative example): an authorized pose may stay in the play area after rejection while the card logically stays in hand; visibly label 'not played' and offer return-to-hand. Face disclosure occurs only with accepted authorized reveal, even if a private card is rotated or moved to the center.
+
+Validation: `cargo test --locked -p poche-native-ui -p poche-spatial -p poche-runtime`; puppet actual viewport crossing, rotation, legal play, out-of-turn denial and repeated region entry. Compare both clients' poses and logical states; inspect screenshots of denied versus accepted play. Verify no automatic delayed play when actor changes and no secret face in remote payload/capture.
+
+Complete when both views show the same authorized world motion; only accepted rules commands change logical location. The hand camera may keep showing a logically owned but physically displaced card through a clearly identified proxy; document chosen representation rather than silently snapping it back.
+
+### [ ] T5 Implement crash/rejoin identity and state recovery
+
+Work: close G1/G2 fully. Persist credential references before admission succeeds; protect secrets, atomic profile writes, explicit recovery errors. Reconnect proves identity cryptographically, not by matching display name. New device enrollment must not clone a device identity or increase player rights/votes. Persist or reconstruct canonical accepted history and entitled private state according to agreed fault model. Distinguish disconnected, voluntarily left, kicked, and revoked.
+
+Validation: `cargo test --locked -p poche-player-client --features protected-store`; `cargo test --locked -p poche-session -p poche-runtime`. Add process-kill tests after join/deal/action submission, replay without double application, wrong-secret/name-collision/expired-invite/revoked-device cases, secret-redacted logs/captures, and agreed creator/all-peer failure cases. Use temporary test profiles, never overwrite user keyring entries.
+
+Complete when a killed/relaunched player resumes the same authorized identity/state within the agreed availability model; ordinary leave still permits spectator rejoin where allowed. Game state recovery must be proven independently of credential persistence.
+
+U13 acceptance: final intentional departure disbands the lobby; reuse of its invitation reports closed/unavailable rather than recreating it. A new lobby uses a fresh identity/invitation. No all-peer offline restoration promise. Add unexpected-all-peer-loss tests under the chosen grace/expiry policy, temporary partition tests that cannot independently finalize conflicting histories, creator crash with a surviving peer, and multiple-device presence tests (one device closing is not automatically its player's final departure). Grace duration and protocol remain design decisions, not user-confirmed timing requirements.
+
+### [ ] T6 Acceptance, docs, and handoff
+
+Work: one documented desktop launch path and windowless puppet invocation; run menu-to-G4 endpoint plus T5 failures. CLI is another authorized device, not window IPC. Capture screenshots and semantic revision/history evidence, inspect images, redact credentials. Update README/coverage/release notes; preserve prior web artifacts with explicit support scope. Review diff, commit scoped work and follow repository push workflow when implementing the agreed goal.
+
+Validation: `cargo test --workspace --locked`; `cargo run --locked -p poche-xtask -- coverage audit --all`; actual new end-to-end commands recorded here. Existing native test surface: `$env:WGPU_BACKEND='dx12'; cargo test --locked -p poche-puppet --test native_full_game -- --ignored --nocapture` (verify applicability before using it as new acceptance).
+
+Complete when all tasks/gates have evidence, failures are resolved or honestly scoped, fresh captures inspected, docs reproduce two-window play and recovery, and final three-pass audit is recorded.
+
+## Acceptance matrix and risks
+
+| Surface | Required evidence | Current evidence |
+| --- | --- | --- |
+| Single-process mock nodes | Real adapter, fault injection, identities and privacy | Pending |
+| Two Windows game processes | Real Veilid, UI menu/seats/agreed gameplay, crash recovery | Pending |
+| Windowless puppets | Same actions, no visible windows, actual GPU capture inspected | Pending |
+| CLI sibling device | Same authorization and observations, no extra vote weight | Pending |
+| Browser/other OS | Outside this slice; retain prior artifacts without claiming new validation | Not targeted |
+
+Critical risks: credential recovery without surviving room state (G2/T5); stolen recovery capability (G1/T5); same-process mock falsely proving interprocess networking (T2/T6); speculative animation mistaken for accepted play (T4); all peers receiving private faces (T4); name collision granting identity (T5); feature unification accidentally shipping mocks (T2); scope drifting into general engine/UI rewrite (G4). Each must have a concrete negative test or documented gate disposition before release.
