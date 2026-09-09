@@ -25,9 +25,8 @@ impl MembershipStore for VeilidProtectedMembershipStore {
         room_id: &RoomId,
     ) -> Result<Option<SecretMembershipBlob>, MembershipError> {
         self.api
-            .protected_store()
-            .map_err(|_| MembershipError::BackendUnavailable)?
             .load_user_secret(membership_key(room_id))
+            .await
             .map(|value| value.map(SecretMembershipBlob::new))
             .map_err(|_| MembershipError::BackendUnavailable)
     }
@@ -37,21 +36,20 @@ impl MembershipStore for VeilidProtectedMembershipStore {
         room_id: &RoomId,
         membership: &SecretMembershipBlob,
     ) -> Result<(), MembershipError> {
-        let protected = self
-            .api
-            .protected_store()
-            .map_err(|_| MembershipError::BackendUnavailable)?;
-        membership
-            .with_bytes(|bytes| protected.save_user_secret(membership_key(room_id), bytes))
+        self.api
+            .save_user_secret(
+                membership_key(room_id),
+                membership.with_bytes(<[u8]>::to_vec),
+            )
+            .await
             .map(|_| ())
             .map_err(|_| MembershipError::BackendUnavailable)
     }
 
     async fn remove(&self, room_id: &RoomId) -> Result<bool, MembershipError> {
         self.api
-            .protected_store()
-            .map_err(|_| MembershipError::BackendUnavailable)?
             .remove_user_secret(membership_key(room_id))
+            .await
             .map_err(|_| MembershipError::BackendUnavailable)
     }
 }

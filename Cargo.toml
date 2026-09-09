@@ -45,7 +45,7 @@ tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
 ttf-parser = "=0.25.1"
 ureq = { version = "=2.12.1", features = ["json"] }
 weavy = "=0.2.2"
-veilid-core = { version = "=0.5.7", default-features = false, features = ["rt-tokio", "enable-crypto-vld0"] }
+veilid-core = { git = "https://gitlab.com/veilid/veilid.git", rev = "99c9616295f9195c97bf2f5f6b43f0d220ac5d8b", default-features = false, features = ["rt-tokio", "enable-crypto-vld0"] }
 wasm-bindgen = "=0.2.126"
 wasm-bindgen-futures = "=0.4.76"
 web-sys = { version = "=0.3.103", features = ["HtmlCanvasElement"] }

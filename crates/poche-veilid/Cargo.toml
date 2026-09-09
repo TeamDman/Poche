@@ -11,6 +11,9 @@ publish = false
 [features]
 default = []
 veilid = ["dep:veilid-core"]
+# Separate build configuration: the upstream mock replaces the network API.
+# Never enable this feature in a production desktop build.
+veilid-mock-test = ["veilid", "veilid-core/mock-api"]
 veilid-local-test = [
     "veilid",
     "veilid-core/footgun-nodeid-target",

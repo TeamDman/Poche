@@ -323,7 +323,7 @@ impl ResolvedRoom {
     }
 }
 
-/// Released Veilid 0.5.7 adapter for owner-only DFLT rendezvous records and
+/// Pinned Veilid adapter for owner-only DFLT rendezvous records and
 /// private-route calls.
 pub struct VeilidRendezvous {
     api: VeilidAPI,
@@ -457,6 +457,7 @@ impl VeilidRendezvous {
                     &record_key,
                     &owner_keypair,
                 )
+                .await
                 .is_err()
             {
                 self.cleanup_failed_publish(record_key, route.route_id)
@@ -491,7 +492,7 @@ impl VeilidRendezvous {
         expires_at_unix_ms: u64,
         now_unix_ms: u64,
     ) -> Result<ResumedHostRoom, VeilidRendezvousError> {
-        let capability = self.load_host_capability(room_id)?;
+        let capability = self.load_host_capability(room_id).await?;
         if capability.host_principal != host_identity.public().principal_id
             || capability.room_id != *room_id
         {
@@ -838,24 +839,22 @@ impl VeilidRendezvous {
         })
     }
 
-    fn save_host_capability(
+    async fn save_host_capability(
         &self,
         capability: &HostRoomCapability,
     ) -> Result<(), VeilidRendezvousError> {
         let mut encoded = capability.encode()?;
-        let result = (|| {
-            self.api
-                .protected_store()
-                .map_err(|_| VeilidRendezvousError::Unavailable)?
-                .save_user_secret(host_room_store_key(&capability.room_id), &encoded)
-                .map(|_| ())
-                .map_err(|_| VeilidRendezvousError::Unavailable)
-        })();
+        let result = self
+            .api
+            .save_user_secret(host_room_store_key(&capability.room_id), encoded.clone())
+            .await
+            .map(|_| ())
+            .map_err(|_| VeilidRendezvousError::Unavailable);
         encoded.fill(0);
         result
     }
 
-    fn persist_published_host_capability(
+    async fn persist_published_host_capability(
         &self,
         host_identity: &ApplicationIdentity,
         record: &RendezvousRecord,
@@ -868,18 +867,17 @@ impl VeilidRendezvous {
             record_key.to_string().into_bytes(),
             owner_keypair.to_string().into_bytes(),
         )?;
-        self.save_host_capability(&capability)
+        self.save_host_capability(&capability).await
     }
 
-    fn load_host_capability(
+    async fn load_host_capability(
         &self,
         room_id: &RoomId,
     ) -> Result<HostRoomCapability, VeilidRendezvousError> {
         let mut encoded = self
             .api
-            .protected_store()
-            .map_err(|_| VeilidRendezvousError::Unavailable)?
             .load_user_secret(host_room_store_key(room_id))
+            .await
             .map_err(|_| VeilidRendezvousError::Unavailable)?
             .ok_or(VeilidRendezvousError::NotFound)?;
         let result = HostRoomCapability::decode(&encoded);

@@ -21,27 +21,26 @@ impl IdentityStore for VeilidProtectedIdentityStore {
 
     async fn load(&self) -> Result<Option<SecretIdentityBlob>, IdentityStoreError> {
         self.api
-            .protected_store()
-            .map_err(|_| IdentityStoreError::BackendUnavailable)?
-            .load_user_secret(IDENTITY_KEY)
+            .load_user_secret(IDENTITY_KEY.to_owned())
+            .await
             .map(|value| value.map(SecretIdentityBlob::new))
             .map_err(|_| IdentityStoreError::BackendUnavailable)
     }
 
     async fn save(&self, identity: &SecretIdentityBlob) -> Result<(), IdentityStoreError> {
-        let protected_store = self
+        if self
             .api
-            .protected_store()
-            .map_err(|_| IdentityStoreError::BackendUnavailable)?;
-        if protected_store
-            .load_user_secret(IDENTITY_KEY)
+            .load_user_secret(IDENTITY_KEY.to_owned())
+            .await
             .map_err(|_| IdentityStoreError::BackendUnavailable)?
             .is_some()
         {
             return Err(IdentityStoreError::ConcurrentIdentityCreation);
         }
-        let replaced = identity
-            .with_bytes(|bytes| protected_store.save_user_secret(IDENTITY_KEY, bytes))
+        let replaced = self
+            .api
+            .save_user_secret(IDENTITY_KEY.to_owned(), identity.with_bytes(<[u8]>::to_vec))
+            .await
             .map_err(|_| IdentityStoreError::BackendUnavailable)?;
         if replaced {
             Err(IdentityStoreError::ConcurrentIdentityCreation)
