@@ -223,6 +223,13 @@ impl InProcessTransport {
         self.faults.push_back(fault);
     }
 
+    /// Restore route status without inventing a new disconnect event.
+    pub(crate) fn restore_route(&mut self, principal: PrincipalId, connected: bool) -> Result<ScriptedClient, InProcessTransportError> {
+        let client = self.connect(principal)?;
+        self.connections.get_mut(&client.connection_id).expect("new route").connected = connected;
+        Ok(client)
+    }
+
     /// Observe a transport loss and enqueue its semantic boundary event.
     ///
     /// # Errors
@@ -1137,5 +1144,13 @@ mod tests {
         clock.cancel_countdown(&room, &late).unwrap();
         assert!(clock.advance_to(100).is_empty());
         assert_eq!(clock.now(), 100);
+    }
+
+    #[test]
+    fn restored_disconnected_route_stays_closed_without_new_ingress() {
+        let mut transport = InProcessTransport::default();
+        let client = transport.restore_route(principal("offline"), false).unwrap();
+        assert!(!client.route_connected(&transport));
+        assert!(transport.receive().is_none());
     }
 }

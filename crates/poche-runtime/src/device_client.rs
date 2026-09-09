@@ -551,7 +551,7 @@ pub struct RuntimeLoopbackDeviceAdapter<G: SessionGame, A> {
 /// No Debug or serialization: protected durable encoding remains separate.
 pub struct RuntimeDeviceCheckpoint<G: SessionGame, A> {
     authority: crate::AuthorityCheckpoint<G>,
-    profiles: Vec<DeviceProfile>,
+    profiles: Vec<(DeviceProfile, bool)>,
     action_source: A,
     next_projection: u64,
     physical_secret: Option<[u8; 32]>,
@@ -574,7 +574,7 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
     where A: Clone {
         let shared = self.shared.lock().map_err(|_| DeviceClientError::TransportUnavailable)?;
         Ok(RuntimeDeviceCheckpoint {
-            authority: shared.authority.checkpoint(), profiles: shared.profiles.values().cloned().collect(),
+            authority: shared.authority.checkpoint(), profiles: shared.profiles.values().map(|profile| (profile.clone(), shared.clients.get(&profile.device_id).is_some_and(|client| client.route_connected(&shared.authority.transport)))).collect(),
             action_source: shared.action_source.clone(), next_projection: shared.next_projection,
             physical_secret: shared.physical_secret, physical_poses: shared.physical_poses.clone(),
             physical_pose_epoch: shared.physical_pose_epoch, cooperation_now_unix_ms: shared.cooperation_now_unix_ms,
@@ -592,7 +592,15 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
             physical_secret: checkpoint.physical_secret, physical_poses: checkpoint.physical_poses,
             physical_pose_epoch: checkpoint.physical_pose_epoch,
         })) };
-        for profile in checkpoint.profiles { adapter.enroll(&profile)?; }
+        {
+            let mut shared = adapter.shared.lock().map_err(|_| DeviceClientError::TransportUnavailable)?;
+            for (profile, connected) in checkpoint.profiles {
+                profile.validate()?;
+                let client = shared.authority.transport.restore_route(profile.player_id.clone(), connected).map_err(|_| DeviceClientError::TransportUnavailable)?;
+                shared.clients.insert(profile.device_id.clone(), client);
+                shared.profiles.insert(profile.device_id.clone(), profile);
+            }
+        }
         Ok(adapter)
     }
 
