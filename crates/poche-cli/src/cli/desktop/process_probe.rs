@@ -64,7 +64,7 @@ fn protected_desktop_process_role() {
     let root = Path::new(&root);
     let role = std::env::var("POCHE_PROCESS_PROBE_ROLE").expect("parent role");
     let suffix = std::env::var("POCHE_PROCESS_PROBE_SUFFIX").expect("parent suffix");
-    let creator = role == "creator" || role == "creator-resume";
+    let creator = role == "creator" || role == "creator-resume" || role == "alone";
     let creator_loss = std::env::var("POCHE_PROCESS_PROBE_CREATOR_LOSS").as_deref() == Ok("1");
     let restarting = role.ends_with("-resume");
     assert!(creator || role == "joiner" || restarting);
@@ -80,6 +80,16 @@ fn protected_desktop_process_role() {
     };
     let mut owners = Vec::new();
     let mut live = connect(request, &mut owners).expect("production process connection");
+    if role == "alone" {
+        let path = root.join("previous-invitation");
+        let invitation = live.room_invitation().unwrap();
+        if path.exists() {
+            assert!(fs::read_to_string(&path).unwrap() != invitation, "empty room was resurrected");
+            fs::write(root.join("empty-room-replaced"), b"verified").unwrap();
+        }
+        fs::write(path, invitation).unwrap();
+        return;
+    }
     if restarting {
         wait_until(|| {
             live.poll().expect("restarted observation");
@@ -213,6 +223,36 @@ fn protected_desktop_two_process() {
 #[ignore = "real public Veilid creator crash with protected profiles"]
 fn protected_desktop_creator_crash() {
     run_two_process(true);
+}
+
+#[test]
+#[ignore = "real public Veilid and protected empty-room lifecycle"]
+fn protected_desktop_empty_room_disbands() {
+    opt_in();
+    let directory = tempfile::tempdir().unwrap();
+    let suffix = now().unwrap().to_string();
+    for _ in 0..2 {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.args(["protected_desktop_process_role", "--ignored", "--nocapture"])
+            .env("POCHE_PROCESS_PROBE_ROOT", directory.path())
+            .env("POCHE_PROCESS_PROBE_ROLE", "alone")
+            .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
+        #[cfg(windows)] {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
+        }
+        let mut child = ChildOwner(command.spawn().unwrap());
+        let deadline = Instant::now() + Duration::from_secs(150);
+        loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                assert!(status.success(), "empty-room lifecycle process failed");
+                break;
+            }
+            assert!(Instant::now() < deadline, "empty-room lifecycle timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    assert!(directory.path().join("empty-room-replaced").exists());
 }
 
 fn recovery_digest(live: &NativeLiveDevice) -> String {
