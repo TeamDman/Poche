@@ -565,6 +565,12 @@ impl<G: SessionGame> InProcessAuthority<G> {
 
     /// Capture logical state and event provenance together, excluding routes.
     /// The caller must protect this authority-only data from player devices.
+    /// Private authority recovery inputs, including hidden deal material.
+    /// Never expose these through player projections or diagnostic exports.
+    pub fn recovery_journal(&self) -> &[AuthorityJournalInput] {
+        &self.journal
+    }
+
     pub fn checkpoint(&self) -> AuthorityCheckpoint<G> {
         AuthorityCheckpoint {
             journal: self.journal.clone(),
