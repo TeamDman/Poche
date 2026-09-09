@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "http")]
 mod http;
 mod loopback;
+mod physical;
 mod policy;
 #[cfg(feature = "protected-store")]
 mod protected_store;
@@ -45,6 +46,7 @@ mod protected_store;
 #[cfg(feature = "http")]
 pub use http::*;
 pub use loopback::*;
+pub use physical::*;
 pub use policy::*;
 #[cfg(feature = "protected-store")]
 pub use protected_store::*;
@@ -337,6 +339,8 @@ pub struct PhysicalHandCard {
     pub seat: u8,
     /// Present only for the viewer's own hand, never merely a camera-hidden field.
     pub face: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pose: Option<PhysicalPoseState>,
 }
 
 /// Exact-recipient observation and action set delivered atomically by an
@@ -587,6 +591,14 @@ pub struct HttpDeviceCooperationCall {
 
 /// Adapter boundary shared by loopback, gateway, and Veilid clients.
 pub trait DeviceTransport {
+    /// Optional independent physical-motion channel. Unsupported adapters fail closed.
+    fn physical_pose(
+        &mut self,
+        _profile: &DeviceProfile,
+        _request: PhysicalPoseRequest,
+    ) -> Result<PhysicalPoseState, DeviceClientError> {
+        Err(DeviceClientError::AuthorizationDenied)
+    }
     /// Obtain one atomic exact-recipient observation.
     fn observe(
         &mut self,
@@ -630,6 +642,13 @@ pub trait DeviceTransport {
 }
 
 impl<T: DeviceTransport + ?Sized> DeviceTransport for Box<T> {
+    fn physical_pose(
+        &mut self,
+        profile: &DeviceProfile,
+        request: PhysicalPoseRequest,
+    ) -> Result<PhysicalPoseState, DeviceClientError> {
+        (**self).physical_pose(profile, request)
+    }
     fn observe(
         &mut self,
         profile: &DeviceProfile,
@@ -682,6 +701,15 @@ pub struct PlayerDeviceClient<T> {
 }
 
 impl<T: DeviceTransport> PlayerDeviceClient<T> {
+    pub fn physical_pose(
+        &mut self,
+        request: PhysicalPoseRequest,
+    ) -> Result<PhysicalPoseState, DeviceClientError> {
+        if request.certificate != self.profile.certificate {
+            return Err(DeviceClientError::InvalidProfile);
+        }
+        self.transport.physical_pose(&self.profile, request)
+    }
     pub fn new(profile: DeviceProfile, transport: T) -> Result<Self, DeviceClientError> {
         profile.validate()?;
         Ok(Self { profile, transport })

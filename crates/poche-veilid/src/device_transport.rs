@@ -32,6 +32,7 @@ pub enum VeilidDeviceRequest {
     Invoke(DeviceActionWire),
     Route(DeviceRouteRequestWire),
     Cooperate(HttpDeviceCooperationCall),
+    PhysicalPose(poche_player_client::SignedPhysicalPose),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -46,6 +47,7 @@ pub enum VeilidDeviceReply {
     Action(DeviceActionResult),
     Route(DeviceRouteResultWire),
     Cooperation(DeviceCooperationResult),
+    PhysicalPose(poche_player_client::PhysicalPoseState),
     /// Stable public failure category; never include backend diagnostic text.
     Denied,
     NoProgress,
@@ -225,6 +227,18 @@ pub(crate) fn retry_observation<T>(
 }
 
 impl<S: DeviceSigner> DeviceTransport for VeilidDeviceTransport<S> {
+    fn physical_pose(
+        &mut self,
+        profile: &DeviceProfile,
+        request: poche_player_client::PhysicalPoseRequest,
+    ) -> Result<poche_player_client::PhysicalPoseState, DeviceClientError> {
+        self.require_room(&request.room_id)?;
+        let signed = request.sign(profile, &self.signer)?;
+        match self.exchange(VeilidDeviceRequest::PhysicalPose(signed))? {
+            VeilidDeviceReply::PhysicalPose(state) => Ok(state),
+            _ => Err(DeviceClientError::ProtocolViolation),
+        }
+    }
     fn observe(
         &mut self,
         profile: &DeviceProfile,

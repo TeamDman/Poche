@@ -398,6 +398,80 @@ fn device_dispatch_authenticates_before_returning_observations() {
                     );
                     std::thread::sleep(Duration::from_millis(20));
                 }
+                let before = resumed.observe(&guest_room).unwrap();
+                let hand_card = before
+                    .physical_hands
+                    .iter()
+                    .find(|card| card.face.is_some())
+                    .unwrap();
+                let mut motion = poche_player_client::PhysicalPoseRequest {
+                    certificate: test_profile(41).certificate,
+                    room_id: guest_room.clone(),
+                    session_epoch: before.projection.session_epoch,
+                    card_id: hand_card.id.clone(),
+                    generation: 0,
+                    claim: true,
+                    sequence: 1,
+                    position_mm: [100, 200, 300],
+                    rotation_millidegrees: [1000, 2000, 3000],
+                };
+                let accepted = resumed.physical_pose(motion.clone()).unwrap();
+                assert_eq!(accepted.generation, 1);
+                let other_view = creator.observe(&guest_room).unwrap();
+                assert_eq!(
+                    other_view.projection.current_revision,
+                    before.projection.current_revision
+                );
+                let remote = other_view
+                    .physical_hands
+                    .iter()
+                    .find(|card| card.id == motion.card_id)
+                    .unwrap();
+                assert!(remote.face.is_none());
+                assert_eq!(remote.pose.as_ref(), Some(&accepted));
+                motion.claim = false;
+                motion.generation = 1;
+                motion.sequence = 2;
+                motion.position_mm[0] += 20;
+                let moved = resumed.physical_pose(motion.clone()).unwrap();
+                let mut outside = motion.clone();
+                outside.sequence = 3;
+                outside.position_mm[0] = i32::MAX;
+                assert_eq!(
+                    resumed.physical_pose(outside),
+                    Err(DeviceClientError::AuthorizationDenied)
+                );
+                assert_eq!(
+                    resumed.physical_pose(motion.clone()),
+                    Err(DeviceClientError::StaleRevision)
+                );
+                let mut stolen = motion.clone();
+                stolen.certificate = test_profile(31).certificate;
+                stolen.claim = true;
+                stolen.sequence = 1;
+                assert_eq!(
+                    creator.physical_pose(stolen),
+                    Err(DeviceClientError::AuthorizationDenied)
+                );
+                let final_view = creator.observe(&guest_room).unwrap();
+                assert_eq!(
+                    final_view.projection.current_revision,
+                    before.projection.current_revision
+                );
+                assert_eq!(
+                    final_view.projection.payload.public_game_state,
+                    before.projection.payload.public_game_state
+                );
+                assert_eq!(
+                    final_view
+                        .physical_hands
+                        .iter()
+                        .find(|card| card.id == motion.card_id)
+                        .unwrap()
+                        .pose
+                        .as_ref(),
+                    Some(&moved)
+                );
             })
             .join()
             .unwrap();

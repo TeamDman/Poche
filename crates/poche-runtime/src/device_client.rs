@@ -494,6 +494,7 @@ struct SharedLoopbackState<G: SessionGame, A> {
     action_source: A,
     next_projection: u64,
     physical_secret: Option<[u8; 32]>,
+    physical_poses: BTreeMap<String, poche_player_client::PhysicalPoseState>,
 }
 
 struct RegisteredCaptureProvider {
@@ -567,6 +568,7 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
                 action_source,
                 next_projection: 0,
                 physical_secret: None,
+                physical_poses: BTreeMap::new(),
             })),
         }
     }
@@ -939,6 +941,114 @@ where
         self.service_profiles
             .sort_by(|left, right| left.device_id.cmp(&right.device_id));
         Ok(())
+    }
+
+    /// Accept hand motion without changing any logical game/session revision.
+    /// Claims use compare-and-swap lease generations, so sibling devices cannot
+    /// silently overwrite each other's active drag. No play is implied.
+    pub fn physical_pose(
+        &mut self,
+        signed: &poche_player_client::SignedPhysicalPose,
+    ) -> Result<poche_player_client::PhysicalPoseState, DeviceClientError> {
+        let request = &signed.request;
+        request
+            .certificate
+            .validate()
+            .map_err(|_| DeviceClientError::InvalidProfile)?;
+        verify_device_certificate(&request.certificate)?;
+        if !verify_ed25519_hex(
+            &request.certificate.device_signing_public_key,
+            signed.signature.as_str(),
+            &request.canonical_bytes()?,
+        ) {
+            return Err(DeviceClientError::AuthorizationDenied);
+        }
+        if !request
+            .certificate
+            .capabilities
+            .contains(&poche_protocol::DeviceCapabilityWire::Propose)
+            || request.session_epoch < request.certificate.valid_from_membership_epoch
+            || request
+                .certificate
+                .valid_through_membership_epoch
+                .is_some_and(|end| request.session_epoch > end)
+            || !poche_spatial::Point3Mm::new(
+                request.position_mm[0],
+                request.position_mm[1],
+                request.position_mm[2],
+            )
+            .is_within_table_bounds()
+            || request
+                .rotation_millidegrees
+                .iter()
+                .any(|angle| !(0..360_000).contains(angle))
+        {
+            return Err(DeviceClientError::AuthorizationDenied);
+        }
+        let profile = self.ensure_enrolled(&request.certificate)?;
+        let mut shared = self
+            .adapter
+            .shared
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        if !shared
+            .clients
+            .get(&profile.device_id)
+            .is_some_and(|client| client.route_connected(&shared.authority.transport))
+        {
+            return Err(DeviceClientError::AuthorizationDenied);
+        }
+        if request.room_id != shared.authority.state.room_id
+            || request.session_epoch != shared.authority.state.session_epoch
+        {
+            return Err(DeviceClientError::StaleRevision);
+        }
+        let view = observation(&mut shared, &profile, &request.room_id)?;
+        if !view
+            .physical_hands
+            .iter()
+            .any(|card| card.id == request.card_id && card.face.is_some())
+        {
+            return Err(DeviceClientError::AuthorizationDenied);
+        }
+        let previous = shared.physical_poses.get(&request.card_id);
+        let current_generation = previous.map_or(0, |pose| pose.generation);
+        if request.generation != current_generation {
+            return Err(DeviceClientError::StaleRevision);
+        }
+        let generation = if request.claim {
+            if request.sequence != 1 {
+                return Err(DeviceClientError::ProtocolViolation);
+            }
+            current_generation
+                .checked_add(1)
+                .ok_or(DeviceClientError::ProtocolViolation)?
+        } else {
+            let previous = previous.ok_or(DeviceClientError::AuthorizationDenied)?;
+            if previous.device != profile.device_id {
+                return Err(DeviceClientError::AuthorizationDenied);
+            }
+            if request.sequence <= previous.sequence {
+                return Err(DeviceClientError::StaleRevision);
+            }
+            current_generation
+        };
+        let accepted = poche_player_client::PhysicalPoseState {
+            device: profile.device_id,
+            generation,
+            sequence: request.sequence,
+            position_mm: request.position_mm,
+            rotation_millidegrees: request.rotation_millidegrees,
+        };
+        // This initial channel retains hand poses only; full deck/play pose
+        // lifecycle is a separate integration requirement, not an implicit reveal.
+        shared
+            .physical_poses
+            .retain(|id, _| view.physical_hands.iter().any(|card| &card.id == id));
+        shared
+            .physical_poses
+            .insert(request.card_id.clone(), accepted.clone());
+        Ok(accepted)
     }
 
     /// Advance deterministic authority-owned transitions through the same
@@ -1887,6 +1997,7 @@ fn physical_hands<G: SessionGame, A>(
             let own = member.principal_id == projection.principal_id
                 && member.connection == ConnectionState::Connected;
             cards.push(poche_player_client::PhysicalHandCard {
+                pose: shared.physical_poses.get(&id).cloned(),
                 id,
                 seat,
                 face: own.then_some(face),

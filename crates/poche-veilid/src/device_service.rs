@@ -118,6 +118,12 @@ where
     pub fn dispatch(&self, bytes: &[u8]) -> Result<Vec<u8>, DeviceClientError> {
         let request = VeilidDeviceRequest::decode(bytes)?;
         let result = match request {
+            VeilidDeviceRequest::PhysicalPose(request) => self
+                .room
+                .lock()
+                .map_err(|_| DeviceClientError::TransportUnavailable)?
+                .physical_pose(&request)
+                .map(VeilidDeviceReply::PhysicalPose),
             VeilidDeviceRequest::Observe(request) => self
                 .room
                 .lock()

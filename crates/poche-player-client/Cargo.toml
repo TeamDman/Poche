@@ -11,14 +11,13 @@ description = "Transport-neutral exact-recipient Poche device client"
 
 [features]
 default = []
-http = ["dep:getrandom", "dep:poche-capture", "dep:serde_json", "dep:ureq"]
+http = ["dep:getrandom", "dep:poche-capture", "dep:ureq"]
 protected-store = [
     "dep:directories",
     "dep:ed25519-dalek",
     "dep:getrandom",
     "dep:keyring-manager",
     "dep:poche-capture",
-    "dep:serde_json",
     "dep:tempfile",
     "dep:zeroize",
 ]
@@ -33,7 +32,7 @@ keyring-manager = { workspace = true, optional = true }
 poche-protocol = { path = "../poche-protocol" }
 poche-capture = { path = "../poche-capture", optional = true }
 serde.workspace = true
-serde_json = { workspace = true, optional = true }
+serde_json.workspace = true
 tempfile = { workspace = true, optional = true }
 ureq = { workspace = true, optional = true }
 zeroize = { workspace = true, optional = true }

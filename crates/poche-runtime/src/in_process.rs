@@ -50,6 +50,14 @@ pub struct ScriptedClient {
 }
 
 impl ScriptedClient {
+    /// Whether this exact device route, rather than a sibling route, is live.
+    #[must_use]
+    pub fn route_connected(&self, transport: &InProcessTransport) -> bool {
+        transport
+            .connections
+            .get(&self.connection_id)
+            .is_some_and(|route| route.connected)
+    }
     /// Build a structurally signed command for the current in-process state.
     ///
     /// The loopback signature is intentionally a non-cryptographic placeholder;
