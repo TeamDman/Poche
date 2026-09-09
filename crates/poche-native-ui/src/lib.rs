@@ -169,7 +169,7 @@ pub struct CommittedPresentation {
 pub struct NativeController {
     layout: SpatialLayout,
     scene: SpatialScene,
-    issuing_seat: SeatId,
+    issuing_seat: Option<SeatId>,
     legal_plays: Option<BTreeSet<u8>>,
     committed: Option<CommittedPresentation>,
     last_finding: String,
@@ -188,12 +188,22 @@ impl NativeController {
         scene: SpatialScene,
         issuing_seat: SeatId,
     ) -> Result<Self, String> {
+        Self::try_new_viewer(layout, scene, Some(issuing_seat))
+    }
+
+    /// Construct a seated or unseated viewer without assigning phantom seat
+    /// ownership to a lobby participant or spectator.
+    pub fn try_new_viewer(
+        layout: SpatialLayout,
+        scene: SpatialScene,
+        issuing_seat: Option<SeatId>,
+    ) -> Result<Self, String> {
         scene
             .validate()
             .map_err(|error| format!("invalid viewer scene: {error:?}"))?;
         if layout.id() != scene.layout
             || layout.table_id() != scene.table_id
-            || issuing_seat.get() >= layout.id().players()
+            || issuing_seat.is_some_and(|seat| seat.get() >= layout.id().players())
         {
             return Err("scene, layout, and issuing seat do not share one frame".to_owned());
         }
@@ -203,8 +213,12 @@ impl NativeController {
             issuing_seat,
             legal_plays: None,
             committed: None,
-            last_finding: "ready: drag an owned card to PLAY, press P, or use --play-card"
-                .to_owned(),
+            last_finding: if issuing_seat.is_some() {
+                "ready: drag an owned card to PLAY, press P, or use --play-card"
+            } else {
+                "Choose a seat, or watch as a spectator."
+            }
+            .to_owned(),
             generation: 0,
             last_commit_cost: None,
         })
@@ -224,7 +238,7 @@ impl NativeController {
 
     /// Return the issuing seat.
     #[must_use]
-    pub const fn issuing_seat(&self) -> SeatId {
+    pub const fn issuing_seat(&self) -> Option<SeatId> {
         self.issuing_seat
     }
 
@@ -247,7 +261,10 @@ impl NativeController {
     /// Returns stable spatial input evidence as display text.
     pub fn commit_named(&mut self, face: CardFace) -> Result<CommittedPresentation, String> {
         let started = Instant::now();
-        let resolved = resolve_card_play(&self.layout, &self.scene, self.issuing_seat, face)
+        let seat = self
+            .issuing_seat
+            .ok_or("unseated viewers cannot play cards")?;
+        let resolved = resolve_card_play(&self.layout, &self.scene, seat, face)
             .map_err(|finding| format!("{finding:?}"))?;
         self.accept_resolved(resolved, started)
     }
@@ -266,7 +283,8 @@ impl NativeController {
         let resolved = resolve_drag_play(
             &self.layout,
             &self.scene,
-            self.issuing_seat,
+            self.issuing_seat
+                .ok_or("unseated viewers cannot play cards")?,
             object,
             released_bounds,
         )
@@ -280,7 +298,7 @@ impl NativeController {
         self.scene.cards.iter().find_map(|card| {
             matches!(
                 card.location,
-                CardLocation::Hand { seat, .. } if seat == self.issuing_seat
+                CardLocation::Hand { seat, .. } if Some(seat) == self.issuing_seat
             )
             .then_some(card.face)
             .flatten()
@@ -391,10 +409,13 @@ pub fn native_controller_from_observation(
         .members
         .iter()
         .find(|member| member.principal_id == observation.projection.principal_id)
-        .and_then(|member| member.seat)
-        .ok_or_else(|| "live viewer does not occupy a seat".to_owned())?;
-    let issuing_seat = SeatId::new(issuing_ordinal, layout_id)
-        .ok_or_else(|| "live viewer seat is outside the selected layout".to_owned())?;
+        .and_then(|member| member.seat);
+    let issuing_seat = issuing_ordinal
+        .map(|ordinal| {
+            SeatId::new(ordinal, layout_id)
+                .ok_or_else(|| "live viewer seat is outside the selected layout".to_owned())
+        })
+        .transpose()?;
     let legal_plays = observation
         .actions
         .iter()
@@ -405,7 +426,7 @@ pub fn native_controller_from_observation(
             _ => None,
         })
         .collect();
-    let mut controller = NativeController::try_new(layout, scene, issuing_seat)?;
+    let mut controller = NativeController::try_new_viewer(layout, scene, issuing_seat)?;
     controller.legal_plays = Some(legal_plays);
     Ok(controller)
 }
@@ -1415,7 +1436,7 @@ fn setup_native_scene(
         if is_visible
             && matches!(
                 card.location,
-                CardLocation::Hand { seat, .. } if seat == controller.issuing_seat
+                CardLocation::Hand { seat, .. } if Some(seat) == controller.issuing_seat
             )
         {
             entity
@@ -1730,7 +1751,10 @@ fn update_status(
         .count();
     window.title = format!(
         "Poche | seat {} | {} cards | {} faces | {} | audit {} | {fps:.0} fps",
-        controller.issuing_seat.get(),
+        controller.issuing_seat.map_or_else(
+            || "none (spectator/lobby)".to_owned(),
+            |seat| seat.get().to_string()
+        ),
         controller.scene.cards.len(),
         visible_faces,
         controller.last_finding,
@@ -2554,7 +2578,7 @@ mod tests {
                 card.face == Some(face)
                     && matches!(
                         card.location,
-                        CardLocation::Hand { seat, .. } if seat == controller.issuing_seat()
+                        CardLocation::Hand { seat, .. } if Some(seat) == controller.issuing_seat()
                     )
             })
             .expect("owned object")
@@ -2564,19 +2588,68 @@ mod tests {
         let mut named = NativeController::try_new(
             controller.layout().clone(),
             controller.scene().clone(),
-            controller.issuing_seat(),
+            controller.issuing_seat().expect("fixture seat"),
         )
         .expect("named");
         let mut dragged = NativeController::try_new(
             controller.layout().clone(),
             controller.scene().clone(),
-            controller.issuing_seat(),
+            controller.issuing_seat().expect("fixture seat"),
         )
         .expect("dragged");
         let named = named.commit_named(face).expect("named play");
         let dragged = dragged.commit_drag(object, bounds).expect("drag play");
         assert_eq!(named.play, dragged.play);
         assert_eq!(named.endpoint, dragged.endpoint);
+    }
+
+    #[test]
+    fn lobby_viewer_can_render_before_seating_and_after_releasing_seat() {
+        let room = RoomId::new("native-lobby-view").unwrap();
+        let player = PrincipalId::new("lobby-viewer").unwrap();
+        let state = SessionState::<OracleSessionGame<2>>::pending(
+            room.clone(),
+            PrincipalId::new("clock").unwrap(),
+            PrincipalId::new("game").unwrap(),
+        );
+        let profile = certified_profile(&player, "lobby-device", "77");
+        let adapter = RuntimeLoopbackDeviceAdapter::new(
+            state,
+            poche_runtime::OracleRoomActionSource::new(29, 2, "invite", 30, "countdown").unwrap(),
+            LoopbackCodec::Typed,
+        );
+        adapter.enroll(&profile).unwrap();
+        let mut client =
+            PlayerDeviceClient::new(profile, LoopbackDeviceTransport::new(adapter)).unwrap();
+        for (index, payload) in [
+            CommandPayload::CreateRoom,
+            CommandPayload::TakeSeat { seat: 0 },
+            CommandPayload::ReleaseSeat,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let before = client.observe(&room).unwrap();
+            client
+                .invoke_payload(
+                    &before,
+                    &payload,
+                    CommandId::new(format!("lobby-action-{index}")).unwrap(),
+                )
+                .unwrap();
+            let observation = client.observe(&room).unwrap();
+            let mut controller = native_controller_from_observation(&observation).unwrap();
+            assert_eq!(controller.issuing_seat().is_some(), index == 1);
+            if index != 1 {
+                assert!(controller.first_owned_face().is_none());
+                assert_eq!(
+                    controller
+                        .commit_named(CardFace::new(0).unwrap())
+                        .unwrap_err(),
+                    "unseated viewers cannot play cards"
+                );
+            }
+        }
     }
 
     #[test]

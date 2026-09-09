@@ -152,6 +152,8 @@ Complete when two game instances join through the presented menu, not a privileg
 
 ### [ ] T4 Ground lobby and private-hand interactions
 
+Unseated-viewer correction: native_controller_from_observation previously rejected every viewer without a seat, including a newly created lobby. NativeController now represents issuing_seat as Option<SeatId>; existing seated constructor delegates to try_new_viewer. Unseated viewers receive no first-owned card, cannot commit named/drag plays, and get lobby/spectator guidance instead of card-play instructions. Native regression executes CreateRoom -> TakeSeat -> ReleaseSeat through the device client and constructs the projection at each step, verifying optional seat authority and unseated play denial. All 18 native lib tests passed; final CLI check passed after guidance-text adjustment. This fixes the data-path blocker but is not yet a captured successful menu-to-lobby transition, spectator capsule implementation or pointer-input acceptance.
+
 Work: close G3/G4. Table, seat claims, spectator capsules, local camera, ready/deal/actions as agreed. Card views share logical identity; render-layer proxies allowed. Authority checks movement/reveal/spawn separately. Render back-only opponent observations; never send faces and hide them with camera layers. Preserve action palette/CLI access beside spatial affordances.
 
 Validation: `cargo test --locked -p poche-session -p poche-runtime -p poche-spatial -p poche-native-ui`; `cargo run --locked -p poche-xtask -- coverage audit --all`. Add seat-race, illegal spawn/reveal, privacy and UI action tests. Update formal models/coverage for changed semantics with explicit scopes; screenshots do not prove secrecy.
