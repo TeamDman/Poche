@@ -584,8 +584,12 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
     /// Restore internal state with freshly enrolled routes. Capture providers
     /// must register again; this does not restore a certified service's caches.
     pub fn from_checkpoint(checkpoint: RuntimeDeviceCheckpoint<G, A>, codec: LoopbackCodec) -> Result<Self, DeviceClientError> {
+        let authority = InProcessAuthority::from_checkpoint(checkpoint.authority, InProcessTransport::new(codec));
+        if matches!(authority.state.phase, SessionPhase::Closed) {
+            return Err(DeviceClientError::AuthorizationDenied);
+        }
         let adapter = Self { shared: Arc::new(Mutex::new(SharedLoopbackState {
-            authority: InProcessAuthority::from_checkpoint(checkpoint.authority, InProcessTransport::new(codec)),
+            authority,
             clients: BTreeMap::new(), profiles: BTreeMap::new(), capture_providers: BTreeMap::new(),
             capture_replays: CaptureReplayWindow::new(256), cooperation_now_unix_ms: checkpoint.cooperation_now_unix_ms,
             action_source: checkpoint.action_source, next_projection: checkpoint.next_projection,
@@ -2280,6 +2284,14 @@ mod tests {
         assert_eq!(shared.next_projection, 19);
         assert!(shared.profiles.contains_key(&profile.device_id));
         assert!(shared.capture_providers.is_empty());
+    }
+
+    #[test]
+    fn closed_room_checkpoint_cannot_restore_a_running_adapter() {
+        let mut state: SessionState<OracleSessionGame<2>> = SessionState::pending(RoomId::new("closed-checkpoint").unwrap(), PrincipalId::new("clock").unwrap(), PrincipalId::new("game").unwrap());
+        state.phase = SessionPhase::Closed;
+        let adapter = RuntimeLoopbackDeviceAdapter::new(state, CreateRoomActions, LoopbackCodec::Typed);
+        assert!(matches!(RuntimeLoopbackDeviceAdapter::from_checkpoint(adapter.checkpoint().unwrap(), LoopbackCodec::Typed), Err(DeviceClientError::AuthorizationDenied)));
     }
 
     impl AdvertisedActionSource<OracleSessionGame<2>> for CreateRoomActions {
