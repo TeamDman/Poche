@@ -70,7 +70,8 @@ pub async fn publish_device_room(
             InviteRecord::new_reusable(proof.expose(), u64::MAX)
                 .map_err(|_| DeviceClientError::ProtocolViolation)?,
         );
-        let actions = OracleRoomActionSource::new(seed, 2, proof.expose(), 30, "countdown")?;
+        let actions = OracleRoomActionSource::new(seed, 2, proof.expose(), 30, "countdown")?
+            .without_hand_sharing();
         let mut room = CertifiedDeviceRoom::new(RuntimeLoopbackDeviceAdapter::new(
             state,
             actions,

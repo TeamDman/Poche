@@ -163,6 +163,7 @@ pub struct OracleRoomActionSource {
     invite: InviteProof,
     countdown_deadline_tick: u64,
     countdown_token: CountdownToken,
+    allow_hand_sharing: bool,
 }
 
 impl OracleRoomActionSource {
@@ -190,7 +191,17 @@ impl OracleRoomActionSource {
             countdown_deadline_tick,
             countdown_token: CountdownToken::new(countdown_token.into())
                 .map_err(|_| DeviceClientError::ProtocolViolation)?,
+            allow_hand_sharing: true,
         })
+    }
+
+    /// Strict Poche desktop policy: unplayed hands cannot be requested/granted.
+    /// Existing experimental callers retain their explicit sharing surface.
+    /// Configure this before creating the room, not as a way to revoke existing grants.
+    #[must_use]
+    pub const fn without_hand_sharing(mut self) -> Self {
+        self.allow_hand_sharing = false;
+        self
     }
 
     fn advertised(
@@ -429,6 +440,14 @@ impl<const PLAYERS: usize> AdvertisedActionSource<crate::OracleSessionGame<PLAYE
                 "Leave room",
                 CommandPayload::Leave,
             ));
+        }
+        if !self.allow_hand_sharing {
+            actions.retain(|action| {
+                !matches!(
+                    action.payload,
+                    CommandPayload::RequestHand { .. } | CommandPayload::GrantHand { .. }
+                )
+            });
         }
         Ok(actions)
     }
@@ -2545,10 +2564,11 @@ mod tests {
         );
         state
             .invites
-            .push(InviteRecord::new("service-guest-invite", u64::MAX).unwrap());
+            .push(InviteRecord::new_reusable("service-guest-invite", u64::MAX).unwrap());
         let source =
             OracleRoomActionSource::new(0x5eed, 2, "service-guest-invite", 3, "service-countdown")
-                .unwrap();
+                .unwrap()
+                .without_hand_sharing();
         let adapter =
             RuntimeLoopbackDeviceAdapter::new(state, source, LoopbackCodec::CanonicalNdjson);
         adapter.enroll(&host_profile).unwrap();
@@ -2561,7 +2581,21 @@ mod tests {
             LoopbackDeviceTransport::new(adapter.clone()),
         )
         .unwrap();
-        let mut certified = CertifiedDeviceRoom::new(adapter);
+        let spectator_profile = signed_profile(
+            "strict-spectator",
+            &SigningKey::from_bytes(&[48; 32]),
+            &SigningKey::from_bytes(&[49; 32]),
+            vec![DeviceCapabilityWire::Propose],
+        );
+        let mut certified = CertifiedDeviceRoom::new(adapter.clone());
+        certified
+            .ensure_enrolled(&spectator_profile.certificate)
+            .unwrap();
+        let mut spectator = PlayerDeviceClient::new(
+            spectator_profile.clone(),
+            LoopbackDeviceTransport::new(adapter.clone()),
+        )
+        .unwrap();
         assert_eq!(
             certified.enroll_authority_service(&guest_profile),
             Err(DeviceClientError::AuthorizationDenied)
@@ -2668,6 +2702,44 @@ mod tests {
             Some(PublicGamePhase::Bidding)
         ));
         assert_eq!(certified.drive_authority_services(2).unwrap(), 0);
+        invoke!(spectator, "room-join", "strict-spectator-join");
+        let view = spectator.observe(&room_id).unwrap();
+        assert!(view.projection.payload.own_hand.is_none());
+        assert!(view.projection.payload.granted_hands.is_empty());
+        assert!(!view.actions.iter().any(|action| matches!(
+            action.payload,
+            CommandPayload::RequestHand { .. } | CommandPayload::GrantHand { .. }
+        )));
+        // Bypass the UI's action list with a correctly signed handcrafted RPC.
+        // The authority must enforce the same policy, not merely hide a button.
+        let wire = DeviceActionRequest {
+            room_id: room_id.clone(),
+            session_epoch: view.projection.session_epoch,
+            command_id: CommandId::new("forged-hand-request").unwrap(),
+            player_id: spectator_profile.player_id.clone(),
+            device_id: spectator_profile.device_id.clone(),
+            expected_revision: view.projection.current_revision,
+            expected_projection_hash: view.projection_hash,
+            action_id: "hand-request-0".to_owned(),
+            payload: CommandPayload::RequestHand {
+                player: observation.projection.principal_id,
+            },
+        }
+        .sign(
+            &spectator_profile,
+            &TestDeviceSigner(SigningKey::from_bytes(&[49; 32])),
+        )
+        .unwrap();
+        assert_eq!(
+            certified.invoke(&wire),
+            Err(DeviceClientError::UnknownAction)
+        );
+        let after = spectator.observe(&room_id).unwrap();
+        assert_eq!(
+            after.projection.current_revision,
+            view.projection.current_revision
+        );
+        assert!(after.projection.payload.granted_hands.is_empty());
     }
 
     #[test]
