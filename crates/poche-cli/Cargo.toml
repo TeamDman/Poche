@@ -14,6 +14,7 @@ name = "poche"
 path = "src/main.rs"
 
 [dependencies]
+zeroize.workspace = true
 blake3.workspace = true
 eyre = "=0.6.12"
 facet.workspace = true

@@ -34,6 +34,7 @@ struct DesktopRoomRecovery {
 }
 
 impl DesktopRoomGenesis {
+    pub fn room_id(&self) -> &RoomId { &self.room_id }
     /// Encode authority-only material for immediate encrypted persistence.
     /// Caller must not log the returned bytes or expose them to player devices.
     pub fn encode_recovery(&self, room: &poche_runtime::CertifiedRoomRecovery) -> Result<Vec<u8>, DeviceClientError> {
@@ -91,6 +92,34 @@ pub async fn publish_device_room(
     now_unix_ms: u64,
     incoming: tokio::sync::mpsc::Receiver<Box<veilid_core::VeilidAppCall>>,
 ) -> Result<(PublishedRoom, RunningDeviceService), DeviceClientError> {
+    publish_device_room_inner(node, identity, network, label, now_unix_ms, incoming, None).await
+}
+
+/// Publish only after an initial private checkpoint has been persisted. The
+/// writer must encrypt the envelope; it must never publish it to the DHT.
+pub async fn publish_durable_device_room(
+    node: &VeilidDeviceNode,
+    identity: &ApplicationIdentity,
+    network: RoomNetwork,
+    label: &str,
+    now_unix_ms: u64,
+    incoming: tokio::sync::mpsc::Receiver<Box<veilid_core::VeilidAppCall>>,
+    writer: impl Fn(&DesktopRoomGenesis, &poche_runtime::CertifiedRoomRecovery) -> Result<(), DeviceClientError> + Send + Sync + 'static,
+) -> Result<(PublishedRoom, RunningDeviceService), DeviceClientError> {
+    publish_device_room_inner(node, identity, network, label, now_unix_ms, incoming, Some(std::sync::Arc::new(writer))).await
+}
+
+type DesktopRecoveryWriter = dyn Fn(&DesktopRoomGenesis, &poche_runtime::CertifiedRoomRecovery) -> Result<(), DeviceClientError> + Send + Sync;
+
+async fn publish_device_room_inner(
+    node: &VeilidDeviceNode,
+    identity: &ApplicationIdentity,
+    network: RoomNetwork,
+    label: &str,
+    now_unix_ms: u64,
+    incoming: tokio::sync::mpsc::Receiver<Box<veilid_core::VeilidAppCall>>,
+    writer: Option<std::sync::Arc<DesktopRecoveryWriter>>,
+) -> Result<(PublishedRoom, RunningDeviceService), DeviceClientError> {
     let mut entropy = [0_u8; 24];
     getrandom::fill(&mut entropy).map_err(|_| DeviceClientError::KeyUnavailable)?;
     let room_id = RoomId::new(format!(
@@ -137,7 +166,11 @@ pub async fn publish_device_room(
         let genesis = DesktopRoomGenesis { schema_version: 1, room_id, seed,
             admission_proof: proof.expose().to_owned(), clock, environment };
         let room = genesis.fresh_room()?;
-        Ok::<_, DeviceClientError>(VeilidDeviceService::new(room))
+        let service = VeilidDeviceService::new(room);
+        match writer {
+            Some(writer) => service.with_recovery_sink(move |recovery| writer(&genesis, recovery)),
+            None => Ok(service),
+        }
     })();
     match service {
         Ok(service) => Ok((published, service.serve(node.clone(), incoming))),

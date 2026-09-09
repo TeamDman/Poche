@@ -141,15 +141,28 @@ fn connect(
                 IdentityStoragePolicy::RequireProtected,
             ))
             .map_err(|_| "Cannot recover the node identity.")?;
+        let recovery_store = std::sync::Mutex::new(ProtectedProfileStore::open_default()
+            .map_err(|_| "Cannot open protected room recovery storage.")?);
+        let recovery_label = label.clone();
         let (published, service) = node
             .runtime()
-            .block_on(poche_veilid::publish_device_room(
+            .block_on(poche_veilid::publish_durable_device_room(
                 &node,
                 &identity,
                 RoomNetwork::VeilidPublic,
                 "Poche lobby",
                 now,
                 receive,
+                move |genesis, recovery| {
+                    let bytes = zeroize::Zeroizing::new(genesis.encode_recovery(recovery)?);
+                    recovery_store.lock()
+                        .map_err(|_| poche_player_client::DeviceClientError::TransportUnavailable)?
+                        .save_authority_recovery(&recovery_label, genesis.room_id().as_str(), &bytes)
+                        .map_err(|error| {
+                            eprintln!("poche: protected room checkpoint failed: {error}");
+                            poche_player_client::DeviceClientError::TransportUnavailable
+                        })
+                },
             ))
             .map_err(|_| "Could not publish the lobby.")?;
         let initialized = (|| {

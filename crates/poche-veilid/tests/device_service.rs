@@ -194,16 +194,25 @@ fn device_dispatch_authenticates_before_returning_observations() {
         )
         .await
         .unwrap();
-        let (published, handler) = poche_veilid::publish_device_room(
+        let saves = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let writer_saves = saves.clone();
+        let (published, handler) = poche_veilid::publish_durable_device_room(
             &server_node,
             &identity,
             RoomNetwork::VeilidLocal,
             "RPC room",
             100,
             receive,
+            move |genesis, recovery| {
+                let bytes = genesis.encode_recovery(recovery)?;
+                assert!(!bytes.is_empty());
+                writer_saves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            },
         )
         .await
         .unwrap();
+        assert!(saves.load(std::sync::atomic::Ordering::SeqCst) > 0);
         let room_id = published.record().room_id.clone();
         let bytes = VeilidDeviceRequest::Observe(
             sign_observation_request(
