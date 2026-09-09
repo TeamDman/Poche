@@ -879,16 +879,19 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
     }
 }
 
+#[derive(Clone)]
 struct CachedRemoteObservation {
     request: DeviceObservationRequestWire,
     observation: DeviceObservation,
 }
 
+#[derive(Clone)]
 struct CachedRemoteAction {
     action: DeviceActionWire,
     result: DeviceActionResult,
 }
 
+#[derive(Clone)]
 struct CachedRemoteRoute {
     request: DeviceRouteRequestWire,
     result: DeviceRouteResultWire,
@@ -906,6 +909,18 @@ pub struct CertifiedDeviceRoom<G: SessionGame, A> {
     service_profiles: Vec<DeviceProfile>,
     next_service_command: u64,
     countdown_started: Option<(u64, std::time::Duration)>,
+}
+
+/// Internal authority-only checkpoint including exact signed-request replay
+/// caches. No serialization or Debug; not a player-visible snapshot.
+pub struct CertifiedRoomCheckpoint<G: SessionGame, A> {
+    adapter: RuntimeDeviceCheckpoint<G, A>,
+    profiles: BTreeMap<DeviceId, DeviceProfile>,
+    observation_cache: BTreeMap<(DeviceId, String), CachedRemoteObservation>,
+    action_cache: BTreeMap<(DeviceId, String), CachedRemoteAction>,
+    route_cache: BTreeMap<(DeviceId, String), CachedRemoteRoute>,
+    service_profiles: Vec<DeviceProfile>,
+    next_service_command: u64,
 }
 
 /// Already-authenticated cooperation route that can execute without holding
@@ -942,6 +957,29 @@ where
     G::Error: Send,
     A: AdvertisedActionSource<G>,
 {
+    /// Capture while the caller holds exclusive access to this certified room.
+    pub fn checkpoint(&self) -> Result<CertifiedRoomCheckpoint<G, A>, DeviceClientError>
+    where A: Clone {
+        Ok(CertifiedRoomCheckpoint {
+            adapter: self.adapter.checkpoint()?, profiles: self.profiles.clone(),
+            observation_cache: self.observation_cache.clone(), action_cache: self.action_cache.clone(),
+            route_cache: self.route_cache.clone(), service_profiles: self.service_profiles.clone(),
+            next_service_command: self.next_service_command,
+        })
+    }
+
+    /// Restore in-memory checkpoint state; countdown observation restarts its
+    /// local elapsed-time anchor instead of reusing another process's clock.
+    pub fn from_checkpoint(checkpoint: CertifiedRoomCheckpoint<G, A>, codec: LoopbackCodec) -> Result<Self, DeviceClientError> {
+        Ok(Self {
+            adapter: RuntimeLoopbackDeviceAdapter::from_checkpoint(checkpoint.adapter, codec)?,
+            profiles: checkpoint.profiles, observation_cache: checkpoint.observation_cache,
+            action_cache: checkpoint.action_cache, route_cache: checkpoint.route_cache,
+            service_profiles: checkpoint.service_profiles, next_service_command: checkpoint.next_service_command,
+            countdown_started: None,
+        })
+    }
+
     #[must_use]
     pub fn new(adapter: RuntimeLoopbackDeviceAdapter<G, A>) -> Self {
         Self {
@@ -2799,7 +2837,11 @@ mod tests {
             }
         );
         assert_eq!(adapter.revision(), Some(1));
+        let mut room = CertifiedDeviceRoom::from_checkpoint(
+            room.checkpoint().unwrap(), LoopbackCodec::CanonicalNdjson,
+        ).unwrap();
         assert_eq!(room.invoke(&signed_action).unwrap(), result);
+        assert_eq!(room.adapter.revision(), Some(1));
         assert_eq!(
             room.observe(signed_observe).unwrap(),
             observation,
