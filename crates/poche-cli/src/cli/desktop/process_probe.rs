@@ -111,8 +111,48 @@ fn protected_desktop_process_role() {
             .is_empty()
     );
     fs::write(root.join(format!("{role}-dealt")), b"dealt").unwrap();
+    let revision = live.observation().projection.current_revision;
+    let game = live.observation().projection.payload.public_game_state.clone();
+    let position = [170, 240, -310];
+    let rotation = [45000, 12000, 270000];
     if creator {
-        wait_until(|| root.join("joiner-dealt").exists());
+        wait_until(|| {
+            live.poll().expect("remote pose observation");
+            live.observation().physical_hands.iter().any(|card| {
+                card.face.is_none()
+                    && card.pose.as_ref().is_some_and(|pose| {
+                        pose.position_mm == position && pose.rotation_millidegrees == rotation
+                    })
+            })
+        });
+        assert_eq!(live.observation().projection.current_revision, revision);
+        assert_eq!(live.observation().projection.payload.public_game_state, game);
+        fs::write(root.join("creator-saw-motion"), b"verified").unwrap();
+        wait_until(|| root.join("joiner-motion-done").exists());
+    } else {
+        let card = live
+            .observation()
+            .physical_hands
+            .iter()
+            .find(|card| card.face.is_some())
+            .expect("owned physical card")
+            .id
+            .clone();
+        live.submit_pose(&card, true, position, rotation)
+            .expect("native motion submission");
+        wait_until(|| {
+            live.poll().expect("own pose receipt");
+            live.observation().physical_hands.iter().any(|entry| {
+                entry.id == card
+                    && entry.pose.as_ref().is_some_and(|pose| {
+                        pose.position_mm == position && pose.rotation_millidegrees == rotation
+                    })
+            })
+        });
+        assert_eq!(live.observation().projection.current_revision, revision);
+        assert_eq!(live.observation().projection.payload.public_game_state, game);
+        wait_until(|| root.join("creator-saw-motion").exists());
+        fs::write(root.join("joiner-motion-done"), b"verified").unwrap();
     }
 }
 
@@ -155,7 +195,9 @@ fn protected_desktop_two_process() {
     }
     assert!(directory.path().join("creator-dealt").exists());
     assert!(directory.path().join("joiner-dealt").exists());
+    assert!(directory.path().join("creator-saw-motion").exists());
+    assert!(directory.path().join("joiner-motion-done").exists());
     eprintln!(
-        "two independent protected desktop processes dealt successfully; profile suffix {suffix}"
+        "two independent protected desktop processes dealt and shared private-safe motion; profile suffix {suffix}"
     );
 }
