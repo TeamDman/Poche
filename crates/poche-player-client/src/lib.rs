@@ -329,6 +329,16 @@ fn valid_action_identity(id: &str, label: &str) -> bool {
         && !label.chars().any(char::is_control)
 }
 
+/// Recipient-scoped physical identity of a card logically held in a hand.
+#[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PhysicalHandCard {
+    pub id: String,
+    pub seat: u8,
+    /// Present only for the viewer's own hand, never merely a camera-hidden field.
+    pub face: Option<u8>,
+}
+
 /// Exact-recipient observation and action set delivered atomically by an
 /// adapter. Actions expire with this revision and projection hash.
 #[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
@@ -342,6 +352,9 @@ pub struct DeviceObservation {
     /// Signed providers owned by this exact player root in this room/session.
     /// Other players' devices are absent from the object graph.
     pub capture_providers: Vec<CaptureProviderAdvertisementWire>,
+    /// Optional desktop hand identities, ordered by opaque ID, not secret face.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub physical_hands: Vec<PhysicalHandCard>,
 }
 
 impl DeviceObservation {
@@ -350,6 +363,40 @@ impl DeviceObservation {
         profile: &DeviceProfile,
         room_id: &RoomId,
     ) -> Result<(), DeviceClientError> {
+        let own_seat = self
+            .projection
+            .payload
+            .members
+            .iter()
+            .find(|member| member.principal_id == profile.player_id && member.connected)
+            .and_then(|member| member.seat);
+        if self.physical_hands.len() > 52
+            || !self
+                .physical_hands
+                .windows(2)
+                .all(|pair| pair[0].id < pair[1].id)
+            || self.physical_hands.iter().any(|card| {
+                card.id.len() != 64
+                    || !card.id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    || !self
+                        .projection
+                        .payload
+                        .members
+                        .iter()
+                        .any(|member| member.seat == Some(card.seat))
+                    || card.face.is_some_and(|face| {
+                        own_seat != Some(card.seat)
+                            || !self
+                                .projection
+                                .payload
+                                .own_hand
+                                .as_ref()
+                                .is_some_and(|hand| hand.cards.contains(&face))
+                    })
+            })
+        {
+            return Err(DeviceClientError::InvalidObservation);
+        }
         if &self.projection.room_id != room_id
             || self.projection.principal_id != profile.player_id
             || self.actions.iter().any(|action| !action.validate())
@@ -990,6 +1037,7 @@ mod tests {
             action_templates: Vec::new(),
             chat_tail: Vec::new(),
             capture_providers: Vec::new(),
+            physical_hands: Vec::new(),
         };
         (profile, observation)
     }

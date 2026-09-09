@@ -557,6 +557,18 @@ impl<G: SessionGame> InProcessAuthority<G> {
         })
     }
 
+    /// Distinguish a new game after returning to the lobby from its predecessor.
+    #[must_use]
+    pub fn latest_game_start_revision(&self) -> Option<u64> {
+        self.committed_events.iter().rev().find_map(|entry| {
+            matches!(
+                entry.event.kind,
+                poche_session::SessionEventKind::GameStarted { .. }
+            )
+            .then_some(entry.revision)
+        })
+    }
+
     /// Process at most one authenticated transport input.
     ///
     /// # Errors

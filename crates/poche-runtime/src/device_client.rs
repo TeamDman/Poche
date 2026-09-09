@@ -493,6 +493,7 @@ struct SharedLoopbackState<G: SessionGame, A> {
     cooperation_now_unix_ms: u64,
     action_source: A,
     next_projection: u64,
+    physical_secret: Option<[u8; 32]>,
 }
 
 struct RegisteredCaptureProvider {
@@ -565,8 +566,26 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
                 cooperation_now_unix_ms: 1,
                 action_source,
                 next_projection: 0,
+                physical_secret: None,
             })),
         }
+    }
+
+    /// Enable round-stable physical hand identities before any client enrolls.
+    /// Supply independent cryptographic entropy, never the rules/deal seed.
+    ///
+    /// # Errors
+    /// Rejects mutation after enrollment or a poisoned room lock.
+    pub fn enable_physical_identities(&self, secret: [u8; 32]) -> Result<(), DeviceClientError> {
+        let mut shared = self
+            .shared
+            .lock()
+            .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        if !shared.clients.is_empty() || shared.physical_secret.is_some() {
+            return Err(DeviceClientError::AuthorizationDenied);
+        }
+        shared.physical_secret = Some(secret);
+        Ok(())
     }
 
     /// Connect one independently certified profile to the shared loopback room.
@@ -1816,6 +1835,7 @@ where
         .collect::<Vec<_>>();
     capture_providers.sort_by(|left, right| left.provider_device_id.cmp(&right.provider_device_id));
     Ok(DeviceObservation {
+        physical_hands: physical_hands(shared, &projection)?,
         projection,
         projection_hash,
         actions,
@@ -1823,6 +1843,58 @@ where
         chat_tail,
         capture_providers,
     })
+}
+
+fn physical_hands<G: SessionGame, A>(
+    shared: &SharedLoopbackState<G, A>,
+    projection: &ProjectionEnvelope,
+) -> Result<Vec<poche_player_client::PhysicalHandCard>, DeviceClientError> {
+    let Some(secret) = &shared.physical_secret else {
+        return Ok(Vec::new());
+    };
+    let game = match &shared.authority.state.phase {
+        SessionPhase::Running { game } | SessionPhase::Paused { game } => game,
+        _ => return Ok(Vec::new()),
+    };
+    let public = game
+        .public_projection()
+        .map_err(|_| DeviceClientError::InvalidObservation)?;
+    let epoch = shared
+        .authority
+        .latest_game_start_revision()
+        .ok_or(DeviceClientError::InvalidObservation)?
+        .checked_mul(65_536)
+        .and_then(|epoch| epoch.checked_add(u64::from(public.round_index)))
+        .ok_or(DeviceClientError::ProtocolViolation)?;
+    let identities = poche_spatial::PhysicalDeckIdentity::new(secret, epoch);
+    let mut cards = Vec::new();
+    for member in &shared.authority.state.members {
+        let Some(seat) = member.seat else {
+            continue;
+        };
+        for face in game
+            .private_hand(seat)
+            .map_err(|_| DeviceClientError::InvalidObservation)?
+        {
+            let card =
+                poche_spatial::CardFace::new(face).ok_or(DeviceClientError::InvalidObservation)?;
+            let id = identities
+                .card(card)
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            let own = member.principal_id == projection.principal_id
+                && member.connection == ConnectionState::Connected;
+            cards.push(poche_player_client::PhysicalHandCard {
+                id,
+                seat,
+                face: own.then_some(face),
+            });
+        }
+    }
+    cards.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(cards)
 }
 
 fn observation_supplements<G, A>(
@@ -2571,6 +2643,7 @@ mod tests {
                 .without_hand_sharing();
         let adapter =
             RuntimeLoopbackDeviceAdapter::new(state, source, LoopbackCodec::CanonicalNdjson);
+        adapter.enable_physical_identities([92; 32]).unwrap();
         adapter.enroll(&host_profile).unwrap();
         adapter.enroll(&guest_profile).unwrap();
         let mut host =
@@ -2704,6 +2777,33 @@ mod tests {
         assert_eq!(certified.drive_authority_services(2).unwrap(), 0);
         invoke!(spectator, "room-join", "strict-spectator-join");
         let view = spectator.observe(&room_id).unwrap();
+        assert_eq!(view.physical_hands.len(), 2);
+        assert!(view.physical_hands.iter().all(|card| card.face.is_none()));
+        assert_eq!(
+            view.physical_hands
+                .iter()
+                .map(|card| &card.id)
+                .collect::<Vec<_>>(),
+            observation
+                .physical_hands
+                .iter()
+                .map(|card| &card.id)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            observation
+                .physical_hands
+                .iter()
+                .filter(|card| card.face.is_some())
+                .count(),
+            1
+        );
+        let mut leaked = view.clone();
+        leaked.physical_hands[0].face = Some(0);
+        assert_eq!(
+            leaked.validate_for(&spectator_profile, &room_id),
+            Err(DeviceClientError::InvalidObservation)
+        );
         assert!(view.projection.payload.own_hand.is_none());
         assert!(view.projection.payload.granted_hands.is_empty());
         assert!(!view.actions.iter().any(|action| matches!(

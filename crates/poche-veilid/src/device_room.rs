@@ -72,11 +72,12 @@ pub async fn publish_device_room(
         );
         let actions = OracleRoomActionSource::new(seed, 2, proof.expose(), 30, "countdown")?
             .without_hand_sharing();
-        let mut room = CertifiedDeviceRoom::new(RuntimeLoopbackDeviceAdapter::new(
-            state,
-            actions,
-            LoopbackCodec::CanonicalNdjson,
-        ));
+        let adapter =
+            RuntimeLoopbackDeviceAdapter::new(state, actions, LoopbackCodec::CanonicalNdjson);
+        let mut physical_secret = [0_u8; 32];
+        getrandom::fill(&mut physical_secret).map_err(|_| DeviceClientError::KeyUnavailable)?;
+        adapter.enable_physical_identities(physical_secret)?;
+        let mut room = CertifiedDeviceRoom::new(adapter);
         room.enroll_authority_service(&clock)?;
         room.enroll_authority_service(&environment)?;
         Ok::<_, DeviceClientError>(VeilidDeviceService::new(room))
