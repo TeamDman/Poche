@@ -84,11 +84,17 @@ fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, DeviceClien
 }
 
 impl VeilidDeviceRequest {
+    pub fn encode(&self) -> Result<Vec<u8>, DeviceClientError> {
+        encode(self)
+    }
     pub fn decode(bytes: &[u8]) -> Result<Self, DeviceClientError> {
         decode(bytes)
     }
 }
 impl VeilidDeviceReply {
+    pub fn decode(bytes: &[u8]) -> Result<Self, DeviceClientError> {
+        decode(bytes)
+    }
     pub fn encode(&self) -> Result<Vec<u8>, DeviceClientError> {
         encode(self)
     }

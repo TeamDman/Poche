@@ -21,6 +21,10 @@ mod store;
 mod transport;
 #[cfg(feature = "device-transport")]
 pub use device_transport::*;
+#[cfg(feature = "device-service")]
+mod device_service;
+#[cfg(feature = "device-service")]
+pub use device_service::*;
 
 pub use identity::*;
 pub use membership::*;

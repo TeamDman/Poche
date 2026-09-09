@@ -12,6 +12,7 @@ publish = false
 default = []
 veilid = ["dep:veilid-core"]
 device-transport = ["veilid", "dep:tokio", "dep:poche-player-client"]
+device-service = ["device-transport", "dep:poche-runtime", "dep:poche-session"]
 # Separate build configuration: the upstream mock replaces the network API.
 # Never enable this feature in a production desktop build.
 veilid-mock-test = ["veilid", "veilid-core/mock-api"]
