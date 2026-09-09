@@ -1952,6 +1952,7 @@ where
     capture_providers.sort_by(|left, right| left.provider_device_id.cmp(&right.provider_device_id));
     Ok(DeviceObservation {
         physical_hands: physical_hands(shared, &projection)?,
+        physical_public: physical_public(shared, &projection)?,
         projection,
         projection_hash,
         actions,
@@ -2025,6 +2026,23 @@ fn physical_hands<G: SessionGame, A>(
         }
     }
     cards.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(cards)
+}
+
+fn physical_public<G: SessionGame, A>(shared: &SharedLoopbackState<G, A>, projection: &ProjectionEnvelope) -> Result<Vec<poche_player_client::PhysicalPublicCard>, DeviceClientError> {
+    let (Some(secret), Some(game), Some(epoch)) = (&shared.physical_secret, &projection.payload.public_game_state, shared.physical_pose_epoch) else { return Ok(Vec::new()); };
+    let current_epoch = shared.authority.latest_game_start_revision().and_then(|revision| revision.checked_mul(65_536)).and_then(|value| value.checked_add(u64::from(game.round_index)));
+    if current_epoch != Some(epoch) { return Ok(Vec::new()); }
+    let identities = poche_spatial::PhysicalDeckIdentity::new(secret, epoch);
+    let mut cards = Vec::new();
+    for played in &game.current_trick {
+        let face = poche_spatial::CardFace::new(played.card).ok_or(DeviceClientError::InvalidObservation)?;
+        let id = identities.card(face).as_bytes().iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        if let Some(pose) = shared.physical_poses.get(&id) {
+            cards.push(poche_player_client::PhysicalPublicCard { id, face: played.card, pose: pose.clone() });
+        }
+    }
+    cards.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(cards)
 }
 

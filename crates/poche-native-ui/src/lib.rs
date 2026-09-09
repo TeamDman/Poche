@@ -469,6 +469,13 @@ pub fn native_controller_from_observation(
             }
         }
     }
+    for card in &controller.scene.cards {
+        if matches!(card.location, CardLocation::Play { .. })
+            && let Some(entry) = observation.physical_public.iter().find(|entry| card.face.is_some_and(|face| face.code() == entry.face))
+        {
+            controller.physical_poses.insert(ObjectId::Card(card.id), entry.pose.clone());
+        }
+    }
     Ok(controller)
 }
 
@@ -2677,6 +2684,7 @@ mod tests {
             chat_tail: Vec::new(),
             capture_providers: Vec::new(),
             physical_hands: Vec::new(),
+            physical_public: Vec::new(),
         }
     }
 

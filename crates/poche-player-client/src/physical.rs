@@ -3,6 +3,14 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct PhysicalPublicCard {
+    pub id: String,
+    pub face: u8,
+    pub pose: PhysicalPoseState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PhysicalPoseState {
     pub device: DeviceId,
     pub generation: u64,

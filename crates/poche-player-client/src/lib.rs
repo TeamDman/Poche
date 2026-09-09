@@ -359,6 +359,8 @@ pub struct DeviceObservation {
     /// Optional desktop hand identities, ordered by opaque ID, not secret face.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub physical_hands: Vec<PhysicalHandCard>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub physical_public: Vec<PhysicalPublicCard>,
 }
 
 impl DeviceObservation {
@@ -374,6 +376,13 @@ impl DeviceObservation {
             .iter()
             .find(|member| member.principal_id == profile.player_id && member.connected)
             .and_then(|member| member.seat);
+        if self.physical_public.len() > 52
+            || !self.physical_public.windows(2).all(|pair| pair[0].id < pair[1].id)
+            || self.physical_public.iter().any(|card| card.id.len() != 64
+                || !card.id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                || !card.pose.validate()
+                || !self.projection.payload.public_game_state.as_ref().is_some_and(|game| game.current_trick.iter().any(|played| played.card == card.face)))
+        { return Err(DeviceClientError::InvalidObservation); }
         if self.physical_hands.len() > 52
             || !self
                 .physical_hands
@@ -1067,6 +1076,7 @@ mod tests {
             chat_tail: Vec::new(),
             capture_providers: Vec::new(),
             physical_hands: Vec::new(),
+            physical_public: Vec::new(),
         };
         (profile, observation)
     }

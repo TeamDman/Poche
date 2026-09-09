@@ -132,6 +132,7 @@ mod tests {
             chat_tail: Vec::new(),
             capture_providers: Vec::new(),
             physical_hands: Vec::new(),
+            physical_public: Vec::new(),
         }
     }
 
