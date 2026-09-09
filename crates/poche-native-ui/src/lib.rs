@@ -175,6 +175,7 @@ pub struct NativeController {
     last_finding: String,
     generation: u64,
     last_commit_cost: Option<Duration>,
+    physical_poses: HashMap<ObjectId, poche_player_client::PhysicalPoseState>,
 }
 
 impl NativeController {
@@ -221,6 +222,7 @@ impl NativeController {
             .to_owned(),
             generation: 0,
             last_commit_cost: None,
+            physical_poses: HashMap::new(),
         })
     }
 
@@ -428,6 +430,31 @@ pub fn native_controller_from_observation(
         .collect();
     let mut controller = NativeController::try_new_viewer(layout, scene, issuing_seat)?;
     controller.legal_plays = Some(legal_plays);
+    for card in &controller.scene.cards {
+        let CardLocation::Hand {
+            seat,
+            index_from_left,
+        } = card.location
+        else {
+            continue;
+        };
+        let candidates = observation
+            .physical_hands
+            .iter()
+            .filter(|entry| entry.seat == seat.get());
+        let entry = if let Some(face) = card.face {
+            candidates
+                .into_iter()
+                .find(|entry| entry.face == Some(face.code()))
+        } else {
+            candidates.into_iter().nth(usize::from(index_from_left))
+        };
+        if let Some(pose) = entry.and_then(|entry| entry.pose.as_ref()) {
+            controller
+                .physical_poses
+                .insert(ObjectId::Card(card.id), pose.clone());
+        }
+    }
     Ok(controller)
 }
 
@@ -1677,6 +1704,22 @@ fn apply_mirrored_transforms(
         }
     }
     for (mirror, preview, mut transform) in &mut mirrors {
+        if let Some(pose) = controller.physical_poses.get(&mirror.id) {
+            *transform = Transform::from_translation(
+                Vec3::new(
+                    pose.position_mm[0] as f32,
+                    pose.position_mm[1] as f32,
+                    pose.position_mm[2] as f32,
+                ) / 1000.0,
+            )
+            .with_rotation(Quat::from_euler(
+                EulerRot::YXZ,
+                (pose.rotation_millidegrees[0] as f32 / 1000.0).to_radians(),
+                (pose.rotation_millidegrees[1] as f32 / 1000.0).to_radians(),
+                (pose.rotation_millidegrees[2] as f32 / 1000.0).to_radians(),
+            ));
+            continue;
+        }
         let base_pose = controller
             .scene
             .objects
@@ -2756,6 +2799,91 @@ mod tests {
         assert_eq!(
             controller.commit_named(CardFace::new(12).expect("ace clubs")),
             Err("A♣ was not advertised for this exact projection".to_owned())
+        );
+    }
+
+    #[test]
+    fn accepted_physical_pose_changes_render_transform_not_logical_scene() {
+        use super::{CanonicalMirror, DragPreview, TweenClock, apply_mirrored_transforms};
+        use bevy::prelude::*;
+        let mut observation = live_play_observation();
+        let baseline = native_controller_from_observation(&observation).unwrap();
+        let card = baseline.scene.cards.iter().find(|card| card.face.is_some()
+            && matches!(card.location, CardLocation::Hand { seat, .. } if Some(seat) == baseline.issuing_seat)).unwrap().clone();
+        let seat = baseline.issuing_seat.unwrap().get();
+        observation
+            .physical_hands
+            .push(poche_player_client::PhysicalHandCard {
+                id: "aa".repeat(32),
+                seat,
+                face: card.face.map(CardFace::code),
+                pose: Some(poche_player_client::PhysicalPoseState {
+                    device: poche_protocol::DeviceId::new("render-pose-device").unwrap(),
+                    generation: 1,
+                    sequence: 1,
+                    position_mm: [100, 200, 300],
+                    rotation_millidegrees: [30_000, 45_000, 60_000],
+                }),
+            });
+        let controller = native_controller_from_observation(&observation).unwrap();
+        assert_eq!(controller.scene, baseline.scene);
+        let hidden = baseline
+            .scene
+            .cards
+            .iter()
+            .find(|card| card.face.is_none() && matches!(card.location, CardLocation::Hand { .. }))
+            .unwrap();
+        let CardLocation::Hand {
+            seat: hidden_seat, ..
+        } = hidden.location
+        else {
+            unreachable!()
+        };
+        observation
+            .physical_hands
+            .push(poche_player_client::PhysicalHandCard {
+                id: "bb".repeat(32),
+                seat: hidden_seat.get(),
+                face: None,
+                pose: observation.physical_hands[0].pose.clone(),
+            });
+        let controller = native_controller_from_observation(&observation).unwrap();
+        assert!(
+            controller
+                .physical_poses
+                .contains_key(&ObjectId::Card(hidden.id))
+        );
+        assert_eq!(controller.scene, baseline.scene);
+        let mut app = App::new();
+        app.insert_resource(controller)
+            .init_resource::<Time>()
+            .init_resource::<TweenClock>()
+            .add_systems(Update, apply_mirrored_transforms);
+        let entity = app
+            .world_mut()
+            .spawn((
+                CanonicalMirror {
+                    id: ObjectId::Card(card.id),
+                    pose: card.pose,
+                    location: Some(card.location),
+                },
+                DragPreview::default(),
+                Transform::default(),
+            ))
+            .id();
+        app.update();
+        let transform = app.world().get::<Transform>(entity).unwrap();
+        assert!(transform.translation.distance(Vec3::new(0.1, 0.2, 0.3)) < 0.00001);
+        let expected = Quat::from_euler(
+            EulerRot::YXZ,
+            30f32.to_radians(),
+            45f32.to_radians(),
+            60f32.to_radians(),
+        );
+        assert!(transform.rotation.dot(expected).abs() > 0.99999);
+        assert_eq!(
+            app.world().resource::<NativeController>().scene,
+            baseline.scene
         );
     }
 

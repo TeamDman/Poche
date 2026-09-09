@@ -64,10 +64,12 @@ impl NativeLiveDevice {
         let (command_tx, command_rx) = mpsc::sync_channel(8);
         let (event_tx, event_rx) = mpsc::sync_channel(8);
         let initial_revision = observation.projection.current_revision;
+        let initial_hands = observation.physical_hands.clone();
         thread::Builder::new()
             .name("poche-native-device".to_owned())
             .spawn(move || {
                 let mut latest_revision = initial_revision;
+                let mut latest_hands = initial_hands;
                 let mut retry_delay = Duration::from_millis(50);
                 loop {
                     match command_rx.recv_timeout(retry_delay) {
@@ -82,6 +84,7 @@ impl NativeLiveDevice {
                                     Ok(observation) => {
                                         retry_delay = Duration::from_millis(50);
                                         latest_revision = observation.projection.current_revision;
+                                        latest_hands = observation.physical_hands.clone();
                                         if event_tx
                                             .send(NativeWorkerEvent::Updated {
                                                 result,
@@ -119,10 +122,19 @@ impl NativeLiveDevice {
                             }
                         }
                         Err(mpsc::RecvTimeoutError::Timeout) => {
-                            match client.wait(&room_id, latest_revision) {
+                            // A rules-revision wait cannot see physical-only
+                            // changes. Poll snapshots and publish only changed
+                            // rules or physical hand state to the render thread.
+                            match client.observe(&room_id) {
                                 Ok(observation) => {
                                     retry_delay = Duration::from_millis(50);
+                                    if latest_revision == observation.projection.current_revision
+                                        && latest_hands == observation.physical_hands
+                                    {
+                                        continue;
+                                    }
                                     latest_revision = observation.projection.current_revision;
+                                    latest_hands = observation.physical_hands.clone();
                                     if event_tx
                                         .send(NativeWorkerEvent::Observed(Box::new(observation)))
                                         .is_err()
