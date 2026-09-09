@@ -64,10 +64,11 @@ fn protected_desktop_process_role() {
     let root = Path::new(&root);
     let role = std::env::var("POCHE_PROCESS_PROBE_ROLE").expect("parent role");
     let suffix = std::env::var("POCHE_PROCESS_PROBE_SUFFIX").expect("parent suffix");
-    let creator = role == "creator";
-    let restarting = role == "joiner-resume";
+    let creator = role == "creator" || role == "creator-resume";
+    let creator_loss = std::env::var("POCHE_PROCESS_PROBE_CREATOR_LOSS").as_deref() == Ok("1");
+    let restarting = role.ends_with("-resume");
     assert!(creator || role == "joiner" || restarting);
-    let profile_role = if restarting { "joiner" } else { &role };
+    let profile_role = if creator { "creator" } else if restarting { "joiner" } else { &role };
     let name = format!("process-{profile_role}-{suffix}");
     let request = if creator {
         DesktopMenuRequest::Create { name }
@@ -84,9 +85,14 @@ fn protected_desktop_process_role() {
             live.poll().expect("restarted observation");
             live.observation().projection.payload.own_hand.as_ref().is_some_and(|hand| !hand.cards.is_empty())
         });
-        assert!(live.observation().projection.payload.members.iter().any(|member| member.principal_id == live.observation().projection.principal_id && member.seat == Some(1)));
-        assert!(live.observation().physical_hands.iter().any(|card| card.face.is_some() && card.pose.is_some()));
-        fs::write(root.join("joiner-resumed"), b"verified").unwrap();
+        assert!(live.observation().projection.payload.members.iter().any(|member| member.principal_id == live.observation().projection.principal_id && member.seat == Some(if creator { 0 } else { 1 })));
+        assert!(live.observation().physical_hands.iter().any(|card| card.face.is_some() != creator && card.pose.is_some()));
+        if creator {
+            assert!(live.room_invitation().unwrap() == fs::read_to_string(root.join("invitation")).unwrap());
+            let digest = recovery_digest(&live);
+            assert!(digest == fs::read_to_string(root.join("creator-state-digest")).unwrap(), "recovered creator state differs");
+        }
+        fs::write(root.join(if creator { "creator-resumed" } else { "joiner-resumed" }), b"verified").unwrap();
         return;
     }
     if creator {
@@ -148,6 +154,11 @@ fn protected_desktop_process_role() {
             game
         );
         fs::write(root.join("creator-saw-motion"), b"verified").unwrap();
+        if creator_loss {
+            fs::write(root.join("creator-state-digest"), recovery_digest(&live)).unwrap();
+            fs::write(root.join("creator-ready-for-kill"), b"ready").unwrap();
+            wait_until(|| false);
+        }
         wait_until(|| root.join("joiner-resumed").exists());
     } else {
         let card = live
@@ -178,13 +189,39 @@ fn protected_desktop_process_role() {
         fs::write(root.join("joiner-motion-done"), b"verified").unwrap();
         // Parent kills this exact child; no graceful disconnect or destructor
         // shutdown may substitute for abrupt process loss in this probe.
-        wait_until(|| false);
+        if creator_loss {
+            wait_until(|| {
+                // Read failures during creator downtime must not resubmit a
+                // game action. The worker refreshes its route on later reads.
+                if let Err(error) = live.poll() {
+                    assert!(error.contains("transport") || error.contains("progress"), "unexpected recovery error: {error}");
+                }
+                root.join("creator-resumed").exists()
+            });
+            assert_eq!(live.observation().projection.payload.public_game_state, game);
+        } else { wait_until(|| false); }
     }
 }
 
 #[test]
 #[ignore = "real public Veilid and fresh persistent protected test profiles"]
 fn protected_desktop_two_process() {
+    run_two_process(false);
+}
+
+#[test]
+#[ignore = "real public Veilid creator crash with protected profiles"]
+fn protected_desktop_creator_crash() {
+    run_two_process(true);
+}
+
+fn recovery_digest(live: &NativeLiveDevice) -> String {
+    let view = live.observation();
+    let bytes = serde_json::to_vec(&(&view.projection.payload.own_hand, &view.projection.payload.public_game_state, &view.physical_hands)).unwrap();
+    blake3::hash(&bytes).to_hex().to_string()
+}
+
+fn run_two_process(creator_loss: bool) {
     opt_in();
     let directory = tempfile::tempdir().unwrap();
     let suffix = now().unwrap().to_string();
@@ -195,6 +232,7 @@ fn protected_desktop_two_process() {
             .args(["protected_desktop_process_role", "--ignored", "--nocapture"])
             .env("POCHE_PROCESS_PROBE_ROOT", directory.path())
             .env("POCHE_PROCESS_PROBE_ROLE", role)
+            .env("POCHE_PROCESS_PROBE_CREATOR_LOSS", if creator_loss { "1" } else { "0" })
             .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
         #[cfg(windows)]
         {
@@ -213,8 +251,8 @@ fn protected_desktop_two_process() {
         if let Some(status) = children[1].0.try_wait().unwrap() {
             panic!("joiner exited before forced termination: {status}");
         }
-        if directory.path().join("joiner-motion-done").exists() {
-            let mut victim = children.remove(1);
+        if directory.path().join(if creator_loss { "creator-ready-for-kill" } else { "joiner-motion-done" }).exists() {
+            let mut victim = children.remove(if creator_loss { 0 } else { 1 });
             victim.0.kill().expect("terminate owned joiner process");
             assert!(!victim.0.wait().unwrap().success());
             break;
@@ -225,7 +263,8 @@ fn protected_desktop_two_process() {
     let mut restart = Command::new(std::env::current_exe().unwrap());
     restart.args(["protected_desktop_process_role", "--ignored", "--nocapture"])
         .env("POCHE_PROCESS_PROBE_ROOT", directory.path())
-        .env("POCHE_PROCESS_PROBE_ROLE", "joiner-resume")
+        .env("POCHE_PROCESS_PROBE_ROLE", if creator_loss { "creator-resume" } else { "joiner-resume" })
+        .env("POCHE_PROCESS_PROBE_CREATOR_LOSS", if creator_loss { "1" } else { "0" })
         .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
     #[cfg(windows)] {
         use std::os::windows::process::CommandExt;
@@ -249,7 +288,7 @@ fn protected_desktop_two_process() {
     assert!(directory.path().join("joiner-dealt").exists());
     assert!(directory.path().join("creator-saw-motion").exists());
     assert!(directory.path().join("joiner-motion-done").exists());
-    assert!(directory.path().join("joiner-resumed").exists());
+    assert!(directory.path().join(if creator_loss { "creator-resumed" } else { "joiner-resumed" }).exists());
     eprintln!(
         "two independent protected desktop processes dealt and shared private-safe motion; profile suffix {suffix}"
     );
