@@ -65,8 +65,10 @@ fn protected_desktop_process_role() {
     let role = std::env::var("POCHE_PROCESS_PROBE_ROLE").expect("parent role");
     let suffix = std::env::var("POCHE_PROCESS_PROBE_SUFFIX").expect("parent suffix");
     let creator = role == "creator";
-    assert!(creator || role == "joiner");
-    let name = format!("process-{role}-{suffix}");
+    let restarting = role == "joiner-resume";
+    assert!(creator || role == "joiner" || restarting);
+    let profile_role = if restarting { "joiner" } else { &role };
+    let name = format!("process-{profile_role}-{suffix}");
     let request = if creator {
         DesktopMenuRequest::Create { name }
     } else {
@@ -77,6 +79,16 @@ fn protected_desktop_process_role() {
     };
     let mut owners = Vec::new();
     let mut live = connect(request, &mut owners).expect("production process connection");
+    if restarting {
+        wait_until(|| {
+            live.poll().expect("restarted observation");
+            live.observation().projection.payload.own_hand.as_ref().is_some_and(|hand| !hand.cards.is_empty())
+        });
+        assert!(live.observation().projection.payload.members.iter().any(|member| member.principal_id == live.observation().projection.principal_id && member.seat == Some(1)));
+        assert!(live.observation().physical_hands.iter().any(|card| card.face.is_some() && card.pose.is_some()));
+        fs::write(root.join("joiner-resumed"), b"verified").unwrap();
+        return;
+    }
     if creator {
         // Never print the bearer secret. TempDir owns its cleanup in the parent.
         fs::write(root.join("invitation"), live.room_invitation().unwrap()).unwrap();
@@ -136,7 +148,7 @@ fn protected_desktop_process_role() {
             game
         );
         fs::write(root.join("creator-saw-motion"), b"verified").unwrap();
-        wait_until(|| root.join("joiner-motion-done").exists());
+        wait_until(|| root.join("joiner-resumed").exists());
     } else {
         let card = live
             .observation()
@@ -191,6 +203,27 @@ fn protected_desktop_two_process() {
         ));
     }
     let deadline = Instant::now() + Duration::from_secs(240);
+    loop {
+        if let Some(status) = children[0].0.try_wait().unwrap() {
+            assert!(status.success(), "creator failed before participant restart");
+        }
+        if let Some(status) = children[1].0.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        assert!(Instant::now() < deadline, "joiner did not finish");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let mut restart = Command::new(std::env::current_exe().unwrap());
+    restart.args(["protected_desktop_process_role", "--ignored", "--nocapture"])
+        .env("POCHE_PROCESS_PROBE_ROOT", directory.path())
+        .env("POCHE_PROCESS_PROBE_ROLE", "joiner-resume")
+        .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
+    #[cfg(windows)] {
+        use std::os::windows::process::CommandExt;
+        restart.creation_flags(0x0800_0000);
+    }
+    children.push(ChildOwner(restart.spawn().unwrap()));
     for child in &mut children {
         loop {
             if let Some(status) = child.0.try_wait().unwrap() {
@@ -208,6 +241,7 @@ fn protected_desktop_two_process() {
     assert!(directory.path().join("joiner-dealt").exists());
     assert!(directory.path().join("creator-saw-motion").exists());
     assert!(directory.path().join("joiner-motion-done").exists());
+    assert!(directory.path().join("joiner-resumed").exists());
     eprintln!(
         "two independent protected desktop processes dealt and shared private-safe motion; profile suffix {suffix}"
     );

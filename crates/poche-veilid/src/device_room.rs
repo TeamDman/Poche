@@ -40,7 +40,10 @@ pub async fn publish_device_room(
     let metadata = PublicRoomMetadata::new(label, 2, true)
         .map_err(|_| DeviceClientError::ProtocolViolation)?;
     let adapter = VeilidRendezvous::new(node.api().clone())
-        .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        .map_err(|error| {
+            eprintln!("poche: rendezvous initialization failed: {error:?}");
+            DeviceClientError::TransportUnavailable
+        })?;
     let published = adapter
         .publish_room(
             identity,
@@ -53,7 +56,11 @@ pub async fn publish_device_room(
             now_unix_ms,
         )
         .await
-        .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        .map_err(|error| {
+            // This enum carries only stable categories, never route/key data.
+            eprintln!("poche: lobby publication failed: {error:?}");
+            DeviceClientError::TransportUnavailable
+        })?;
     let service = (|| {
         let clock = authority_profile("clock")?;
         let environment = authority_profile("game")?;
