@@ -176,6 +176,7 @@ pub struct NativeController {
     generation: u64,
     last_commit_cost: Option<Duration>,
     physical_poses: HashMap<ObjectId, poche_player_client::PhysicalPoseState>,
+    physical_defaults: HashMap<ObjectId, PoseMm>,
 }
 
 impl NativeController {
@@ -223,6 +224,7 @@ impl NativeController {
             generation: 0,
             last_commit_cost: None,
             physical_poses: HashMap::new(),
+            physical_defaults: HashMap::new(),
         })
     }
 
@@ -444,15 +446,24 @@ pub fn native_controller_from_observation(
             .filter(|entry| entry.seat == seat.get());
         let entry = if let Some(face) = card.face {
             candidates
-                .into_iter()
-                .find(|entry| entry.face == Some(face.code()))
+                .enumerate()
+                .find(|(_, entry)| entry.face == Some(face.code()))
         } else {
-            candidates.into_iter().nth(usize::from(index_from_left))
+            candidates.enumerate().nth(usize::from(index_from_left))
         };
-        if let Some(pose) = entry.and_then(|entry| entry.pose.as_ref()) {
-            controller
-                .physical_poses
-                .insert(ObjectId::Card(card.id), pose.clone());
+        if let Some((slot, entry)) = entry {
+            // Private face order is not shared. Use the opaque identity order
+            // for initial physical slots on both owner and peer renderers.
+            if let Some(default_card) = controller.scene.cards.iter().find(|candidate| {
+                matches!(candidate.location, CardLocation::Hand { seat: candidate_seat, index_from_left } if candidate_seat == seat && usize::from(index_from_left) == slot)
+            }) {
+                controller.physical_defaults.insert(ObjectId::Card(card.id), default_card.pose);
+            }
+            if let Some(pose) = entry.pose.as_ref() {
+                controller
+                    .physical_poses
+                    .insert(ObjectId::Card(card.id), pose.clone());
+            }
         }
     }
     Ok(controller)
@@ -1806,18 +1817,24 @@ fn apply_mirrored_transforms(
             continue;
         }
         let base_pose = controller
-            .scene
-            .objects
-            .iter()
-            .find(|object| object.id == mirror.id)
-            .map(|object| object.pose)
+            .physical_defaults
+            .get(&mirror.id)
+            .copied()
             .or_else(|| {
                 controller
                     .scene
-                    .cards
+                    .objects
                     .iter()
-                    .find(|card| ObjectId::Card(card.id) == mirror.id)
-                    .map(|card| card.pose)
+                    .find(|object| object.id == mirror.id)
+                    .map(|object| object.pose)
+                    .or_else(|| {
+                        controller
+                            .scene
+                            .cards
+                            .iter()
+                            .find(|card| ObjectId::Card(card.id) == mirror.id)
+                            .map(|card| card.pose)
+                    })
             })
             .unwrap_or(mirror.pose);
         let mut pose = pose_transform(base_pose);
@@ -2267,6 +2284,45 @@ fn zone_center_card_bounds(layout: &SpatialLayout, id: ZoneId) -> Result<AabbMm,
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn initial_physical_slots_use_opaque_order_not_private_face_order() {
+        let mut owner = live_play_observation();
+        owner.physical_hands = vec![
+            poche_player_client::PhysicalHandCard {
+                id: "aa".repeat(32),
+                seat: 0,
+                face: Some(12),
+                pose: None,
+            },
+            poche_player_client::PhysicalHandCard {
+                id: "bb".repeat(32),
+                seat: 0,
+                face: Some(0),
+                pose: None,
+            },
+        ];
+        let owner_controller = super::native_controller_from_observation(&owner).unwrap();
+        let owner_card = owner_controller
+            .scene
+            .cards
+            .iter()
+            .find(|card| card.face.is_some_and(|face| face.code() == 12))
+            .unwrap();
+        let mut peer = owner.clone();
+        peer.projection.principal_id = PrincipalId::new("bob").unwrap();
+        peer.projection.payload.own_hand = None;
+        for card in &mut peer.physical_hands {
+            card.face = None;
+        }
+        let peer_controller = super::native_controller_from_observation(&peer).unwrap();
+        let peer_card = peer_controller.scene.cards.iter().find(|card| matches!(card.location, poche_spatial::CardLocation::Hand {seat, index_from_left: 0} if seat.get() == 0)).unwrap();
+        assert_eq!(
+            owner_controller.physical_defaults[&poche_spatial::ObjectId::Card(owner_card.id)],
+            peer_controller.physical_defaults[&poche_spatial::ObjectId::Card(peer_card.id)]
+        );
+        assert!(peer_card.face.is_none());
+    }
+
     #[test]
     fn drag_rotation_supports_all_axes_and_wraps_without_network_feedback() {
         let start = [359900, 100, 200];

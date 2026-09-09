@@ -112,7 +112,12 @@ fn protected_desktop_process_role() {
     );
     fs::write(root.join(format!("{role}-dealt")), b"dealt").unwrap();
     let revision = live.observation().projection.current_revision;
-    let game = live.observation().projection.payload.public_game_state.clone();
+    let game = live
+        .observation()
+        .projection
+        .payload
+        .public_game_state
+        .clone();
     let position = [170, 240, -310];
     let rotation = [45000, 12000, 270000];
     if creator {
@@ -126,7 +131,10 @@ fn protected_desktop_process_role() {
             })
         });
         assert_eq!(live.observation().projection.current_revision, revision);
-        assert_eq!(live.observation().projection.payload.public_game_state, game);
+        assert_eq!(
+            live.observation().projection.payload.public_game_state,
+            game
+        );
         fs::write(root.join("creator-saw-motion"), b"verified").unwrap();
         wait_until(|| root.join("joiner-motion-done").exists());
     } else {
@@ -150,7 +158,10 @@ fn protected_desktop_process_role() {
             })
         });
         assert_eq!(live.observation().projection.current_revision, revision);
-        assert_eq!(live.observation().projection.payload.public_game_state, game);
+        assert_eq!(
+            live.observation().projection.payload.public_game_state,
+            game
+        );
         wait_until(|| root.join("creator-saw-motion").exists());
         fs::write(root.join("joiner-motion-done"), b"verified").unwrap();
     }
