@@ -246,6 +246,8 @@ Complete when both views show the same authorized world motion; only accepted ru
 
 ### [ ] T5 Implement crash/rejoin identity and state recovery
 
+Authority checkpoint foundation: `InProcessAuthority::checkpoint/from_checkpoint` preserve reducer state, committed events, manual clock, chat tail and delivery counter together, with fresh transport supplied on restore. Opaque checkpoint has private fields and no Debug/wire encoding because it can contain private hands. Runtime suite passed 36 tests, including a committed Create checkpoint/restore equality regression. This is in-memory scaffolding only: no durable serialization/encryption, certified replay/profile/action-source/physical-state checkpoint, persistence-before-ack, liveness/disband gate, or creator process recovery yet.
+
 Creator recovery source audit (2026-09-09): `veilid_rendezvous.rs::resume_host_room` already reopens protected DHT ownership and rotates a route for the same application identity; it must not be mistaken for room-state recovery. `InProcessAuthority` owns state, manual clock, next delivery and committed events; `SharedLoopbackState` additionally owns profiles/routes, action source, projection counter, independent physical identity secret and poses. The published device service currently has no checkpoint restore path. Reconstructing with `InProcessAuthority::new(state, ...)` alone loses event provenance used for physical identity epochs. Existing transcript snapshot tests replay fixture prefixes, not production certified service recovery.
 
 Next creator-recovery implementation sequence (all still required, not completed):

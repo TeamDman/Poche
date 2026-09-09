@@ -493,6 +493,17 @@ pub enum InProcessAuthorityError<E> {
 }
 
 /// Central authority composing the existing pure reducer with loopback ports.
+/// Authority-private checkpoint. Intentionally has no Debug or wire encoding:
+/// reducer state may contain every private hand. Never send this to a player.
+pub struct AuthorityCheckpoint<G: SessionGame> {
+    state: SessionState<G>,
+    clock: ManualClock,
+    chat_tail: ChatTail,
+    next_delivery: u64,
+    committed_events: Vec<CommittedAuthorityEvent<G>>,
+}
+
+/// Central authority composing the existing pure reducer with loopback ports.
 pub struct InProcessAuthority<G: SessionGame> {
     pub state: SessionState<G>,
     pub clock: ManualClock,
@@ -503,6 +514,24 @@ pub struct InProcessAuthority<G: SessionGame> {
 }
 
 impl<G: SessionGame> InProcessAuthority<G> {
+    /// Capture logical state and event provenance together, excluding routes.
+    /// The caller must protect this authority-only data from player devices.
+    pub fn checkpoint(&self) -> AuthorityCheckpoint<G> {
+        AuthorityCheckpoint {
+            state: self.state.clone(), clock: self.clock.clone(),
+            chat_tail: self.chat_tail.clone(), next_delivery: self.next_delivery,
+            committed_events: self.committed_events.clone(),
+        }
+    }
+
+    /// Restore an internally constructed checkpoint onto fresh transport ports.
+    /// This is not a durable storage or untrusted-deserialization API.
+    pub fn from_checkpoint(checkpoint: AuthorityCheckpoint<G>, transport: InProcessTransport) -> Self {
+        Self { state: checkpoint.state, clock: checkpoint.clock, transport,
+            chat_tail: checkpoint.chat_tail, next_delivery: checkpoint.next_delivery,
+            committed_events: checkpoint.committed_events }
+    }
+
     #[must_use]
     pub const fn new(state: SessionState<G>, transport: InProcessTransport) -> Self {
         Self::with_chat_capacity(state, transport, DEFAULT_CHAT_TAIL_CAPACITY)
@@ -954,6 +983,23 @@ mod tests {
             .unwrap();
 
         assert_eq!(typed.receive(), ndjson.receive());
+    }
+
+    #[test]
+    fn authority_checkpoint_preserves_state_and_committed_provenance() {
+        let state = state();
+        let mut transport = InProcessTransport::new(LoopbackCodec::Typed);
+        let client = transport.connect(principal("host")).unwrap();
+        client.submit(&mut transport, command(&client, &state, "checkpoint-create")).unwrap();
+        let mut authority = InProcessAuthority::new(state, transport);
+        authority.drive_all().unwrap();
+        assert!(!authority.committed_events.is_empty());
+        let restored = InProcessAuthority::from_checkpoint(authority.checkpoint(), InProcessTransport::new(LoopbackCodec::Typed));
+        assert_eq!(restored.state, authority.state);
+        assert_eq!(restored.committed_events, authority.committed_events);
+        assert_eq!(restored.clock, authority.clock);
+        assert_eq!(restored.next_delivery, authority.next_delivery);
+        assert_eq!(restored.chat_tail, authority.chat_tail);
     }
 
     #[test]
