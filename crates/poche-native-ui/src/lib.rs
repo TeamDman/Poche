@@ -1414,11 +1414,17 @@ fn setup_native_scene(mut commands: Commands, surface: Res<NativeRenderSurface>)
     commands.run_system_cached(spawn_scene_objects);
 }
 
+fn hand_camera_distance(count: usize, aspect: f32, vertical_fov: f32) -> f32 {
+    let width = (count.saturating_sub(1) as f32 * 0.072 + 0.064) * 1.2;
+    let height: f32 = 0.088 * 1.2;
+    (height.max(width / aspect.max(0.01)) / (2.0 * (vertical_fov * 0.5).tan())).max(0.15)
+}
+
 fn update_hand_camera(
     controller: Res<NativeController>,
     surface: Res<NativeRenderSurface>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    mut cameras: Query<(&mut Camera, &mut Transform), With<HandCamera>>,
+    mut cameras: Query<(&mut Camera, &mut Transform, &Projection), With<HandCamera>>,
 ) {
     let size = match &*surface {
         NativeRenderSurface::Windowless { width, height, .. } => UVec2::new(*width, *height),
@@ -1430,7 +1436,7 @@ fn update_hand_camera(
         }
     };
     let cards: Vec<_> = controller.scene.cards.iter().filter(|card| matches!(card.location, CardLocation::Hand {seat, ..} if Some(seat) == controller.issuing_seat)).collect();
-    for (mut camera, mut transform) in &mut cameras {
+    for (mut camera, mut transform, projection) in &mut cameras {
         camera.is_active = !cards.is_empty() && size.x >= 10 && size.y >= 10;
         if !camera.is_active {
             continue;
@@ -1440,11 +1446,14 @@ fn update_hand_camera(
             .map(|card| point_to_vec3(card.pose.translation))
             .sum::<Vec3>()
             / cards.len() as f32;
+        let Projection::Perspective(projection) = projection else { continue; };
+        let viewport_size = UVec2::new(size.x * 3 / 5, size.y / 5);
+        let distance = hand_camera_distance(cards.len(), viewport_size.x as f32 / viewport_size.y as f32, projection.fov);
         *transform =
-            Transform::from_translation(center + Vec3::Y * 0.15).looking_at(center, Vec3::NEG_Z);
+            Transform::from_translation(center + Vec3::Y * distance).looking_at(center, Vec3::NEG_Z);
         camera.viewport = Some(bevy::camera::Viewport {
             physical_position: UVec2::new(size.x / 5, size.y * 3 / 5),
-            physical_size: UVec2::new(size.x * 3 / 5, size.y / 5),
+            physical_size: viewport_size,
             ..default()
         });
     }
@@ -2368,6 +2377,19 @@ fn zone_center_card_bounds(layout: &SpatialLayout, id: ZoneId) -> Result<AabbMm,
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hand_camera_fits_full_default_hand_in_narrow_and_wide_viewports() {
+        let fov = std::f32::consts::FRAC_PI_4;
+        for count in 1..=7 {
+            for aspect in [0.5, 1.0, 4.8] {
+                let distance = super::hand_camera_distance(count, aspect, fov);
+                let visible_height = 2.0 * distance * (fov * 0.5).tan();
+                assert!(visible_height >= 0.088);
+                assert!(visible_height * aspect >= (count - 1) as f32 * 0.072 + 0.064);
+            }
+        }
+    }
+
     #[test]
     fn camera_transition_does_not_reapply_prior_drag_distance() {
         use bevy::prelude::*;
