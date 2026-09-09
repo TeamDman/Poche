@@ -10,7 +10,11 @@
 //! the network stack.
 
 #[cfg(feature = "device-transport")]
+mod device_join;
+#[cfg(feature = "device-transport")]
 mod device_node;
+#[cfg(feature = "device-transport")]
+pub use device_join::*;
 #[cfg(feature = "device-transport")]
 mod device_transport;
 #[cfg(feature = "device-transport")]

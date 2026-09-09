@@ -91,6 +91,7 @@ where
             Ok(reply) => reply.encode(),
             Err(DeviceClientError::NoProgress) => VeilidDeviceReply::NoProgress.encode(),
             Err(DeviceClientError::StaleRevision) => VeilidDeviceReply::StaleRevision.encode(),
+            Err(DeviceClientError::TransportUnavailable) => VeilidDeviceReply::Unavailable.encode(),
             // Do not return certificates, signatures, or backend errors in a
             // rejected call. Detailed local diagnostics belong outside wire.
             Err(_) => VeilidDeviceReply::Denied.encode(),

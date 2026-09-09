@@ -50,6 +50,7 @@ pub enum VeilidDeviceReply {
     Denied,
     NoProgress,
     StaleRevision,
+    Unavailable,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -116,6 +117,12 @@ pub struct VeilidDeviceTransport<S> {
 }
 
 impl<S> VeilidDeviceTransport<S> {
+    /// Supply a bearer proof only for admission of a nonmember. Existing
+    /// membership authenticates through the device certificate instead.
+    pub fn set_join_invite(&mut self, invite: Option<InviteProof>) {
+        self.invite = invite;
+    }
+
     pub fn new(
         adapter: VeilidRendezvous,
         room: ResolvedRoom,
@@ -190,6 +197,7 @@ impl<S> VeilidDeviceTransport<S> {
             VeilidDeviceReply::Denied => Err(DeviceClientError::AuthorizationDenied),
             VeilidDeviceReply::NoProgress => Err(DeviceClientError::NoProgress),
             VeilidDeviceReply::StaleRevision => Err(DeviceClientError::StaleRevision),
+            VeilidDeviceReply::Unavailable => Err(DeviceClientError::TransportUnavailable),
             reply => Ok(reply),
         }
     }

@@ -277,10 +277,6 @@ fn device_dispatch_authenticates_before_returning_observations() {
         })
         .await
         .unwrap();
-        let guest_resolved = joiner
-            .resolve_room(published.room_code(), 102)
-            .await
-            .unwrap();
         let wrong_transport = VeilidDeviceTransport::from_node(
             client_node.clone(),
             joiner
@@ -292,14 +288,8 @@ fn device_dispatch_authenticates_before_returning_observations() {
             Some(InviteProof::new("wrong-secret").unwrap()),
         )
         .unwrap();
-        let guest_transport = VeilidDeviceTransport::from_node(
-            client_node.clone(),
-            guest_resolved,
-            TestSigner(SigningKey::from_bytes(&[42; 32])),
-            1,
-            Some(admission),
-        )
-        .unwrap();
+        let invitation = published.room_code().encode().unwrap();
+        let guest_node = client_node.clone();
         tokio::task::spawn_blocking(move || {
             std::thread::spawn(move || {
                 let guest_profile = test_profile(41);
@@ -310,25 +300,17 @@ fn device_dispatch_authenticates_before_returning_observations() {
                     rejected.observe(&guest_room),
                     Err(DeviceClientError::AuthorizationDenied)
                 ));
-                let mut guest = PlayerDeviceClient::new(guest_profile, guest_transport).unwrap();
+                let (mut guest, joined_room) = poche_veilid::join_device(
+                    guest_node.clone(),
+                    guest_profile,
+                    TestSigner(SigningKey::from_bytes(&[42; 32])),
+                    invitation.expose(),
+                    102,
+                )
+                .unwrap();
+                assert_eq!(joined_room, guest_room);
                 let observation = guest.observe(&guest_room).unwrap();
                 assert_eq!(observation.projection.principal_id, guest_id);
-                let join = observation
-                    .actions
-                    .iter()
-                    .find(|action| matches!(action.payload, CommandPayload::RedeemInvite { .. }))
-                    .unwrap();
-                assert!(matches!(
-                    guest
-                        .invoke(
-                            &observation,
-                            &join.id,
-                            CommandId::new("guest-join").unwrap()
-                        )
-                        .unwrap(),
-                    DeviceActionResult::Committed { .. }
-                ));
-                let observation = guest.observe(&guest_room).unwrap();
                 assert!(
                     !observation.actions.iter().any(|action| matches!(
                         action.payload,
@@ -354,6 +336,22 @@ fn device_dispatch_authenticates_before_returning_observations() {
                     guest.observe(&guest_room).unwrap().projection.principal_id,
                     guest_id
                 );
+                guest.disconnect_route(&guest_room).unwrap();
+                drop(guest);
+                let (mut resumed, _) = poche_veilid::join_device(
+                    guest_node,
+                    test_profile(41),
+                    TestSigner(SigningKey::from_bytes(&[42; 32])),
+                    invitation.expose(),
+                    103,
+                )
+                .unwrap();
+                let resumed = resumed.observe(&guest_room).unwrap();
+                assert!(resumed.projection.payload.members.iter().any(
+                    |member| member.principal_id == guest_id
+                        && member.connected
+                        && member.seat == Some(1)
+                ));
             })
             .join()
             .unwrap();
