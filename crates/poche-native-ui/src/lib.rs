@@ -581,6 +581,7 @@ struct DraggableCard(CardObjectId);
 
 #[derive(Component, Clone, Copy, Debug, Default)]
 struct DragPreview {
+    pointer: Option<bevy::picking::pointer::PointerId>,
     pixels: Vec2,
     physical_claimed: bool,
     physical_origin: Option<Vec3>,
@@ -1060,6 +1061,7 @@ fn run_with_live_device(
         .init_resource::<CameraRig>()
         .init_resource::<LaunchClock>()
         .add_plugins((MeshPickingPlugin, FrameTimeDiagnosticsPlugin::default()))
+        .add_systems(PreUpdate, cancel_pointer_drags.in_set(bevy::picking::PickingSystems::Last))
         .add_systems(
             PreUpdate,
             image_target_pointer_rays
@@ -1713,9 +1715,10 @@ fn select_drag_camera<'a>(
 
 fn on_drag_start(
     drag: On<Pointer<DragStart>>,
-    mut cards: Query<&mut Pickable, With<DraggableCard>>,
+    mut cards: Query<(&mut Pickable, &mut DragPreview), With<DraggableCard>>,
 ) {
-    if let Ok(mut pickable) = cards.get_mut(drag.entity) {
+    if let Ok((mut pickable, mut preview)) = cards.get_mut(drag.entity) {
+        preview.pointer = Some(drag.pointer_id);
         // The pointer keeps its captured drag target. Let subsequent hit tests
         // reach the drop zone rather than being occluded by the moving card.
         *pickable = Pickable::IGNORE;
@@ -1812,15 +1815,31 @@ fn on_drag_end(
 ) {
     if let Ok((mut preview, mut pickable)) = previews.get_mut(drag.entity) {
         *pickable = Pickable::default();
-        preview.pixels = Vec2::ZERO;
-        preview.physical_claimed = false;
-        preview.physical_origin = None;
-        preview.physical_rotation = None;
+        *preview = DragPreview::default();
     }
     if let Ok(window) = windows.single() {
         commands
             .entity(window)
             .insert(CursorIcon::System(SystemCursorIcon::Default));
+    }
+}
+
+fn cancel_pointer_drags(
+    mut input: MessageReader<bevy::picking::pointer::PointerInput>,
+    mut cards: Query<(&mut Pickable, &mut DragPreview), With<DraggableCard>>,
+    windows: Query<Entity, With<PrimaryWindow>>,
+    mut commands: Commands,
+) {
+    for event in input.read() {
+        if !matches!(event.action, bevy::picking::pointer::PointerAction::Cancel) { continue; }
+        for (mut pickable, mut preview) in &mut cards {
+            if preview.pointer != Some(event.pointer_id) { continue; }
+            *pickable = Pickable::default();
+            *preview = DragPreview::default();
+            if let Ok(window) = windows.single() {
+                commands.entity(window).insert(CursorIcon::System(SystemCursorIcon::Default));
+            }
+        }
     }
 }
 
@@ -2479,6 +2498,7 @@ mod tests {
             ray_cast_visibility: RayCastVisibility::Any, ..default()
         }).add_systems(PreUpdate, super::image_target_pointer_rays
             .after(RayMap::repopulate).in_set(bevy::picking::PickingSystems::ProcessInput));
+        app.add_systems(PreUpdate, super::cancel_pointer_drags.in_set(bevy::picking::PickingSystems::Last));
         let bounds = Aabb::from_min_max(Vec3::new(-0.1, -0.005, -0.15), Vec3::new(0.1, 0.005, 0.15));
         let card = app.world_mut().spawn((
             super::DraggableCard(card_id), super::DragPreview::default(), Pickable::default(),
@@ -2515,7 +2535,7 @@ mod tests {
         let picking = app.world().get::<Pickable>(card).unwrap();
         assert!(!picking.should_block_lower && !picking.is_hoverable);
         assert_eq!(hits(&mut app), vec![play], "actual mesh backend reaches PLAY during drag");
-        app.world_mut().write_message(PointerInput::new(PointerId::Mouse, moved_location, PointerAction::Release(PointerButton::Primary)));
+        app.world_mut().write_message(PointerInput::new(PointerId::Mouse, moved_location.clone(), PointerAction::Release(PointerButton::Primary)));
         app.update();
         let drops: Vec<_> = app.world_mut().resource_mut::<Messages<Pointer<DragDrop>>>().drain().collect();
         assert!(drops.iter().any(|drop| drop.entity == play && drop.dropped == card),
@@ -2523,6 +2543,21 @@ mod tests {
         let picking = app.world().get::<Pickable>(card).unwrap();
         assert!(picking.should_block_lower && picking.is_hoverable);
         assert_eq!(hits(&mut app), vec![card], "released card becomes pickable again");
+        app.world_mut().write_message(PointerInput::new(PointerId::Mouse, moved_location.clone(), PointerAction::Press(PointerButton::Primary)));
+        app.update();
+        moved_location.position.x += 1.0;
+        app.world_mut().write_message(PointerInput::new(PointerId::Mouse, moved_location.clone(), PointerAction::Move { delta: Vec2::X }));
+        app.update();
+        assert!(!app.world().get::<Pickable>(card).unwrap().is_hoverable);
+        app.world_mut().write_message(PointerInput::new(PointerId::Touch(10), moved_location.clone(), PointerAction::Cancel));
+        app.update();
+        assert!(!app.world().get::<Pickable>(card).unwrap().is_hoverable, "unrelated pointer cannot cancel mouse drag");
+        app.world_mut().write_message(PointerInput::new(PointerId::Mouse, moved_location, PointerAction::Cancel));
+        app.update();
+        assert!(app.world().get::<Pickable>(card).unwrap().is_hoverable);
+        assert!(app.world().get::<super::DragPreview>(card).unwrap().pointer.is_none());
+        assert!(app.world_mut().resource_mut::<Messages<Pointer<DragDrop>>>().drain().next().is_none(), "cancel must not play a card");
+        assert_eq!(hits(&mut app), vec![card]);
     }
 
     #[test]
