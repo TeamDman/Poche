@@ -134,7 +134,8 @@ fn device_dispatch_authenticates_before_returning_observations() {
         .await
         .unwrap();
         config.namespace = "client".to_owned();
-        let client = api_startup(Arc::new(drop), config).await.unwrap();
+        let client_node = poche_veilid::VeilidDeviceNode::start(config, Arc::new(drop)).unwrap();
+        let client = client_node.api().clone();
         server.attach().await.unwrap();
         client.attach().await.unwrap();
         let route = server.new_private_route().await.unwrap();
@@ -189,10 +190,9 @@ fn device_dispatch_authenticates_before_returning_observations() {
             .resolve_room(published.room_code(), 101)
             .await
             .unwrap();
-        let transport = VeilidDeviceTransport::new(
-            joiner,
+        let transport = VeilidDeviceTransport::from_node(
+            client_node.clone(),
             resolved,
-            tokio::runtime::Handle::current(),
             TestSigner(SigningKey::from_bytes(&[32; 32])),
             0,
             None,
@@ -262,7 +262,7 @@ fn device_dispatch_authenticates_before_returning_observations() {
         .unwrap();
         handler.abort();
         let _ = handler.await;
-        client.shutdown().await;
+        client_node.shutdown().unwrap();
         server.shutdown().await;
     });
 }

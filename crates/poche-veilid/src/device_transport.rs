@@ -111,6 +111,8 @@ pub struct VeilidDeviceTransport<S> {
     sequence: u64,
     epoch: u64,
     invite: Option<InviteProof>,
+    // Keep runtime/API lifetime with the client after the menu disappears.
+    _node: Option<crate::VeilidDeviceNode>,
 }
 
 impl<S> VeilidDeviceTransport<S> {
@@ -133,7 +135,25 @@ impl<S> VeilidDeviceTransport<S> {
             invite,
             sequence: 0,
             namespace: data_encoding::HEXLOWER.encode(&random),
+            _node: None,
         })
+    }
+
+    /// Production lifetime-owning constructor. Resolve the room using this
+    /// node's API before moving it into the transport.
+    pub fn from_node(
+        node: crate::VeilidDeviceNode,
+        room: ResolvedRoom,
+        signer: S,
+        epoch: u64,
+        invite: Option<InviteProof>,
+    ) -> Result<Self, DeviceClientError> {
+        let adapter = VeilidRendezvous::new(node.api().clone())
+            .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        let mut transport =
+            Self::new(adapter, room, node.runtime().clone(), signer, epoch, invite)?;
+        transport._node = Some(node);
+        Ok(transport)
     }
 
     fn request_id(&mut self) -> Result<CorrelationId, DeviceClientError> {

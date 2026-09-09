@@ -10,7 +10,11 @@
 //! the network stack.
 
 #[cfg(feature = "device-transport")]
+mod device_node;
+#[cfg(feature = "device-transport")]
 mod device_transport;
+#[cfg(feature = "device-transport")]
+pub use device_node::*;
 mod identity;
 mod membership;
 mod projection_packet;
