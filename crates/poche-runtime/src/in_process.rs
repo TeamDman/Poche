@@ -990,16 +990,25 @@ mod tests {
         let state = state();
         let mut transport = InProcessTransport::new(LoopbackCodec::Typed);
         let client = transport.connect(principal("host")).unwrap();
-        client.submit(&mut transport, command(&client, &state, "checkpoint-create")).unwrap();
+        let original = command(&client, &state, "checkpoint-create");
+        client.submit(&mut transport, original.clone()).unwrap();
         let mut authority = InProcessAuthority::new(state, transport);
         authority.drive_all().unwrap();
         assert!(!authority.committed_events.is_empty());
-        let restored = InProcessAuthority::from_checkpoint(authority.checkpoint(), InProcessTransport::new(LoopbackCodec::Typed));
+        let mut restored = InProcessAuthority::from_checkpoint(authority.checkpoint(), InProcessTransport::new(LoopbackCodec::Typed));
         assert_eq!(restored.state, authority.state);
         assert_eq!(restored.committed_events, authority.committed_events);
         assert_eq!(restored.clock, authority.clock);
         assert_eq!(restored.next_delivery, authority.next_delivery);
         assert_eq!(restored.chat_tail, authority.chat_tail);
+        let reconnected = restored.transport.connect(principal("host")).unwrap();
+        reconnected.submit(&mut restored.transport, original).unwrap();
+        let outcome = restored.drive_all().unwrap();
+        assert_eq!(outcome.len(), 1);
+        assert_eq!(outcome[0].disposition, AuthorityDisposition::Applied);
+        assert_eq!(restored.state.revision, authority.state.revision);
+        assert_eq!(restored.state.processed_commands, authority.state.processed_commands);
+        assert_eq!(restored.committed_events, authority.committed_events);
     }
 
     #[test]
