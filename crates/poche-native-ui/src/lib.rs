@@ -1316,14 +1316,7 @@ fn rasterize_slug_text(
 }
 
 #[allow(clippy::too_many_lines)]
-fn setup_native_scene(
-    mut commands: Commands,
-    controller: Res<NativeController>,
-    surface: Res<NativeRenderSurface>,
-    mut images: ResMut<Assets<Image>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
+fn setup_native_scene(mut commands: Commands, surface: Res<NativeRenderSurface>) {
     let mut camera = commands.spawn((
         Camera3d::default(),
         CameraView::home().transform(),
@@ -1345,7 +1338,24 @@ fn setup_native_scene(
         brightness: 180.0,
         affects_lightmapped_meshes: true,
     });
+    commands.run_system_cached(spawn_scene_objects);
+}
 
+/// Replace viewer-specific geometry independently of cameras and lighting.
+/// Faces, labels, drag authority, and object membership all belong to the projection.
+#[allow(clippy::too_many_lines)]
+fn spawn_scene_objects(
+    mut commands: Commands,
+    mirrors: Query<Entity, With<CanonicalMirror>>,
+    controller: Res<NativeController>,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    // Text children are removed with their roots; camera and lighting survive.
+    for entity in &mirrors {
+        commands.entity(entity).despawn();
+    }
     let table_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.055, 0.28, 0.16),
         perceptual_roughness: 0.82,
@@ -1570,6 +1580,7 @@ fn keyboard_input(
 }
 
 fn poll_live_device(
+    mut commands: Commands,
     live: Option<ResMut<NativeLiveDevice>>,
     mut controller: ResMut<NativeController>,
 ) {
@@ -1579,11 +1590,18 @@ fn poll_live_device(
     match live.poll() {
         Ok(true) => match native_controller_from_observation(live.observation()) {
             Ok(mut next) => {
+                let scene_changed =
+                    controller.scene != next.scene || controller.issuing_seat != next.issuing_seat;
                 next.last_finding = format!(
                     "live device synchronized authority revision {}",
                     live.observation().projection.current_revision
                 );
                 *controller = next;
+                if scene_changed {
+                    // Attached text is despawned with its parent. Keep the camera,
+                    // render target, lighting, and action controls intact.
+                    commands.run_system_cached(spawn_scene_objects);
+                }
             }
             Err(error) => controller.last_finding = format!("live projection rejected: {error}"),
         },
@@ -2564,6 +2582,63 @@ mod tests {
                 assert!((oracle - banded).abs() <= 0.000_1);
             }
         }
+    }
+
+    #[test]
+    fn scene_refresh_replaces_roots_and_text_without_replacing_camera() {
+        use super::{CanonicalMirror, TabletopCamera, spawn_scene_objects};
+        use bevy::prelude::*;
+        let controller = replay_fixture_controller().expect("fixture");
+        let mut app = App::new();
+        app.init_resource::<Assets<Image>>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .insert_resource(controller)
+            .add_systems(Update, spawn_scene_objects);
+        let camera = app
+            .world_mut()
+            .spawn((TabletopCamera, Transform::default()))
+            .id();
+        app.update();
+        let old_roots: Vec<_> = app
+            .world_mut()
+            .query_filtered::<Entity, With<CanonicalMirror>>()
+            .iter(app.world())
+            .collect();
+        assert!(!old_roots.is_empty());
+        // Simulate a new projection with no cards: no stale cards or face labels
+        // may survive even though the render target/camera stays the same.
+        {
+            let mut controller = app.world_mut().resource_mut::<NativeController>();
+            controller.scene.cards.clear();
+            controller
+                .scene
+                .text
+                .retain(|run| !matches!(run.attached_to.object, ObjectId::Card(_)));
+        }
+        app.update();
+        assert!(app.world().get_entity(camera).is_ok());
+        for old in old_roots {
+            assert!(app.world().get_entity(old).is_err());
+        }
+        let expected = app
+            .world()
+            .resource::<NativeController>()
+            .scene
+            .objects
+            .len();
+        let actual = app
+            .world_mut()
+            .query::<&CanonicalMirror>()
+            .iter(app.world())
+            .count();
+        assert_eq!(actual, expected);
+        assert!(
+            app.world_mut()
+                .query::<&CanonicalMirror>()
+                .iter(app.world())
+                .all(|mirror| !matches!(mirror.id, ObjectId::Card(_)))
+        );
     }
 
     #[test]

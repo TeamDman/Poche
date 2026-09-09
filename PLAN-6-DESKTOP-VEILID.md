@@ -204,6 +204,12 @@ Complete when all tasks/gates have evidence, failures are resolved or honestly s
 
 ## Acceptance matrix and risks
 
+### Native projection refresh checkpoint (2026-09-09)
+
+- Fixed scene lifecycle: changed live projections rebuild viewer-scoped object roots, attached text, materials, and drag authority while preserving the camera/render target and lighting. Previously only transforms of startup entities changed, leaving membership and labels stale after seating/dealing.
+- Added a renderer-world regression which replaces a projection containing cards with one without cards, verifies old roots are destroyed, and verifies the camera survives. Native library suite: 19 passed. This is not live two-process, graphical input, or crash recovery evidence; those gates remain pending.
+- Current implementation rebuilds the scene on projection changes; incremental asset reuse/performance remains a follow-up, not a claim of optimized continuous pose synchronization.
+
 | Surface | Required evidence | Current evidence |
 | --- | --- | --- |
 | Single-process mock nodes | Real adapter, fault injection, identities and privacy | Pending |
