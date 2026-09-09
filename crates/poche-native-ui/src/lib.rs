@@ -3311,6 +3311,32 @@ mod tests {
         reason = "the live-device acceptance keeps spatial input, sibling observation, and peer-driven refresh in one shared-room scenario"
     )]
     fn native_spatial_action_commits_through_device_client_and_reaches_sibling() {
+        use bevy::{camera::RenderTarget, picking::pointer::PointerId, prelude::*};
+        use crate::{DraggableCard, on_drag_drop};
+
+        fn drop_input(controller: NativeController, live: NativeLiveDevice, face: CardFace) -> App {
+            let card_id = controller.scene.cards.iter()
+                .find(|card| card.face == Some(face)).expect("owned card").id;
+            let mut app = App::new();
+            app.insert_resource(controller).insert_resource(live);
+            let dropped = app.world_mut().spawn(DraggableCard(card_id)).id();
+            let play_zone = app.world_mut().spawn_empty().observe(on_drag_drop).id();
+            app.world_mut().trigger(Pointer::new(
+                PointerId::Mouse,
+                bevy::picking::pointer::Location {
+                    target: RenderTarget::Image(Handle::<Image>::default().into()).normalize(None).unwrap(),
+                    position: Vec2::ZERO,
+                },
+                DragDrop {
+                    button: PointerButton::Primary,
+                    dropped,
+                    hit: bevy::picking::backend::HitData::new(play_zone, 0.0, None, None),
+                },
+                play_zone,
+            ));
+            app
+        }
+
         let (state, actor) = running_play_state();
         let room_id = state.room_id.clone();
         let other_player = state
@@ -3357,6 +3383,25 @@ mod tests {
         adapter.enroll(&native_profile).expect("enroll native");
         adapter.enroll(&sibling_profile).expect("enroll sibling");
         adapter.enroll(&other_profile).expect("enroll other player");
+        let denied_profile = certified_profile(&other_player, "denied-renderer", "66");
+        adapter.enroll(&denied_profile).expect("enroll denied renderer");
+        let denied_client = PlayerDeviceClient::new(
+            denied_profile, LoopbackDeviceTransport::new(adapter.clone()),
+        ).unwrap();
+        let denied_live = NativeLiveDevice::connect(denied_client, room_id.clone()).unwrap();
+        let denied_before = denied_live.observation().clone();
+        let denied_controller = native_controller_from_observation(&denied_before).unwrap();
+        let denied_face = denied_controller.first_owned_face().expect("out-of-turn hand");
+        let denied_scene = denied_controller.scene.clone();
+        let mut denied_app = drop_input(denied_controller, denied_live, denied_face);
+        let denied_controller = denied_app.world().resource::<NativeController>();
+        assert!(denied_controller.last_finding.starts_with("Not played:"));
+        assert!(denied_controller.committed.is_none());
+        assert_eq!(denied_controller.scene, denied_scene);
+        // Polling must not turn the synchronous rejection into a local mutation.
+        denied_app.world_mut().resource_mut::<NativeLiveDevice>().poll().unwrap();
+        assert_eq!(denied_app.world().resource::<NativeLiveDevice>().observation().projection.payload,
+            denied_before.projection.payload);
         let native = PlayerDeviceClient::new(
             native_profile,
             LoopbackDeviceTransport::new(adapter.clone()),
@@ -3371,8 +3416,10 @@ mod tests {
             PlayerDeviceClient::new(other_profile, LoopbackDeviceTransport::new(adapter))
                 .expect("other player client");
 
-        let mut live = NativeLiveDevice::connect(native, room_id.clone()).expect("live device");
+        let live = NativeLiveDevice::connect(native, room_id.clone()).expect("live device");
         let observation = live.observation().clone();
+        assert_eq!(observation.projection.current_revision, denied_before.projection.current_revision,
+            "the out-of-turn drop did not advance the authority");
         let (action_id, face) = observation
             .actions
             .iter()
@@ -3395,7 +3442,12 @@ mod tests {
         );
         let starting_revision = observation.projection.current_revision;
         let starting_history = observation.projection.payload.public_history.len();
-        live.submit_play(&committed).expect("queue device action");
+        // Exercise the registered drop observer rather than calling submit_play
+        // directly. Hit testing/ray generation still require graphical evidence.
+        let mut input_app = drop_input(controller, live, face);
+        assert!(input_app.world().resource::<NativeController>().committed.is_none(),
+            "drop queues a proposal, not a speculative accepted animation");
+        let mut live = input_app.world_mut().remove_resource::<NativeLiveDevice>().unwrap();
         let mut synchronized = false;
         for _ in 0..10_000 {
             synchronized = live.poll().expect("poll live device");
