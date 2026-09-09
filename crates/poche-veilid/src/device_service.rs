@@ -8,6 +8,7 @@ use poche_session::SessionGame;
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 
 type RecoverySink = dyn Fn(&CertifiedRoomRecovery) -> Result<(), DeviceClientError> + Send + Sync;
+type ExpirySink = dyn Fn() -> Result<(), DeviceClientError> + Send + Sync;
 
 /// Lifetime of a bounded service task. Keep this beside the room, not the
 /// menu. Dropping it stops accepting calls and cancels the async handlers.
@@ -31,6 +32,8 @@ pub struct VeilidDeviceService<G: SessionGame, A> {
     recovery_sink: Option<Arc<RecoverySink>>,
     recovery_failed: Arc<AtomicBool>,
     recovery_presence: Arc<Mutex<Option<(crate::RecoveryPresence, std::time::Instant)>>>,
+    expiry_sink: Option<Arc<ExpirySink>>,
+    expiry_persisted: Arc<AtomicBool>,
 }
 
 impl<G: SessionGame, A> Clone for VeilidDeviceService<G, A> {
@@ -40,6 +43,8 @@ impl<G: SessionGame, A> Clone for VeilidDeviceService<G, A> {
             recovery_sink: self.recovery_sink.clone(),
             recovery_failed: Arc::clone(&self.recovery_failed),
             recovery_presence: Arc::clone(&self.recovery_presence),
+            expiry_sink: self.expiry_sink.clone(),
+            expiry_persisted: Arc::clone(&self.expiry_persisted),
         }
     }
 }
@@ -56,6 +61,8 @@ where
             recovery_sink: None,
             recovery_failed: Arc::new(AtomicBool::new(false)),
             recovery_presence: Arc::new(Mutex::new(None)),
+            expiry_sink: None,
+            expiry_persisted: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -64,6 +71,24 @@ where
     pub fn awaiting_survivor(self, presence: crate::RecoveryPresence) -> Result<Self, DeviceClientError> {
         *self.recovery_presence.lock().map_err(|_| DeviceClientError::TransportUnavailable)? = Some((presence, std::time::Instant::now()));
         Ok(self)
+    }
+
+    /// Persist a terminal record when the recovery grace expires. The callback
+    /// must replace the active encrypted checkpoint, not merely log expiry.
+    pub fn with_recovery_expiry_sink(mut self, sink: impl Fn() -> Result<(), DeviceClientError> + Send + Sync + 'static) -> Self {
+        self.expiry_sink = Some(Arc::new(sink));
+        self
+    }
+
+    // Called under the presence mutex. Failed persistence may be retried, but
+    // no ordinary operation or checkpoint save may proceed after expiry.
+    fn persist_expiry(&self) {
+        self.recovery_failed.store(true, Ordering::Release);
+        if !self.expiry_persisted.load(Ordering::Acquire) {
+            if let Some(sink) = &self.expiry_sink {
+                if sink().is_ok() { self.expiry_persisted.store(true, Ordering::Release); }
+            }
+        }
     }
 
     /// Attach private durable storage before serving any requests. The initial
@@ -111,7 +136,12 @@ where
                 tokio::select! {
                     _ = interval.tick() => {
                         let presence = self.recovery_presence.lock().expect("recovery gate lock");
-                        if presence.as_ref().is_some_and(|(gate, _)| !gate.witnessed()) { continue; }
+                        if let Some((gate, started)) = presence.as_ref() {
+                            if !gate.witnessed() {
+                                if gate.expired_without_survivor(started.elapsed()) { self.persist_expiry(); }
+                                continue;
+                            }
+                        }
                         // No player command is invented here. Only explicitly
                         // enrolled clock/environment services can act.
                         let result = self.with_room(|room| room.drive_authority_services_elapsed(
@@ -164,7 +194,10 @@ where
         let mut presence = self.recovery_presence.lock().map_err(|_| DeviceClientError::TransportUnavailable)?;
         if let Some((gate, started)) = presence.as_mut() {
             if !gate.witnessed() {
-                if gate.expired_without_survivor(started.elapsed()) { return VeilidDeviceReply::Unavailable.encode(); }
+                if gate.expired_without_survivor(started.elapsed()) {
+                    self.persist_expiry();
+                    return VeilidDeviceReply::Unavailable.encode();
+                }
                 let VeilidDeviceRequest::Observe(observation) = &request else {
                     return VeilidDeviceReply::NoProgress.encode();
                 };

@@ -89,6 +89,29 @@ fn room_service(
 }
 
 #[test]
+fn expired_recovery_retries_terminal_write_without_resuming_service() {
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    let profile = test_profile(31);
+    let room_id = RoomId::new("expired-service").unwrap();
+    let gate = poche_veilid::RecoveryPresence::new(&PrincipalId::new("creator").unwrap(),
+        [profile.player_id.clone()], std::time::Duration::ZERO, std::time::Duration::from_nanos(1)).unwrap();
+    let writes = Arc::new(AtomicUsize::new(0));
+    let count = writes.clone();
+    let service = room_service(&room_id, "test-invite").awaiting_survivor(gate).unwrap()
+        .with_recovery_expiry_sink(move || {
+            if count.fetch_add(1, Ordering::SeqCst) == 0 { Err(DeviceClientError::TransportUnavailable) } else { Ok(()) }
+        });
+    let clone = service.clone();
+    let request = sign_observation_request(&profile, &room_id, 0, CorrelationId::new("expired-read").unwrap(),
+        DeviceObservationModeWire::Snapshot, &TestSigner(SigningKey::from_bytes(&[32; 32]))).unwrap();
+    let bytes = VeilidDeviceRequest::Observe(request).encode().unwrap();
+    for handle in [&service, &clone, &service] {
+        assert!(matches!(VeilidDeviceReply::decode(&handle.dispatch(&bytes).unwrap()).unwrap(), VeilidDeviceReply::Unavailable));
+    }
+    assert_eq!(writes.load(Ordering::SeqCst), 2, "retry failed write; do not rewrite successful terminal record");
+}
+
+#[test]
 fn recovering_service_requires_fresh_signed_peer_read() {
     let profile = test_profile(31);
     let room_id = RoomId::new("recovering-service").unwrap();

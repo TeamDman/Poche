@@ -34,12 +34,34 @@ struct DesktopRoomRecovery {
     room: poche_runtime::CertifiedRoomRecovery,
 }
 
+/// Terminal private storage marker; deliberately incompatible with a running
+/// room envelope so ordinary recovery cannot resurrect it.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesktopRoomDisbanded {
+    schema_version: u16,
+    room_id: RoomId,
+    disbanded: bool,
+}
+
+impl DesktopRoomDisbanded {
+    pub fn encode(room_id: &RoomId) -> Result<Vec<u8>, DeviceClientError> {
+        serde_json::to_vec(&Self { schema_version: 1, room_id: room_id.clone(), disbanded: true }).map_err(|_| DeviceClientError::ProtocolViolation)
+    }
+    pub fn decode(bytes: &[u8]) -> Result<Self, DeviceClientError> {
+        let value: Self = serde_json::from_slice(bytes).map_err(|_| DeviceClientError::ProtocolViolation)?;
+        if value.schema_version != 1 || !value.disbanded { return Err(DeviceClientError::ProtocolViolation); }
+        Ok(value)
+    }
+}
+
 impl DesktopRoomGenesis {
     /// Assemble a gated recovered service without publishing its route. The
     /// caller must authenticate/decrypt storage and own the original route
     /// capability; expiry/disband persistence remains the lifecycle owner's job.
     pub fn recovered_service(bytes: &[u8], creator: &poche_protocol::PrincipalId, grace: std::time::Duration,
         writer: impl Fn(&DesktopRoomGenesis, &poche_runtime::CertifiedRoomRecovery) -> Result<(), DeviceClientError> + Send + Sync + 'static,
+        expiry_writer: impl Fn() -> Result<(), DeviceClientError> + Send + Sync + 'static,
     ) -> Result<(Self, VeilidDeviceService<OracleSessionGame<2>, OracleRoomActionSource>), DeviceClientError> {
         let (genesis, room) = Self::decode_recovery(bytes)?;
         let peers = room.recovery_peers(creator)?;
@@ -48,6 +70,7 @@ impl DesktopRoomGenesis {
         let saved_genesis = genesis.clone();
         let service = VeilidDeviceService::new(room)
             .with_recovery_sink(move |recovery| writer(&saved_genesis, recovery))?
+            .with_recovery_expiry_sink(expiry_writer)
             .awaiting_survivor(presence)?;
         Ok((genesis, service))
     }
@@ -269,6 +292,9 @@ mod recovery_tests {
 
     #[test]
     fn desktop_genesis_restores_service_configuration_without_regeneration() {
+        let terminal = DesktopRoomDisbanded::encode(&RoomId::new("disbanded-room").unwrap()).unwrap();
+        assert!(DesktopRoomDisbanded::decode(&terminal).is_ok());
+        assert!(DesktopRoomGenesis::decode_recovery(&terminal).is_err());
         let code = crate::RoomCode::issue(RoomNetwork::VeilidLocal, "test-record-key", poche_protocol::PrincipalId::new("ab".repeat(32)).unwrap(), u64::MAX, 0).unwrap();
         let genesis = DesktopRoomGenesis {
             schema_version: 1, room_id: RoomId::new("desktop-recovery").unwrap(),
@@ -282,6 +308,7 @@ mod recovery_tests {
         assert!(DesktopRoomGenesis::recovered_service(&encoded,
             &poche_protocol::PrincipalId::new("not-the-creator").unwrap(), std::time::Duration::from_secs(60),
             |_, _| panic!("invalid recovery must not persist or start serving"),
+            || panic!("invalid recovery must not expire"),
         ).is_err());
         let (restored_genesis, restored) = DesktopRoomGenesis::decode_recovery(&encoded).unwrap();
         assert!(serde_json::to_value(&genesis).unwrap() == serde_json::to_value(&restored_genesis).unwrap());
