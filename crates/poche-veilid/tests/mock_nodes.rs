@@ -88,6 +88,13 @@ async fn two_mock_nodes_share_dht_but_not_device_secrets() {
         .unwrap();
     assert_eq!(resolved.record().room_id, published.record().room_id);
 
+    let route = published.route_id().clone();
+    published.close(&reader).await.unwrap();
+    assert!(
+        reader.release_private_route(route).is_err(),
+        "publication cleanup must release its private route before shutdown"
+    );
+
     reader.shutdown().await;
     writer.shutdown().await;
 }

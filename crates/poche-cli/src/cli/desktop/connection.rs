@@ -123,10 +123,12 @@ fn connect(
     )?;
     node.runtime()
         .block_on(node.attach_public(Duration::from_secs(90)))?;
-    let (client, room_id, code, publication, service) = if let Some(code) = invitation {
+    let (mut live, code, publication, service) = if let Some(code) = invitation {
         let (client, room_id) = poche_veilid::join_device(node, profile, store, &code, now)
             .map_err(|_| "Could not join this lobby. Check the invitation and connection.")?;
-        (client, room_id, code, None, None)
+        let live = NativeLiveDevice::connect(client, room_id)
+            .map_err(|_| "Could not load the live table.")?;
+        (live, code, None, None)
     } else {
         let identity = node
             .runtime()
@@ -146,18 +148,38 @@ fn connect(
                 receive,
             ))
             .map_err(|_| "Could not publish the lobby.")?;
-        let code = published
-            .room_code()
-            .encode()
-            .map_err(|_| "Cannot encode lobby invitation.")?
-            .expose()
-            .to_owned();
-        let (client, room_id) = poche_veilid::create_device(node, profile, store, &code, now)
-            .map_err(|_| "Could not initialize the lobby.")?;
-        (client, room_id, code, Some(published), Some(service))
+        let initialized = (|| {
+            let code = published
+                .room_code()
+                .encode()
+                .map_err(|_| "Cannot encode lobby invitation.")?
+                .expose()
+                .to_owned();
+            let (client, room_id) =
+                poche_veilid::create_device(node.clone(), profile, store, &code, now)
+                    .map_err(|_| "Could not initialize the lobby.")?;
+            let live = NativeLiveDevice::connect(client, room_id)
+                .map_err(|_| "Could not load the live table.")?;
+            Ok::<_, &'static str>((live, code))
+        })();
+        match initialized {
+            Ok((live, code)) => (live, code, Some(published), Some(service)),
+            Err(error) => {
+                // The invitation has not been exposed to the user. Stop the
+                // pending service and explicitly release publication handles
+                // while its owning node/runtime is still alive.
+                drop(service);
+                if node
+                    .runtime()
+                    .block_on(published.close(node.api()))
+                    .is_err()
+                {
+                    eprintln!("poche: failed startup publication cleanup was incomplete");
+                }
+                return Err(error);
+            }
+        }
     };
-    let mut live =
-        NativeLiveDevice::connect(client, room_id).map_err(|_| "Could not load the live table.")?;
     live.set_room_invitation(code);
     owners.push(RoomOwner {
         _publication: publication,
