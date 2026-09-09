@@ -2467,17 +2467,18 @@ mod tests {
     #[test]
     fn dragged_card_stops_occluding_drop_targets_and_restores_picking() {
         use bevy::{camera::RenderTarget, picking::pointer::{Location, PointerId}, prelude::*};
-        use bevy::picking::{backend::{PointerHits, ray::RayMap}, mesh_picking::{MeshPickingSettings, update_hits, ray_cast::RayCastVisibility}};
+        use bevy::picking::{backend::{PointerHits, ray::RayMap}, mesh_picking::{MeshPickingSettings, ray_cast::RayCastVisibility}};
         use bevy::camera::primitives::Aabb;
         let controller = replay_fixture_controller().unwrap();
         let card_id = controller.scene.cards[0].id;
         let mut app = App::new();
-        app.add_plugins(bevy::app::TaskPoolPlugin::default());
+        app.add_plugins((bevy::app::TaskPoolPlugin::default(), PickingPlugin, InteractionPlugin, MeshPickingPlugin));
         let mut meshes = Assets::<Mesh>::default();
         let mesh = meshes.add(Cuboid::new(0.2, 0.01, 0.3));
         app.insert_resource(meshes).insert_resource(MeshPickingSettings {
             ray_cast_visibility: RayCastVisibility::Any, ..default()
-        }).add_message::<PointerHits>().add_systems(Update, (RayMap::repopulate, super::image_target_pointer_rays, update_hits).chain());
+        }).add_systems(PreUpdate, super::image_target_pointer_rays
+            .after(RayMap::repopulate).in_set(bevy::picking::PickingSystems::ProcessInput));
         let bounds = Aabb::from_min_max(Vec3::new(-0.1, -0.005, -0.15), Vec3::new(0.1, 0.005, 0.15));
         let card = app.world_mut().spawn((
             super::DraggableCard(card_id), super::DragPreview::default(), Pickable::default(),
@@ -2498,21 +2499,27 @@ mod tests {
         app.world_mut().spawn((PointerId::Mouse, bevy::picking::pointer::PointerLocation::new(location.clone())));
         app.init_resource::<RayMap>();
         let hits = |app: &mut App| {
+            app.world_mut().resource_mut::<Messages<PointerHits>>().clear();
             app.update();
             app.world_mut().resource_mut::<Messages<PointerHits>>().drain()
                 .flat_map(|message| message.picks.into_iter().map(|(entity, _)| entity)).collect::<Vec<_>>()
         };
         assert_eq!(hits(&mut app), vec![card], "resting card is the nearest blocking mesh");
-        app.world_mut().trigger(Pointer::new(PointerId::Mouse, location.clone(), DragStart {
-            button: PointerButton::Primary,
-            hit: bevy::picking::backend::HitData::new(card, 0.0, None, None),
-        }, card));
+        use bevy::picking::pointer::{PointerInput, PointerAction};
+        app.world_mut().write_message(PointerInput::new(PointerId::Mouse, location.clone(), PointerAction::Press(PointerButton::Primary)));
+        app.update();
+        let mut moved_location = location;
+        moved_location.position.x += 1.0;
+        app.world_mut().write_message(PointerInput::new(PointerId::Mouse, moved_location.clone(), PointerAction::Move { delta: Vec2::X }));
+        app.update();
         let picking = app.world().get::<Pickable>(card).unwrap();
         assert!(!picking.should_block_lower && !picking.is_hoverable);
         assert_eq!(hits(&mut app), vec![play], "actual mesh backend reaches PLAY during drag");
-        app.world_mut().trigger(Pointer::new(PointerId::Mouse, location, DragEnd {
-            button: PointerButton::Primary, distance: Vec2::new(20.0, 10.0),
-        }, card));
+        app.world_mut().write_message(PointerInput::new(PointerId::Mouse, moved_location, PointerAction::Release(PointerButton::Primary)));
+        app.update();
+        let drops: Vec<_> = app.world_mut().resource_mut::<Messages<Pointer<DragDrop>>>().drain().collect();
+        assert!(drops.iter().any(|drop| drop.entity == play && drop.dropped == card),
+            "press/move/release must generate a drop onto PLAY, not merely a mesh hit");
         let picking = app.world().get::<Pickable>(card).unwrap();
         assert!(picking.should_block_lower && picking.is_hoverable);
         assert_eq!(hits(&mut app), vec![card], "released card becomes pickable again");
