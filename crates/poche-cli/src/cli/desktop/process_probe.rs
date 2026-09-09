@@ -64,7 +64,7 @@ fn protected_desktop_process_role() {
     let root = Path::new(&root);
     let role = std::env::var("POCHE_PROCESS_PROBE_ROLE").expect("parent role");
     let suffix = std::env::var("POCHE_PROCESS_PROBE_SUFFIX").expect("parent suffix");
-    let creator = role == "creator" || role == "creator-resume" || role == "alone";
+    let creator = role == "creator" || role == "creator-resume" || role == "alone" || role == "creator-expire" || role == "creator-after-expiry";
     let creator_loss = std::env::var("POCHE_PROCESS_PROBE_CREATOR_LOSS").as_deref() == Ok("1");
     let restarting = role.ends_with("-resume");
     assert!(creator || role == "joiner" || restarting);
@@ -79,7 +79,22 @@ fn protected_desktop_process_role() {
         DesktopMenuRequest::Join { name, invitation }
     };
     let mut owners = Vec::new();
-    let mut live = connect(request, &mut owners).expect("production process connection");
+    let result = connect(request, &mut owners);
+    if role == "creator-expire" {
+        assert!(matches!(result, Err("Recovery expired or persistence failed.")), "recovery without peers must expire");
+        let label = format!("desktop-{}", &blake3::hash(format!("process-creator-{suffix}").as_bytes()).to_hex()[..24]);
+        let store = ProtectedProfileStore::open_default().unwrap();
+        let bytes = store.load_authority_recovery(&label, "active-room").unwrap().unwrap();
+        assert!(poche_veilid::DesktopRoomDisbanded::decode(&bytes).is_ok(), "expiry did not persist disbanding");
+        fs::write(root.join("all-peer-expired"), b"verified").unwrap();
+        return;
+    }
+    let mut live = result.expect("production process connection");
+    if role == "creator-after-expiry" {
+        assert!(live.room_invitation().unwrap() != fs::read_to_string(root.join("invitation")).unwrap(), "expired room resurrected");
+        fs::write(root.join("all-peer-replaced"), b"verified").unwrap();
+        return;
+    }
     if role == "alone" {
         let path = root.join("previous-invitation");
         let invitation = live.room_invitation().unwrap();
@@ -216,14 +231,18 @@ fn protected_desktop_process_role() {
 #[test]
 #[ignore = "real public Veilid and fresh persistent protected test profiles"]
 fn protected_desktop_two_process() {
-    run_two_process(false);
+    run_two_process(false, false);
 }
 
 #[test]
 #[ignore = "real public Veilid creator crash with protected profiles"]
 fn protected_desktop_creator_crash() {
-    run_two_process(true);
+    run_two_process(true, false);
 }
+
+#[test]
+#[ignore = "real public Veilid all-peer loss and 60-second recovery expiry"]
+fn protected_desktop_all_peer_loss() { run_two_process(true, true); }
 
 #[test]
 #[ignore = "real public Veilid and protected empty-room lifecycle"]
@@ -261,7 +280,7 @@ fn recovery_digest(live: &NativeLiveDevice) -> String {
     blake3::hash(&bytes).to_hex().to_string()
 }
 
-fn run_two_process(creator_loss: bool) {
+fn run_two_process(creator_loss: bool, all_loss: bool) {
     opt_in();
     let directory = tempfile::tempdir().unwrap();
     let suffix = now().unwrap().to_string();
@@ -291,10 +310,16 @@ fn run_two_process(creator_loss: bool) {
         if let Some(status) = children[1].0.try_wait().unwrap() {
             panic!("joiner exited before forced termination: {status}");
         }
-        if directory.path().join(if creator_loss { "creator-ready-for-kill" } else { "joiner-motion-done" }).exists() {
+        if directory.path().join(if creator_loss { "creator-ready-for-kill" } else { "joiner-motion-done" }).exists()
+            && (!all_loss || directory.path().join("joiner-motion-done").exists()) {
             let mut victim = children.remove(if creator_loss { 0 } else { 1 });
             victim.0.kill().expect("terminate owned joiner process");
             assert!(!victim.0.wait().unwrap().success());
+            if all_loss {
+                let mut peer = children.remove(0);
+                peer.0.kill().unwrap();
+                assert!(!peer.0.wait().unwrap().success());
+            }
             break;
         }
         assert!(Instant::now() < deadline, "joiner did not finish");
@@ -303,7 +328,7 @@ fn run_two_process(creator_loss: bool) {
     let mut restart = Command::new(std::env::current_exe().unwrap());
     restart.args(["protected_desktop_process_role", "--ignored", "--nocapture"])
         .env("POCHE_PROCESS_PROBE_ROOT", directory.path())
-        .env("POCHE_PROCESS_PROBE_ROLE", if creator_loss { "creator-resume" } else { "joiner-resume" })
+        .env("POCHE_PROCESS_PROBE_ROLE", if all_loss { "creator-expire" } else if creator_loss { "creator-resume" } else { "joiner-resume" })
         .env("POCHE_PROCESS_PROBE_CREATOR_LOSS", if creator_loss { "1" } else { "0" })
         .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
     #[cfg(windows)] {
@@ -328,7 +353,19 @@ fn run_two_process(creator_loss: bool) {
     assert!(directory.path().join("joiner-dealt").exists());
     assert!(directory.path().join("creator-saw-motion").exists());
     assert!(directory.path().join("joiner-motion-done").exists());
-    assert!(directory.path().join(if creator_loss { "creator-resumed" } else { "joiner-resumed" }).exists());
+    if all_loss {
+        assert!(directory.path().join("all-peer-expired").exists());
+        restart.env("POCHE_PROCESS_PROBE_ROLE", "creator-after-expiry");
+        let mut child = ChildOwner(restart.spawn().unwrap());
+        loop {
+            if let Some(status) = child.0.try_wait().unwrap() { assert!(status.success()); break; }
+            assert!(Instant::now() < deadline, "replacement room timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(directory.path().join("all-peer-replaced").exists());
+    } else {
+        assert!(directory.path().join(if creator_loss { "creator-resumed" } else { "joiner-resumed" }).exists());
+    }
     eprintln!(
         "two independent protected desktop processes dealt and shared private-safe motion; profile suffix {suffix}"
     );
