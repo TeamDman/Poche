@@ -176,6 +176,9 @@ fn protected_desktop_process_role() {
         );
         wait_until(|| root.join("creator-saw-motion").exists());
         fs::write(root.join("joiner-motion-done"), b"verified").unwrap();
+        // Parent kills this exact child; no graceful disconnect or destructor
+        // shutdown may substitute for abrupt process loss in this probe.
+        wait_until(|| false);
     }
 }
 
@@ -208,7 +211,12 @@ fn protected_desktop_two_process() {
             assert!(status.success(), "creator failed before participant restart");
         }
         if let Some(status) = children[1].0.try_wait().unwrap() {
-            assert!(status.success());
+            panic!("joiner exited before forced termination: {status}");
+        }
+        if directory.path().join("joiner-motion-done").exists() {
+            let mut victim = children.remove(1);
+            victim.0.kill().expect("terminate owned joiner process");
+            assert!(!victim.0.wait().unwrap().success());
             break;
         }
         assert!(Instant::now() < deadline, "joiner did not finish");
