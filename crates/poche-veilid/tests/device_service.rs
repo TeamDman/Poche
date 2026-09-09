@@ -141,8 +141,9 @@ fn device_dispatch_authenticates_before_returning_observations() {
         let remote = client.import_remote_private_route(route.blob).unwrap();
         let server_api = server.clone();
         let handler = tokio::spawn(async move {
-            let call = receive.recv().await.unwrap();
-            service.answer_app_call(&server_api, &call).await.unwrap();
+            while let Some(call) = receive.recv().await {
+                service.answer_app_call(&server_api, &call).await.unwrap();
+            }
         });
         let response = tokio::time::timeout(
             Duration::from_secs(5),
@@ -158,7 +159,109 @@ fn device_dispatch_authenticates_before_returning_observations() {
             VeilidDeviceReply::decode(&response).unwrap(),
             VeilidDeviceReply::Observation(_)
         ));
-        handler.await.unwrap();
+        use poche_player_client::{DeviceActionResult, PlayerDeviceClient};
+        use poche_veilid::{
+            ApplicationIdentity, IdentityStoragePolicy, PublicRoomMetadata, RoomNetwork,
+            VeilidDeviceTransport, VeilidProtectedIdentityStore, VeilidRendezvous,
+        };
+        let identity = ApplicationIdentity::load_or_create(
+            &VeilidProtectedIdentityStore::new(server.clone()),
+            IdentityStoragePolicy::RequireProtected,
+        )
+        .await
+        .unwrap();
+        let publisher = VeilidRendezvous::new(server.clone()).unwrap();
+        let published = publisher
+            .publish_room(
+                &identity,
+                RoomNetwork::VeilidLocal,
+                room_id.clone(),
+                PublicRoomMetadata::new("RPC room", 2, true).unwrap(),
+                1,
+                1,
+                10_000,
+                100,
+            )
+            .await
+            .unwrap();
+        let joiner = VeilidRendezvous::new(client.clone()).unwrap();
+        let resolved = joiner
+            .resolve_room(published.room_code(), 101)
+            .await
+            .unwrap();
+        let transport = VeilidDeviceTransport::new(
+            joiner,
+            resolved,
+            tokio::runtime::Handle::current(),
+            TestSigner(SigningKey::from_bytes(&[32; 32])),
+            0,
+            None,
+        )
+        .unwrap();
+        // Match NativeLiveDevice's ordinary worker thread, not a nested Tokio
+        // block_on inside a runtime task.
+        tokio::task::spawn_blocking(move || {
+            std::thread::spawn(move || {
+                let mut device = PlayerDeviceClient::new(profile, transport).unwrap();
+                let observation = device.observe(&room_id).unwrap();
+                let action = observation
+                    .actions
+                    .iter()
+                    .find(|action| matches!(action.payload, CommandPayload::CreateRoom))
+                    .unwrap();
+                let action_id = action.id.clone();
+                assert!(matches!(
+                    device
+                        .invoke(
+                            &observation,
+                            &action_id,
+                            CommandId::new("rpc-create").unwrap()
+                        )
+                        .unwrap(),
+                    DeviceActionResult::Committed { .. }
+                ));
+                let created = device.observe(&room_id).unwrap();
+                assert_eq!(created.projection.current_revision, 1);
+                let seat_action = created
+                    .actions
+                    .iter()
+                    .find(|action| matches!(action.payload, CommandPayload::TakeSeat { seat: 0 }))
+                    .unwrap()
+                    .id
+                    .clone();
+                assert!(matches!(
+                    device
+                        .invoke(&created, &seat_action, CommandId::new("rpc-seat").unwrap())
+                        .unwrap(),
+                    DeviceActionResult::Committed { .. }
+                ));
+                let seated = device.observe(&room_id).unwrap();
+                assert_eq!(seated.projection.current_revision, 2);
+                let disconnected = device.disconnect_route(&room_id).unwrap();
+                assert!(!disconnected.member_connected);
+                device.rebind_route(&room_id).unwrap();
+                let reconnect = device.observe(&room_id).unwrap();
+                assert_eq!(reconnect.actions.len(), 1);
+                assert!(matches!(
+                    reconnect.actions[0].payload,
+                    CommandPayload::Reconnect
+                ));
+                device
+                    .invoke(
+                        &reconnect,
+                        &reconnect.actions[0].id,
+                        CommandId::new("rpc-reconnect").unwrap(),
+                    )
+                    .unwrap();
+                assert!(device.observe(&room_id).unwrap().actions.len() > 1);
+            })
+            .join()
+            .unwrap()
+        })
+        .await
+        .unwrap();
+        handler.abort();
+        let _ = handler.await;
         client.shutdown().await;
         server.shutdown().await;
     });

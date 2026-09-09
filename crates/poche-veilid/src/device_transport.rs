@@ -203,6 +203,8 @@ impl<S: DeviceSigner> DeviceTransport for VeilidDeviceTransport<S> {
         request: DeviceActionRequest,
     ) -> Result<DeviceActionResult, DeviceClientError> {
         self.require_room(&request.room_id)?;
+        let creates = request.session_epoch == 0
+            && matches!(request.payload, poche_protocol::CommandPayload::CreateRoom);
         let joins = matches!(
             request.payload,
             poche_protocol::CommandPayload::RedeemInvite { .. }
@@ -210,6 +212,9 @@ impl<S: DeviceSigner> DeviceTransport for VeilidDeviceTransport<S> {
         let signed = request.sign(profile, &self.signer)?;
         match self.exchange(VeilidDeviceRequest::Invoke(signed))? {
             VeilidDeviceReply::Action(value) => {
+                if creates && matches!(value, DeviceActionResult::Committed { .. }) {
+                    self.epoch = 1;
+                }
                 if joins && matches!(value, DeviceActionResult::Committed { .. }) {
                     self.invite = None;
                 }
