@@ -116,6 +116,8 @@ impl Plugin for DesktopLiveControlsPlugin {
 
 fn refresh_live_controls(
     live: Option<Res<crate::NativeLiveDevice>>,
+    mut fonts: ResMut<Assets<Font>>,
+    mut card_font: Local<Option<Handle<Font>>>,
     mut revision: Local<Option<u64>>,
     old: Query<Entity, With<LiveControls>>,
     cameras: Query<Entity, With<crate::TabletopCamera>>,
@@ -132,6 +134,7 @@ fn refresh_live_controls(
         return;
     }
     *revision = Some(current);
+    let card_font = card_font.get_or_insert_with(|| fonts.add(Font::from_bytes(crate::FONT_BYTES.to_vec()))).clone();
     for entity in &old {
         commands.entity(entity).despawn();
     }
@@ -186,7 +189,7 @@ fn refresh_live_controls(
                     },
                     BackgroundColor(Color::srgb(0.14, 0.3, 0.32)),
                 ))
-                .with_child(Text::new(&action.label));
+                .with_child((Text::new(&action.label), TextFont::from_font_size(20.0).with_font(card_font.clone())));
             }
         });
 }
