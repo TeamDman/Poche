@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     sync::{Mutex, mpsc},
     thread,
     time::Duration,
@@ -35,6 +36,54 @@ enum NativeWorkerEvent {
     Failed(String),
 }
 
+#[derive(Default)]
+struct MotionOutbox(VecDeque<NativeWorkerCommand>);
+
+impl MotionOutbox {
+    fn push(&mut self, command: NativeWorkerCommand) -> Result<(), String> {
+        if let NativeWorkerCommand::Pose {
+            card_id,
+            claim,
+            position_mm,
+            rotation_millidegrees,
+        } = &command
+            && let Some(NativeWorkerCommand::Pose {
+                card_id: previous_id,
+                claim: previous_claim,
+                position_mm: previous_position,
+                rotation_millidegrees: previous_rotation,
+            }) = self.0.back_mut()
+            && card_id == previous_id
+        {
+            *previous_claim |= *claim;
+            *previous_position = *position_mm;
+            *previous_rotation = *rotation_millidegrees;
+            return Ok(());
+        }
+        if self.0.len() >= 52 {
+            return Err("physical motion backlog is full".to_owned());
+        }
+        self.0.push_back(command);
+        Ok(())
+    }
+
+    fn flush(&mut self, sender: &mpsc::SyncSender<NativeWorkerCommand>) -> Result<(), String> {
+        while let Some(command) = self.0.pop_front() {
+            match sender.try_send(command) {
+                Ok(()) => {}
+                Err(mpsc::TrySendError::Full(command)) => {
+                    self.0.push_front(command);
+                    break;
+                }
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    return Err("native device worker is unavailable".to_owned());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Nonblocking bridge between the Bevy update loop and one ordinary certified
 /// player-device client. The worker owns the configured transport; this is not
 /// local-instance control and grants no authority over another process.
@@ -43,6 +92,7 @@ pub struct NativeLiveDevice {
     room_invitation: Option<String>,
     observation: DeviceObservation,
     commands: mpsc::SyncSender<NativeWorkerCommand>,
+    motion_outbox: MotionOutbox,
     events: Mutex<mpsc::Receiver<NativeWorkerEvent>>,
     next_command: u64,
     command_namespace: String,
@@ -254,6 +304,7 @@ impl NativeLiveDevice {
             room_invitation: None,
             observation,
             commands: command_tx,
+            motion_outbox: MotionOutbox::default(),
             events: Mutex::new(event_rx),
             next_command: 0,
             command_namespace,
@@ -281,19 +332,13 @@ impl NativeLiveDevice {
         {
             return Err("physical card is not in this viewer's hand".to_owned());
         }
-        self.commands
-            .try_send(NativeWorkerCommand::Pose {
-                card_id: card_id.to_owned(),
-                claim,
-                position_mm,
-                rotation_millidegrees,
-            })
-            .map_err(|error| match error {
-                mpsc::TrySendError::Full(_) => "physical motion queue is busy".to_owned(),
-                mpsc::TrySendError::Disconnected(_) => {
-                    "native device worker is unavailable".to_owned()
-                }
-            })
+        self.motion_outbox.push(NativeWorkerCommand::Pose {
+            card_id: card_id.to_owned(),
+            claim,
+            position_mm,
+            rotation_millidegrees,
+        })?;
+        self.motion_outbox.flush(&self.commands)
     }
 
     /// Borrow the exact projection currently rendered by the native adapter.
@@ -327,6 +372,10 @@ impl NativeLiveDevice {
 
     /// Queue any currently advertised action from the live action palette.
     pub fn submit_action(&mut self, action_id: &str) -> Result<(), String> {
+        self.motion_outbox.flush(&self.commands)?;
+        if !self.motion_outbox.0.is_empty() {
+            return Err("physical movement is still queued; retry the action shortly".to_owned());
+        }
         if !self
             .observation
             .actions
@@ -361,6 +410,7 @@ impl NativeLiveDevice {
     ///
     /// Returns a stable worker/client error received since the last poll.
     pub fn poll(&mut self) -> Result<bool, String> {
+        self.motion_outbox.flush(&self.commands)?;
         let mut changed = false;
         let receiver = self
             .events
@@ -404,4 +454,48 @@ fn retryable_observation_error(error: DeviceClientError) -> bool {
             | DeviceClientError::StaleRevision
             | DeviceClientError::NoProgress
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pose(claim: bool, x: i32) -> NativeWorkerCommand {
+        NativeWorkerCommand::Pose {
+            card_id: "card".to_owned(),
+            claim,
+            position_mm: [x, 0, 0],
+            rotation_millidegrees: [0, x, 0],
+        }
+    }
+
+    #[test]
+    fn saturated_motion_queue_retains_final_sample_and_unsent_claim() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        sender.try_send(pose(false, -1)).ok().unwrap();
+        let mut outbox = MotionOutbox::default();
+        outbox.push(pose(true, 0)).unwrap();
+        for x in 1..100 {
+            outbox.push(pose(false, x)).unwrap();
+            outbox.flush(&sender).unwrap();
+        }
+        assert_eq!(outbox.0.len(), 1);
+        receiver.recv().unwrap();
+        // A later frame drains the last sample even after dragging has stopped.
+        outbox.flush(&sender).unwrap();
+        assert!(outbox.0.is_empty());
+        let NativeWorkerCommand::Pose {
+            claim,
+            position_mm,
+            rotation_millidegrees,
+            ..
+        } = receiver.recv().unwrap()
+        else {
+            panic!("expected pose")
+        };
+        assert!(claim);
+        assert_eq!(position_mm, [99, 0, 0]);
+        assert_eq!(rotation_millidegrees, [0, 99, 0]);
+        assert!(receiver.try_recv().is_err());
+    }
 }
