@@ -6,6 +6,7 @@ use poche_native_ui::{
 #[cfg(test)]
 #[path = "process_probe.rs"]
 mod process_probe;
+mod recovery;
 use poche_player_client::ProtectedProfileStore;
 use poche_veilid::{
     ApplicationIdentity, IdentityStoragePolicy, PublishedRoom, RoomCode, RoomNetwork,
@@ -36,6 +37,7 @@ pub fn validator() -> InvitationValidator {
 // Retained by the worker closure for the whole graphical app lifetime. This
 // is initial room service ownership, not replica-based creator failover.
 struct RoomOwner {
+    _resumed: Option<poche_veilid::ResumedHostRoom>,
     _publication: Option<PublishedRoom>,
     _service: Option<RunningDeviceService>,
     _lease: fs::File,
@@ -127,6 +129,14 @@ fn connect(
     )?;
     node.runtime()
         .block_on(node.attach_public(Duration::from_secs(90)))?;
+    if invitation.is_none() {
+        if let Some(bytes) = store.load_authority_recovery(&label, "active-room")
+            .map_err(|_| "Cannot read protected room recovery state.")? {
+            if poche_veilid::DesktopRoomDisbanded::decode(&bytes).is_err() {
+                return recovery::restore(node, profile, store, &bytes, &label, receive, lease, owners);
+            }
+        }
+    }
     let (mut live, code, publication, service) = if let Some(code) = invitation {
         let (client, room_id) = poche_veilid::join_device(node, profile, store, &code, now)
             .map_err(|_| "Could not join this lobby. Check the invitation and connection.")?;
@@ -199,6 +209,7 @@ fn connect(
     };
     live.set_room_invitation(code);
     owners.push(RoomOwner {
+        _resumed: None,
         _publication: publication,
         _service: service,
         _lease: lease,

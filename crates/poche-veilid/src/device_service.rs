@@ -73,6 +73,12 @@ where
         Ok(self)
     }
 
+    pub fn recovery_ready(&self) -> Result<bool, DeviceClientError> {
+        let presence = self.recovery_presence.lock().map_err(|_| DeviceClientError::TransportUnavailable)?;
+        if self.recovery_failed.load(Ordering::Acquire) { return Err(DeviceClientError::TransportUnavailable); }
+        Ok(presence.as_ref().is_none_or(|(gate, _)| gate.witnessed()))
+    }
+
     /// Persist a terminal record when the recovery grace expires. The callback
     /// must replace the active encrypted checkpoint, not merely log expiry.
     pub fn with_recovery_expiry_sink(mut self, sink: impl Fn() -> Result<(), DeviceClientError> + Send + Sync + 'static) -> Self {
