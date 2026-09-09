@@ -157,6 +157,7 @@ impl SecretVault for OsCredentialVault {
 /// protected handle for the duration of one signature.
 pub struct ProtectedProfileStore {
     public_root: PathBuf,
+    creation_lock_root: PathBuf,
     vault: Box<dyn SecretVault>,
 }
 
@@ -185,8 +186,13 @@ impl ProtectedProfileStore {
     ///
     /// Fails closed if the protected credential backend cannot be opened.
     pub fn open_at(public_root: PathBuf) -> Result<Self, ProfileStoreError> {
+        // Vault handles are global to this OS user, even when public metadata
+        // roots differ. Therefore serialize creation across all public roots.
+        let project = ProjectDirs::from("com", "TeamDman", "Poche")
+            .ok_or(ProfileStoreError::PublicStoreUnavailable)?;
         Ok(Self {
             public_root,
+            creation_lock_root: project.data_local_dir().join("credential-locks"),
             vault: Box::new(OsCredentialVault::open()?),
         })
     }
@@ -194,6 +200,49 @@ impl ProtectedProfileStore {
     #[must_use]
     pub fn public_root(&self) -> &Path {
         &self.public_root
+    }
+
+    /// Recover the selected local identity, creating only genuinely absent
+    /// profiles. Labels are local selectors, never remote proof of identity.
+    /// Missing/corrupt keys behind existing metadata fail without replacement.
+    /// Call on the connection worker because the protected vault may block.
+    pub fn load_or_create_device(
+        &self,
+        root_label: &str,
+        device_label: &str,
+    ) -> Result<DeviceProfile, ProfileStoreError> {
+        validate_label(root_label)?;
+        validate_label(device_label)?;
+        let root = match self.load_player_root(root_label) {
+            Ok(root) => root,
+            Err(ProfileStoreError::NotFound) => match self.create_player_root(root_label) {
+                Ok(root) => root,
+                Err(ProfileStoreError::AlreadyExists) => self.load_player_root(root_label)?,
+                Err(error) => return Err(error),
+            },
+            Err(error) => return Err(error),
+        };
+        let _root_key =
+            self.load_signing_key(&root.signing_key_handle, &root.root.signing_public_key)?;
+        let profile = match self.load_device(device_label) {
+            Ok(profile) => profile,
+            Err(ProfileStoreError::NotFound) => {
+                match self.create_device(root_label, device_label) {
+                    Ok(profile) => profile,
+                    Err(ProfileStoreError::AlreadyExists) => self.load_device(device_label)?,
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) => return Err(error),
+        };
+        if profile.player_id != root.root.player_id {
+            return Err(ProfileStoreError::CorruptPublicProfile);
+        }
+        let _device_key = self.load_signing_key(
+            &profile.signing_key_handle,
+            &profile.certificate.device_signing_public_key,
+        )?;
+        Ok(profile)
     }
 
     /// Generate a new player root in protected storage and persist only its
@@ -205,6 +254,7 @@ impl ProtectedProfileStore {
     /// public metadata cannot be committed.
     pub fn create_player_root(&self, label: &str) -> Result<PlayerRootProfile, ProfileStoreError> {
         validate_label(label)?;
+        let _creation = self.lock_creation()?;
         let handle = key_handle(ROOT_KEY_SERVICE, label);
         let path = self.root_path(label);
         self.require_vacant(&path, &handle)?;
@@ -246,6 +296,7 @@ impl ProtectedProfileStore {
         device_label: &str,
     ) -> Result<DeviceProfile, ProfileStoreError> {
         validate_label(device_label)?;
+        let _creation = self.lock_creation()?;
         let root = self.load_player_root(root_label)?;
         let root_key = self.load_signing_key(
             &root.signing_key_handle,
@@ -404,6 +455,23 @@ impl ProtectedProfileStore {
         self.public_root
             .join("devices")
             .join(format!("{label}.json"))
+    }
+
+    fn lock_creation(&self) -> Result<fs::File, ProfileStoreError> {
+        fs::create_dir_all(&self.creation_lock_root)
+            .map_err(|_| ProfileStoreError::PublicStoreUnavailable)?;
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.creation_lock_root.join("create.lock"))
+            .map_err(|_| ProfileStoreError::PublicStoreUnavailable)?;
+        // OS-managed lock releases even after a process crashes. Keep the file
+        // itself: unlinking lock files can let writers lock different inodes.
+        file.lock()
+            .map_err(|_| ProfileStoreError::PublicStoreUnavailable)?;
+        Ok(file)
     }
 
     fn require_vacant(&self, path: &Path, handle: &str) -> Result<(), ProfileStoreError> {
@@ -650,9 +718,55 @@ mod tests {
         let vault = MemoryVault::default();
         let store = ProtectedProfileStore {
             public_root: directory.path().to_path_buf(),
+            creation_lock_root: directory.path().join("locks"),
             vault: Box::new(vault.clone()),
         };
         (directory, store, vault)
+    }
+
+    #[test]
+    fn automatic_recovery_keeps_identity_and_never_replaces_missing_keys() {
+        let (_directory, store, vault) = fixture_store();
+        let first = store
+            .load_or_create_device("alice", "alice-desktop")
+            .unwrap();
+        assert_eq!(
+            first,
+            store
+                .load_or_create_device("alice", "alice-desktop")
+                .unwrap()
+        );
+        let second = store.load_or_create_device("bob", "bob-desktop").unwrap();
+        assert_ne!(first.player_id, second.player_id);
+        assert!(store.load_or_create_device("bob", "alice-desktop").is_err());
+        vault.delete(&first.signing_key_handle).unwrap();
+        assert!(
+            store
+                .load_or_create_device("alice", "alice-desktop")
+                .is_err()
+        );
+        assert!(vault.load(&first.signing_key_handle).unwrap().is_none());
+        assert_eq!(store.load_device("alice-desktop").unwrap(), first);
+    }
+
+    #[test]
+    fn competing_creators_preserve_the_winning_secret() {
+        let (_directory, store, vault) = fixture_store();
+        let other = ProtectedProfileStore {
+            public_root: store.public_root.join("other-public-root"),
+            creation_lock_root: store.creation_lock_root.clone(),
+            vault: Box::new(vault),
+        };
+        let ((left, store), (right, other)) = std::thread::scope(|scope| {
+            let left = scope.spawn(move || (store.create_player_root("same-player"), store));
+            let right = scope.spawn(move || (other.create_player_root("same-player"), other));
+            (left.join().unwrap(), right.join().unwrap())
+        });
+        assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
+        let winner = if left.is_ok() { &store } else { &other };
+        // This loads and verifies the protected root key, not only metadata.
+        let device = winner.create_device("same-player", "survivor").unwrap();
+        assert!(winner.sign_device_bytes(&device, b"still-owned").is_ok());
     }
 
     #[test]
