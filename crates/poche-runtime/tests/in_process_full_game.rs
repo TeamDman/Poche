@@ -221,9 +221,9 @@ fn three_scripted_clients_complete_a_real_poche_game_without_sockets() {
     // Exercise recovery across a real countdown expiry, every deal, player
     // action and settlement. This is private authority material, not a replay
     // export that is safe to give to a player during a running game.
-    let encoded = serde_json::to_vec(authority.recovery_journal()).unwrap();
+    let encoded = serde_json::to_vec(&authority.durable_journal()).unwrap();
     let inputs = serde_json::from_slice(&encoded).unwrap();
-    let recovered = InProcessAuthority::replay_journal(initial_state, inputs).unwrap();
+    let recovered = InProcessAuthority::from_durable_journal(initial_state, inputs).unwrap();
     assert_eq!(recovered.state, authority.state);
     assert_eq!(recovered.committed_events_after(0), authority.committed_events_after(0));
     assert!(recovered.recovery_journal() == authority.recovery_journal());

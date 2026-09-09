@@ -560,6 +560,21 @@ pub struct RuntimeDeviceCheckpoint<G: SessionGame, A> {
     cooperation_now_unix_ms: u64,
 }
 
+/// Private persisted adapter state. Store only inside authenticated encryption.
+/// The enclosing room format supplies the matching genesis and action source.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeDeviceRecovery {
+    schema_version: u16,
+    authority: crate::AuthorityRecoveryJournal,
+    profiles: Vec<(DeviceProfile, bool)>,
+    next_projection: u64,
+    physical_secret: Option<[u8; 32]>,
+    physical_poses: BTreeMap<String, poche_player_client::PhysicalPoseState>,
+    physical_pose_epoch: Option<u64>,
+    cooperation_now_unix_ms: u64,
+}
+
 impl<G: SessionGame, A> Clone for RuntimeLoopbackDeviceAdapter<G, A> {
     fn clone(&self) -> Self {
         Self {
@@ -569,6 +584,32 @@ impl<G: SessionGame, A> Clone for RuntimeLoopbackDeviceAdapter<G, A> {
 }
 
 impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<G, A> {
+    pub fn durable_recovery(&self) -> Result<RuntimeDeviceRecovery, DeviceClientError> {
+        let shared = self.shared.lock().map_err(|_| DeviceClientError::TransportUnavailable)?;
+        Ok(RuntimeDeviceRecovery {
+            schema_version: 1, authority: shared.authority.durable_journal(),
+            profiles: shared.profiles.values().map(|profile| (profile.clone(), shared.clients.get(&profile.device_id).is_some_and(|client| client.route_connected(&shared.authority.transport)))).collect(),
+            next_projection: shared.next_projection, physical_secret: shared.physical_secret,
+            physical_poses: shared.physical_poses.clone(), physical_pose_epoch: shared.physical_pose_epoch,
+            cooperation_now_unix_ms: shared.cooperation_now_unix_ms,
+        })
+    }
+
+    pub fn from_durable_recovery(initial: SessionState<G>, action_source: A, recovery: RuntimeDeviceRecovery, codec: LoopbackCodec) -> Result<Self, DeviceClientError> {
+        if recovery.schema_version != 1 || recovery.physical_poses.len() > 52
+            || recovery.physical_poses.values().any(|pose| !pose.validate()) {
+            return Err(DeviceClientError::ProtocolViolation);
+        }
+        let authority = InProcessAuthority::from_durable_journal(initial, recovery.authority)
+            .map_err(|_| DeviceClientError::ProtocolViolation)?;
+        Self::from_checkpoint(RuntimeDeviceCheckpoint {
+            authority: authority.checkpoint(), profiles: recovery.profiles, action_source,
+            next_projection: recovery.next_projection, physical_secret: recovery.physical_secret,
+            physical_poses: recovery.physical_poses, physical_pose_epoch: recovery.physical_pose_epoch,
+            cooperation_now_unix_ms: recovery.cooperation_now_unix_ms,
+        }, codec)
+    }
+
     /// Capture the adapter without retaining transport routes or capture handlers.
     pub fn checkpoint(&self) -> Result<RuntimeDeviceCheckpoint<G, A>, DeviceClientError>
     where A: Clone {
@@ -891,19 +932,19 @@ impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct CachedRemoteObservation {
     request: DeviceObservationRequestWire,
     observation: DeviceObservation,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct CachedRemoteAction {
     action: DeviceActionWire,
     result: DeviceActionResult,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct CachedRemoteRoute {
     request: DeviceRouteRequestWire,
     result: DeviceRouteResultWire,
@@ -931,6 +972,20 @@ pub struct CertifiedRoomCheckpoint<G: SessionGame, A> {
     observation_cache: BTreeMap<(DeviceId, String), CachedRemoteObservation>,
     action_cache: BTreeMap<(DeviceId, String), CachedRemoteAction>,
     route_cache: BTreeMap<(DeviceId, String), CachedRemoteRoute>,
+    service_profiles: Vec<DeviceProfile>,
+    next_service_command: u64,
+}
+
+/// Private service recovery, including exact-request idempotency caches.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CertifiedRoomRecovery {
+    schema_version: u16,
+    adapter: RuntimeDeviceRecovery,
+    profiles: BTreeMap<DeviceId, DeviceProfile>,
+    observation_cache: Vec<((DeviceId, String), CachedRemoteObservation)>,
+    action_cache: Vec<((DeviceId, String), CachedRemoteAction)>,
+    route_cache: Vec<((DeviceId, String), CachedRemoteRoute)>,
     service_profiles: Vec<DeviceProfile>,
     next_service_command: u64,
 }
@@ -969,6 +1024,33 @@ where
     G::Error: Send,
     A: AdvertisedActionSource<G>,
 {
+    /// Capture while the caller holds exclusive access to this certified room.
+    pub fn durable_recovery(&self) -> Result<CertifiedRoomRecovery, DeviceClientError> {
+        Ok(CertifiedRoomRecovery {
+            schema_version: 1, adapter: self.adapter.durable_recovery()?,
+            profiles: self.profiles.clone(),
+            observation_cache: self.observation_cache.iter().map(|(k,v)| (k.clone(),v.clone())).collect(),
+            action_cache: self.action_cache.iter().map(|(k,v)| (k.clone(),v.clone())).collect(),
+            route_cache: self.route_cache.iter().map(|(k,v)| (k.clone(),v.clone())).collect(),
+            service_profiles: self.service_profiles.clone(), next_service_command: self.next_service_command,
+        })
+    }
+
+    /// Decode only after storage authentication. Genesis and action-source
+    /// configuration belong to the enclosing versioned room format.
+    pub fn from_durable_recovery(initial: SessionState<G>, action_source: A, recovery: CertifiedRoomRecovery, codec: LoopbackCodec) -> Result<Self, DeviceClientError> {
+        if recovery.schema_version != 1 { return Err(DeviceClientError::ProtocolViolation); }
+        let adapter = RuntimeLoopbackDeviceAdapter::from_durable_recovery(initial, action_source, recovery.adapter, codec)?;
+        Ok(Self {
+            adapter, profiles: recovery.profiles,
+            observation_cache: recovery.observation_cache.into_iter().collect(),
+            action_cache: recovery.action_cache.into_iter().collect(),
+            route_cache: recovery.route_cache.into_iter().collect(),
+            service_profiles: recovery.service_profiles, next_service_command: recovery.next_service_command,
+            countdown_started: None,
+        })
+    }
+
     /// Capture while the caller holds exclusive access to this certified room.
     pub fn checkpoint(&self) -> Result<CertifiedRoomCheckpoint<G, A>, DeviceClientError>
     where A: Clone {
@@ -2273,17 +2355,27 @@ mod tests {
     #[test]
     fn adapter_checkpoint_retains_physical_identity_and_projection_sequence() {
         let state: SessionState<OracleSessionGame<2>> = SessionState::pending(RoomId::new("checkpoint-room").unwrap(), PrincipalId::new("clock").unwrap(), PrincipalId::new("game").unwrap());
-        let adapter = RuntimeLoopbackDeviceAdapter::new(state, CreateRoomActions, LoopbackCodec::Typed);
+        let adapter = RuntimeLoopbackDeviceAdapter::new(state.clone(), CreateRoomActions, LoopbackCodec::Typed);
         adapter.enable_physical_identities([73; 32]).unwrap();
         let profile = device_profile("checkpoint-device", "22");
         adapter.enroll(&profile).unwrap();
         adapter.shared.lock().unwrap().next_projection = 19;
-        let restored = RuntimeLoopbackDeviceAdapter::from_checkpoint(adapter.checkpoint().unwrap(), LoopbackCodec::Typed).unwrap();
+        let pose = poche_player_client::PhysicalPoseState {
+            device: profile.device_id.clone(), generation: 2, sequence: 7,
+            position_mm: [170, 240, -310], rotation_millidegrees: [45000, 12000, 270000],
+        };
+        adapter.shared.lock().unwrap().physical_poses.insert("ab".repeat(32), pose.clone());
+        let bytes = serde_json::to_vec(&adapter.durable_recovery().unwrap()).unwrap();
+        let mut unsupported: RuntimeDeviceRecovery = serde_json::from_slice(&bytes).unwrap();
+        unsupported.schema_version = 2;
+        assert!(RuntimeLoopbackDeviceAdapter::from_durable_recovery(state.clone(), CreateRoomActions, unsupported, LoopbackCodec::Typed).is_err());
+        let restored = RuntimeLoopbackDeviceAdapter::from_durable_recovery(state, CreateRoomActions, serde_json::from_slice(&bytes).unwrap(), LoopbackCodec::Typed).unwrap();
         let shared = restored.shared.lock().unwrap();
         assert_eq!(shared.physical_secret, Some([73; 32]));
         assert_eq!(shared.next_projection, 19);
         assert!(shared.profiles.contains_key(&profile.device_id));
         assert!(shared.capture_providers.is_empty());
+        assert_eq!(shared.physical_poses.get(&"ab".repeat(32)), Some(&pose));
     }
 
     #[test]
@@ -2857,8 +2949,10 @@ mod tests {
             }
         );
         assert_eq!(adapter.revision(), Some(1));
-        let mut room = CertifiedDeviceRoom::from_checkpoint(
-            room.checkpoint().unwrap(), LoopbackCodec::CanonicalNdjson,
+        let encoded = serde_json::to_vec(&room.durable_recovery().unwrap()).unwrap();
+        let mut room = CertifiedDeviceRoom::from_durable_recovery(
+            SessionState::pending(room_id, PrincipalId::new("clock").unwrap(), PrincipalId::new("game").unwrap()),
+            CreateRoomActions, serde_json::from_slice(&encoded).unwrap(), LoopbackCodec::CanonicalNdjson,
         ).unwrap();
         assert_eq!(room.invoke(&signed_action).unwrap(), result);
         assert_eq!(room.adapter.revision(), Some(1));

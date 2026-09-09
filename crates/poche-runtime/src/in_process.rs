@@ -524,6 +524,20 @@ pub struct AuthorityCheckpoint<G: SessionGame> {
     next_observation: u64,
 }
 
+/// Authenticated-storage-only replay material; never a public transcript.
+/// Genesis and the rules implementation must be supplied by the room format.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityRecoveryJournal {
+    schema_version: u16,
+    room_id: RoomId,
+    revision: u64,
+    inputs: Vec<AuthorityJournalInput>,
+    next_delivery: u64,
+    next_connection: u64,
+    next_observation: u64,
+}
+
 /// Central authority composing the existing pure reducer with loopback ports.
 pub struct InProcessAuthority<G: SessionGame> {
     journal: Vec<AuthorityJournalInput>,
@@ -536,6 +550,30 @@ pub struct InProcessAuthority<G: SessionGame> {
 }
 
 impl<G: SessionGame> InProcessAuthority<G> {
+    pub fn durable_journal(&self) -> AuthorityRecoveryJournal {
+        AuthorityRecoveryJournal {
+            schema_version: 1, room_id: self.state.room_id.clone(), revision: self.state.revision,
+            inputs: self.journal.clone(), next_delivery: self.next_delivery,
+            next_connection: self.transport.next_connection, next_observation: self.transport.next_observation,
+        }
+    }
+
+    /// Reconstruct the reducer and preserve identifier counters. Only accepts
+    /// the current storage schema and matching genesis room identity.
+    pub fn from_durable_journal(initial: SessionState<G>, journal: AuthorityRecoveryJournal) -> Result<Self, &'static str> {
+        if journal.schema_version != 1 || journal.room_id != initial.room_id {
+            return Err("incompatible authority recovery journal");
+        }
+        let mut authority = Self::replay_journal(initial, journal.inputs).map_err(|_| "authority recovery replay failed")?;
+        if authority.state.revision != journal.revision {
+            return Err("authority recovery revision mismatch");
+        }
+        authority.next_delivery = journal.next_delivery;
+        authority.transport.next_connection = authority.transport.next_connection.max(journal.next_connection);
+        authority.transport.next_observation = authority.transport.next_observation.max(journal.next_observation);
+        Ok(authority)
+    }
+
     /// Replay authority-private inputs from a trusted, authenticated store.
     /// This does not authenticate storage or replace certified-device checks.
     pub fn replay_journal(initial: SessionState<G>, inputs: Vec<AuthorityJournalInput>) -> Result<Self, InProcessAuthorityError<G::Error>> {
