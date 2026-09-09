@@ -64,7 +64,17 @@ impl DesktopArgs {
                 .map_err(|error| eyre::eyre!(error))?;
             println!("{}", persisted.manifest_path.display());
         } else {
-            poche_native_ui::run(options).map_err(|error| eyre::eyre!(error))?;
+            if options.play_card.is_some()
+                || options.screenshot.is_some()
+                || options.acceptance_report.is_some()
+                || options.exit_after_seconds.is_some()
+            {
+                poche_native_ui::run(options).map_err(|error| eyre::eyre!(error))?;
+            } else {
+                let worker = super::connection::worker().map_err(|error| eyre::eyre!(error))?;
+                poche_native_ui::run_menu(options, worker, super::connection::validator())
+                    .map_err(|error| eyre::eyre!(error))?;
+            }
         }
         Ok(true)
     }

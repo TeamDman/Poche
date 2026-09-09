@@ -34,10 +34,12 @@ enum NativeWorkerEvent {
 /// local-instance control and grants no authority over another process.
 #[derive(Resource)]
 pub struct NativeLiveDevice {
+    room_invitation: Option<String>,
     observation: DeviceObservation,
     commands: mpsc::SyncSender<NativeWorkerCommand>,
     events: Mutex<mpsc::Receiver<NativeWorkerEvent>>,
     next_command: u64,
+    command_namespace: String,
     last_result: Option<DeviceActionResult>,
 }
 
@@ -56,6 +58,9 @@ impl NativeLiveDevice {
         let observation = client
             .observe(&room_id)
             .map_err(|error| error.to_string())?;
+        let mut random = [0_u8; 16];
+        getrandom::fill(&mut random).map_err(|_| "cannot allocate command identity".to_owned())?;
+        let command_namespace = blake3::hash(&random).to_hex()[..32].to_owned();
         let (command_tx, command_rx) = mpsc::sync_channel(8);
         let (event_tx, event_rx) = mpsc::sync_channel(8);
         let initial_revision = observation.projection.current_revision;
@@ -126,10 +131,12 @@ impl NativeLiveDevice {
             })
             .map_err(|_| "native device worker could not start".to_owned())?;
         Ok(Self {
+            room_invitation: None,
             observation,
             commands: command_tx,
             events: Mutex::new(event_rx),
             next_command: 0,
+            command_namespace,
             last_result: None,
         })
     }
@@ -138,6 +145,15 @@ impl NativeLiveDevice {
     #[must_use]
     pub const fn observation(&self) -> &DeviceObservation {
         &self.observation
+    }
+
+    /// Explicit UI-only bearer-code exposure; never included in diagnostics.
+    pub fn set_room_invitation(&mut self, code: String) {
+        self.room_invitation = Some(code);
+    }
+
+    pub fn room_invitation(&self) -> Option<&str> {
+        self.room_invitation.as_deref()
     }
 
     /// Queue one spatially accepted play through the opaque action advertised
@@ -150,13 +166,30 @@ impl NativeLiveDevice {
     pub fn submit_play(&mut self, committed: &CommittedPresentation) -> Result<(), String> {
         let action = advertised_action_for_play(&self.observation, committed)
             .ok_or_else(|| "spatial play has no exact advertised action".to_owned())?;
-        let command_id = CommandId::new(format!("native-device-{}", self.next_command))
-            .map_err(|_| "native device command ID is invalid".to_owned())?;
+        let action_id = action.id.clone();
+        self.submit_action(&action_id)
+    }
+
+    /// Queue any currently advertised action from the live action palette.
+    pub fn submit_action(&mut self, action_id: &str) -> Result<(), String> {
+        if !self
+            .observation
+            .actions
+            .iter()
+            .any(|action| action.id == action_id)
+        {
+            return Err("action is not currently advertised".to_owned());
+        }
+        let command_id = CommandId::new(format!(
+            "native-{}-{}",
+            self.command_namespace, self.next_command
+        ))
+        .map_err(|_| "native device command ID is invalid".to_owned())?;
         self.next_command = self.next_command.saturating_add(1);
         self.commands
             .try_send(NativeWorkerCommand::Invoke {
                 observation: self.observation.clone(),
-                action_id: action.id.clone(),
+                action_id: action_id.to_owned(),
                 command_id,
             })
             .map_err(|error| match error {

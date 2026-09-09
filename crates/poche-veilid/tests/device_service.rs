@@ -204,7 +204,7 @@ fn device_dispatch_authenticates_before_returning_observations() {
             VeilidDeviceReply::decode(&response).unwrap(),
             VeilidDeviceReply::Observation(_)
         ));
-        let creator_node = client_node.clone();
+        let creator_node = server_node.clone();
         let creator_invitation = published.room_code().encode().unwrap();
         // Match NativeLiveDevice's ordinary worker thread, not a nested Tokio
         // block_on inside a runtime task.

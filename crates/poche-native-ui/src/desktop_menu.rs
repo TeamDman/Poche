@@ -77,6 +77,12 @@ enum Action {
 }
 #[derive(Component)]
 struct StatusLabel;
+#[derive(Component)]
+struct LiveControls;
+#[derive(Component)]
+struct LiveAction(String);
+#[derive(Component)]
+struct CopyInvitation;
 
 /// Install alongside DefaultPlugins and a transport-specific validator.
 /// The owning app removes DesktopMenuRoot when a room has actually joined.
@@ -90,7 +96,123 @@ impl Plugin for DesktopMenuPlugin {
             .add_systems(
                 Update,
                 (buttons, clipboard_result, connection, status_text).chain(),
+            )
+            .add_systems(
+                Update,
+                (live_action_buttons, refresh_live_controls)
+                    .chain()
+                    .after(crate::poll_live_device),
             );
+    }
+}
+
+fn refresh_live_controls(
+    live: Option<Res<crate::NativeLiveDevice>>,
+    mut revision: Local<Option<u64>>,
+    old: Query<Entity, With<LiveControls>>,
+    mut commands: Commands,
+) {
+    let Some(live) = live else {
+        return;
+    };
+    let current = live.observation().projection.current_revision;
+    if *revision == Some(current) {
+        return;
+    }
+    *revision = Some(current);
+    for entity in &old {
+        commands.entity(entity).despawn();
+    }
+    commands
+        .spawn((
+            LiveControls,
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: px(0.),
+                width: percent(100.),
+                padding: px(12.).all(),
+                column_gap: px(8.),
+                row_gap: px(8.),
+                flex_wrap: FlexWrap::Wrap,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.04, 0.07, 0.08)),
+        ))
+        .with_children(|bar| {
+            if live.room_invitation().is_some() {
+                bar.spawn((
+                    Button,
+                    CopyInvitation,
+                    Node {
+                        padding: px(10.).all(),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.14, 0.3, 0.32)),
+                ))
+                .with_child(Text::new("Copy lobby invitation"));
+            }
+            for action in &live.observation().actions {
+                bar.spawn((
+                    Button,
+                    LiveAction(action.id.clone()),
+                    Node {
+                        padding: px(10.).all(),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.14, 0.3, 0.32)),
+                ))
+                .with_child(Text::new(&action.label));
+            }
+        });
+}
+
+fn live_action_buttons(
+    buttons: Query<(&Interaction, Option<&LiveAction>, Has<CopyInvitation>), Changed<Interaction>>,
+    live: Option<ResMut<crate::NativeLiveDevice>>,
+    controller: Option<ResMut<crate::NativeController>>,
+    mut clipboard: ResMut<Clipboard>,
+    mut confirmation: Local<Option<String>>,
+) {
+    let (Some(mut live), Some(mut controller)) = (live, controller) else {
+        return;
+    };
+    for (interaction, action, copy) in &buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        if copy {
+            controller.last_finding = match live
+                .room_invitation()
+                .map(|code| clipboard.set_text(code.to_owned()))
+            {
+                Some(Ok(())) => "Lobby invitation copied.".to_owned(),
+                _ => "Could not copy the lobby invitation.".to_owned(),
+            };
+        } else if let Some(action) = action {
+            let destructive = live
+                .observation()
+                .actions
+                .iter()
+                .find(|candidate| candidate.id == action.0)
+                .is_some_and(|candidate| {
+                    matches!(
+                        candidate.payload,
+                        poche_protocol::CommandPayload::Leave
+                            | poche_protocol::CommandPayload::CloseRoom
+                    )
+                });
+            if destructive && confirmation.as_deref() != Some(&action.0) {
+                *confirmation = Some(action.0.clone());
+                controller.last_finding =
+                    "Click the same action again to confirm leaving/closing the room.".to_owned();
+                continue;
+            }
+            *confirmation = None;
+            controller.last_finding = match live.submit_action(&action.0) {
+                Ok(()) => "Action sent; awaiting the room.".to_owned(),
+                Err(error) => error,
+            };
+        }
     }
 }
 

@@ -11,6 +11,7 @@ description = "Bevy leaf adapter for Poche's canonical spatial presentation"
 [dependencies]
 bevy = { workspace = true, features = ["ui"] }
 blake3.workspace = true
+getrandom.workspace = true
 image.workspace = true
 poche-capture = { path = "../poche-capture" }
 poche-player-client = { path = "../poche-player-client" }

@@ -26,6 +26,9 @@ poche-player-client = { path = "../poche-player-client", features = ["http", "pr
 poche-protocol = { path = "../poche-protocol" }
 poche-puppet = { path = "../poche-puppet" }
 poche-runtime = { path = "../poche-runtime" }
+poche-veilid = { path = "../poche-veilid", features = ["device-service"] }
+veilid-core.workspace = true
+tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 teamy-cancellation = { git = "https://github.com/TeamDman/teamy-cancellation.git", tag = "v0.3.1", default-features = false, features = ["ctrlc", "tracing"] }

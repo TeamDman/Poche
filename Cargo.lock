@@ -8582,11 +8582,14 @@ dependencies = [
  "poche-protocol",
  "poche-puppet",
  "poche-runtime",
+ "poche-veilid",
  "serde",
  "serde_json",
  "teamy-cancellation",
+ "tokio",
  "tracing",
  "tracing-subscriber",
+ "veilid-core",
 ]
 
 [[package]]
@@ -8669,6 +8672,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "blake3",
+ "getrandom 0.3.4",
  "image",
  "poche-capture",
  "poche-player-client",
