@@ -7,6 +7,20 @@ use poche_runtime::{AdvertisedActionSource, CertifiedDeviceRoom};
 use poche_session::SessionGame;
 use std::sync::{Arc, Mutex};
 
+/// Lifetime of a bounded service task. Keep this beside the room, not the
+/// menu. Dropping it stops accepting calls and cancels the async handlers.
+/// It is not replica persistence or a substitute for creator failover.
+pub struct RunningDeviceService {
+    task: tokio::task::JoinHandle<()>,
+    _node: crate::VeilidDeviceNode,
+}
+
+impl Drop for RunningDeviceService {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
 /// Share only enrollment/replay state across concurrent calls. Cooperation
 /// executes after releasing this lock, allowing the rendering device to make
 /// observation requests while it fulfills a capture request.
@@ -32,6 +46,38 @@ where
         Self {
             room: Arc::new(Mutex::new(room)),
         }
+    }
+
+    /// Serve a bounded callback queue with at most four concurrent calls.
+    /// Independent handlers let observations progress while a capture request
+    /// waits on a cooperating device. The callback must use try_send, never
+    /// block Veilid's update loop; queue overflow is a retryable lost call.
+    pub fn serve(
+        self,
+        node: crate::VeilidDeviceNode,
+        mut incoming: tokio::sync::mpsc::Receiver<Box<veilid_core::VeilidAppCall>>,
+    ) -> RunningDeviceService {
+        let api = node.api().clone();
+        let task = node.runtime().spawn(async move {
+            let mut calls = tokio::task::JoinSet::new();
+            loop {
+                tokio::select! {
+                    call = incoming.recv(), if calls.len() < 4 => {
+                        let Some(call) = call else { break; };
+                        let service = self.clone();
+                        let api = api.clone();
+                        calls.spawn(async move {
+                            // Stable wire errors are returned by dispatch. A
+                            // failed reply means the remote call must time out.
+                            let _ = service.answer_app_call(&api, &call).await;
+                        });
+                    }
+                    _ = calls.join_next(), if !calls.is_empty() => {}
+                }
+            }
+            calls.abort_all();
+        });
+        RunningDeviceService { task, _node: node }
     }
 
     /// Run reducer dispatch away from the Veilid update callback and answer

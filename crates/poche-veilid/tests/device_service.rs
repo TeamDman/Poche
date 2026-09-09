@@ -125,7 +125,7 @@ fn device_dispatch_authenticates_before_returning_observations() {
     #[cfg(feature = "veilid-mock-test")]
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         use std::{sync::Arc, time::Duration};
-        use veilid_core::{Target, VeilidConfig, VeilidUpdate, api_startup};
+        use veilid_core::{Target, VeilidConfig, VeilidUpdate};
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().to_str().unwrap();
         let mut config = VeilidConfig::new(
@@ -136,17 +136,17 @@ fn device_dispatch_authenticates_before_returning_observations() {
             Some(path),
         );
         config.namespace = "server".to_owned();
-        let (send, mut receive) = tokio::sync::mpsc::channel(4);
-        let server = api_startup(
+        let (send, receive) = tokio::sync::mpsc::channel(4);
+        let server_node = poche_veilid::VeilidDeviceNode::start(
+            config.clone(),
             Arc::new(move |update| {
                 if let VeilidUpdate::AppCall(call) = update {
-                    send.try_send(call).unwrap();
+                    let _ = send.try_send(call);
                 }
             }),
-            config.clone(),
         )
-        .await
         .unwrap();
+        let server = server_node.api().clone();
         config.namespace = "client".to_owned();
         let client_node = poche_veilid::VeilidDeviceNode::start(config, Arc::new(drop)).unwrap();
         let client = client_node.api().clone();
@@ -182,12 +182,7 @@ fn device_dispatch_authenticates_before_returning_observations() {
         let joiner = VeilidRendezvous::new(client.clone()).unwrap();
         let admission = published.room_code().admission_proof().unwrap();
         let service = room_service(&room_id, admission.expose());
-        let server_api = server.clone();
-        let handler = tokio::spawn(async move {
-            while let Some(call) = receive.recv().await {
-                service.answer_app_call(&server_api, &call).await.unwrap();
-            }
-        });
+        let handler = service.serve(server_node.clone(), receive);
         let response = tokio::time::timeout(
             Duration::from_secs(5),
             client
@@ -358,9 +353,8 @@ fn device_dispatch_authenticates_before_returning_observations() {
         })
         .await
         .unwrap();
-        handler.abort();
-        let _ = handler.await;
+        drop(handler);
         client_node.shutdown().unwrap();
-        server.shutdown().await;
+        server_node.shutdown().unwrap();
     });
 }
