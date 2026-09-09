@@ -1,6 +1,19 @@
 //! Protected same-device creator restoration. Runs on the menu worker only.
 use super::*;
 
+/// A creator alone in the authenticated snapshot has no other peer retaining
+/// the room. Commit disbanding before allowing a new room to replace the slot.
+/// Corruption or a mismatched creator is never interpreted as an empty room.
+pub(super) fn terminal_if_no_peers(bytes: &[u8], creator: &poche_protocol::PrincipalId) -> Result<Option<Vec<u8>>, &'static str> {
+    let (genesis, room) = poche_veilid::DesktopRoomGenesis::decode_recovery(bytes)
+        .map_err(|_| "Saved lobby recovery state is invalid or closed.")?;
+    let peers = room.recovery_peers(creator).map_err(|_| "Saved lobby belongs to a different creator.")?;
+    if peers.is_empty() {
+        poche_veilid::DesktopRoomDisbanded::encode(genesis.room_id()).map(Some)
+            .map_err(|_| "Cannot prepare previous lobby disbanding.")
+    } else { Ok(None) }
+}
+
 pub(super) fn restore(
     node: VeilidDeviceNode,
     profile: poche_player_client::DeviceProfile,

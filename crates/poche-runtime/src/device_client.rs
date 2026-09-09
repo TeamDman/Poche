@@ -981,6 +981,8 @@ pub struct CertifiedRoomCheckpoint<G: SessionGame, A> {
 #[serde(deny_unknown_fields)]
 pub struct CertifiedRoomRecovery {
     schema_version: u16,
+    #[serde(default)]
+    closed: bool,
     adapter: RuntimeDeviceRecovery,
     profiles: BTreeMap<DeviceId, DeviceProfile>,
     observation_cache: Vec<((DeviceId, String), CachedRemoteObservation)>,
@@ -988,6 +990,10 @@ pub struct CertifiedRoomRecovery {
     route_cache: Vec<((DeviceId, String), CachedRemoteRoute)>,
     service_profiles: Vec<DeviceProfile>,
     next_service_command: u64,
+}
+
+impl CertifiedRoomRecovery {
+    pub fn is_closed(&self) -> bool { self.closed }
 }
 
 /// Already-authenticated cooperation route that can execute without holding
@@ -1026,8 +1032,14 @@ where
 {
     /// Capture while the caller holds exclusive access to this certified room.
     pub fn durable_recovery(&self) -> Result<CertifiedRoomRecovery, DeviceClientError> {
+        let closed = {
+            let shared = self.adapter.shared.lock().map_err(|_| DeviceClientError::TransportUnavailable)?;
+            matches!(shared.authority.state.phase, SessionPhase::Closed)
+        };
         Ok(CertifiedRoomRecovery {
-            schema_version: 1, adapter: self.adapter.durable_recovery()?,
+            schema_version: 1,
+            closed,
+            adapter: self.adapter.durable_recovery()?,
             profiles: self.profiles.clone(),
             observation_cache: self.observation_cache.iter().map(|(k,v)| (k.clone(),v.clone())).collect(),
             action_cache: self.action_cache.iter().map(|(k,v)| (k.clone(),v.clone())).collect(),
@@ -1053,6 +1065,7 @@ where
     /// configuration belong to the enclosing versioned room format.
     pub fn from_durable_recovery(initial: SessionState<G>, action_source: A, recovery: CertifiedRoomRecovery, codec: LoopbackCodec) -> Result<Self, DeviceClientError> {
         if recovery.schema_version != 1 { return Err(DeviceClientError::ProtocolViolation); }
+        if recovery.closed { return Err(DeviceClientError::AuthorizationDenied); }
         let adapter = RuntimeLoopbackDeviceAdapter::from_durable_recovery(initial, action_source, recovery.adapter, codec)?;
         Ok(Self {
             adapter, profiles: recovery.profiles,
@@ -2396,6 +2409,8 @@ mod tests {
         let mut state: SessionState<OracleSessionGame<2>> = SessionState::pending(RoomId::new("closed-checkpoint").unwrap(), PrincipalId::new("clock").unwrap(), PrincipalId::new("game").unwrap());
         state.phase = SessionPhase::Closed;
         let adapter = RuntimeLoopbackDeviceAdapter::new(state, CreateRoomActions, LoopbackCodec::Typed);
+        let certified = CertifiedDeviceRoom::new(adapter.clone());
+        assert!(certified.durable_recovery().unwrap().is_closed());
         assert!(matches!(RuntimeLoopbackDeviceAdapter::from_checkpoint(adapter.checkpoint().unwrap(), LoopbackCodec::Typed), Err(DeviceClientError::AuthorizationDenied)));
     }
 

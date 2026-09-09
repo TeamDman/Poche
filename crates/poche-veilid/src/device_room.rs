@@ -86,6 +86,7 @@ impl DesktopRoomGenesis {
     /// Encode authority-only material for immediate encrypted persistence.
     /// Caller must not log the returned bytes or expose them to player devices.
     pub fn encode_recovery(&self, room: &poche_runtime::CertifiedRoomRecovery) -> Result<Vec<u8>, DeviceClientError> {
+        if room.is_closed() { return DesktopRoomDisbanded::encode(&self.room_id); }
         #[derive(serde::Serialize)]
         struct Envelope<'a> { genesis: &'a DesktopRoomGenesis, room: &'a poche_runtime::CertifiedRoomRecovery }
         serde_json::to_vec(&Envelope { genesis: self, room }).map_err(|_| DeviceClientError::ProtocolViolation)

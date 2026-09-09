@@ -133,7 +133,12 @@ fn connect(
         if let Some(bytes) = store.load_authority_recovery(&label, "active-room")
             .map_err(|_| "Cannot read protected room recovery state.")? {
             if poche_veilid::DesktopRoomDisbanded::decode(&bytes).is_err() {
-                return recovery::restore(node, profile, store, &bytes, &label, receive, lease, owners);
+                if let Some(terminal) = recovery::terminal_if_no_peers(&bytes, &profile.player_id)? {
+                    store.save_authority_recovery(&label, "active-room", &terminal)
+                        .map_err(|_| "Cannot persist the previous lobby's disbanding.")?;
+                } else {
+                    return recovery::restore(node, profile, store, &bytes, &label, receive, lease, owners);
+                }
             }
         }
     }
