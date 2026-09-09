@@ -1666,13 +1666,17 @@ fn on_drag_card(
                     .get_or_insert(transform.translation());
                 let Ok(start_ray) = camera.viewport_to_world(
                     camera_transform,
-                    drag.pointer_location.position - drag.distance,
+                    drag.pointer_location.position - drag.delta,
                 ) else {
                     return;
                 };
                 let Some(position) = drag_world_position(origin, start_ray, ray) else {
                     return;
                 };
+                // Integrate each delta in the currently selected camera. A
+                // camera change must not reproject the entire gesture history.
+                // Retain local position rather than delayed network feedback.
+                preview.physical_origin = Some(position);
                 let (yaw, pitch, roll) = transform.rotation().to_euler(EulerRot::YXZ);
                 let initial_rotation = [yaw, pitch, roll]
                     .map(|angle| (angle.to_degrees() * 1000.0).round().rem_euclid(360000.0) as i32);
@@ -2364,6 +2368,21 @@ fn zone_center_card_bounds(layout: &SpatialLayout, id: ZoneId) -> Result<AabbMm,
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn camera_transition_does_not_reapply_prior_drag_distance() {
+        use bevy::prelude::*;
+        let initial = Vec3::new(0.1, 0.2, 0.3);
+        let hand_start = Ray3d::new(Vec3::new(0.0, 1.0, 0.0), Dir3::NEG_Y);
+        let hand_end = Ray3d::new(Vec3::new(0.05, 1.0, 0.0), Dir3::NEG_Y);
+        let moved = super::drag_world_position(initial, hand_start, hand_end).unwrap();
+        let table_ray = Ray3d::new(Vec3::new(5.0, 4.0, -3.0), Dir3::NEG_Y);
+        let switched = super::drag_world_position(moved, table_ray, table_ray).unwrap();
+        assert!(switched.abs_diff_eq(moved, 0.00001));
+        let table_end = Ray3d::new(Vec3::new(5.02, 4.0, -3.0), Dir3::NEG_Y);
+        let next = super::drag_world_position(switched, table_ray, table_end).unwrap();
+        assert!(next.abs_diff_eq(initial + Vec3::X * 0.07, 0.00001));
+    }
+
     #[test]
     fn initial_physical_slots_use_opaque_order_not_private_face_order() {
         let mut owner = live_play_observation();
