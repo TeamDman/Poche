@@ -381,6 +381,7 @@ impl DeviceObservation {
                 .all(|pair| pair[0].id < pair[1].id)
             || self.physical_hands.iter().any(|card| {
                 card.id.len() != 64
+                    || card.pose.as_ref().is_some_and(|pose| !pose.validate())
                     || !card.id.bytes().all(|byte| byte.is_ascii_hexdigit())
                     || !self
                         .projection

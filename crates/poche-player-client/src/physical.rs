@@ -12,6 +12,58 @@ pub struct PhysicalPoseState {
     pub rotation_millidegrees: [i32; 3],
 }
 
+impl PhysicalPoseState {
+    /// Check wire bounds before a received pose reaches a renderer.
+    /// This is structural validation, not proof of signature or authorization.
+    #[must_use]
+    pub fn validate(&self) -> bool {
+        self.device.validate()
+            && self.generation > 0
+            && self.sequence > 0
+            && self
+                .position_mm
+                .iter()
+                .all(|value| (-10_000..=10_000).contains(value))
+            && self
+                .rotation_millidegrees
+                .iter()
+                .all(|value| (0..360_000).contains(value))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn received_pose_bounds_and_lease_counters_are_checked() {
+        let pose = PhysicalPoseState {
+            device: DeviceId::new("device").unwrap(),
+            generation: 1,
+            sequence: 1,
+            position_mm: [-10_000, 0, 10_000],
+            rotation_millidegrees: [0, 180_000, 359_999],
+        };
+        assert!(pose.validate());
+        for value in [i32::MIN, -10_001, 10_001, i32::MAX] {
+            let mut invalid = pose.clone();
+            invalid.position_mm[0] = value;
+            assert!(!invalid.validate());
+        }
+        for value in [-1, 360_000] {
+            let mut invalid = pose.clone();
+            invalid.rotation_millidegrees[2] = value;
+            assert!(!invalid.validate());
+        }
+        let mut invalid = pose.clone();
+        invalid.generation = 0;
+        assert!(!invalid.validate());
+        invalid = pose;
+        invalid.sequence = 0;
+        assert!(!invalid.validate());
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Facet, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PhysicalPoseRequest {
