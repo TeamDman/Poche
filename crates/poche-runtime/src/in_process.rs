@@ -135,6 +135,17 @@ struct Connection {
 }
 
 /// An input whose principal was bound by the transport connection.
+/// Authority-only journal record. Commands can contain hidden deal material;
+/// encrypt before persistence and never expose this as a player transcript.
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum AuthorityJournalInput {
+    Command { principal: PrincipalId, command: Box<CommandEnvelope> },
+    Disconnected { principal: PrincipalId, observation_id: CommandId },
+    ClockAdvance { tick: u64, next_delivery_before: u64 },
+}
+
+/// An input whose principal was bound by the transport connection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AuthenticatedIngress {
     Command {
@@ -503,6 +514,7 @@ pub enum InProcessAuthorityError<E> {
 /// Authority-private checkpoint. Intentionally has no Debug or wire encoding:
 /// reducer state may contain every private hand. Never send this to a player.
 pub struct AuthorityCheckpoint<G: SessionGame> {
+    journal: Vec<AuthorityJournalInput>,
     state: SessionState<G>,
     clock: ManualClock,
     chat_tail: ChatTail,
@@ -514,6 +526,7 @@ pub struct AuthorityCheckpoint<G: SessionGame> {
 
 /// Central authority composing the existing pure reducer with loopback ports.
 pub struct InProcessAuthority<G: SessionGame> {
+    journal: Vec<AuthorityJournalInput>,
     pub state: SessionState<G>,
     pub clock: ManualClock,
     pub transport: InProcessTransport,
@@ -523,10 +536,38 @@ pub struct InProcessAuthority<G: SessionGame> {
 }
 
 impl<G: SessionGame> InProcessAuthority<G> {
+    /// Replay authority-private inputs from a trusted, authenticated store.
+    /// This does not authenticate storage or replace certified-device checks.
+    pub fn replay_journal(initial: SessionState<G>, inputs: Vec<AuthorityJournalInput>) -> Result<Self, InProcessAuthorityError<G::Error>> {
+        let mut authority = Self::new(initial, InProcessTransport::default());
+        let mut principals = std::collections::BTreeSet::new();
+        for input in inputs {
+            match &input {
+                AuthorityJournalInput::Command { principal, command } => {
+                    if principals.insert(principal.clone()) {
+                        authority.transport.connect(principal.clone()).map_err(InProcessAuthorityError::Transport)?;
+                    }
+                    authority.process_command(principal.clone(), *command.clone())?;
+                    authority.journal.push(input);
+                }
+                AuthorityJournalInput::Disconnected { principal, observation_id } => {
+                    authority.process_disconnect(principal.clone(), observation_id.clone())?;
+                    authority.journal.push(input);
+                }
+                AuthorityJournalInput::ClockAdvance { tick, next_delivery_before } => {
+                    authority.next_delivery = *next_delivery_before;
+                    authority.advance_clock_to(*tick)?;
+                }
+            }
+        }
+        Ok(authority)
+    }
+
     /// Capture logical state and event provenance together, excluding routes.
     /// The caller must protect this authority-only data from player devices.
     pub fn checkpoint(&self) -> AuthorityCheckpoint<G> {
         AuthorityCheckpoint {
+            journal: self.journal.clone(),
             state: self.state.clone(), clock: self.clock.clone(),
             chat_tail: self.chat_tail.clone(), next_delivery: self.next_delivery,
             committed_events: self.committed_events.clone(),
@@ -540,7 +581,7 @@ impl<G: SessionGame> InProcessAuthority<G> {
     pub fn from_checkpoint(checkpoint: AuthorityCheckpoint<G>, mut transport: InProcessTransport) -> Self {
         transport.next_connection = transport.next_connection.max(checkpoint.next_connection);
         transport.next_observation = transport.next_observation.max(checkpoint.next_observation);
-        Self { state: checkpoint.state, clock: checkpoint.clock, transport,
+        Self { journal: checkpoint.journal, state: checkpoint.state, clock: checkpoint.clock, transport,
             chat_tail: checkpoint.chat_tail, next_delivery: checkpoint.next_delivery,
             committed_events: checkpoint.committed_events }
     }
@@ -558,6 +599,7 @@ impl<G: SessionGame> InProcessAuthority<G> {
         chat_capacity: usize,
     ) -> Self {
         Self {
+            journal: Vec::new(),
             state,
             clock: ManualClock {
                 now: 0,
@@ -630,6 +672,10 @@ impl<G: SessionGame> InProcessAuthority<G> {
         let Some(ingress) = self.transport.receive() else {
             return Ok(None);
         };
+        self.journal.push(match &ingress {
+            AuthenticatedIngress::Command { principal_id, command, .. } => AuthorityJournalInput::Command { principal: principal_id.clone(), command: command.clone() },
+            AuthenticatedIngress::Disconnected { principal_id, observation_id, .. } => AuthorityJournalInput::Disconnected { principal: principal_id.clone(), observation_id: observation_id.clone() },
+        });
         match ingress {
             AuthenticatedIngress::Command {
                 principal_id,
@@ -672,6 +718,7 @@ impl<G: SessionGame> InProcessAuthority<G> {
         tick: u64,
     ) -> Result<Vec<AuthorityOutcome>, InProcessAuthorityError<G::Error>> {
         let expiries = self.clock.advance_to(tick);
+        self.journal.push(AuthorityJournalInput::ClockAdvance { tick, next_delivery_before: self.next_delivery });
         let mut outcomes = Vec::with_capacity(expiries.len());
         for expiry in expiries {
             let sequence = self.next_delivery;
@@ -1001,6 +1048,7 @@ mod tests {
     #[test]
     fn authority_checkpoint_preserves_state_and_committed_provenance() {
         let state = state();
+        let initial = state.clone();
         let mut transport = InProcessTransport::new(LoopbackCodec::Typed);
         let client = transport.connect(principal("host")).unwrap();
         let original = command(&client, &state, "checkpoint-create");
@@ -1008,6 +1056,14 @@ mod tests {
         let mut authority = InProcessAuthority::new(state, transport);
         authority.drive_all().unwrap();
         assert!(!authority.committed_events.is_empty());
+        authority.advance_clock_to(10).unwrap();
+        let encoded = serde_json::to_vec(&authority.journal).unwrap();
+        let inputs = serde_json::from_slice(&encoded).unwrap();
+        let replayed = InProcessAuthority::replay_journal(initial, inputs).unwrap();
+        assert_eq!(replayed.state, authority.state);
+        assert_eq!(replayed.clock, authority.clock);
+        assert_eq!(replayed.committed_events, authority.committed_events);
+        assert!(replayed.journal == authority.journal);
         let mut restored = InProcessAuthority::from_checkpoint(authority.checkpoint(), InProcessTransport::new(LoopbackCodec::Typed));
         assert_eq!(restored.state, authority.state);
         assert_eq!(restored.committed_events, authority.committed_events);
