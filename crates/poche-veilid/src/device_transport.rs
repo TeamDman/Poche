@@ -53,6 +53,8 @@ pub enum VeilidDeviceReply {
     NoProgress,
     StaleRevision,
     Unavailable,
+    /// A restarted authority requires a fresh signed observation from a peer.
+    RecoveryChallenge(CorrelationId),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -255,8 +257,15 @@ impl<S: DeviceSigner> DeviceTransport for VeilidDeviceTransport<S> {
             self.invite.clone(),
             &self.signer,
         )?;
-        match self.exchange(VeilidDeviceRequest::Observe(request))? {
+        let reply = self.exchange(VeilidDeviceRequest::Observe(request))?;
+        let reply = if let VeilidDeviceReply::RecoveryChallenge(challenge) = reply {
+            let response = sign_observation_request_with_invite(profile, room_id, self.epoch, challenge,
+                DeviceObservationModeWire::Snapshot, self.invite.clone(), &self.signer)?;
+            self.exchange(VeilidDeviceRequest::Observe(response))?
+        } else { reply };
+        match reply {
             VeilidDeviceReply::Observation(value) => Ok(value),
+            VeilidDeviceReply::RecoveryChallenge(_) => Err(DeviceClientError::NoProgress),
             _ => Err(DeviceClientError::ProtocolViolation),
         }
     }
@@ -305,6 +314,7 @@ impl<S: DeviceSigner> DeviceTransport for VeilidDeviceTransport<S> {
         )?;
         match self.exchange(VeilidDeviceRequest::Observe(request))? {
             VeilidDeviceReply::Observation(value) => Ok(value),
+            VeilidDeviceReply::RecoveryChallenge(_) => self.observe(profile, room_id),
             _ => Err(DeviceClientError::ProtocolViolation),
         }
     }

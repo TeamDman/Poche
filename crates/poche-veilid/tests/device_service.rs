@@ -89,6 +89,28 @@ fn room_service(
 }
 
 #[test]
+fn recovering_service_requires_fresh_signed_peer_read() {
+    let profile = test_profile(31);
+    let room_id = RoomId::new("recovering-service").unwrap();
+    let gate = poche_veilid::RecoveryPresence::new(
+        &PrincipalId::new("creator").unwrap(), [profile.player_id.clone()],
+        std::time::Duration::ZERO, std::time::Duration::from_secs(60),
+    ).unwrap();
+    let service = room_service(&room_id, "test-invite").awaiting_survivor(gate).unwrap();
+    let sign = |id| sign_observation_request(&profile, &room_id, 0, id,
+        DeviceObservationModeWire::Snapshot, &TestSigner(SigningKey::from_bytes(&[32; 32]))).unwrap();
+    let request = sign(CorrelationId::new("old-read").unwrap());
+    let exchange = |request| VeilidDeviceReply::decode(&service.dispatch(&VeilidDeviceRequest::Observe(request).encode().unwrap()).unwrap()).unwrap();
+    let VeilidDeviceReply::RecoveryChallenge(challenge) = exchange(request.clone()) else { panic!("missing challenge"); };
+    assert!(matches!(exchange(request.clone()), VeilidDeviceReply::RecoveryChallenge(_)));
+    let mut tampered = request;
+    tampered.request_id = challenge.clone();
+    assert!(matches!(exchange(tampered), VeilidDeviceReply::Denied));
+    assert!(matches!(exchange(sign(challenge)), VeilidDeviceReply::Observation(_)));
+    assert!(matches!(exchange(sign(CorrelationId::new("normal-after-recovery").unwrap())), VeilidDeviceReply::Observation(_)));
+}
+
+#[test]
 fn persistence_precedes_reply_and_failure_freezes_service_clones() {
     use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
     let saves = Arc::new(AtomicUsize::new(0));

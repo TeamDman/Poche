@@ -30,6 +30,7 @@ pub struct VeilidDeviceService<G: SessionGame, A> {
     room: Arc<Mutex<CertifiedDeviceRoom<G, A>>>,
     recovery_sink: Option<Arc<RecoverySink>>,
     recovery_failed: Arc<AtomicBool>,
+    recovery_presence: Arc<Mutex<Option<(crate::RecoveryPresence, std::time::Instant)>>>,
 }
 
 impl<G: SessionGame, A> Clone for VeilidDeviceService<G, A> {
@@ -38,6 +39,7 @@ impl<G: SessionGame, A> Clone for VeilidDeviceService<G, A> {
             room: Arc::clone(&self.room),
             recovery_sink: self.recovery_sink.clone(),
             recovery_failed: Arc::clone(&self.recovery_failed),
+            recovery_presence: Arc::clone(&self.recovery_presence),
         }
     }
 }
@@ -53,7 +55,15 @@ where
             room: Arc::new(Mutex::new(room)),
             recovery_sink: None,
             recovery_failed: Arc::new(AtomicBool::new(false)),
+            recovery_presence: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Hold mutations until an existing non-creator member answers a fresh
+    /// challenge. The gate's clock must begin at Duration::ZERO.
+    pub fn awaiting_survivor(self, presence: crate::RecoveryPresence) -> Result<Self, DeviceClientError> {
+        *self.recovery_presence.lock().map_err(|_| DeviceClientError::TransportUnavailable)? = Some((presence, std::time::Instant::now()));
+        Ok(self)
     }
 
     /// Attach private durable storage before serving any requests. The initial
@@ -100,6 +110,8 @@ where
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
+                        let presence = self.recovery_presence.lock().expect("recovery gate lock");
+                        if presence.as_ref().is_some_and(|(gate, _)| !gate.witnessed()) { continue; }
                         // No player command is invented here. Only explicitly
                         // enrolled clock/environment services can act.
                         let result = self.with_room(|room| room.drive_authority_services_elapsed(
@@ -149,6 +161,28 @@ where
     /// from a worker, not while holding a network callback or rendering lock.
     pub fn dispatch(&self, bytes: &[u8]) -> Result<Vec<u8>, DeviceClientError> {
         let request = VeilidDeviceRequest::decode(bytes)?;
+        let mut presence = self.recovery_presence.lock().map_err(|_| DeviceClientError::TransportUnavailable)?;
+        if let Some((gate, started)) = presence.as_mut() {
+            if !gate.witnessed() {
+                if gate.expired_without_survivor(started.elapsed()) { return VeilidDeviceReply::Unavailable.encode(); }
+                let VeilidDeviceRequest::Observe(observation) = &request else {
+                    return VeilidDeviceReply::NoProgress.encode();
+                };
+                // Authenticate using the normal certified boundary before
+                // accepting evidence; stored connection flags are not proof.
+                let result = self.with_room(|room| room.observe(observation.clone()));
+                return match result {
+                    Ok(value) => {
+                        if gate.accept_authenticated(&observation.player_id, &observation.request_id, started.elapsed()) {
+                            VeilidDeviceReply::Observation(value).encode()
+                        } else { VeilidDeviceReply::RecoveryChallenge(gate.challenge().clone()).encode() }
+                    }
+                    Err(DeviceClientError::TransportUnavailable) => VeilidDeviceReply::Unavailable.encode(),
+                    Err(_) => VeilidDeviceReply::Denied.encode(),
+                };
+            }
+        }
+        drop(presence);
         let result = match request {
             VeilidDeviceRequest::PhysicalPose(request) => self.with_room(|room| room.physical_pose(&request))
                 .map(VeilidDeviceReply::PhysicalPose),
