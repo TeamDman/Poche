@@ -102,6 +102,9 @@ fn expired_recovery_retries_terminal_write_without_resuming_service() {
             if count.fetch_add(1, Ordering::SeqCst) == 0 { Err(DeviceClientError::TransportUnavailable) } else { Ok(()) }
         });
     let clone = service.clone();
+    assert_eq!(service.recovery_ready(), Ok(false), "failed terminal save keeps monitor waiting, never ready");
+    assert_eq!(clone.recovery_ready(), Err(DeviceClientError::TransportUnavailable),
+        "monitor retries persistence before reporting terminal recovery failure");
     let request = sign_observation_request(&profile, &room_id, 0, CorrelationId::new("expired-read").unwrap(),
         DeviceObservationModeWire::Snapshot, &TestSigner(SigningKey::from_bytes(&[32; 32]))).unwrap();
     let bytes = VeilidDeviceRequest::Observe(request).encode().unwrap();

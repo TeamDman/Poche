@@ -75,6 +75,18 @@ where
 
     pub fn recovery_ready(&self) -> Result<bool, DeviceClientError> {
         let presence = self.recovery_presence.lock().map_err(|_| DeviceClientError::TransportUnavailable)?;
+        // Keep the desktop monitor alive long enough to retry a transient
+        // terminal-write failure. Ordinary service remains frozen throughout;
+        // the caller's existing timeout bounds how long recovery can wait.
+        if self.expiry_sink.is_some()
+            && presence.as_ref().is_some_and(|(gate, started)| gate.expired_without_survivor(started.elapsed()))
+            && !self.expiry_persisted.load(Ordering::Acquire)
+        {
+            self.persist_expiry();
+            if !self.expiry_persisted.load(Ordering::Acquire) {
+                return Ok(false);
+            }
+        }
         if self.recovery_failed.load(Ordering::Acquire) { return Err(DeviceClientError::TransportUnavailable); }
         Ok(presence.as_ref().is_none_or(|(gate, _)| gate.witnessed()))
     }
