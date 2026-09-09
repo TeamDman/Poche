@@ -796,7 +796,7 @@ pub fn run_from_env() -> Result<(), String> {
 ///
 /// Returns invalid launch options or fixture failures before the event loop.
 pub fn run(options: NativeUiLaunchOptions) -> Result<(), String> {
-    run_with_live_device(options, None)
+    run_with_live_device(options, None, None)
 }
 
 /// Run the Bevy leaf adapter from one certified device's exact observation.
@@ -809,7 +809,17 @@ pub fn run_live(
     options: NativeUiLaunchOptions,
     live_device: NativeLiveDevice,
 ) -> Result<(), String> {
-    run_with_live_device(options, Some(live_device))
+    run_with_live_device(options, Some(live_device), None)
+}
+
+/// Open the main menu without creating a fixture table. A successful worker
+/// result creates the live scene in the same Bevy app/window.
+pub fn run_menu(
+    options: NativeUiLaunchOptions,
+    worker: desktop_menu::DesktopConnectionWorker,
+    validator: desktop_menu::InvitationValidator,
+) -> Result<(), String> {
+    run_with_live_device(options, None, Some((worker, validator)))
 }
 
 #[allow(
@@ -819,6 +829,10 @@ pub fn run_live(
 fn run_with_live_device(
     options: NativeUiLaunchOptions,
     mut live_device: Option<NativeLiveDevice>,
+    menu: Option<(
+        desktop_menu::DesktopConnectionWorker,
+        desktop_menu::InvitationValidator,
+    )>,
 ) -> Result<(), String> {
     let NativeUiLaunchOptions {
         play_card,
@@ -831,12 +845,17 @@ fn run_with_live_device(
         capture_context,
         external_tracing,
     } = options;
-    let mut controller = if let Some(live) = &live_device {
-        native_controller_from_observation(live.observation())?
+    let mut controller = if menu.is_some() {
+        None
+    } else if let Some(live) = &live_device {
+        Some(native_controller_from_observation(live.observation())?)
     } else {
-        replay_fixture_controller()?
+        Some(replay_fixture_controller()?)
     };
     if let Some(value) = play_card {
+        let controller = controller
+            .as_mut()
+            .ok_or("fixture play cannot be combined with the main menu")?;
         let face = if value == "first" {
             controller
                 .first_owned_face()
@@ -910,8 +929,15 @@ fn run_with_live_device(
             1.0 / 60.0,
         )));
     }
-    app.insert_resource(controller)
-        .insert_resource(debug_overlay)
+    if let Some(controller) = controller {
+        app.insert_resource(controller);
+    }
+    if let Some((worker, validator)) = menu {
+        app.insert_resource(worker)
+            .insert_resource(validator)
+            .add_plugins(desktop_menu::DesktopMenuPlugin);
+    }
+    app.insert_resource(debug_overlay)
         .insert_resource(render_surface)
         .insert_resource(acceptance)
         .init_resource::<TweenClock>()
@@ -920,7 +946,11 @@ fn run_with_live_device(
         .add_plugins((MeshPickingPlugin, FrameTimeDiagnosticsPlugin::default()))
         .add_systems(
             Startup,
-            (setup_native_render_target, setup_native_scene).chain(),
+            (
+                setup_native_render_target,
+                setup_native_scene.run_if(resource_exists::<NativeController>),
+            )
+                .chain(),
         )
         .add_systems(
             Update,
@@ -933,7 +963,8 @@ fn run_with_live_device(
                 poll_live_device,
                 acceptance_driver,
             )
-                .chain(),
+                .chain()
+                .run_if(resource_exists::<NativeController>),
         );
     if capture_provider.is_some() != capture_context.is_some() {
         return Err(

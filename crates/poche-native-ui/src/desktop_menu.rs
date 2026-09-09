@@ -7,7 +7,7 @@ use bevy::{
     text::{EditableText, TextCursorStyle},
 };
 
-#[derive(Message)]
+#[derive(Message, Clone)]
 pub enum DesktopMenuRequest {
     Create { name: String },
     Join { name: String, invitation: String },
@@ -22,6 +22,41 @@ pub struct InvitationValidator(pub fn(&str) -> bool);
 pub struct DesktopMenuStatus {
     pub busy: bool,
     pub message: String,
+}
+
+/// Dedicated connection work, shared by Create and Join. No credential or
+/// network operation runs in the Bevy frame schedule. Keep errors static and
+/// redacted at this boundary.
+#[derive(Resource)]
+pub struct DesktopConnectionWorker {
+    requests: std::sync::mpsc::SyncSender<DesktopMenuRequest>,
+    results:
+        std::sync::Mutex<std::sync::mpsc::Receiver<Result<crate::NativeLiveDevice, &'static str>>>,
+}
+
+impl DesktopConnectionWorker {
+    pub fn start(
+        mut connect: impl FnMut(DesktopMenuRequest) -> Result<crate::NativeLiveDevice, &'static str>
+        + Send
+        + 'static,
+    ) -> Result<Self, &'static str> {
+        let (request_tx, request_rx) = std::sync::mpsc::sync_channel(1);
+        let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("poche-desktop-connect".to_owned())
+            .spawn(move || {
+                while let Ok(request) = request_rx.recv() {
+                    if result_tx.send(connect(request)).is_err() {
+                        break;
+                    }
+                }
+            })
+            .map_err(|_| "connection worker could not start")?;
+        Ok(Self {
+            requests: request_tx,
+            results: std::sync::Mutex::new(result_rx),
+        })
+    }
 }
 
 #[derive(Resource, Default)]
@@ -51,13 +86,72 @@ impl Plugin for DesktopMenuPlugin {
         app.init_resource::<DesktopMenuStatus>()
             .init_resource::<PendingClipboard>()
             .add_message::<DesktopMenuRequest>()
-            .add_systems(Startup, setup)
-            .add_systems(Update, (buttons, clipboard_result, status_text).chain());
+            .add_systems(Startup, setup.after(crate::setup_native_render_target))
+            .add_systems(
+                Update,
+                (buttons, clipboard_result, connection, status_text).chain(),
+            );
     }
 }
 
-fn setup(mut commands: Commands) {
-    commands.spawn((Camera2d, DesktopMenuRoot));
+fn connection(
+    mut requests: MessageReader<DesktopMenuRequest>,
+    worker: Option<Res<DesktopConnectionWorker>>,
+    mut status: ResMut<DesktopMenuStatus>,
+    roots: Query<Entity, With<DesktopMenuRoot>>,
+    mut commands: Commands,
+) {
+    for request in requests.read() {
+        let sent = worker
+            .as_ref()
+            .is_some_and(|worker| worker.requests.try_send(request.clone()).is_ok());
+        if !sent {
+            status.busy = false;
+            status.message = "Connection service unavailable. Please try again.".to_owned();
+        }
+    }
+    let Some(worker) = worker else {
+        return;
+    };
+    let result = match worker.results.lock() {
+        Ok(results) => match results.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) if status.busy => {
+                Err("Connection worker stopped. Restart the client.")
+            }
+            Err(_) => return,
+        },
+        Err(_) => Err("Connection worker unavailable. Restart the client."),
+    };
+    match result {
+        Ok(live) => match crate::native_controller_from_observation(live.observation()) {
+            Ok(controller) => {
+                for entity in &roots {
+                    commands.entity(entity).despawn();
+                }
+                commands.insert_resource(controller);
+                commands.insert_resource(live);
+                commands.run_system_cached(crate::setup_native_scene);
+                status.busy = false;
+            }
+            Err(_) => {
+                status.busy = false;
+                status.message = "The room returned an invalid table view.".to_owned();
+            }
+        },
+        Err(message) => {
+            status.busy = false;
+            status.message = message.to_owned();
+        }
+    }
+}
+
+fn setup(mut commands: Commands, surface: Res<crate::NativeRenderSurface>) {
+    let mut camera = commands.spawn((Camera2d, DesktopMenuRoot));
+    if let Some(target) = surface.render_target() {
+        camera.insert(target);
+    }
     commands
         .spawn((
             DesktopMenuRoot,
@@ -222,6 +316,46 @@ fn clipboard_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn connection_failure_is_reported_without_blocking_the_frame() {
+        let frame_thread = std::thread::current().id();
+        let worker = DesktopConnectionWorker::start(move |_| {
+            assert_ne!(std::thread::current().id(), frame_thread);
+            Err("Network unavailable. Try again.")
+        })
+        .unwrap();
+        let mut app = App::new();
+        app.insert_resource(worker)
+            .insert_resource(DesktopMenuStatus {
+                busy: true,
+                message: "Connecting…".to_owned(),
+            })
+            .add_message::<DesktopMenuRequest>()
+            .add_systems(Update, connection);
+        app.world_mut()
+            .resource_mut::<Messages<DesktopMenuRequest>>()
+            .write(DesktopMenuRequest::Create {
+                name: "Alice".to_owned(),
+            });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            app.update();
+            if !app.world().resource::<DesktopMenuStatus>().busy {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "worker did not report its result"
+            );
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            app.world().resource::<DesktopMenuStatus>().message,
+            "Network unavailable. Try again."
+        );
+        assert!(!app.world().contains_resource::<crate::NativeController>());
+    }
+
     #[test]
     fn join_requires_explicit_press_and_busy_state_blocks_duplicate_requests() {
         let mut app = App::new();
