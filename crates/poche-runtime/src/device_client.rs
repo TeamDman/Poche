@@ -547,6 +547,19 @@ pub struct RuntimeLoopbackDeviceAdapter<G: SessionGame, A> {
     shared: Arc<Mutex<SharedLoopbackState<G, A>>>,
 }
 
+/// Authority-only in-memory checkpoint; contains private game/identity data.
+/// No Debug or serialization: protected durable encoding remains separate.
+pub struct RuntimeDeviceCheckpoint<G: SessionGame, A> {
+    authority: crate::AuthorityCheckpoint<G>,
+    profiles: Vec<DeviceProfile>,
+    action_source: A,
+    next_projection: u64,
+    physical_secret: Option<[u8; 32]>,
+    physical_poses: BTreeMap<String, poche_player_client::PhysicalPoseState>,
+    physical_pose_epoch: Option<u64>,
+    cooperation_now_unix_ms: u64,
+}
+
 impl<G: SessionGame, A> Clone for RuntimeLoopbackDeviceAdapter<G, A> {
     fn clone(&self) -> Self {
         Self {
@@ -556,6 +569,33 @@ impl<G: SessionGame, A> Clone for RuntimeLoopbackDeviceAdapter<G, A> {
 }
 
 impl<G: SessionGame, A: AdvertisedActionSource<G>> RuntimeLoopbackDeviceAdapter<G, A> {
+    /// Capture the adapter without retaining transport routes or capture handlers.
+    pub fn checkpoint(&self) -> Result<RuntimeDeviceCheckpoint<G, A>, DeviceClientError>
+    where A: Clone {
+        let shared = self.shared.lock().map_err(|_| DeviceClientError::TransportUnavailable)?;
+        Ok(RuntimeDeviceCheckpoint {
+            authority: shared.authority.checkpoint(), profiles: shared.profiles.values().cloned().collect(),
+            action_source: shared.action_source.clone(), next_projection: shared.next_projection,
+            physical_secret: shared.physical_secret, physical_poses: shared.physical_poses.clone(),
+            physical_pose_epoch: shared.physical_pose_epoch, cooperation_now_unix_ms: shared.cooperation_now_unix_ms,
+        })
+    }
+
+    /// Restore internal state with freshly enrolled routes. Capture providers
+    /// must register again; this does not restore a certified service's caches.
+    pub fn from_checkpoint(checkpoint: RuntimeDeviceCheckpoint<G, A>, codec: LoopbackCodec) -> Result<Self, DeviceClientError> {
+        let adapter = Self { shared: Arc::new(Mutex::new(SharedLoopbackState {
+            authority: InProcessAuthority::from_checkpoint(checkpoint.authority, InProcessTransport::new(codec)),
+            clients: BTreeMap::new(), profiles: BTreeMap::new(), capture_providers: BTreeMap::new(),
+            capture_replays: CaptureReplayWindow::new(256), cooperation_now_unix_ms: checkpoint.cooperation_now_unix_ms,
+            action_source: checkpoint.action_source, next_projection: checkpoint.next_projection,
+            physical_secret: checkpoint.physical_secret, physical_poses: checkpoint.physical_poses,
+            physical_pose_epoch: checkpoint.physical_pose_epoch,
+        })) };
+        for profile in checkpoint.profiles { adapter.enroll(&profile)?; }
+        Ok(adapter)
+    }
+
     #[must_use]
     pub fn new(state: SessionState<G>, action_source: A, codec: LoopbackCodec) -> Self {
         Self {
@@ -2177,7 +2217,24 @@ mod tests {
     use crate::OracleSessionGame;
     use poche_session::InviteRecord;
 
+    #[derive(Clone)]
     struct CreateRoomActions;
+
+    #[test]
+    fn adapter_checkpoint_retains_physical_identity_and_projection_sequence() {
+        let state: SessionState<OracleSessionGame<2>> = SessionState::pending(RoomId::new("checkpoint-room").unwrap(), PrincipalId::new("clock").unwrap(), PrincipalId::new("game").unwrap());
+        let adapter = RuntimeLoopbackDeviceAdapter::new(state, CreateRoomActions, LoopbackCodec::Typed);
+        adapter.enable_physical_identities([73; 32]).unwrap();
+        let profile = device_profile("checkpoint-device", "22");
+        adapter.enroll(&profile).unwrap();
+        adapter.shared.lock().unwrap().next_projection = 19;
+        let restored = RuntimeLoopbackDeviceAdapter::from_checkpoint(adapter.checkpoint().unwrap(), LoopbackCodec::Typed).unwrap();
+        let shared = restored.shared.lock().unwrap();
+        assert_eq!(shared.physical_secret, Some([73; 32]));
+        assert_eq!(shared.next_projection, 19);
+        assert!(shared.profiles.contains_key(&profile.device_id));
+        assert!(shared.capture_providers.is_empty());
+    }
 
     impl AdvertisedActionSource<OracleSessionGame<2>> for CreateRoomActions {
         fn actions(
