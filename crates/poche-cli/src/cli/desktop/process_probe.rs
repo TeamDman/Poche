@@ -103,6 +103,15 @@ fn protected_desktop_process_role() {
             fs::write(root.join("empty-room-replaced"), b"verified").unwrap();
         }
         fs::write(path, invitation).unwrap();
+        if std::env::var("POCHE_PROCESS_PROBE_EXPLICIT_LEAVE").as_deref() == Ok("1") {
+            invoke(&mut live, "room-leave");
+            assert_eq!(live.observation().projection.payload.phase, poche_protocol::RoomPhase::Closed);
+            let label = format!("desktop-{}", &blake3::hash(format!("process-creator-{suffix}").as_bytes()).to_hex()[..24]);
+            let store = ProtectedProfileStore::open_default().unwrap();
+            let bytes = store.load_authority_recovery(&label, "active-room").unwrap().unwrap();
+            assert!(poche_veilid::DesktopRoomDisbanded::decode(&bytes).is_ok(), "explicit departure did not persist disbanding");
+            fs::write(root.join("explicit-leave-saved"), b"verified").unwrap();
+        }
         return;
     }
     if restarting {
@@ -247,6 +256,16 @@ fn protected_desktop_all_peer_loss() { run_two_process(true, true); }
 #[test]
 #[ignore = "real public Veilid and protected empty-room lifecycle"]
 fn protected_desktop_empty_room_disbands() {
+    run_empty_room(false);
+}
+
+#[test]
+#[ignore = "real public Veilid explicit final departure and protected restart"]
+fn protected_desktop_final_leave_disbands() {
+    run_empty_room(true);
+}
+
+fn run_empty_room(explicit_leave: bool) {
     opt_in();
     let directory = tempfile::tempdir().unwrap();
     let suffix = now().unwrap().to_string();
@@ -255,6 +274,7 @@ fn protected_desktop_empty_room_disbands() {
         command.args(["protected_desktop_process_role", "--ignored", "--nocapture"])
             .env("POCHE_PROCESS_PROBE_ROOT", directory.path())
             .env("POCHE_PROCESS_PROBE_ROLE", "alone")
+            .env("POCHE_PROCESS_PROBE_EXPLICIT_LEAVE", if explicit_leave { "1" } else { "0" })
             .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
         #[cfg(windows)] {
             use std::os::windows::process::CommandExt;
@@ -272,6 +292,9 @@ fn protected_desktop_empty_room_disbands() {
         }
     }
     assert!(directory.path().join("empty-room-replaced").exists());
+    if explicit_leave {
+        assert!(directory.path().join("explicit-leave-saved").exists());
+    }
 }
 
 fn recovery_digest(live: &NativeLiveDevice) -> String {
