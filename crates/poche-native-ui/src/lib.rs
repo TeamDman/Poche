@@ -974,7 +974,11 @@ fn run_with_live_device(
         } else {
             parse_card_face(&value).ok_or_else(|| format!("unrecognized card face {value:?}"))?
         };
-        let committed = controller.commit_named(face)?;
+        let committed = if live_device.is_some() {
+            controller.prepare_named(face)?
+        } else {
+            controller.commit_named(face)?
+        };
         if let Some(live) = live_device.as_mut() {
             live.submit_play(&committed)?;
         }
@@ -3378,11 +3382,12 @@ mod tests {
                 _ => None,
             })
             .expect("advertised play");
-        let mut controller =
+        let controller =
             native_controller_from_observation(&observation).expect("native controller");
         let committed = controller
-            .commit_named(face)
+            .prepare_named(face)
             .expect("native spatial action");
+        assert!(controller.committed.is_none(), "queued live action is not yet accepted");
         assert_eq!(
             advertised_action_for_play(&observation, &committed).map(|action| action.id.as_str()),
             Some(action_id.as_str())
