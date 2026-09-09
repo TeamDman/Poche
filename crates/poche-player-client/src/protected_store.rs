@@ -36,6 +36,7 @@ const MAX_PUBLIC_PROFILE_BYTES: u64 = 1024 * 1024;
 const KEYRING_APPLICATION: &str = "TeamDman.Poche";
 const ROOT_KEY_SERVICE: &str = "player-root-v1";
 const DEVICE_KEY_SERVICE: &str = "device-key-v1";
+const TRANSPORT_KEY_SERVICE: &str = "transport-password-v1";
 
 /// Public selector and stable root identity. The key handle is an opaque
 /// locator into protected storage, never secret key material.
@@ -200,6 +201,38 @@ impl ProtectedProfileStore {
     #[must_use]
     pub fn public_root(&self) -> &Path {
         &self.public_root
+    }
+
+    /// Borrow the protected transport-storage password only at its startup
+    /// boundary. Set allow_create only for a new transport store; recovery of
+    /// an existing store must fail if the credential is missing. No plaintext
+    /// fallback, user-selected password or recovery-code export is provided.
+    pub fn with_transport_password<R>(
+        &self,
+        label: &str,
+        allow_create: bool,
+        operation: impl FnOnce(&str) -> R,
+    ) -> Result<R, ProfileStoreError> {
+        validate_label(label)?;
+        let guard = self.lock_creation()?;
+        let handle = key_handle(TRANSPORT_KEY_SERVICE, label);
+        let password = match self.vault.load(&handle)? {
+            Some(password) => {
+                if decode_hex::<32>(&password).is_none() {
+                    return Err(ProfileStoreError::CorruptProtectedSecret);
+                }
+                password
+            }
+            None if allow_create => {
+                let seed = random_seed()?;
+                let password = Zeroizing::new(hex(&*seed));
+                self.vault.store(&handle, &password)?;
+                password
+            }
+            None => return Err(ProfileStoreError::NotFound),
+        };
+        drop(guard);
+        Ok(operation(&password))
     }
 
     /// Recover the selected local identity, creating only genuinely absent
@@ -556,7 +589,11 @@ fn key_handle(service: &str, label: &str) -> String {
 fn parse_handle(handle: &str) -> Option<(&str, &str)> {
     let value = handle.strip_prefix("keyring:")?;
     let (service, label) = value.split_once(':')?;
-    if matches!(service, ROOT_KEY_SERVICE | DEVICE_KEY_SERVICE) && validate_label(label).is_ok() {
+    if matches!(
+        service,
+        ROOT_KEY_SERVICE | DEVICE_KEY_SERVICE | TRANSPORT_KEY_SERVICE
+    ) && validate_label(label).is_ok()
+    {
         Some((service, label))
     } else {
         None
@@ -722,6 +759,39 @@ mod tests {
             vault: Box::new(vault.clone()),
         };
         (directory, store, vault)
+    }
+
+    #[test]
+    fn transport_password_is_stable_and_missing_recovery_never_creates_one() {
+        let (_directory, store, vault) = fixture_store();
+        assert!(matches!(
+            store.with_transport_password("node", false, |_| ()),
+            Err(ProfileStoreError::NotFound)
+        ));
+        assert!(vault.0.lock().unwrap().is_empty());
+        let fingerprint = |password: &str| blake3::hash(password.as_bytes());
+        let first = store
+            .with_transport_password("node", true, fingerprint)
+            .unwrap();
+        assert_eq!(
+            first,
+            store
+                .with_transport_password("node", false, fingerprint)
+                .unwrap()
+        );
+        assert_ne!(
+            first,
+            store
+                .with_transport_password("other-node", true, fingerprint)
+                .unwrap()
+        );
+        vault
+            .delete(&key_handle(TRANSPORT_KEY_SERVICE, "node"))
+            .unwrap();
+        assert!(matches!(
+            store.with_transport_password("node", false, |_| ()),
+            Err(ProfileStoreError::NotFound)
+        ));
     }
 
     #[test]
