@@ -472,6 +472,34 @@ fn device_dispatch_authenticates_before_returning_observations() {
                         .as_ref(),
                     Some(&moved)
                 );
+                assert!(final_view.physical_public.is_empty());
+                for step in 0..2 {
+                    let creator_view = creator.observe(&guest_room).unwrap();
+                    let creator_turn = creator_view.actions.iter().any(|action| matches!(action.payload, CommandPayload::GameAction { action: poche_protocol::GameActionWire::Bid { .. } }));
+                    let client = if creator_turn { &mut creator } else { &mut resumed };
+                    let view = client.observe(&guest_room).unwrap();
+                    let action = view.actions.iter().find(|action| matches!(action.payload, CommandPayload::GameAction { action: poche_protocol::GameActionWire::Bid { .. } })).unwrap();
+                    assert!(matches!(client.invoke(&view, &action.id, CommandId::new(format!("pose-bid-{step}")).unwrap()).unwrap(), DeviceActionResult::Committed { .. }));
+                }
+                let creator_view = creator.observe(&guest_room).unwrap();
+                let creator_turn = creator_view.actions.iter().any(|action| matches!(action.payload, CommandPayload::GameAction { action: poche_protocol::GameActionWire::Play { .. } }));
+                let client = if creator_turn { &mut creator } else { &mut resumed };
+                let view = client.observe(&guest_room).unwrap();
+                let action = view.actions.iter().find(|action| matches!(action.payload, CommandPayload::GameAction { action: poche_protocol::GameActionWire::Play { .. } })).unwrap();
+                let CommandPayload::GameAction { action: poche_protocol::GameActionWire::Play { card: face } } = action.payload else { unreachable!() };
+                let card = view.physical_hands.iter().find(|card| card.face == Some(face)).unwrap();
+                let id = card.id.clone();
+                let pose = client.physical_pose(poche_player_client::PhysicalPoseRequest {
+                    certificate: client.profile().certificate.clone(), room_id: guest_room.clone(), session_epoch: view.projection.session_epoch,
+                    card_id: id.clone(), generation: card.pose.as_ref().map_or(0, |pose| pose.generation), claim: true, sequence: 1,
+                    position_mm: [220, 180, 110], rotation_millidegrees: [12000, 23000, 34000],
+                }).unwrap();
+                assert!(matches!(client.invoke(&view, &action.id, CommandId::new("pose-play").unwrap()).unwrap(), DeviceActionResult::Committed { .. }));
+                let public = creator.observe(&guest_room).unwrap();
+                assert!(!public.physical_hands.iter().any(|card| card.id == id));
+                let played = public.physical_public.iter().find(|card| card.id == id).unwrap();
+                assert_eq!(played.face, face);
+                assert_eq!(played.pose, pose);
             })
             .join()
             .unwrap();
