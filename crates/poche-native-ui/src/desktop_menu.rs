@@ -144,6 +144,11 @@ fn refresh_live_controls(
             BackgroundColor(Color::srgb(0.04, 0.07, 0.08)),
         ))
         .with_children(|bar| {
+            bar.spawn((
+                Text::new("Drag a hand card to move it. While dragging: Shift = yaw, Ctrl = pitch, Alt = roll."),
+                TextFont { font_size: 14.0, ..default() },
+                Node { width: percent(100.), ..default() },
+            ));
             if live.room_invitation().is_some() {
                 bar.spawn((
                     Button,

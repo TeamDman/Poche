@@ -529,6 +529,7 @@ struct DragPreview {
     pixels: Vec2,
     physical_claimed: bool,
     physical_origin: Option<Vec3>,
+    physical_rotation: Option<[i32; 3]>,
 }
 
 #[derive(Resource, Default)]
@@ -1528,10 +1529,21 @@ fn drag_world_position(origin: Vec3, start: Ray3d, current: Ray3d) -> Option<Vec
     Some(origin + current.get_point(current_distance) - start.get_point(start_distance))
 }
 
+fn rotate_drag_pose(mut rotation: [i32; 3], horizontal_pixels: f32, axes: [bool; 3]) -> [i32; 3] {
+    let delta = (horizontal_pixels * 500.0).round() as i64;
+    for (angle, enabled) in rotation.iter_mut().zip(axes) {
+        if enabled {
+            *angle = (i64::from(*angle) + delta).rem_euclid(360000) as i32;
+        }
+    }
+    rotation
+}
+
 fn on_drag_card(
     drag: On<Pointer<Drag>>,
     mut previews: Query<(&mut DragPreview, &CanonicalMirror, &GlobalTransform)>,
     cameras: Query<(&Camera, &GlobalTransform), With<TabletopCamera>>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut controller: ResMut<NativeController>,
     live: Option<ResMut<NativeLiveDevice>>,
     windows: Query<Entity, With<PrimaryWindow>>,
@@ -1571,8 +1583,18 @@ fn on_drag_card(
                     return;
                 };
                 let (yaw, pitch, roll) = transform.rotation().to_euler(EulerRot::YXZ);
-                let rotation = [yaw, pitch, roll]
+                let initial_rotation = [yaw, pitch, roll]
                     .map(|angle| (angle.to_degrees() * 1000.0).round().rem_euclid(360000.0) as i32);
+                let rotation = rotate_drag_pose(
+                    *preview.physical_rotation.get_or_insert(initial_rotation),
+                    drag.delta.x,
+                    [
+                        keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight),
+                        keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight),
+                        keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight),
+                    ],
+                );
+                preview.physical_rotation = Some(rotation);
                 let position_mm = position
                     .to_array()
                     .map(|value| (value * 1000.0).round() as i32);
@@ -1603,6 +1625,7 @@ fn on_drag_end(
         preview.pixels = Vec2::ZERO;
         preview.physical_claimed = false;
         preview.physical_origin = None;
+        preview.physical_rotation = None;
     }
     if let Ok(window) = windows.single() {
         commands
@@ -2244,6 +2267,25 @@ fn zone_center_card_bounds(layout: &SpatialLayout, id: ZoneId) -> Result<AabbMm,
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn drag_rotation_supports_all_axes_and_wraps_without_network_feedback() {
+        let start = [359900, 100, 200];
+        assert_eq!(
+            super::rotate_drag_pose(start, 2.0, [true, false, false]),
+            [900, 100, 200]
+        );
+        assert_eq!(
+            super::rotate_drag_pose(start, -2.0, [false, true, true]),
+            [359900, 359100, 359200]
+        );
+        assert_eq!(super::rotate_drag_pose(start, 5.0, [false; 3]), start);
+        let next = super::rotate_drag_pose(start, 2.0, [true; 3]);
+        assert_eq!(
+            super::rotate_drag_pose(next, 2.0, [true; 3]),
+            [1900, 2100, 2200]
+        );
+    }
+
     #[test]
     fn drag_rays_preserve_grab_offset_and_reject_parallel_projection() {
         use bevy::prelude::*;
