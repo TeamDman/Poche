@@ -527,6 +527,8 @@ struct DraggableCard(CardObjectId);
 #[derive(Component, Clone, Copy, Debug, Default)]
 struct DragPreview {
     pixels: Vec2,
+    physical_claimed: bool,
+    physical_origin: Option<Vec3>,
 }
 
 #[derive(Resource, Default)]
@@ -1517,14 +1519,72 @@ fn spawn_scene_objects(
     }
 }
 
+// Keep the grab offset: the cursor is not necessarily over the card's centre.
+// Both rays resolve into the same world-space plane, not screen-pixel units.
+fn drag_world_position(origin: Vec3, start: Ray3d, current: Ray3d) -> Option<Vec3> {
+    let plane = InfinitePlane3d::new(Vec3::Y);
+    let start_distance = start.intersect_plane(origin, plane)?;
+    let current_distance = current.intersect_plane(origin, plane)?;
+    Some(origin + current.get_point(current_distance) - start.get_point(start_distance))
+}
+
 fn on_drag_card(
     drag: On<Pointer<Drag>>,
-    mut previews: Query<&mut DragPreview>,
+    mut previews: Query<(&mut DragPreview, &CanonicalMirror, &GlobalTransform)>,
+    cameras: Query<(&Camera, &GlobalTransform), With<TabletopCamera>>,
+    mut controller: ResMut<NativeController>,
+    live: Option<ResMut<NativeLiveDevice>>,
     windows: Query<Entity, With<PrimaryWindow>>,
     mut commands: Commands,
 ) {
-    if let Ok(mut preview) = previews.get_mut(drag.entity) {
-        preview.pixels += drag.delta;
+    if let Ok((mut preview, mirror, transform)) = previews.get_mut(drag.entity) {
+        if let Some(mut live) = live {
+            let face = controller
+                .scene
+                .cards
+                .iter()
+                .find(|card| ObjectId::Card(card.id) == mirror.id)
+                .and_then(|card| card.face);
+            let identity = face
+                .and_then(|face| {
+                    live.observation()
+                        .physical_hands
+                        .iter()
+                        .find(|card| card.face == Some(face.code()))
+                })
+                .map(|card| card.id.clone());
+            if let Some(identity) = identity
+                && let Ok((camera, camera_transform)) = cameras.single()
+                && let Ok(ray) =
+                    camera.viewport_to_world(camera_transform, drag.pointer_location.position)
+            {
+                let origin = *preview
+                    .physical_origin
+                    .get_or_insert(transform.translation());
+                let Ok(start_ray) = camera.viewport_to_world(
+                    camera_transform,
+                    drag.pointer_location.position - drag.distance,
+                ) else {
+                    return;
+                };
+                let Some(position) = drag_world_position(origin, start_ray, ray) else {
+                    return;
+                };
+                let (yaw, pitch, roll) = transform.rotation().to_euler(EulerRot::YXZ);
+                let rotation = [yaw, pitch, roll]
+                    .map(|angle| (angle.to_degrees() * 1000.0).round().rem_euclid(360000.0) as i32);
+                let position_mm = position
+                    .to_array()
+                    .map(|value| (value * 1000.0).round() as i32);
+                match live.submit_pose(&identity, !preview.physical_claimed, position_mm, rotation)
+                {
+                    Ok(()) => preview.physical_claimed = true,
+                    Err(error) => controller.last_finding = format!("physical movement: {error}"),
+                }
+            }
+        } else {
+            preview.pixels += drag.delta;
+        }
     }
     if let Ok(window) = windows.single() {
         commands
@@ -1541,6 +1601,8 @@ fn on_drag_end(
 ) {
     if let Ok(mut preview) = previews.get_mut(drag.entity) {
         preview.pixels = Vec2::ZERO;
+        preview.physical_claimed = false;
+        preview.physical_origin = None;
     }
     if let Ok(window) = windows.single() {
         commands
@@ -2182,6 +2244,24 @@ fn zone_center_card_bounds(layout: &SpatialLayout, id: ZoneId) -> Result<AabbMm,
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn drag_rays_preserve_grab_offset_and_reject_parallel_projection() {
+        use bevy::prelude::*;
+        let origin = Vec3::new(1.0, 0.2, 2.0);
+        let start = Ray3d::new(Vec3::new(1.1, 3.0, 2.1), Dir3::NEG_Y);
+        let current = Ray3d::new(Vec3::new(1.6, 3.0, 1.8), Dir3::NEG_Y);
+        let moved = super::drag_world_position(origin, start, current).unwrap();
+        assert!(moved.abs_diff_eq(Vec3::new(1.5, 0.2, 1.7), 0.00001));
+        assert!(
+            super::drag_world_position(origin, start, start)
+                .unwrap()
+                .abs_diff_eq(origin, 0.00001)
+        );
+        assert!(
+            super::drag_world_position(origin, start, Ray3d::new(Vec3::ZERO, Dir3::X)).is_none()
+        );
+    }
+
     use poche_player_client::{
         AdvertisedAction, DeviceObservation, DeviceProfile, LoopbackDeviceTransport,
         PlayerDeviceClient,

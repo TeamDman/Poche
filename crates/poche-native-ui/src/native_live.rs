@@ -81,7 +81,15 @@ impl NativeLiveDevice {
                 let mut force_snapshot = false;
                 let mut retry_delay = Duration::from_millis(50);
                 loop {
-                    match command_rx.recv_timeout(retry_delay) {
+                    // An uninterrupted stream of drag samples must not starve
+                    // reads (including the submitting device's own receipt).
+                    let next = if force_snapshot {
+                        thread::sleep(retry_delay);
+                        Err(mpsc::RecvTimeoutError::Timeout)
+                    } else {
+                        command_rx.recv_timeout(retry_delay)
+                    };
+                    match next {
                         Ok(NativeWorkerCommand::Pose {
                             card_id,
                             claim,
