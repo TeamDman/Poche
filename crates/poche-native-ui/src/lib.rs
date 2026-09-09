@@ -209,6 +209,9 @@ impl NativeController {
         {
             return Err("scene, layout, and issuing seat do not share one frame".to_owned());
         }
+        let physical_defaults = scene.cards.iter().filter_map(|card| {
+            expanded_hand_pose(&scene, card).map(|pose| (ObjectId::Card(card.id), pose))
+        }).collect();
         Ok(Self {
             layout,
             scene,
@@ -224,7 +227,7 @@ impl NativeController {
             generation: 0,
             last_commit_cost: None,
             physical_poses: HashMap::new(),
-            physical_defaults: HashMap::new(),
+            physical_defaults,
         })
     }
 
@@ -457,7 +460,7 @@ pub fn native_controller_from_observation(
             if let Some(default_card) = controller.scene.cards.iter().find(|candidate| {
                 matches!(candidate.location, CardLocation::Hand { seat: candidate_seat, index_from_left } if candidate_seat == seat && usize::from(index_from_left) == slot)
             }) {
-                controller.physical_defaults.insert(ObjectId::Card(card.id), default_card.pose);
+                controller.physical_defaults.insert(ObjectId::Card(card.id), expanded_hand_pose(&controller.scene, default_card).unwrap_or(default_card.pose));
             }
             if let Some(pose) = entry.pose.as_ref() {
                 controller
@@ -467,6 +470,16 @@ pub fn native_controller_from_observation(
         }
     }
     Ok(controller)
+}
+
+// Default physical arrangement is independent of logical zone packing.
+fn expanded_hand_pose(scene: &SpatialScene, card: &poche_spatial::CardObject) -> Option<PoseMm> {
+    let CardLocation::Hand { seat, index_from_left } = card.location else { return None; };
+    let count = scene.cards.iter().filter(|candidate| matches!(candidate.location, CardLocation::Hand {seat: other, ..} if other == seat)).count() as i32;
+    // Logical zone packing stays canonical; physical cards are spaced by their
+    // 64 mm width plus an 8 mm gap in both camera views.
+    let factor = 2 * i32::from(index_from_left) + 1 - count;
+    PoseMm::checked(Point3Mm::new(card.pose.translation.x.get() + factor * (36 - 7), card.pose.translation.y.get(), card.pose.translation.z.get()), card.pose.yaw)
 }
 
 /// Resolve a spatially accepted play back to the opaque action advertised for
@@ -1428,7 +1441,7 @@ fn update_hand_camera(
             .sum::<Vec3>()
             / cards.len() as f32;
         *transform =
-            Transform::from_translation(center + Vec3::Y * 0.15).looking_at(center, Vec3::Z);
+            Transform::from_translation(center + Vec3::Y * 0.15).looking_at(center, Vec3::NEG_Z);
         camera.viewport = Some(bevy::camera::Viewport {
             physical_position: UVec2::new(size.x / 5, size.y * 3 / 5),
             physical_size: UVec2::new(size.x * 3 / 5, size.y / 5),
