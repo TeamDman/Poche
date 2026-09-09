@@ -9,6 +9,10 @@ repository.workspace = true
 publish = false
 build = "build.rs"
 
+[features]
+# Opt-in acceptance observers; does not enable Veilid's process-local mock.
+native-input-test = ["poche-native-ui/input-probe"]
+
 [[bin]]
 name = "poche"
 path = "src/main.rs"

@@ -21,6 +21,8 @@ use std::{
 };
 
 pub mod desktop_menu;
+#[cfg(feature = "input-probe")]
+pub mod input_probe;
 
 use bevy::{
     app::ScheduleRunnerPlugin,

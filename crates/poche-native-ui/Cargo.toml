@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 description = "Bevy leaf adapter for Poche's canonical spatial presentation"
 
+[features]
+# Acceptance harness only; never enabled by the normal desktop entrypoint.
+input-probe = []
+
 [dependencies]
 bevy = { workspace = true, features = ["ui"] }
 blake3.workspace = true

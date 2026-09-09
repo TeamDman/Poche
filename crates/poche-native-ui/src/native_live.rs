@@ -192,10 +192,18 @@ impl NativeLiveDevice {
                                     force_snapshot = true;
                                 }
                                 Err(error) => {
+                                    let message = if error == DeviceClientError::TransportUnavailable {
+                                        // No negative acknowledgement was received. Refresh
+                                        // before processing another queued sample, never replay
+                                        // this write or report it as an authoritative rejection.
+                                        force_snapshot = true;
+                                        retry_delay = Duration::from_millis(500);
+                                        "Physical movement outcome is unknown; refreshing to read the accepted pose.".to_owned()
+                                    } else {
+                                        format!("physical motion rejected: {error}")
+                                    };
                                     if event_tx
-                                        .send(NativeWorkerEvent::Failed(format!(
-                                            "physical motion rejected: {error}"
-                                        )))
+                                        .send(NativeWorkerEvent::Failed(message))
                                         .is_err()
                                     {
                                         break;

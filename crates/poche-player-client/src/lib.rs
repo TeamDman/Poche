@@ -711,6 +711,8 @@ pub struct PlayerDeviceClient<T> {
 }
 
 impl<T: DeviceTransport> PlayerDeviceClient<T> {
+    /// Submit once. If the transport loses the reply, an exact-recipient read
+    /// may confirm the matching lease/sample. An uncertain write is never resent.
     pub fn physical_pose(
         &mut self,
         request: PhysicalPoseRequest,
@@ -718,7 +720,15 @@ impl<T: DeviceTransport> PlayerDeviceClient<T> {
         if request.certificate != self.profile.certificate {
             return Err(DeviceClientError::InvalidProfile);
         }
-        self.transport.physical_pose(&self.profile, request)
+        match self.transport.physical_pose(&self.profile, request.clone()) {
+            Err(DeviceClientError::TransportUnavailable) => {
+                let confirmed = self.observe(&request.room_id).ok().and_then(|observation| {
+                    request.confirmed_pose(&self.profile, &observation)
+                });
+                confirmed.ok_or(DeviceClientError::TransportUnavailable)
+            }
+            result => result,
+        }
     }
     pub fn new(profile: DeviceProfile, transport: T) -> Result<Self, DeviceClientError> {
         profile.validate()?;
@@ -1118,6 +1128,75 @@ mod tests {
             SemanticHash([7; 32])
         );
         assert_eq!(transport.invoked[0].device_id.as_str(), "22".repeat(32));
+    }
+
+    struct LostPoseReply {
+        observation: DeviceObservation,
+        failure: DeviceClientError,
+        writes: usize,
+        reads: usize,
+    }
+
+    impl DeviceTransport for LostPoseReply {
+        fn physical_pose(&mut self, _: &DeviceProfile, _: PhysicalPoseRequest) -> Result<PhysicalPoseState, DeviceClientError> {
+            self.writes += 1;
+            Err(self.failure)
+        }
+        fn observe(&mut self, _: &DeviceProfile, _: &RoomId) -> Result<DeviceObservation, DeviceClientError> {
+            self.reads += 1;
+            Ok(self.observation.clone())
+        }
+        fn invoke(&mut self, _: &DeviceProfile, _: DeviceActionRequest) -> Result<DeviceActionResult, DeviceClientError> { panic!("pose reconciliation must not invoke a rules action") }
+        fn wait(&mut self, _: &DeviceProfile, _: &RoomId, _: u64) -> Result<DeviceObservation, DeviceClientError> { panic!("pose reconciliation must use a snapshot, not a rules-revision wait") }
+        fn route(&mut self, _: &DeviceProfile, _: &RoomId, _: DeviceRouteOperationWire) -> Result<DeviceRouteResultWire, DeviceClientError> { panic!("pose reconciliation must not change route state") }
+        fn cooperate(&mut self, _: &DeviceProfile, _: &DeviceId, _: DeviceCooperationRequest) -> Result<DeviceCooperationResult, DeviceClientError> { panic!("pose reconciliation must not request cooperation") }
+    }
+
+    #[test]
+    fn lost_pose_reply_requires_exact_authoritative_sample_without_resending() {
+        for claim in [false, true] {
+            for mismatch in 0..11 {
+                let (profile, mut observation) = fixture();
+                let request = PhysicalPoseRequest {
+                    certificate: profile.certificate.clone(), room_id: observation.projection.room_id.clone(),
+                    session_epoch: observation.projection.session_epoch, card_id: "ab".repeat(32),
+                    generation: 3, claim, sequence: if claim { 1 } else { 8 },
+                    position_mm: [100, 200, 300], rotation_millidegrees: [4000, 5000, 6000],
+                };
+                observation.projection.payload.members.push(poche_protocol::MemberProjection {
+                    principal_id: profile.player_id.clone(), connected: true, seat: Some(0), ready: false, host: false,
+                });
+                observation.projection.payload.own_hand = Some(poche_protocol::HandProjection {
+                    player: profile.player_id.clone(), grant_epoch: 1, cards: vec![0],
+                });
+                let expected = PhysicalPoseState {
+                    device: profile.device_id.clone(), generation: if claim { 4 } else { 3 },
+                    sequence: request.sequence, position_mm: request.position_mm, rotation_millidegrees: request.rotation_millidegrees,
+                };
+                let mut pose = expected.clone();
+                match mismatch {
+                    2 => pose.sequence += 1,
+                    3 => pose.generation += 1,
+                    4 => pose.device = DeviceId::new("different-device").unwrap(),
+                    5 => pose.position_mm[0] += 1,
+                    6 => observation.projection.session_epoch += 1,
+                    9 => observation.projection.principal_id = PrincipalId::new("different-player").unwrap(),
+                    10 => pose.rotation_millidegrees[0] += 1,
+                    _ => {}
+                }
+                observation.physical_hands.push(PhysicalHandCard {
+                    id: if mismatch == 7 { "cd".repeat(32) } else { request.card_id.clone() },
+                    seat: 0, face: if mismatch == 8 { None } else { Some(0) }, pose: Some(pose),
+                });
+                let failure = if mismatch == 1 { DeviceClientError::AuthorizationDenied } else { DeviceClientError::TransportUnavailable };
+                let mut client = PlayerDeviceClient::new(profile, LostPoseReply { observation, failure, writes: 0, reads: 0 }).unwrap();
+                let result = client.physical_pose(request);
+                if mismatch == 0 { assert_eq!(result, Ok(expected)); } else { assert_eq!(result, Err(failure)); }
+                let transport = client.into_transport();
+                assert_eq!(transport.writes, 1, "a lost reply must never cause a second write");
+                assert_eq!(transport.reads, usize::from(mismatch != 1), "authorization denial must not be reinterpreted using a read");
+            }
+        }
     }
 
     #[test]

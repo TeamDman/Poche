@@ -13,6 +13,40 @@ use poche_session::SessionState;
 use poche_veilid::{VeilidDeviceReply, VeilidDeviceRequest, VeilidDeviceService};
 
 struct TestSigner(SigningKey);
+
+#[cfg(feature = "native-input-test")]
+mod lost_pose_reply {
+    use poche_player_client::*;
+    use poche_protocol::*;
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+
+    // Fault injection happens after the real service accepted the signed pose.
+    // All reads and other operations still traverse the actual adapter.
+    pub struct DropReplies<T>(pub T, pub Arc<AtomicUsize>);
+    impl<T: DeviceTransport> DeviceTransport for DropReplies<T> {
+        fn physical_pose(&mut self, profile: &DeviceProfile, request: PhysicalPoseRequest) -> Result<PhysicalPoseState, DeviceClientError> {
+            self.1.fetch_add(1, Ordering::SeqCst);
+            self.0.physical_pose(profile, request)?;
+            Err(DeviceClientError::TransportUnavailable)
+        }
+        fn observe(&mut self, profile: &DeviceProfile, room: &RoomId) -> Result<DeviceObservation, DeviceClientError> {
+            self.0.observe(profile, room)
+        }
+        fn invoke(&mut self, profile: &DeviceProfile, request: DeviceActionRequest) -> Result<DeviceActionResult, DeviceClientError> {
+            self.0.invoke(profile, request)
+        }
+        fn wait(&mut self, profile: &DeviceProfile, room: &RoomId, revision: u64) -> Result<DeviceObservation, DeviceClientError> {
+            self.0.wait(profile, room, revision)
+        }
+        fn route(&mut self, profile: &DeviceProfile, room: &RoomId, operation: DeviceRouteOperationWire) -> Result<DeviceRouteResultWire, DeviceClientError> {
+            self.0.route(profile, room, operation)
+        }
+        fn cooperate(&mut self, profile: &DeviceProfile, device: &DeviceId, request: DeviceCooperationRequest) -> Result<DeviceCooperationResult, DeviceClientError> {
+            self.0.cooperate(profile, device, request)
+        }
+    }
+}
+
 impl DeviceSigner for TestSigner {
     fn sign_device_bytes(
         &self,
@@ -27,8 +61,12 @@ fn signature(key: &SigningKey, bytes: &[u8]) -> SignatureBytes {
 }
 
 fn test_profile(seed: u8) -> DeviceProfile {
+    test_profile_for_device(seed, seed + 1)
+}
+
+fn test_profile_for_device(seed: u8, device_seed: u8) -> DeviceProfile {
     let root = SigningKey::from_bytes(&[seed; 32]);
-    let device = SigningKey::from_bytes(&[seed + 1; 32]);
+    let device = SigningKey::from_bytes(&[device_seed; 32]);
     let player_id =
         PrincipalId::new(data_encoding::HEXLOWER.encode(&root.verifying_key().to_bytes())).unwrap();
     let device_public = data_encoding::HEXLOWER.encode(&device.verifying_key().to_bytes());
@@ -409,7 +447,7 @@ fn device_dispatch_authenticates_before_returning_observations() {
                 guest.disconnect_route(&guest_room).unwrap();
                 drop(guest);
                 let (mut resumed, _) = poche_veilid::join_device(
-                    guest_node,
+                    guest_node.clone(),
                     test_profile(41),
                     TestSigner(SigningKey::from_bytes(&[42; 32])),
                     invitation.expose(),
@@ -559,6 +597,28 @@ fn device_dispatch_authenticates_before_returning_observations() {
                     Some(&moved)
                 );
                 assert!(final_view.physical_public.is_empty());
+                #[cfg(feature = "native-input-test")]
+                {
+                    let (native_client, _) = poche_veilid::join_device(
+                        guest_node.clone(), test_profile_for_device(41, 44),
+                        TestSigner(SigningKey::from_bytes(&[44; 32])), invitation.expose(), 105,
+                    ).unwrap();
+                    let profile = native_client.profile().clone();
+                    let writes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                    let native_client = poche_player_client::PlayerDeviceClient::new(profile,
+                        lost_pose_reply::DropReplies(native_client.into_transport(), writes.clone())).unwrap();
+                    let native = poche_native_ui::NativeLiveDevice::connect(native_client, guest_room.clone()).unwrap();
+                    let native = poche_native_ui::input_probe::drag_across_viewports(native).unwrap();
+                    assert_eq!(writes.load(std::sync::atomic::Ordering::SeqCst), 3, "each drag sample is sent once even when every reply is lost");
+                    let owner = native.observation().physical_hands.iter().find(|card| card.id == motion.card_id).unwrap();
+                    let peer = creator.observe(&guest_room).unwrap();
+                    let hidden = peer.physical_hands.iter().find(|card| card.id == motion.card_id).unwrap();
+                    assert!(hidden.face.is_none());
+                    assert_eq!(hidden.pose, owner.pose);
+                    assert_ne!(hidden.pose.as_ref(), Some(&moved));
+                    assert_eq!(peer.projection.current_revision, before.projection.current_revision);
+                    assert_eq!(peer.projection.payload.public_game_state, before.projection.payload.public_game_state);
+                }
                 for step in 0..2 {
                     let creator_view = creator.observe(&guest_room).unwrap();
                     let creator_turn = creator_view.actions.iter().any(|action| matches!(action.payload, CommandPayload::GameAction { action: poche_protocol::GameActionWire::Bid { .. } }));

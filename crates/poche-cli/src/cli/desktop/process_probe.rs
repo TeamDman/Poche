@@ -66,6 +66,8 @@ fn protected_desktop_process_role() {
     let suffix = std::env::var("POCHE_PROCESS_PROBE_SUFFIX").expect("parent suffix");
     let creator = role == "creator" || role == "creator-resume" || role == "alone" || role == "creator-expire" || role == "creator-after-expiry";
     let creator_loss = std::env::var("POCHE_PROCESS_PROBE_CREATOR_LOSS").as_deref() == Ok("1");
+    let native_input = std::env::var("POCHE_PROCESS_PROBE_NATIVE_INPUT").as_deref() == Ok("1");
+    assert!(!native_input || cfg!(feature = "native-input-test"), "native input probe feature is required");
     let restarting = role.ends_with("-resume");
     assert!(creator || role == "joiner" || restarting);
     let profile_role = if creator { "creator" } else if restarting { "joiner" } else { &role };
@@ -121,6 +123,15 @@ fn protected_desktop_process_role() {
         });
         assert!(live.observation().projection.payload.members.iter().any(|member| member.principal_id == live.observation().projection.principal_id && member.seat == Some(if creator { 0 } else { 1 })));
         assert!(live.observation().physical_hands.iter().any(|card| card.face.is_some() != creator && card.pose.is_some()));
+        if native_input && !creator {
+            let (id, expected_position, expected_rotation): (String, [i32; 3], [i32; 3]) =
+                serde_json::from_slice(&fs::read(root.join("observer-motion")).unwrap()).unwrap();
+            assert!(live.observation().physical_hands.iter().any(|card| {
+                card.id == id && card.face.is_some() && card.pose.as_ref().is_some_and(|pose| {
+                    pose.position_mm == expected_position && pose.rotation_millidegrees == expected_rotation
+                })
+            }), "restarted player lost the exact pointer-driven pose");
+        }
         if creator {
             assert!(live.room_invitation().unwrap() == fs::read_to_string(root.join("invitation")).unwrap());
             let digest = recovery_digest(&live);
@@ -188,6 +199,27 @@ fn protected_desktop_process_role() {
             game
         );
         fs::write(root.join("creator-saw-motion"), b"verified").unwrap();
+        #[cfg(feature = "native-input-test")]
+        if native_input {
+            wait_until(|| root.join("observer-motion-ready").exists());
+            // This file contains only expected public pose metadata. The actual
+            // observation must arrive through the other process's Veilid client.
+            let (id, expected_position, expected_rotation): (String, [i32; 3], [i32; 3]) =
+                serde_json::from_slice(&fs::read(root.join("observer-motion")).unwrap()).unwrap();
+            wait_until(|| {
+                live.poll().expect("observer-driven remote pose");
+                live.observation().physical_hands.iter().any(|card| {
+                    card.id == id && card.face.is_none() && card.pose.as_ref().is_some_and(|pose| {
+                        pose.position_mm == expected_position && pose.rotation_millidegrees == expected_rotation
+                    })
+                })
+            });
+            assert_ne!(expected_position, position);
+            assert_ne!(expected_rotation, rotation);
+            assert_eq!(live.observation().projection.current_revision, revision);
+            assert_eq!(live.observation().projection.payload.public_game_state, game);
+            fs::write(root.join("creator-saw-observer-motion"), b"verified").unwrap();
+        }
         if creator_loss {
             fs::write(root.join("creator-state-digest"), recovery_digest(&live)).unwrap();
             fs::write(root.join("creator-ready-for-kill"), b"ready").unwrap();
@@ -220,6 +252,18 @@ fn protected_desktop_process_role() {
             game
         );
         wait_until(|| root.join("creator-saw-motion").exists());
+        #[cfg(feature = "native-input-test")]
+        if native_input {
+            live = poche_native_ui::input_probe::drag_across_viewports(live).expect("native drag observers over real Veilid");
+            let own = live.observation().physical_hands.iter().find(|entry| entry.id == card).unwrap();
+            let pose = own.pose.as_ref().unwrap();
+            assert!(own.face.is_some());
+            assert_eq!(live.observation().projection.current_revision, revision);
+            assert_eq!(live.observation().projection.payload.public_game_state, game);
+            fs::write(root.join("observer-motion"), serde_json::to_vec(&(&card, pose.position_mm, pose.rotation_millidegrees)).unwrap()).unwrap();
+            fs::write(root.join("observer-motion-ready"), b"ready").unwrap();
+            wait_until(|| root.join("creator-saw-observer-motion").exists());
+        }
         fs::write(root.join("joiner-motion-done"), b"verified").unwrap();
         // Parent kills this exact child; no graceful disconnect or destructor
         // shutdown may substitute for abrupt process loss in this probe.
@@ -240,18 +284,25 @@ fn protected_desktop_process_role() {
 #[test]
 #[ignore = "real public Veilid and fresh persistent protected test profiles"]
 fn protected_desktop_two_process() {
-    run_two_process(false, false);
+    run_two_process(false, false, false);
+}
+
+#[cfg(feature = "native-input-test")]
+#[test]
+#[ignore = "real public Veilid, protected profiles and windowless native drag observers"]
+fn protected_desktop_native_drag_two_process() {
+    run_two_process(false, false, true);
 }
 
 #[test]
 #[ignore = "real public Veilid creator crash with protected profiles"]
 fn protected_desktop_creator_crash() {
-    run_two_process(true, false);
+    run_two_process(true, false, false);
 }
 
 #[test]
 #[ignore = "real public Veilid all-peer loss and 60-second recovery expiry"]
-fn protected_desktop_all_peer_loss() { run_two_process(true, true); }
+fn protected_desktop_all_peer_loss() { run_two_process(true, true, false); }
 
 #[test]
 #[ignore = "real public Veilid and protected empty-room lifecycle"]
@@ -303,7 +354,7 @@ fn recovery_digest(live: &NativeLiveDevice) -> String {
     blake3::hash(&bytes).to_hex().to_string()
 }
 
-fn run_two_process(creator_loss: bool, all_loss: bool) {
+fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool) {
     opt_in();
     let directory = tempfile::tempdir().unwrap();
     let suffix = now().unwrap().to_string();
@@ -315,6 +366,7 @@ fn run_two_process(creator_loss: bool, all_loss: bool) {
             .env("POCHE_PROCESS_PROBE_ROOT", directory.path())
             .env("POCHE_PROCESS_PROBE_ROLE", role)
             .env("POCHE_PROCESS_PROBE_CREATOR_LOSS", if creator_loss { "1" } else { "0" })
+            .env("POCHE_PROCESS_PROBE_NATIVE_INPUT", if native_input { "1" } else { "0" })
             .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
         #[cfg(windows)]
         {
@@ -353,6 +405,7 @@ fn run_two_process(creator_loss: bool, all_loss: bool) {
         .env("POCHE_PROCESS_PROBE_ROOT", directory.path())
         .env("POCHE_PROCESS_PROBE_ROLE", if all_loss { "creator-expire" } else if creator_loss { "creator-resume" } else { "joiner-resume" })
         .env("POCHE_PROCESS_PROBE_CREATOR_LOSS", if creator_loss { "1" } else { "0" })
+        .env("POCHE_PROCESS_PROBE_NATIVE_INPUT", if native_input { "1" } else { "0" })
         .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
     #[cfg(windows)] {
         use std::os::windows::process::CommandExt;
@@ -376,6 +429,7 @@ fn run_two_process(creator_loss: bool, all_loss: bool) {
     assert!(directory.path().join("joiner-dealt").exists());
     assert!(directory.path().join("creator-saw-motion").exists());
     assert!(directory.path().join("joiner-motion-done").exists());
+    if native_input { assert!(directory.path().join("creator-saw-observer-motion").exists()); }
     if all_loss {
         assert!(directory.path().join("all-peer-expired").exists());
         restart.env("POCHE_PROCESS_PROBE_ROLE", "creator-after-expiry");

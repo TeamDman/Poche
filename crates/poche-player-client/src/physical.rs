@@ -95,6 +95,19 @@ pub struct SignedPhysicalPose {
 }
 
 impl PhysicalPoseRequest {
+    /// Caller must validate the observation's recipient and room first.
+    pub(crate) fn confirmed_pose(&self, profile: &DeviceProfile, observation: &DeviceObservation) -> Option<PhysicalPoseState> {
+        if observation.projection.session_epoch != self.session_epoch || (self.claim && self.sequence != 1) {
+            return None;
+        }
+        let generation = if self.claim { self.generation.checked_add(1)? } else { self.generation };
+        let pose = observation.physical_hands.iter()
+            .find(|card| card.id == self.card_id && card.face.is_some())?.pose.as_ref()?;
+        (pose.device == profile.device_id && pose.generation == generation
+            && pose.sequence == self.sequence && pose.position_mm == self.position_mm
+            && pose.rotation_millidegrees == self.rotation_millidegrees).then(|| pose.clone())
+    }
+
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, DeviceClientError> {
         let mut bytes = b"poche.physical-pose.v1\0".to_vec();
         bytes.extend(serde_json::to_vec(self).map_err(|_| DeviceClientError::ProtocolViolation)?);

@@ -134,17 +134,26 @@ pub fn join_device<S: DeviceSigner>(
     let resolved = node
         .runtime()
         .block_on(adapter.resolve_room(&code, now_unix_ms))
-        .map_err(|_| DeviceClientError::TransportUnavailable)?;
+        .map_err(|error| {
+            eprintln!("poche join: rendezvous resolution failed ({error:?})");
+            DeviceClientError::TransportUnavailable
+        })?;
     let room_id = resolved.record().room_id.clone();
     let epoch = resolved.record().session_epoch;
     let principal = profile.player_id.clone();
     let transport = VeilidDeviceTransport::from_node(node, resolved, signer, epoch, None)?;
     let mut client = PlayerDeviceClient::new(profile, transport)?;
-    let mut observation = match client.observe(&room_id) {
+    let mut observation = match client.observe(&room_id).inspect_err(|error| {
+        eprintln!("poche join: initial observation failed ({error})");
+    }) {
         Ok(observation) => observation,
         Err(DeviceClientError::TransportUnavailable) => {
-            client.rebind_route(&room_id)?;
-            client.observe(&room_id)?
+            client.rebind_route(&room_id).inspect_err(|error| {
+                eprintln!("poche join: rebind failed ({error})");
+            })?;
+            client.observe(&room_id).inspect_err(|error| {
+                eprintln!("poche join: rebound observation failed ({error})");
+            })?
         }
         Err(error) => return Err(error),
     };
@@ -159,7 +168,9 @@ pub fn join_device<S: DeviceSigner>(
         .any(|member| member.principal_id == principal)
     {
         client.transport_mut().set_join_invite(Some(proof));
-        observation = client.observe(&room_id)?;
+        observation = client.observe(&room_id).inspect_err(|error| {
+            eprintln!("poche join: admission observation failed ({error})");
+        })?;
     }
     if let Some(action) = observation.actions.iter().find(|action| {
         matches!(
@@ -172,15 +183,20 @@ pub fn join_device<S: DeviceSigner>(
         let command = CommandId::new(format!("join-{}", data_encoding::HEXLOWER.encode(&bytes)))
             .map_err(|_| DeviceClientError::ProtocolViolation)?;
         if !matches!(
-            client.invoke(&observation, &action.id, command)?,
+            client.invoke(&observation, &action.id, command).inspect_err(|error| {
+                eprintln!("poche join: admission invocation failed ({error})");
+            })?,
             DeviceActionResult::Committed { .. }
         ) {
+            eprintln!("poche join: admission did not commit");
             return Err(DeviceClientError::AuthorizationDenied);
         }
     }
     // No optimistic admission: require a subsequent exact-recipient membership
     // observation before a graphical caller transitions away from the menu.
-    let joined = client.observe(&room_id)?;
+    let joined = client.observe(&room_id).inspect_err(|error| {
+        eprintln!("poche join: confirmation failed ({error})");
+    })?;
     if !joined
         .projection
         .payload
@@ -188,6 +204,7 @@ pub fn join_device<S: DeviceSigner>(
         .iter()
         .any(|member| member.principal_id == principal && member.connected)
     {
+        eprintln!("poche join: confirmed projection has no connected membership");
         return Err(DeviceClientError::AuthorizationDenied);
     }
     Ok((client, room_id))
