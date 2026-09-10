@@ -205,6 +205,22 @@ fn persistence_precedes_reply_and_failure_freezes_service_clones() {
 
 #[test]
 fn device_dispatch_authenticates_before_returning_observations() {
+    exercise_device_dispatch(false);
+}
+
+#[cfg(all(feature = "native-input-test", feature = "veilid-mock-test"))]
+#[test]
+#[ignore = "explicit GPU acceptance: set a fresh POCHE_RENDERED_EVIDENCE_ROOT; no windows"]
+fn rendered_pointer_denied_and_accepted_play() {
+    exercise_device_dispatch(true);
+}
+
+#[cfg(feature = "native-input-test")]
+#[path = "support/rendered_play.rs"]
+mod rendered_play;
+
+fn exercise_device_dispatch(rendered: bool) {
+    assert!(!rendered || cfg!(feature = "native-input-test"));
     let profile = test_profile(31);
     let room_id = RoomId::new("device-service-test").unwrap();
     let service = room_service(&room_id, "test-invite");
@@ -466,7 +482,7 @@ fn device_dispatch_authenticates_before_returning_observations() {
                             && member.seat == Some(1))
                 );
                 let (mut creator, _) = poche_veilid::join_device(
-                    creator_node,
+                    creator_node.clone(),
                     test_profile(31),
                     TestSigner(SigningKey::from_bytes(&[32; 32])),
                     invitation.expose(),
@@ -521,6 +537,11 @@ fn device_dispatch_authenticates_before_returning_observations() {
                         "assembled service did not expire countdown and deal"
                     );
                     std::thread::sleep(Duration::from_millis(20));
+                }
+                #[cfg(feature = "native-input-test")]
+                if rendered {
+                    rendered_play::exercise(creator, resumed, creator_node, guest_node, invitation.expose(), &guest_room);
+                    return;
                 }
                 let before = resumed.observe(&guest_room).unwrap();
                 let hand_card = before

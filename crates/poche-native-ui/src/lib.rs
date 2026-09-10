@@ -587,6 +587,7 @@ struct DragPreview {
     pixels: Vec2,
     physical_claimed: bool,
     physical_origin: Option<Vec3>,
+    physical_anchor: Option<DragPlane>,
     physical_rotation: Option<[i32; 3]>,
 }
 
@@ -942,11 +943,26 @@ pub fn run_menu(
 )]
 fn run_with_live_device(
     options: NativeUiLaunchOptions,
+    live_device: Option<NativeLiveDevice>,
+    menu: Option<(
+        desktop_menu::DesktopConnectionWorker,
+        desktop_menu::InvitationValidator,
+    )>,
+) -> Result<(), String> {
+    run_configured(options, live_device, menu, |_| {})
+}
+
+// The opt-in input probe installs only its driver here. Rendering, picking,
+// controls and capture registration remain identical to the ordinary app.
+#[allow(clippy::too_many_lines)]
+fn run_configured(
+    options: NativeUiLaunchOptions,
     mut live_device: Option<NativeLiveDevice>,
     menu: Option<(
         desktop_menu::DesktopConnectionWorker,
         desktop_menu::InvitationValidator,
     )>,
+    configure: impl FnOnce(&mut App),
 ) -> Result<(), String> {
     let NativeUiLaunchOptions {
         play_card,
@@ -1109,6 +1125,7 @@ fn run_with_live_device(
     if let Some(live_device) = live_device {
         app.insert_resource(live_device);
     }
+    configure(&mut app);
     app.run();
     if let Some(provider) = shutdown_provider {
         let _ = provider.shutdown();
@@ -1660,13 +1677,25 @@ fn spawn_scene_objects(
     }
 }
 
-// Keep the grab offset: the cursor is not necessarily over the card's centre.
-// Both rays resolve into the same world-space plane, not screen-pixel units.
-fn drag_world_position(origin: Vec3, start: Ray3d, current: Ray3d) -> Option<Vec3> {
-    let plane = InfinitePlane3d::new(Vec3::Y);
-    let start_distance = start.intersect_plane(origin, plane)?;
-    let current_distance = current.intersect_plane(origin, plane)?;
-    Some(origin + current.get_point(current_distance) - start.get_point(start_distance))
+// A grab has one world-space offset, not a sum of camera-dependent pixel
+// deltas. On leaving the inset, the table camera places the same card under
+// the pointer. The two camera images need not depict adjacent world regions.
+#[derive(Clone, Copy, Debug)]
+struct DragPlane {
+    origin: Vec3,
+    grab_offset: Vec3,
+}
+
+impl DragPlane {
+    fn new(origin: Vec3, start: Ray3d) -> Option<Self> {
+        let distance = start.intersect_plane(origin, InfinitePlane3d::new(Vec3::Y))?;
+        Some(Self { origin, grab_offset: origin - start.get_point(distance) })
+    }
+
+    fn project(self, current: Ray3d) -> Option<Vec3> {
+        let distance = current.intersect_plane(self.origin, InfinitePlane3d::new(Vec3::Y))?;
+        Some(current.get_point(distance) + self.grab_offset)
+    }
 }
 
 fn rotate_drag_pose(mut rotation: [i32; 3], horizontal_pixels: f32, axes: [bool; 3]) -> [i32; 3] {
@@ -1737,6 +1766,7 @@ fn on_drag_card(
     windows: Query<Entity, With<PrimaryWindow>>,
     mut commands: Commands,
 ) {
+    if drag.delta == Vec2::ZERO { return; }
     if let Ok((mut preview, mirror, transform)) = previews.get_mut(drag.entity) {
         if let Some(mut live) = live {
             let face = controller
@@ -1760,21 +1790,25 @@ fn on_drag_card(
                 && let Ok(ray) =
                     camera.viewport_to_world(camera_transform, drag.pointer_location.position)
             {
-                let origin = *preview
-                    .physical_origin
-                    .get_or_insert(transform.translation());
                 let Ok(start_ray) = camera.viewport_to_world(
                     camera_transform,
                     drag.pointer_location.position - drag.delta,
                 ) else {
                     return;
                 };
-                let Some(position) = drag_world_position(origin, start_ray, ray) else {
+                let anchor = match preview.physical_anchor {
+                    Some(anchor) => anchor,
+                    None => {
+                        let Some(anchor) = DragPlane::new(transform.translation(), start_ray) else { return; };
+                        preview.physical_anchor = Some(anchor);
+                        anchor
+                    }
+                };
+                let Some(position) = anchor.project(ray) else {
                     return;
                 };
-                // Integrate each delta in the currently selected camera. A
-                // camera change must not reproject the entire gesture history.
-                // Retain local position rather than delayed network feedback.
+                // Keep the original grab point despite delayed observations;
+                // camera changes affect projection, not the grab offset.
                 preview.physical_origin = Some(position);
                 let (yaw, pitch, roll) = transform.rotation().to_euler(EulerRot::YXZ);
                 let initial_rotation = [yaw, pitch, roll]
@@ -1911,8 +1945,16 @@ fn poll_live_device(
     let Some(mut live) = live else {
         return;
     };
+    let previous_revision = live.observation().projection.current_revision;
+    let previous_result = live.last_result().cloned();
     let finding = match live.poll() {
         Ok(false) => return,
+        Ok(true) if live.observation().projection.current_revision == previous_revision
+            && live.last_result() == previous_result.as_ref() => {
+                // Pose receipts are not new rules decisions. In particular,
+                // a late receipt after release must not erase "Not played".
+                controller.last_finding.clone()
+            }
         Ok(true) => format!(
             "live device synchronized authority revision {}",
             live.observation().projection.current_revision
@@ -2615,18 +2657,20 @@ mod tests {
     }
 
     #[test]
-    fn camera_transition_does_not_reapply_prior_drag_distance() {
+    fn camera_transition_keeps_world_grab_offset_and_lands_at_target() {
         use bevy::prelude::*;
         let initial = Vec3::new(0.1, 0.2, 0.3);
         let hand_start = Ray3d::new(Vec3::new(0.0, 1.0, 0.0), Dir3::NEG_Y);
         let hand_end = Ray3d::new(Vec3::new(0.05, 1.0, 0.0), Dir3::NEG_Y);
-        let moved = super::drag_world_position(initial, hand_start, hand_end).unwrap();
+        let anchor = super::DragPlane::new(initial, hand_start).unwrap();
+        let moved = anchor.project(hand_end).unwrap();
+        assert!(moved.abs_diff_eq(initial + Vec3::X * 0.05, 0.00001));
         let table_ray = Ray3d::new(Vec3::new(5.0, 4.0, -3.0), Dir3::NEG_Y);
-        let switched = super::drag_world_position(moved, table_ray, table_ray).unwrap();
-        assert!(switched.abs_diff_eq(moved, 0.00001));
+        let switched = anchor.project(table_ray).unwrap();
+        assert!(switched.abs_diff_eq(Vec3::new(5.1, 0.2, -2.7), 0.00001));
         let table_end = Ray3d::new(Vec3::new(5.02, 4.0, -3.0), Dir3::NEG_Y);
-        let next = super::drag_world_position(switched, table_ray, table_end).unwrap();
-        assert!(next.abs_diff_eq(initial + Vec3::X * 0.07, 0.00001));
+        let next = anchor.project(table_end).unwrap();
+        assert!(next.abs_diff_eq(switched + Vec3::X * 0.02, 0.00001));
     }
 
     #[test]
@@ -2693,15 +2737,16 @@ mod tests {
         let origin = Vec3::new(1.0, 0.2, 2.0);
         let start = Ray3d::new(Vec3::new(1.1, 3.0, 2.1), Dir3::NEG_Y);
         let current = Ray3d::new(Vec3::new(1.6, 3.0, 1.8), Dir3::NEG_Y);
-        let moved = super::drag_world_position(origin, start, current).unwrap();
+        let anchor = super::DragPlane::new(origin, start).unwrap();
+        let moved = anchor.project(current).unwrap();
         assert!(moved.abs_diff_eq(Vec3::new(1.5, 0.2, 1.7), 0.00001));
         assert!(
-            super::drag_world_position(origin, start, start)
+            anchor.project(start)
                 .unwrap()
                 .abs_diff_eq(origin, 0.00001)
         );
         assert!(
-            super::drag_world_position(origin, start, Ray3d::new(Vec3::ZERO, Dir3::X)).is_none()
+            anchor.project(Ray3d::new(Vec3::ZERO, Dir3::X)).is_none()
         );
     }
 
@@ -2827,7 +2872,7 @@ mod tests {
         assert!(has_meaningful_render_content(&rendered));
     }
 
-    fn live_play_observation() -> DeviceObservation {
+    pub(super) fn live_play_observation() -> DeviceObservation {
         let alice = PrincipalId::new("alice").expect("alice");
         let bob = PrincipalId::new("bob").expect("bob");
         DeviceObservation {

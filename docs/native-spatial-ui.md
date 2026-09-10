@@ -15,6 +15,53 @@ this exact viewer; 49 card objects remain backs with no face text. Current
 windowless captures are generated under ignored `target/` evidence directories
 rather than replacing this historical image in Git.
 
+## September desktop input acceptance
+
+The current desktop renderer uses Bevy **0.19.1**. Logical hand/deck/play
+locations remain rules-engine state; authorized physical positions and full
+rotations are a separate shared overlay. A card moved to PLAY out of turn can
+stay there physically, still logically owned and face-hidden from the peer.
+Only an accepted play publishes its face.
+
+The hand inset and table are different cameras into the same world. A drag
+retains the original world-space grab offset and uses the camera under the
+pointer; entering the table viewport positions the same card under that
+pointer. The inset is not an adjacent world region, so its accumulated pixel
+motion is not carried as a leftover table offset. No logical card is duplicated
+or automatically played merely because a new turn begins. Shift/Ctrl/Alt during
+dragging change yaw/pitch/roll. A release is queued behind preceding poses if
+necessary, retaining its original command ID and rules revision. Later pose-only
+receipts do not erase a visible play rejection.
+
+Reproduce the **windowless GPU + signed mock Veilid** input test from the repo
+root. Use a fresh output directory each time:
+
+```powershell
+$env:WGPU_BACKEND = 'dx12'
+$env:POCHE_RENDERED_EVIDENCE_ROOT = "$PWD/target/my-rendered-play-run"
+cargo test --locked -p poche-veilid --features device-service,veilid-mock-test,native-input-test --offline --test device_service rendered_pointer_denied_and_accepted_play -- --exact --ignored --nocapture --test-threads=1
+```
+
+This drives normal Bevy picking with pointer press/move/release on real
+GPU-computed cameras, including a final move and release in the same frame.
+It checks accepted poses and denial/commit results through the signed device
+service, then compares an independent player's observation for pose equality
+and face privacy. `denied/` and `accepted/` each contain `before.png`, `held.png`
+and `after.png`, saved by the existing local screenshot/readback path. These
+captures intentionally include the graphical viewer's private hand; treat
+them as local developer evidence, not copy-safe/public room diagnostics.
+
+The September 10 final run passed in 48.02s; inspected images live under ignored
+`target/phase6-rendered-play-06`. It also asserts a six-degree change on each
+rotation axis and waits for the exact final pose receipt, not a fixed frame
+delay. Earlier runs exposed camera-offset drift, a
+cleanup race, missing suit glyphs in feedback, and pose receipts erasing denial
+feedback. Those paths were corrected and retested. This is not OS-input/menu/
+clipboard acceptance, two simultaneously rendered public-network processes,
+or complete lifecycle acceptance. PLAN-6 retains those remaining obligations.
+The fixture launch commands and timings below are historical, not a substitute
+for the current desktop lobby entry point.
+
 ## Architecture and controls
 
 - `poche-slug` is the MPL-2.0 extraction of Teamy Terminal's pinned outline,

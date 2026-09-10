@@ -158,7 +158,7 @@ fn refresh_live_controls(
             bar.spawn((
                 LiveFinding,
                 Text::new(""),
-                TextFont { font_size: FontSize::Px(16.0), ..default() },
+                TextFont::from_font_size(16.0).with_font(card_font.clone()),
                 TextColor(Color::srgb(1.0, 0.9, 0.65)),
                 Node { width: percent(100.), ..default() },
             ));

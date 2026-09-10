@@ -11,6 +11,8 @@ use bevy::picking::{
     pointer::{Location, PointerAction, PointerId, PointerInput, PointerLocation},
 };
 
+pub mod rendered;
+
 /// Move the first own-hand card through hand/table camera coordinates while
 /// applying yaw, pitch and roll. Returns the live device after its signed pose is observed.
 /// This exercises picking, observers and transport, not GPU rendering or OS mouse input.

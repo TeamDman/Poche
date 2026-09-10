@@ -97,6 +97,7 @@ pub struct NativeLiveDevice {
     next_command: u64,
     command_namespace: String,
     last_result: Option<DeviceActionResult>,
+    worker: thread::JoinHandle<()>,
 }
 
 impl NativeLiveDevice {
@@ -122,7 +123,7 @@ impl NativeLiveDevice {
         let initial_revision = observation.projection.current_revision;
         let initial_hands = observation.physical_hands.clone();
         let initial_epoch = observation.projection.session_epoch;
-        thread::Builder::new()
+        let worker = thread::Builder::new()
             .name("poche-native-device".to_owned())
             .spawn(move || {
                 let mut latest_revision = initial_revision;
@@ -317,7 +318,28 @@ impl NativeLiveDevice {
             next_command: 0,
             command_namespace,
             last_result: None,
+            worker,
         })
+    }
+
+    /// Release the device and wait for its worker to relinquish transport
+    /// ownership. Use on a harness/connection thread, never a Bevy frame.
+    /// Ordinary Drop remains nonblocking. This does not issue a room Leave.
+    ///
+    /// # Errors
+    /// Returns an error if the worker panicked during shutdown.
+    pub fn shutdown(self) -> Result<(), String> {
+        let Self {
+            commands,
+            events,
+            worker,
+            ..
+        } = self;
+        drop(commands);
+        drop(events);
+        worker
+            .join()
+            .map_err(|_| "native device worker failed during shutdown".to_owned())
     }
 
     /// Queue physical movement independently of a logical play. Claims are
@@ -381,9 +403,6 @@ impl NativeLiveDevice {
     /// Queue any currently advertised action from the live action palette.
     pub fn submit_action(&mut self, action_id: &str) -> Result<(), String> {
         self.motion_outbox.flush(&self.commands)?;
-        if !self.motion_outbox.0.is_empty() {
-            return Err("physical movement is still queued; retry the action shortly".to_owned());
-        }
         if !self
             .observation
             .actions
@@ -398,18 +417,15 @@ impl NativeLiveDevice {
         ))
         .map_err(|_| "native device command ID is invalid".to_owned())?;
         self.next_command = self.next_command.saturating_add(1);
-        self.commands
-            .try_send(NativeWorkerCommand::Invoke {
-                observation: self.observation.clone(),
-                action_id: action_id.to_owned(),
-                command_id,
-            })
-            .map_err(|error| match error {
-                mpsc::TrySendError::Full(_) => "native device worker is busy".to_owned(),
-                mpsc::TrySendError::Disconnected(_) => {
-                    "native device worker is unavailable".to_owned()
-                }
-            })
+        // A release is a single explicit intent. Keep it behind preceding
+        // poses when the worker is full, retaining the original revision and
+        // command ID. Do not re-prepare it if the rules advance while waiting.
+        self.motion_outbox.push(NativeWorkerCommand::Invoke {
+            observation: self.observation.clone(),
+            action_id: action_id.to_owned(),
+            command_id,
+        })?;
+        self.motion_outbox.flush(&self.commands)
     }
 
     /// Apply all currently available worker results without blocking.
@@ -505,5 +521,69 @@ mod tests {
         assert_eq!(position_mm, [99, 0, 0]);
         assert_eq!(rotation_millidegrees, [0, 99, 0]);
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn saturated_release_stays_after_poses_without_repreparing_or_coalescing_across_it() {
+        let observation = crate::tests::live_play_observation();
+        let revision = observation.projection.current_revision;
+        let action = observation.actions[0].id.clone();
+        let (commands, received) = mpsc::sync_channel(1);
+        commands.try_send(pose(false, -1)).ok().unwrap();
+        let (_events, events_rx) = mpsc::sync_channel(1);
+        let mut live = NativeLiveDevice {
+            room_invitation: None,
+            observation,
+            commands,
+            motion_outbox: MotionOutbox::default(),
+            events: Mutex::new(events_rx),
+            next_command: 0,
+            command_namespace: "outbox-test".to_owned(),
+            last_result: None,
+            worker: thread::spawn(|| {}),
+        };
+        live.motion_outbox.push(pose(true, 99)).unwrap();
+        live.submit_action(&action)
+            .expect("explicit release must survive a full worker queue");
+        live.motion_outbox.push(pose(false, 100)).unwrap();
+        assert_eq!(
+            live.motion_outbox.0.len(),
+            3,
+            "an action is a coalescing barrier"
+        );
+        // Simulate a later observation arriving before this local queue drains.
+        live.observation.projection.current_revision += 50;
+        received.recv().unwrap();
+        live.poll().unwrap();
+        assert!(matches!(
+            received.recv().unwrap(),
+            NativeWorkerCommand::Pose {
+                position_mm: [99, 0, 0],
+                ..
+            }
+        ));
+        live.poll().unwrap();
+        let NativeWorkerCommand::Invoke {
+            observation,
+            action_id,
+            command_id,
+        } = received.recv().unwrap()
+        else {
+            panic!("expected the original action");
+        };
+        assert_eq!(observation.projection.current_revision, revision);
+        assert_eq!(action_id, action);
+        assert_eq!(command_id.as_str(), "native-outbox-test-0");
+        live.poll().unwrap();
+        assert!(matches!(
+            received.recv().unwrap(),
+            NativeWorkerCommand::Pose {
+                position_mm: [100, 0, 0],
+                ..
+            }
+        ));
+        live.poll().unwrap();
+        assert!(received.try_recv().is_err(), "no duplicate invocation");
+        live.shutdown().unwrap();
     }
 }
