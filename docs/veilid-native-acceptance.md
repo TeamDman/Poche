@@ -44,6 +44,35 @@ rule for a different binary/profile as the same condition. Further work should
 investigate uncertain Create/join outcomes, without treating a missing reply
 as proof that a state-changing action was rejected.
 
+## September startup delivery policy
+
+Create, invitation redemption, and reconnect may resend the **same signed
+request bytes** up to three times after a classified transient transport
+failure, with 250/500ms backoff. Route failures can refresh the validated route;
+they do not generate a new command against newer state. Explicit server denials
+or unavailable responses stop immediately. Ordinary gameplay and pose writes
+are not automatically resent; a missing reply is an unknown outcome.
+
+The certified service stores exact-command receipts before acknowledgment.
+Deterministic tests lose a request before dispatch or its reply afterward and
+verify one state transition, including single-use admission. A conflicting
+signed request is rejected, and an evicted old Create receipt cannot recreate
+the room. This is bounded replay safety, not unlimited exactly-once delivery.
+
+On September 10 the current suite passed 40 library tests and four service
+integrations:
+
+```powershell
+cargo test --locked -p poche-veilid --features device-service,veilid-mock-test,native-input-test --offline --lib --test device_service
+```
+
+A rebuilt non-mock two-process native-input/restart test also passed in 86.98s
+with the approved firewall rules. It exercised observation retries and pose
+read-reconciliation, but did not emit a startup retry; the deterministic tests
+provide that loss-recovery evidence. This new-code run is separate from the
+frozen firewall comparison above. Full menu, rendered pointer/play, and
+remaining lifecycle acceptance are still pending in PLAN-6.
+
 ## Historical August gates
 
 Poche has two deliberately different native Veilid gates. The default local

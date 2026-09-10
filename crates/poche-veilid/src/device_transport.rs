@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 
 const MAX_DEVICE_CALL: usize = 30_000;
 
+mod startup_retry;
+
 /// Versioned envelope. Signature verification belongs to the receiving
 /// authority; successful decoding is not authorization.
 #[derive(Serialize, Deserialize)]
@@ -192,29 +194,51 @@ impl<S> VeilidDeviceTransport<S> {
         if tokio::runtime::Handle::try_current().is_ok() {
             return Err(DeviceClientError::TransportUnavailable);
         }
-        let bytes = encode(&request)?;
-        let call = || {
-            self.runtime
-                .block_on(self.adapter.app_call(&self.room, bytes.clone()))
-                .map_err(|_| DeviceClientError::TransportUnavailable)
-        };
         let reply = if matches!(request, VeilidDeviceRequest::Observe(_)) {
+            let bytes = encode(&request)?;
+            let call = || {
+                self.runtime
+                    .block_on(self.adapter.app_call(&self.room, bytes.clone()))
+                    .map_err(|_| DeviceClientError::TransportUnavailable)
+            };
             match retry_observation(call) {
                 Err(DeviceClientError::TransportUnavailable) => {
-                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                        .ok().and_then(|time| u64::try_from(time.as_millis()).ok())
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .ok()
+                        .and_then(|time| u64::try_from(time.as_millis()).ok())
                         .ok_or(DeviceClientError::TransportUnavailable)?;
-                    self.runtime.block_on(self.adapter.refresh_resolved_room(&mut self.room, now))
+                    self.runtime
+                        .block_on(self.adapter.refresh_resolved_room(&mut self.room, now))
                         .map_err(|_| DeviceClientError::TransportUnavailable)?;
                     // Retry only the identical signed observation, never a
                     // write whose first outcome may have been committed.
-                    retry_observation(|| self.runtime.block_on(self.adapter.app_call(&self.room, bytes.clone()))
-                        .map_err(|_| DeviceClientError::TransportUnavailable))?
+                    retry_observation(|| {
+                        self.runtime
+                            .block_on(self.adapter.app_call(&self.room, bytes.clone()))
+                            .map_err(|_| DeviceClientError::TransportUnavailable)
+                    })?
                 }
                 result => result?,
             }
         } else {
-            call()?
+            startup_retry::exchange(
+                &request,
+                |bytes, refresh| {
+                    if refresh {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .ok()
+                            .and_then(|time| u64::try_from(time.as_millis()).ok())
+                            .ok_or(crate::VeilidRendezvousError::Unavailable)?;
+                        self.runtime
+                            .block_on(self.adapter.refresh_resolved_room(&mut self.room, now))?;
+                    }
+                    self.runtime
+                        .block_on(self.adapter.app_call(&self.room, bytes.to_vec()))
+                },
+                std::thread::sleep,
+            )?
         };
         match decode(&reply)? {
             VeilidDeviceReply::Denied => Err(DeviceClientError::AuthorizationDenied),
@@ -272,10 +296,19 @@ impl<S: DeviceSigner> DeviceTransport for VeilidDeviceTransport<S> {
         )?;
         let reply = self.exchange(VeilidDeviceRequest::Observe(request))?;
         let reply = if let VeilidDeviceReply::RecoveryChallenge(challenge) = reply {
-            let response = sign_observation_request_with_invite(profile, room_id, self.epoch, challenge,
-                DeviceObservationModeWire::Snapshot, self.invite.clone(), &self.signer)?;
+            let response = sign_observation_request_with_invite(
+                profile,
+                room_id,
+                self.epoch,
+                challenge,
+                DeviceObservationModeWire::Snapshot,
+                self.invite.clone(),
+                &self.signer,
+            )?;
             self.exchange(VeilidDeviceRequest::Observe(response))?
-        } else { reply };
+        } else {
+            reply
+        };
         match reply {
             VeilidDeviceReply::Observation(value) => Ok(value),
             VeilidDeviceReply::RecoveryChallenge(_) => Err(DeviceClientError::NoProgress),
@@ -297,6 +330,7 @@ impl<S: DeviceSigner> DeviceTransport for VeilidDeviceTransport<S> {
         let signed = request.sign(profile, &self.signer)?;
         match self.exchange(VeilidDeviceRequest::Invoke(signed))? {
             VeilidDeviceReply::Action(value) => {
+                startup_retry::validate_result(&request, &value)?;
                 if creates && matches!(value, DeviceActionResult::Committed { .. }) {
                     self.epoch = 1;
                 }
