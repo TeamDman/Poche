@@ -3,7 +3,7 @@
 **Plan status:** Active; user authorized goal execution
 **Primary implementation root:** `D:\Repos\Games\poche-3`, `model-checking`
 **Last updated:** 2026-09-09
-**Intent audit:** Three passes completed for the September restart; scope gates pending
+**Intent audit:** Three passes completed for the September restart and September 9 firewall amendment; technical evidence gates remain
 
 ## Authorized execution contract
 
@@ -30,6 +30,13 @@ Amendment audit (September 9): extraction added U13 from the explicit everyone-l
 
 Movement amendment audit: extraction added U14-U17 from the user's correction of the proposed legal-play-only/local-rearrangement scope. Traceability maps these to T4a/T4b and G4. Adversarial pass rechecked all ledger mappings and preserved cross-client (not merely local) motion, rotation as well as position, one shared world across viewports, and the tentative 'perhaps' concerning denied-play physical pose. No implementation/proof is claimed by this audit.
 
+Firewall amendment audit (2026-09-09):
+
+- **Pass 1 — extraction:** reread the available original September restart instructions and the two latest firewall messages. U18 captures the observed prompts and question about user-mode/installation; U19 captures the user's chosen next step: plan to accept the prompt, then experimentally verify its effect on the failures. Earlier active U1-U17 remain unchanged.
+- **Pass 2 — traceability:** U18/U19 map to G5, T2a, the acceptance matrix and T6 documentation. Exact executable identity, active profile, repeat counts and failure-stage reporting are experiment controls, not new product requirements. T2a takes priority over further uncertain-admission code changes so the comparison does not mix interventions.
+- **Pass 3 — adversarial omission:** checked that accepting a prompt is not silently converted into disabling the firewall, running the game as administrator, changing the router, or implementing an outbound-only redesign. An observed association is not proof that permission is universally necessary or sufficient. Historical runs have unknown firewall state; do not relabel them a controlled baseline. Existing block rules require a separately approved scoped reset before a new prompt can be expected.
+- **Source boundary:** original user messages and this plan were available; intervening older tool results are partly represented by durable task notes. This amendment does not recertify every historical test or every prior plan.
+
 ## Purpose and guidance ledger
 
 Create a coherent desktop experience: independently launched games create/join a lobby, occupy seats around a table, and recover player identity after a crash. Preserve the independently executable rules and formal evidence.
@@ -53,6 +60,8 @@ Create a coherent desktop experience: independently launched games create/join a
 | U15 | Wiggling a hand card in one client must be visible in the other client. | T4a/T6; shared authorized poses even when logical state does not change; hidden faces remain hidden. |
 | U16 | Dragging hand-to-table crosses camera viewports whose projections map to the same 3D space. | T4b; continuous same-card drag, no canonical duplication or unrelated local coordinate state. |
 | U17 | Entering the play area attempts a rules action; if not the player's turn, perhaps logical position stays unchanged even though physical position changed. | T4a/T4b; separate pose acceptance and play acceptance. Proposed MVP preserves allowed pose on denial with explicit status; no implicit reveal. |
+| U18 | Occasional Windows firewall prompts: is accepting required for Veilid, distinct from user-mode operation, and would installation normally handle it? | G5/T2a establish actual permissions and behavior; T6 documents evidence-backed setup without claiming an administrator-only game. |
+| U19 | Plan to have the prompt accepted, then experimentally verify the impact on the success/failure currently being experienced. | T2a is the next focus: frozen-binary baseline, user-approved prompt/permission change, matched post-approval trials and honest comparison. Supersedes the agent's suggestion to prioritize outbound/relay redesign; that is not this intervention. |
 
 Inherited constraints: MPL-2.0; one poche executable with CLI and GUI; Figue/Teamy CLI conventions; no Vox/local-instance control foundation; distinct authorized device keys per player, no extra votes from extra devices; typed observations/actions; same-player capture protocol; windowless puppets; preserve model scopes and independent oracles. Previous leave clarification remains: voluntary leavers may rejoin as spectators and take a seat at an appropriate phase; crash reconnect is distinct from voluntary leave, kick, or revoked credentials.
 
@@ -75,6 +84,7 @@ Inherited constraints: MPL-2.0; one poche executable with CLI and GUI; Figue/Tea
 | G2 Failure contract — lifetime scope settled, protocol details open | U13: everyone leaving disbands the lobby; durable all-peer shutdown/resume is not required. Participant crash recovery remains required while peers retain the room, including creator failure. Proposed policy: explicit final departure closes immediately; unexpected loss uses a bounded reconnect grace period, not instantaneous disbanding on a missed message. Choose timeout, partition-safe membership/expiry rules, seat retention, absence progression, snapshot verification and replay deduplication before implementation. | Killed process rejoins with correct entitled state while room survives; final departure and timeout cases cannot revive a closed room through stale invitations/DHT records. Revoked devices denied; creator failure covered without claiming consensus/failover already solved. |
 | G3 Reveal policy | Latest Poche example disallows hand reveal except play; earlier plans supported spectator hand grants. Confirm strict default Poche mode versus removing grants entirely. | No newly enabled reveal bypass; do not silently remove previous policy features or equate render visibility with authorization. |
 | G4 Slice endpoint — movement clarified | User requires two instances create/join and move cards, specifically synchronized physical poses distinct from logical rules state (U14-U17). Include ready/deal to exercise hand-to-play valid and out-of-turn attempts; one complete trick remains an agent-proposed acceptance witness, not a full-game promise. | Local-only wiggle or legal-action-only dragging does not pass. End-to-end acceptance covers accepted pose with rejected play as well as a successful play. |
+| G5 Windows firewall experiment | U19 chooses accepted-prompt testing before transport redesign. Hold executable path/hash, source, dependency pins, feature set, command, machine/network and execution context fixed across a measured permission change. Existing exact-program block rules must be inspected and any reset explicitly approved. | Compare fresh baseline and post-approval runs by count, duration and first failure stage. Verify effective active-profile rules after acceptance; an added allow rule that still conflicts with an enabled block is not an allowed condition. No broad firewall/router changes or automatic prompt acceptance. |
 
 Working support assumption: Windows desktop first (two local independent processes); no web acceptance in this slice, no Makepad/ash migration, no generalized tabletop editor, new RL learner, or new mental-poker protocol. Network transport is not itself decentralized game authority. Preserve existing consensus/security work without claiming it production-ready.
 
@@ -106,7 +116,9 @@ Complete when patch is locked, source builds, baseline results and any failures 
 
 ### [~] T2 Establish Veilid device transport
 
-Latest live acceptance: fifth public `protected_desktop_native_drag_two_process` run exercised route retry (`allocation attempt 2/3 follows`), passed publication, then failed on the certified Create invocation's TransportUnavailable (25.28 s). No successful full public native-input/restart run this continuation. All test child processes were reaped. The next reliability task is reconciling uncertain Create/join action outcomes with the existing exact-command replay/observation contract, without generating new commands or falsely claiming a dropped reply means rejection. This remains in scope and is not a new product decision. Do not launch repeated unchanged public runs hoping for a green result. Full mock Veilid library suite passed 35 tests; final source composition remains below.
+**Current priority:** T2a firewall experiment below supersedes the next-action ordering in historical checkpoints. Defer further uncertain-Create/join changes until the fixed-binary comparison is recorded or its exact permission gate is handed off. This does not discard that remaining reliability work.
+
+Historical live checkpoint before the firewall experiment: fifth public `protected_desktop_native_drag_two_process` run exercised route retry (`allocation attempt 2/3 follows`), passed publication, then failed on the certified Create invocation's TransportUnavailable (25.28 s). No successful full public native-input/restart run in that continuation; T2a now contains newer controlled results. All test child processes were reaped. Remaining reliability work includes reconciling uncertain Create/join action outcomes with the existing exact-command replay/observation contract, without generating new commands or falsely claiming a dropped reply means rejection. This remains in scope and is not a new product decision. Do not launch repeated unchanged public runs hoping for a green result. Full mock Veilid library suite passed 35 tests; final source composition remains below.
 
 Concrete startup failure isolated: fourth public native-input run failed `AllocateRoute: TryAgain` (13.46 s), after the lost-reply change but before admission. Upstream `new_private_route` documents this pre-publication response for insufficient peers or failed reachability tests even after public readiness. Fresh publication and resumed-route allocation now retry only TryAgain, at most three attempts with 500/1000 ms asynchronous backoff; other errors are not retried, and no DHT write or game command is inside the loop. Focused policy and live rerun evidence pending below. Local Veilid reference HEAD is 76b2176926dc24e30f9427540384a04ae22e590c; the dependency remains locked to 99c9616, not silently updated.
 
@@ -161,6 +173,51 @@ Work: close G2 architecture portion; adapt poche-player-client/poche-veilid boun
 Validation: `cargo test --locked -p poche-player-client -p poche-veilid`; add adapter tests for distinct devices, exact-recipient views, stale/duplicate actions, injected failures and recovery. Record actual mock-feature command once implemented. Separate opted-in two-process real-network acceptance from offline mock harness; respect existing public-network opt-in guards.
 
 Complete when same adapter passes mock tests and actual two-process exchange, with topology documented. HTTP tests alone do not satisfy it.
+
+### [!] T2a Measure the effect of accepting Windows firewall permission
+
+**Exact gate:** Baseline is complete. Post-approval comparison awaits user authorization to reset the two exact-program block rules listed below, followed by the user accepting the new Windows prompt (or an explicitly chosen equivalent rule change). No firewall changes or prompt interaction have occurred. Do not rebuild the frozen artifact or rerun an unchanged baseline while waiting. T2a unblocks when that scoped intervention is authorized and the resulting active-profile permission is verified.
+
+**Completion notes:** Read-only inspection on September 9, outside the sandbox after its CIM queries returned Access denied, found Ethernet on the **Public** profile, IPv4 Internet connectivity, firewall enabled, default inbound Block/outbound Allow and notifications enabled. Exact test executable `target/debug/deps/poche_cli-42f0e4df82fe9f43.exe` has enabled Public-profile inbound **Block** rules for both TCP and UDP (all ports/addresses, status OK). Other historical Poche binary paths have a mixture of allow/block rules. This is a concrete current-state observation, not evidence of what policy applied during every earlier failure. No policy was changed.
+
+Frozen experiment artifact: source commit `1fa1af3120caf3e6a76901cdb688f9a6e149246c`, only this plan modified; the `--no-run` command below completed successfully in 1m 11s and reported the same exact test executable path. **Post-build SHA-256: `01EA43121725A58288AE92E362E2A71015B510BF7525C6099E83D8848E475D22`.** The pre-build binary hash differs and must not be used for this comparison. `--list` confirms the exact native-drag test. All trials run outside the sandbox for the same protected-vault/network context; this does not establish that the game needs administrator privileges.
+
+| Condition / trial | Start UTC (September 10; still September 9 Toronto) | Wall seconds | Outcome / first failure |
+| --- | --- | --- | --- |
+| Existing Public TCP/UDP blocks / A1 | 00:08:36.316 | 74.11 | Passed; read retries occurred; actual two-process motion and forced participant restart assertions completed. Hash unchanged after run. |
+| Existing Public TCP/UDP blocks / A2 | 00:10:26.054 | 39.33 | Failed (exit 101): join admission invocation reported TransportUnavailable, then parent reaped children. Hash unchanged. |
+| Existing Public TCP/UDP blocks / A3 | 00:11:05.922 | 87.49 | Passed (exit 0); read retries occurred; motion and forced participant restart assertions completed. Hash unchanged. |
+| User-accepted permission / B1-B3 | Pending | Pending | Not run; effective permission change has not happened. |
+
+**Baseline finding:** 2/3 complete successes with the inspected inbound block rules in place. This reproduces intermittent admission failure, but also shows that this configuration can finish the native-input/participant-recovery path. It does not identify whether messages used relays/hole punching, prove that the block matched every packet, or show that approval has no benefit. Successful test-body durations were 73.49s and 87.46s (table records wrapper wall time); passing profile suffixes were `1788998916940` and `1788999065952`. After A3, a fresh read verified the same Ethernet Public/IPv4 Internet profile, both enabled TCP/UDP Block rules with unchanged port scope, and no remaining process with this test executable's name. No program code, retry policy, network category, router setting or firewall rule was changed between these trials. Fresh protected test profiles remain, as the existing harness documents; temporary invitation files and owned child processes were cleaned up. The B condition remains unmeasured.
+
+Inventoried Query User block identifiers for the exact path: TCP `{D3A8F44F-C26E-4D72-AA34-150177508CFA}` and UDP `{C6C1B9DB-2CEC-4114-ADF3-7B47C401D3D8}`. Both are enabled inbound Block/Public, protocol-specific, Any local/remote ports and addresses. Before any approved reset, re-resolve full rule names and retain complete associated filter properties; do not use a wildcard delete or alter another Poche executable's rules. If the user does not authorize the reset, hand off this exact gate with baseline evidence and leave rules untouched.
+
+**Work and execution order:**
+
+1. Freeze the current source/dependency configuration and compile once using the command below. Resolve the produced executable, list the exact test, and record its SHA-256 **after** compilation. Both child processes use `current_exe()`, so one exact executable rule covers both. Do not switch to another hash/path, copy the executable, rebuild, or change timeouts/retries/features between conditions. If identity changes, inspect that path's rules and restart the comparison.
+2. Run **three sequential baseline trials** under the inspected existing policy, with no firewall change. This is a predeclared exploratory sample, not retry-until-green. Each trial already uses fresh protected profiles/node storage and hidden children with bounded deadlines and owned cleanup. Retain the test's temporary invitation cleanup; do not dump protected stores, private cards or room codes. Record binary hash, start time, duration, exit code and first diagnostic failure stage; a stage not emitted by the existing test is unknown, not inferred. Persist redacted outcome summaries here. Mark any mid-run policy change as a crossover and exclude it from the stable-condition count.
+3. Stop test processes. For the expected prompt: ask the user to approve resetting **only the two inventoried block rules for this exact test executable**, retaining their IDs/filter details for restoration, then launch one bounded warm-up run and let the user accept the Windows prompt. Do not silently perform that reset, change network category or weaken machine defaults. If the user prefers manually changing the exact-program rule, record that different intervention explicitly. An existing block can suppress future prompts and override an allow rule; approval in chat or an allow checkbox alone is not policy evidence.
+4. Inspect resulting rules and active profile again. The current interface is Public, so a Private-only exception would not test this interface; Public is a Windows network-trust category, not a statement about the Internet destination. If the prompt was answered during the warm-up, exclude that mixed-policy run. Verify policy actually permits the intended inbound traffic with no matching enabled block; rule permission still does not prove router/remote reachability. No arbitrary port opening, UPnP change or firewall disable is part of this experiment.
+5. With the same post-build executable hash and execution context, run **three sequential post-approval trials** using the identical command and fresh-profile policy. Record the same outcomes, including every failure. If both conditions pass, neither passes, or stage/duration changes without full success, report that result without manufacturing a causal conclusion. If the small sample suggests improvement, label it preliminary; optional additional balanced/reversal runs require agreeing the count and any further firewall mutation before running them.
+6. Summarize before/after successes out of attempts, durations and failure stages. Distinguish permitted inbound, observed end-to-end success, and unproven causality/general support. List the exact residual rule state and any approved restoration. Carry remaining transport failures back to T2; never infer gameplay/model-checking acceptance from a connection-only result. Installer work, outbound-only redesign and router configuration remain outside this slice.
+
+**Validation (primary root, public-network opt-in; use the same user/execution context on both sides):**
+
+```powershell
+cargo test --locked -p poche-cli --features native-input-test --offline --no-run
+# Verify this path is the artifact reported above; update the recorded identity if not.
+$pocheFirewallExe = 'D:\Repos\Games\poche-3\target\debug\deps\poche_cli-42f0e4df82fe9f43.exe'
+Get-FileHash -LiteralPath $pocheFirewallExe -Algorithm SHA256
+& $pocheFirewallExe --list
+$env:POCHE_ALLOW_VEILID_PUBLIC_TEST = 'I_ACCEPT_PUBLIC_NETWORK_TRAFFIC'
+# Invoke once per numbered trial; no recompilation, mock feature or extra test filters.
+& $pocheFirewallExe 'cli::desktop::connection::process_probe::protected_desktop_native_drag_two_process' --exact --ignored --nocapture --test-threads=1
+```
+
+Source references: `crates/poche-cli/src/cli/desktop/connection.rs` (UDP `0.0.0.0:<dynamic-port>`, TCP/WS listen disabled, UPnP disabled); `process_probe.rs` (same-exe hidden children, protected profiles, actual signed actions, native picking/pose/restart assertions); `crates/poche-native-ui/src/input_probe.rs` (windowless pointer acceptance limitations). Existing `docs/veilid-native-acceptance.md` describes older August gates, not this protected September experiment. Policy interpretation: [Microsoft Windows Firewall rules](https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/windows-firewall/rules); relay fallback is documented in [Veilid INSTALL](https://gitlab.com/veilid/veilid/-/blob/main/INSTALL.md?ref_type=heads), not proven by our pending comparison.
+
+**Completion criteria:** Verified before/after permission states and fixed-binary results are recorded, including failures, limits and residual rule state. A pending user-approved rule reset is an explicit gate, not permission to bypass it. Three green post-approval runs do not by themselves establish that all users require an exception or that public Veilid is universally reliable. No new gameplay/graphics completion claim.
 
 ### [ ] T3 Implement desktop menu and invitation contract
 
@@ -245,6 +302,10 @@ Validation: `cargo test --locked -p poche-spatial -p poche-session -p poche-runt
 Complete when physical motion is shared without turn advancement, card reveal, ownership change or mutation of the rules-engine state. Update formal abstractions to represent pose-only stuttering of logical state; bounded geometry models and input/render tests provide separate evidence, not a proof of arbitrary continuous geometry.
 
 ### [~] T4b Bridge viewports and attempt play separately
+
+**Resume ordering:** T2a is the current focus after the firewall amendment; next-action language in the earlier checkpoints below is historical. Preserve all remaining pointer/GPU/play obligations.
+
+**New public native-input evidence:** T2a baseline A1 and A3 passed the real two-process `protected_desktop_native_drag_two_process` test on the frozen artifact from `1fa1af3`: native pointer-pipeline motion reached the hidden-card peer and the participant recovered the exact accepted pose after forced termination. A2 failed during join admission. These are actual public-Veilid/native-input/restart successes, superseding the older no-success checkpoint below; they still use windowless manually configured image-target picking, not fresh GPU screenshots, ordinary OS input, legal/denied play completion, clipboard menus or complete G4/T5 acceptance.
 
 Continuation checkpoint: the pointer-to-signed-pose test, deterministic dropped-reply test, bounded route-allocation retry and redacted diagnostics are implemented. Local suites pass as listed below; actual public-network completion remains unsuccessful. Resume with the T2 uncertain-admission reliability boundary before spending another public test run; then finish real pointer/GPU capture, accepted/denied drop behavior and remaining T5 work. No active shell/test processes remain at handoff. Intent recheck: U1-U17 and G4 endpoint remain unchanged; this test work does not replace two-window Create/Join/play/recovery with mock-only acceptance. Commit/push status is handled under T6; do not claim remote publication.
 
@@ -387,6 +448,8 @@ U13 acceptance: final intentional departure disbands the lobby; reuse of its inv
 
 ### [ ] T6 Acceptance, docs, and handoff
 
+Firewall documentation obligation (U18/U19): incorporate T2a's actual supported setup and remaining uncertainty in the desktop instructions. Distinguish executable-specific Windows permission from privilege elevation, router reachability and installer behavior. Do not promise popup-free operation or universal necessity of an exception from the exploratory sample.
+
 September 9 continuation handoff: scoped pointer/Veilid reliability work is committed locally after diff review and the tests recorded under T2/T4b. The overall goal is not complete: public native-input acceptance did not finish successfully, and graphical/lifecycle obligations remain. Push still awaits explicit approval for `https://github.com/TeamDman/Poche.git`, branch `model-checking`, after the earlier approval-review rejection; do not retry or bypass it. No remote publication is claimed. The branch was already 16 local commits ahead of origin before this checkpoint.
 
 Work: one documented desktop launch path and windowless puppet invocation; run menu-to-G4 endpoint plus T5 failures. CLI is another authorized device, not window IPC. Capture screenshots and semantic revision/history evidence, inspect images, redact credentials. Update README/coverage/release notes; preserve prior web artifacts with explicit support scope. Review diff, commit scoped work and follow repository push workflow when implementing the agreed goal.
@@ -401,8 +464,9 @@ Complete when all tasks/gates have evidence, failures are resolved or honestly s
 | --- | --- | --- |
 | Single-process mock nodes | Real adapter, fault injection, identities and privacy | Pending |
 | Two Windows game processes | Real Veilid, UI menu/seats/agreed gameplay, crash recovery | Production connector create/join/seats/ready/deal passed in two processes; graphical input, motion and recovery pending |
+| Windows firewall comparison | T2a: fixed executable, inspected before/after policy, three trials each, redacted outcomes and residual rule state | Baseline 2/3 passed with exact-program Public TCP/UDP blocks; A2 admission failed. Post-approval condition awaits scoped rule-reset permission. |
 | Windowless puppets | Same actions, no visible windows, actual GPU capture inspected | Pending |
 | CLI sibling device | Same authorization and observations, no extra vote weight | Pending |
 | Browser/other OS | Outside this slice; retain prior artifacts without claiming new validation | Not targeted |
 
-Critical risks: credential recovery without surviving room state (G2/T5); stolen recovery capability (G1/T5); same-process mock falsely proving interprocess networking (T2/T6); speculative animation mistaken for accepted play (T4); all peers receiving private faces (T4); name collision granting identity (T5); feature unification accidentally shipping mocks (T2); scope drifting into general engine/UI rewrite (G4). Each must have a concrete negative test or documented gate disposition before release.
+Critical risks: credential recovery without surviving room state (G2/T5); stolen recovery capability (G1/T5); same-process mock falsely proving interprocess networking (T2/T6); speculative animation mistaken for accepted play (T4); all peers receiving private faces (T4); name collision granting identity (T5); feature unification accidentally shipping mocks (T2); scope drifting into general engine/UI rewrite (G4); firewall/profile/executable changes or time-varying public peers confounding a before/after result (G5/T2a: freeze local variables, report every trial and label small-sample limits). Each must have a concrete negative test or documented gate disposition before release.
