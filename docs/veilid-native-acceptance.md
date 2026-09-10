@@ -2,6 +2,50 @@
 
 Status: Tasks 5.2, 5.4, and 5.6 complete (2026-08-05).
 
+## September desktop firewall experiment
+
+On September 9–10, 2026, the protected desktop two-process native-input test
+was compared before and after accepting Windows firewall permission. This is
+separate from the older August gates below; it does not mark the desktop MVP
+complete.
+
+| Exact-program Public-profile policy | Complete successes | Successful run wall times | Failed run |
+| --- | --- | --- | --- |
+| TCP/UDP inbound Block | 2/3 | 74.11s, 87.49s | Join admission transport unavailable, 39.33s |
+| TCP/UDP inbound Allow | 2/3 | 54.27s, 48.43s | Create invocation transport unavailable, 15.74s |
+
+One 62.55s passing prompt warm-up is excluded because permission changed during
+that run. All six measured runs used the same executable path and SHA-256,
+source at `1fa1af3`, native-input feature set, production connector and
+protected-profile policy. Each run used fresh node identities; successful runs
+included remote private-safe card motion and participant recovery after forced
+termination. These were windowless pointer-pipeline tests, not GPU/OS-input or
+complete gameplay acceptance.
+
+Accepting the prompt did **not eliminate the intermittent failure**. The
+post-approval successes were faster, but three trials per condition, roughly
+22 hours between samples and uncontrolled public peer conditions do not establish a causal
+performance improvement. The blocked-policy successes also do not identify
+the route mechanism or establish reliable popup-free operation.
+
+Only the two specifically approved block rules were removed, after full local
+backups and narrowly scoped Windows administrator approval. The resulting
+executable-specific Public TCP/UDP Allow rules remain installed; firewall
+defaults, other rules, router configuration and the Ethernet profile were not
+changed. The game/test did not run through that administrator helper. This
+does not impose an administrator-only runtime requirement or automatically
+grant access to other Poche executable paths.
+
+The exact artifact, command, per-run timestamps, rule identifiers, backup
+locations and interpretation limits are in
+[PLAN-6, T2a](../PLAN-6-DESKTOP-VEILID.md#x-t2a-measure-the-effect-of-accepting-windows-firewall-permission).
+Do not rebuild that artifact in the middle of a comparison or treat an allow
+rule for a different binary/profile as the same condition. Further work should
+investigate uncertain Create/join outcomes, without treating a missing reply
+as proof that a state-changing action was rejected.
+
+## Historical August gates
+
 Poche has two deliberately different native Veilid gates. The default local
 gate is network-free and reproducible. It runs all protocol, authorization,
 formal-agreement, lifecycle, retry, projection, and crypto tests, then records
