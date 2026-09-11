@@ -10,6 +10,7 @@
 
 mod diagnostic;
 mod live;
+mod lobby_spatial;
 mod presentation;
 mod replay;
 mod semantic_html;
@@ -20,6 +21,7 @@ mod widgets;
 
 pub use diagnostic::*;
 pub use live::*;
+pub use lobby_spatial::*;
 pub use presentation::*;
 pub use replay::*;
 pub use semantic_html::*;

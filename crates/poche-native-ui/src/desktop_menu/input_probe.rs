@@ -54,6 +54,8 @@ impl IsolatedClipboard {
 
 pub enum MenuScenario {
     Create,
+    /// Exercise real spatial seating, readiness and returning to the room edge.
+    CreateAndSeat,
     /// Publish the copied invitation to the test coordinator only after the
     /// creator has taken seat 0 and readied through the rendered controls.
     CreateAndDeal {
@@ -126,13 +128,23 @@ pub fn run(
     steps.extend(name.chars().map(Step::Type));
     steps.push_back(Step::Field(Field::Name, name.to_owned()));
     match scenario {
-        MenuScenario::Create | MenuScenario::CreateAndDeal { .. } => {
+        MenuScenario::Create | MenuScenario::CreateAndSeat | MenuScenario::CreateAndDeal { .. } => {
             steps.push_back(Step::Capture("menu.png", false));
             steps.push_back(Step::Click(Target::Create, 0));
             steps.push_back(Step::Live);
             steps.push_back(Step::Click(Target::Copy, 0));
             steps.push_back(Step::Copied);
             steps.push_back(Step::Capture("lobby.png", false));
+            if matches!(scenario, MenuScenario::CreateAndSeat) {
+                steps.extend([
+                    Step::Invoke("room-take-seat-0".into()), Step::OwnSeat(0),
+                    Step::Invoke("room-ready".into()), Step::OwnReady,
+                    Step::Capture("seated-ready.png", false),
+                    Step::Invoke("room-unready".into()),
+                    Step::Invoke("room-release-seat".into()), Step::OwnUnseated,
+                    Step::Capture("standing-again.png", false),
+                ]);
+            }
             if let MenuScenario::CreateAndDeal { invitation_ready } = scenario {
                 steps.extend([
                     Step::Invoke("room-take-seat-0".into()),
@@ -251,6 +263,7 @@ enum Target {
     Join,
     Copy,
     LiveAction(String),
+    Seat(u8),
 }
 
 enum Step {
@@ -265,6 +278,7 @@ enum Step {
     Invoke(String),
     Committed(String, Option<poche_player_client::DeviceActionResult>),
     OwnSeat(u8),
+    OwnUnseated,
     OwnReady,
     PublishInvitation(Box<dyn FnOnce(&str) -> Result<(), String> + Send + Sync>),
     Dealt,
@@ -283,7 +297,7 @@ impl Step {
             Self::Dealt => "waiting for own dealt hand".to_owned(),
             Self::Bid => "waiting for an advertised bid".to_owned(),
             Self::Trick(probe) => probe.description(),
-            Self::OwnSeat(_) | Self::OwnReady => "checking own lobby membership".to_owned(),
+            Self::OwnSeat(_) | Self::OwnReady | Self::OwnUnseated => "checking own lobby membership".to_owned(),
             Self::Live => "waiting for connection".to_owned(),
             Self::Capture(_, _) => "saving screenshot".to_owned(),
             _ => "checking menu input".to_owned(),
@@ -381,14 +395,20 @@ impl Driver {
             Step::Click(target, stage) => {
                 let entity = find_target(world, &target)
                     .ok_or_else(|| format!("missing {target:?} control"))?;
-                let transform = world
-                    .get::<UiGlobalTransform>(entity)
-                    .ok_or("UI geometry missing")?;
-                let position = transform.translation;
-                let camera = world
-                    .get::<ComputedUiTargetCamera>(entity)
-                    .and_then(ComputedUiTargetCamera::get)
-                    .ok_or("UI camera missing")?;
+                let (position, camera) = if matches!(target, Target::Seat(_)) {
+                    let origin = world.get::<GlobalTransform>(entity).ok_or("seat geometry missing")?.translation();
+                    let (id, camera, transform) = world.query_filtered::<(Entity, &Camera, &GlobalTransform), With<crate::TabletopCamera>>()
+                        .single(world).map_err(|_| "table camera missing")?;
+                    let position = camera.world_to_viewport(transform, origin).map_err(|_| "seat outside viewport")?;
+                    if !camera.logical_viewport_rect().is_some_and(|rect| rect.contains(position)) {
+                        return Err("seat is not visible in the table viewport".to_owned());
+                    }
+                    (position, id)
+                } else {
+                    let position = world.get::<UiGlobalTransform>(entity).ok_or("UI geometry missing")?.translation;
+                    let camera = world.get::<ComputedUiTargetCamera>(entity).and_then(ComputedUiTargetCamera::get).ok_or("UI camera missing")?;
+                    (position, camera)
+                };
                 let render_target = world
                     .get::<bevy::camera::RenderTarget>(camera)
                     .and_then(|target| target.normalize(None))
@@ -511,8 +531,12 @@ impl Driver {
                     );
                     self.steps
                         .push_front(Step::Committed(action.clone(), live.last_result().cloned()));
-                    self.steps
-                        .push_front(Step::Click(Target::LiveAction(action), 0));
+                    let target = live.observation().actions.iter().find(|candidate| candidate.id == action)
+                        .and_then(|candidate| match candidate.payload {
+                            poche_protocol::CommandPayload::TakeSeat { seat } => Some(Target::Seat(seat)),
+                            _ => None,
+                        }).unwrap_or(Target::LiveAction(action));
+                    self.steps.push_front(Step::Click(target, 0));
                 }
             }
             Step::Committed(action, previous) => {
@@ -543,6 +567,12 @@ impl Driver {
                     member.principal_id == view.projection.principal_id && member.ready
                 }) {
                     return Err("rendered Ready did not ready this player".to_owned());
+                }
+            }
+            Step::OwnUnseated => {
+                let view = world.resource::<NativeLiveDevice>().observation();
+                if !view.projection.payload.members.iter().any(|member| member.principal_id == view.projection.principal_id && member.seat.is_none() && !member.ready) {
+                    return Err("released player is not an unseated member".to_owned());
                 }
             }
             Step::PublishInvitation(publish) => {
@@ -606,6 +636,9 @@ impl Driver {
             },
             Step::Capture(name, pending) => {
                 if !pending {
+                    if world.contains_resource::<NativeLiveDevice>() {
+                        crate::lobby_scene::validate_members(world)?;
+                    }
                     let path = self.directory.join(name);
                     self.captures.push(path.clone());
                     world.resource_mut::<AcceptanceOptions>().screenshot = Some(path);
@@ -627,6 +660,10 @@ impl Driver {
 }
 
 fn find_target(world: &mut World, target: &Target) -> Option<Entity> {
+    if let Target::Seat(ordinal) = target {
+        return world.query::<(Entity, &crate::lobby_scene::SeatControl, &Mesh3d)>().iter(world)
+            .find(|(_, seat, _)| seat.0.get() == *ordinal).map(|(entity, _, _)| entity);
+    }
     if let Target::LiveAction(id) = target {
         return world
             .query::<(Entity, &LiveAction)>()

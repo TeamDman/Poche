@@ -73,6 +73,7 @@ use serde::Serialize;
 
 mod native_capture;
 mod native_live;
+mod lobby_scene;
 mod view_layout;
 
 pub use native_capture::*;
@@ -180,6 +181,7 @@ pub struct NativeController {
     last_commit_cost: Option<Duration>,
     physical_poses: HashMap<ObjectId, poche_player_client::PhysicalPoseState>,
     physical_defaults: HashMap<ObjectId, PoseMm>,
+    participants: Option<Vec<poche_ui::ParticipantAnchor>>,
 }
 
 impl NativeController {
@@ -231,6 +233,7 @@ impl NativeController {
             last_commit_cost: None,
             physical_poses: HashMap::new(),
             physical_defaults,
+            participants: None,
         })
     }
 
@@ -461,6 +464,8 @@ pub fn native_controller_from_observation(
         })
         .collect();
     let mut controller = NativeController::try_new_viewer(layout, scene, issuing_seat)?;
+    controller.participants = Some(poche_ui::realize_lobby_members(&controller.layout, &presentation.members)
+        .map_err(|error| format!("live lobby projection failed: {error:?}"))?);
     controller.legal_plays = Some(legal_plays);
     for card in &controller.scene.cards {
         let CardLocation::Hand {
@@ -1089,6 +1094,7 @@ fn run_configured(
             .add_plugins(desktop_menu::DesktopMenuPlugin);
     }
     app.add_plugins(desktop_menu::DesktopLiveControlsPlugin);
+    app.add_plugins(lobby_scene::LobbyScenePlugin);
     app.insert_resource(debug_overlay)
         .insert_resource(render_surface)
         .insert_resource(acceptance)
@@ -1588,6 +1594,11 @@ fn spawn_scene_objects(
 
     let mut roots = HashMap::new();
     for object in &controller.scene.objects {
+        if controller.participants.is_some() && matches!(object.id, ObjectId::Player(_)) {
+            // Game-layout player slots are not room membership. Live avatars
+            // are derived separately from actual public participant anchors.
+            continue;
+        }
         let (mesh, material) = match object.id {
             ObjectId::Table => (
                 meshes.add(Cuboid::new(
@@ -1631,6 +1642,9 @@ fn spawn_scene_objects(
             .id();
         if object.id == ObjectId::Zone(ZoneId::Play) {
             commands.entity(id).observe(on_drag_drop);
+        }
+        if let ObjectId::Seat(seat) = object.id {
+            commands.entity(id).insert(lobby_scene::SeatControl(seat)).observe(lobby_scene::click_seat);
         }
         roots.insert(object.id, id);
     }
@@ -3391,6 +3405,10 @@ mod tests {
             let observation = client.observe(&room).unwrap();
             let mut controller = native_controller_from_observation(&observation).unwrap();
             assert_eq!(controller.issuing_seat().is_some(), index == 1);
+            let people = controller.participants.as_ref().unwrap();
+            assert_eq!(people.len(), 1, "layout slots are not phantom room members");
+            assert_eq!(people[0].principal, player.as_str());
+            assert_eq!(people[0].seat.is_some(), index == 1);
             if index != 1 {
                 assert!(controller.first_owned_face().is_none());
                 assert_eq!(

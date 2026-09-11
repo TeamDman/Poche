@@ -98,6 +98,37 @@ for the current desktop lobby entry point.
 
 ## Rendered desktop menu checks
 
+The live lobby now projects **actual public members** into table-local anchors:
+seated members have capsules at their seats; unseated members stand outside the
+table. Empty seats no longer imply phantom players. Ready capsules are green;
+disconnected members retain their place with a grey capsule until membership
+changes. The fixed rules/card seat slots remain intact—removing a member does
+not erase their logical game cards or decide dropout policy in the renderer.
+
+The engine-neutral mapping is `poche-ui/src/lobby_spatial.rs`; it has no private
+hand input and gives different recipients the same ordered public geometry.
+The desktop mirrors it and projects readable name/status labels into native UI.
+Clicking a chair or its available seat label submits the same advertised
+`TakeSeat` action as the bottom palette, awaiting the ordinary authority result.
+Seat numbers match the existing zero-based action labels. Public names currently
+fall back to shortened principal IDs; the menu name selects a protected local
+profile and is not yet a shared signed display-name field. These anchors are
+not a new free-roaming avatar authority or a physics engine.
+
+For windowless menu → spatial seat click → Ready → spectator acceptance:
+
+```powershell
+$env:WGPU_BACKEND = 'dx12'
+$env:POCHE_LOBBY_EVIDENCE_ROOT = "$PWD/target/my-lobby-input-run"
+cargo test --locked -p poche-native-ui --features input-probe --offline --lib lobby_scene::tests::rendered_lobby_seat_ready_and_release -- --exact --ignored --nocapture --test-threads=1
+```
+
+The output directory must be fresh. The harness uses normal pointer/keyboard
+input and a real typed loopback authority; it checks committed results and
+actual Bevy capsule identities/positions, and saves lobby/Ready/standing captures.
+Clipboard buffers are isolated and no OS windows open. This is not public
+Veilid or cross-process clipboard proof.
+
 The desktop build explicitly enables Bevy's `system_clipboard` feature. Without
 it, Copy/Paste use an in-process buffer and cannot exchange invitations between
 two independently launched games. Clipboard errors remain visible; enabling the

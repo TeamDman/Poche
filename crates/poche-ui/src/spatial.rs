@@ -308,6 +308,10 @@ mod tests {
         let plain_spectator = model("viewer", None, Vec::new());
         let granted_spectator = model("viewer", None, vec![alice_hand]);
 
+        let membership = crate::realize_lobby_members(&layout, &alice.members).unwrap();
+        assert_eq!(membership, crate::realize_lobby_members(&layout, &plain_spectator.members).unwrap());
+        assert_eq!(membership, crate::realize_lobby_members(&layout, &granted_spectator.members).unwrap());
+
         let alice_scene = realize_presentation_spatial(&layout, 4, &alice).expect("Alice scene");
         let plain_scene =
             realize_presentation_spatial(&layout, 4, &plain_spectator).expect("plain scene");
