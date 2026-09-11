@@ -341,6 +341,7 @@ impl Probe {
                 if self.frame < 60 {
                     return Ok(());
                 }
+                crate::desktop_menu::input_probe::validate_live_controls_frame(world)?;
                 let controller = world.resource::<NativeController>();
                 let id = controller
                     .scene

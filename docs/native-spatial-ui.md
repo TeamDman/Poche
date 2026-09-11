@@ -23,6 +23,18 @@ rotations are a separate shared overlay. A card moved to PLAY out of turn can
 stay there physically, still logically owned and face-hidden from the peer.
 Only an accepted play publishes its face.
 
+The home table view now faces from the viewer's seat. Taking/changing seats
+tweens to that view; ordinary network observations preserve manual camera
+movement. Space tweens back to the viewer's home view. The table and hand use
+separate nonoverlapping screen regions, with an independent screen-space
+camera for the bottom action bar. These are local presentation choices: they
+do not move canonical objects, change card ownership, or disclose faces.
+The rendered drag harness checks the measured action-bar bounds as well as
+the camera assignment. Full narrow-window and large-action-set usability
+remain separate acceptance work; rectangle arithmetic alone cannot prove them.
+The framing/bounds run `target/phase6-rendered-play-12` passed in 48.24s;
+both perspectives were inspected at 1280x800. Tiny world labels still need work.
+
 The hand inset and table are different cameras into the same world. A drag
 retains the original world-space grab offset and uses the camera under the
 pointer; entering the table viewport positions the same card under that
@@ -73,7 +85,7 @@ and `after.png`, saved by the existing local screenshot/readback path. These
 captures intentionally include the graphical viewer's private hand; treat
 them as local developer evidence, not copy-safe/public room diagnostics.
 
-The September 10 final run passed in 48.02s; inspected images live under ignored
+The earlier September 10 drag-fix run passed in 48.02s; inspected images live under ignored
 `target/phase6-rendered-play-06`. It also asserts a six-degree change on each
 rotation axis and waits for the exact final pose receipt, not a fixed frame
 delay. Earlier runs exposed camera-offset drift, a

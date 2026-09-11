@@ -24,6 +24,28 @@ use std::{
 #[derive(Clone, Default)]
 pub struct IsolatedClipboard(Arc<Mutex<String>>);
 
+/// Check the production UI's measured geometry, not a fixture rectangle.
+/// Called after layout settles in the rendered card-input acceptance harness.
+pub(crate) fn validate_live_controls_frame(world: &mut World) -> Result<(), String> {
+    let mut roots = world.query_filtered::<
+        (&ComputedNode, &UiGlobalTransform, &ComputedUiTargetCamera),
+        With<LiveControls>,
+    >();
+    let (node, transform, target) = roots.single(world).map_err(|_| "live controls missing")?;
+    let entity = target.get().ok_or("live controls camera missing")?;
+    let camera = world.get::<Camera>(entity).ok_or("live controls camera missing")?;
+    if world.get::<crate::DesktopControlsCamera>(entity).is_none() || camera.viewport.is_some() {
+        return Err("live controls must use their own full-surface camera".to_owned());
+    }
+    let size = camera.physical_target_size().ok_or("live controls target missing")?.as_vec2();
+    let min = transform.translation - node.size() * 0.5;
+    let max = transform.translation + node.size() * 0.5;
+    if min.x < -1.0 || min.y < size.y * 0.8 - 1.0 || max.x > size.x + 1.0 || max.y > size.y + 1.0 {
+        return Err("live controls overlap the world/hand or leave the render surface".to_owned());
+    }
+    Ok(())
+}
+
 impl IsolatedClipboard {
     pub fn text(&self) -> String {
         self.0.lock().expect("isolated clipboard").clone()

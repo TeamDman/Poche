@@ -153,7 +153,7 @@ fn refresh_live_controls(
     mut card_font: Local<Option<Handle<Font>>>,
     mut revision: Local<Option<u64>>,
     old: Query<Entity, With<LiveControls>>,
-    cameras: Query<Entity, With<crate::TabletopCamera>>,
+    cameras: Query<Entity, With<crate::DesktopControlsCamera>>,
     mut commands: Commands,
 ) {
     let Some(live) = live else {

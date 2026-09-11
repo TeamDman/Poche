@@ -73,6 +73,7 @@ use serde::Serialize;
 
 mod native_capture;
 mod native_live;
+mod view_layout;
 
 pub use native_capture::*;
 pub use native_live::*;
@@ -608,6 +609,10 @@ struct TabletopCamera;
 #[derive(Component)]
 struct HandCamera;
 
+/// Screen-space controls must not inherit either world's camera viewport.
+#[derive(Component)]
+struct DesktopControlsCamera;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct CameraView {
     target: Vec3,
@@ -662,6 +667,8 @@ struct CameraResetTween {
 #[derive(Resource, Debug)]
 struct CameraRig {
     view: CameraView,
+    home: CameraView,
+    seat: Option<SeatId>,
     reset: Option<CameraResetTween>,
 }
 
@@ -669,12 +676,22 @@ impl Default for CameraRig {
     fn default() -> Self {
         Self {
             view: CameraView::home(),
+            home: CameraView::home(),
+            seat: None,
             reset: None,
         }
     }
 }
 
 impl CameraRig {
+    fn follow_seat(&mut self, seat: Option<SeatId>, home: CameraView) {
+        if self.seat != seat {
+            self.seat = seat;
+            self.home = home;
+            self.begin_reset();
+        }
+    }
+
     fn begin_reset(&mut self) {
         self.reset = Some(CameraResetTween {
             from: self.view,
@@ -694,10 +711,10 @@ impl CameraRig {
         let linear = (tween.elapsed_seconds / CAMERA_RESET_SECONDS).clamp(0.0, 1.0);
         let eased = linear * linear * (3.0 - 2.0 * linear);
         if linear < 1.0 {
-            self.view = tween.from.interpolate(CameraView::home(), eased);
+            self.view = tween.from.interpolate(self.home, eased);
             self.reset = Some(tween);
         } else {
-            self.view = CameraView::home();
+            self.view = self.home;
             self.reset = None;
         }
     }
@@ -1460,6 +1477,19 @@ fn setup_native_scene(mut commands: Commands, surface: Res<NativeRenderSurface>)
     if let Some(target) = surface.render_target() {
         hand.insert(target);
     }
+    let mut controls = commands.spawn((
+        Camera2d,
+        Camera {
+            order: 2,
+            clear_color: ClearColorConfig::None,
+            ..default()
+        },
+        DesktopControlsCamera,
+        bevy::camera::visibility::RenderLayers::none(),
+    ));
+    if let Some(target) = surface.render_target() {
+        controls.insert(target);
+    }
     commands.spawn((
         DirectionalLight {
             illuminance: 8_000.0,
@@ -1487,7 +1517,8 @@ fn update_hand_camera(
     controller: Res<NativeController>,
     surface: Res<NativeRenderSurface>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    mut cameras: Query<(&mut Camera, &mut Transform, &Projection), With<HandCamera>>,
+    mut cameras: Query<(&mut Camera, &mut Transform, &Projection), (With<HandCamera>, Without<TabletopCamera>)>,
+    mut table_cameras: Query<&mut Camera, (With<TabletopCamera>, Without<HandCamera>)>,
 ) {
     let size = match &*surface {
         NativeRenderSurface::Windowless { width, height, .. } => UVec2::new(*width, *height),
@@ -1499,6 +1530,11 @@ fn update_hand_camera(
         }
     };
     let cards: Vec<_> = controller.scene.cards.iter().filter(|card| matches!(card.location, CardLocation::Hand {seat, ..} if Some(seat) == controller.issuing_seat)).collect();
+    let layout = view_layout::viewports(size, !cards.is_empty());
+    for mut camera in &mut table_cameras {
+        camera.is_active = size.x >= 10 && size.y >= 10;
+        camera.viewport = Some(view_layout::viewport(layout.table));
+    }
     for (mut camera, mut transform, projection) in &mut cameras {
         camera.is_active = !cards.is_empty() && size.x >= 10 && size.y >= 10;
         if !camera.is_active {
@@ -1510,15 +1546,11 @@ fn update_hand_camera(
             .sum::<Vec3>()
             / cards.len() as f32;
         let Projection::Perspective(projection) = projection else { continue; };
-        let viewport_size = UVec2::new(size.x * 3 / 5, size.y / 5);
+        let viewport_size = layout.hand.size();
         let distance = hand_camera_distance(cards.len(), viewport_size.x as f32 / viewport_size.y as f32, projection.fov);
         *transform =
             Transform::from_translation(center + Vec3::Y * distance).looking_at(center, Vec3::NEG_Z);
-        camera.viewport = Some(bevy::camera::Viewport {
-            physical_position: UVec2::new(size.x / 5, size.y * 3 / 5),
-            physical_size: viewport_size,
-            ..default()
-        });
+        camera.viewport = Some(view_layout::viewport(layout.hand));
     }
 }
 
@@ -1981,12 +2013,15 @@ fn poll_live_device(
 
 fn camera_input(
     time: Res<Time>,
+    controller: Res<NativeController>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
     mut rig: ResMut<CameraRig>,
     mut camera: Single<&mut Transform, With<TabletopCamera>>,
 ) {
+    let home = view_layout::seat_home(&controller);
+    rig.follow_seat(controller.issuing_seat, home);
     if keys.just_pressed(KeyCode::Space) {
         rig.begin_reset();
     } else {
