@@ -33,6 +33,14 @@ dragging change yaw/pitch/roll. A release is queued behind preceding poses if
 necessary, retaining its original command ID and rules revision. Later pose-only
 receipts do not erase a visible play rejection.
 
+If an invocation returns a receipt but its follow-up snapshot fails, the native
+worker retains that receipt while retrying reads, then delivers it with the
+fresh projection. It does not resend the command or discard its known result.
+A lost invocation ACK remains an unknown outcome: a newer revision alone is
+not treated as a receipt. Closing the client also stops a worker waiting only
+for confirmation reads. Deterministic tests exercise these boundaries against
+the real loopback rules authority; they are not proof of public-network reliability.
+
 Reproduce the **windowless GPU + signed mock Veilid** input test from the repo
 root. Use a fresh output directory each time:
 
@@ -175,6 +183,14 @@ legal drag's outcome, after peer-verified denied movement succeeded. The cause
 is not yet isolated. Follow-up instrumentation checks that release actually
 queues the action and records stage timings; this is not a transport fix.
 See PLAN-6 T4b for the measured result and remaining evidence gates.
+
+The post-receipt-fix run (`target/phase6-public-trick-03`) passed in 270.42s,
+including both rendered clients completing the trick and agreeing on scoring,
+then the scripted participant restart. Both next-round captures were inspected.
+This does not prove the cause of earlier failures or smooth network behavior:
+pose confirmation stages took 35.555s and 44.398s, with read retries still
+occurring. Reducing avoidable queued motion is the next performance task;
+OS clipboard exchange, visual polish and the other PLAN-6 gates remain open.
 
 ## Architecture and controls
 

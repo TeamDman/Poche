@@ -2968,7 +2968,7 @@ mod tests {
         }
     }
 
-    fn certified_profile(player: &PrincipalId, label: &str, device_byte: &str) -> DeviceProfile {
+    pub(super) fn certified_profile(player: &PrincipalId, label: &str, device_byte: &str) -> DeviceProfile {
         let device_key = device_byte.repeat(32);
         let device_id = DeviceId::new(device_key.clone()).expect("device ID");
         let certificate = UnsignedDeviceCertificateWire {
@@ -3022,7 +3022,7 @@ mod tests {
         assert_eq!(outcome[0].disposition, AuthorityDisposition::Applied);
     }
 
-    fn running_play_state() -> (SessionState<OracleSessionGame<2>>, PrincipalId) {
+    pub(super) fn running_play_state() -> (SessionState<OracleSessionGame<2>>, PrincipalId) {
         let alice = PrincipalId::new("11".repeat(32)).expect("alice");
         let bob = PrincipalId::new("22".repeat(32)).expect("bob");
         let room_id = RoomId::new("native-device-room").expect("room");

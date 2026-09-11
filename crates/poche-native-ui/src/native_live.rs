@@ -94,6 +94,7 @@ pub struct NativeLiveDevice {
     commands: mpsc::SyncSender<NativeWorkerCommand>,
     motion_outbox: MotionOutbox,
     events: Mutex<mpsc::Receiver<NativeWorkerEvent>>,
+    worker_lifetime: mpsc::Sender<()>,
     next_command: u64,
     #[cfg(feature = "input-probe")]
     queued_actions: u64,
@@ -122,6 +123,7 @@ impl NativeLiveDevice {
         let command_namespace = blake3::hash(&random).to_hex()[..32].to_owned();
         let (command_tx, command_rx) = mpsc::sync_channel(8);
         let (event_tx, event_rx) = mpsc::sync_channel(8);
+        let (worker_lifetime, worker_lifetime_rx) = mpsc::channel::<()>();
         let initial_revision = observation.projection.current_revision;
         let initial_hands = observation.physical_hands.clone();
         let initial_epoch = observation.projection.session_epoch;
@@ -132,8 +134,14 @@ impl NativeLiveDevice {
                 let mut latest_hands = initial_hands;
                 let mut latest_epoch = initial_epoch;
                 let mut force_snapshot = false;
+                let mut pending_result = None;
                 let mut retry_delay = Duration::from_millis(50);
                 loop {
+                    // Confirmation-only reads may bypass command_rx forever.
+                    // Dropping the client must still let this worker stop.
+                    if matches!(worker_lifetime_rx.try_recv(), Err(mpsc::TryRecvError::Disconnected)) {
+                        break;
+                    }
                     // An uninterrupted stream of drag samples must not starve
                     // reads (including the submitting device's own receipt).
                     let next = if force_snapshot {
@@ -246,6 +254,11 @@ impl NativeLiveDevice {
                                         {
                                             break;
                                         }
+                                        // The invocation already returned its receipt.
+                                        // Do not lose it because a separate read failed.
+                                        // Read confirmation before consuming later writes.
+                                        pending_result = Some(result);
+                                        force_snapshot = true;
                                         retry_delay = Duration::from_millis(500);
                                     }
                                 },
@@ -283,10 +296,15 @@ impl NativeLiveDevice {
                                     latest_epoch = observation.projection.session_epoch;
                                     force_snapshot = false;
                                     latest_hands = observation.physical_hands.clone();
-                                    if event_tx
-                                        .send(NativeWorkerEvent::Observed(Box::new(observation)))
-                                        .is_err()
-                                    {
+                                    let event = if let Some(result) = pending_result.take() {
+                                        NativeWorkerEvent::Updated {
+                                            result,
+                                            observation: Box::new(observation),
+                                        }
+                                    } else {
+                                        NativeWorkerEvent::Observed(Box::new(observation))
+                                    };
+                                    if event_tx.send(event).is_err() {
                                         break;
                                     }
                                 }
@@ -317,6 +335,7 @@ impl NativeLiveDevice {
             commands: command_tx,
             motion_outbox: MotionOutbox::default(),
             events: Mutex::new(event_rx),
+            worker_lifetime,
             next_command: 0,
             #[cfg(feature = "input-probe")]
             queued_actions: 0,
@@ -336,11 +355,13 @@ impl NativeLiveDevice {
         let Self {
             commands,
             events,
+            worker_lifetime,
             worker,
             ..
         } = self;
         drop(commands);
         drop(events);
+        drop(worker_lifetime);
         worker
             .join()
             .map_err(|_| "native device worker failed during shutdown".to_owned())
@@ -491,6 +512,9 @@ fn retryable_observation_error(error: DeviceClientError) -> bool {
 }
 
 #[cfg(test)]
+mod receipt_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -541,12 +565,14 @@ mod tests {
         let (commands, received) = mpsc::sync_channel(1);
         commands.try_send(pose(false, -1)).ok().unwrap();
         let (_events, events_rx) = mpsc::sync_channel(1);
+        let (worker_lifetime, _lifetime_rx) = mpsc::channel();
         let mut live = NativeLiveDevice {
             room_invitation: None,
             observation,
             commands,
             motion_outbox: MotionOutbox::default(),
             events: Mutex::new(events_rx),
+            worker_lifetime,
             next_command: 0,
             command_namespace: "outbox-test".to_owned(),
             #[cfg(feature = "input-probe")]
