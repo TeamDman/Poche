@@ -36,6 +36,14 @@ changed. The game/test did not run through that administrator helper. This
 does not impose an administrator-only runtime requirement or automatically
 grant access to other Poche executable paths.
 
+The public test launches run **outside the agent sandbox**, not through UAC.
+A September 10 read-only check of that outside-sandbox process returned
+`AdministratorToken=false`; Ethernet was Public with IPv4 Internet access.
+Failures and successful public runs both occurred on this execution path.
+We have not performed an inside/outside-sandbox or ordinary-user/Administrator
+Veilid comparison. The separate test-only private clipboard station creation
+failure is not evidence that Veilid requires Administrator privileges.
+
 The exact artifact, command, per-run timestamps, rule identifiers, backup
 locations and interpretation limits are in
 [PLAN-6, T2a](../PLAN-6-DESKTOP-VEILID.md#x-t2a-measure-the-effect-of-accepting-windows-firewall-permission).
