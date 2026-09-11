@@ -13,6 +13,9 @@ use poche_protocol::{CommandId, RoomId};
 
 use crate::{CommittedPresentation, advertised_action_for_play};
 
+mod motion_queue;
+use motion_queue::{CommandInbox, COMMAND_CAPACITY};
+
 enum NativeWorkerCommand {
     Pose {
         card_id: String,
@@ -41,23 +44,7 @@ struct MotionOutbox(VecDeque<NativeWorkerCommand>);
 
 impl MotionOutbox {
     fn push(&mut self, command: NativeWorkerCommand) -> Result<(), String> {
-        if let NativeWorkerCommand::Pose {
-            card_id,
-            claim,
-            position_mm,
-            rotation_millidegrees,
-        } = &command
-            && let Some(NativeWorkerCommand::Pose {
-                card_id: previous_id,
-                claim: previous_claim,
-                position_mm: previous_position,
-                rotation_millidegrees: previous_rotation,
-            }) = self.0.back_mut()
-            && card_id == previous_id
-        {
-            *previous_claim |= *claim;
-            *previous_position = *position_mm;
-            *previous_rotation = *rotation_millidegrees;
+        if self.0.back_mut().is_some_and(|previous| previous.absorb_pose(&command)) {
             return Ok(());
         }
         if self.0.len() >= 52 {
@@ -121,7 +108,7 @@ impl NativeLiveDevice {
         let mut random = [0_u8; 16];
         getrandom::fill(&mut random).map_err(|_| "cannot allocate command identity".to_owned())?;
         let command_namespace = blake3::hash(&random).to_hex()[..32].to_owned();
-        let (command_tx, command_rx) = mpsc::sync_channel(8);
+        let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
         let (event_tx, event_rx) = mpsc::sync_channel(8);
         let (worker_lifetime, worker_lifetime_rx) = mpsc::channel::<()>();
         let initial_revision = observation.projection.current_revision;
@@ -135,6 +122,7 @@ impl NativeLiveDevice {
                 let mut latest_epoch = initial_epoch;
                 let mut force_snapshot = false;
                 let mut pending_result = None;
+                let mut inbox = CommandInbox::default();
                 let mut retry_delay = Duration::from_millis(50);
                 loop {
                     // Confirmation-only reads may bypass command_rx forever.
@@ -148,7 +136,7 @@ impl NativeLiveDevice {
                         thread::sleep(retry_delay);
                         Err(mpsc::RecvTimeoutError::Timeout)
                     } else {
-                        command_rx.recv_timeout(retry_delay)
+                        inbox.receive(&command_rx, retry_delay)
                     };
                     match next {
                         Ok(NativeWorkerCommand::Pose {

@@ -33,6 +33,14 @@ dragging change yaw/pitch/roll. A release is queued behind preceding poses if
 necessary, retaining its original command ID and rules revision. Later pose-only
 receipts do not erase a visible play rejection.
 
+To limit motion backlog, the worker combines up to eight adjacent unsent poses
+for the same card into the newest position/rotation, retaining any unsent
+ownership claim. A different card or game action stops the batch. Already sent
+requests are never rewritten or retried, and the action after a drag retains
+its original observation and command ID. This reduces redundant queued work;
+it does not guarantee a particular network latency or transmit every intermediate
+mouse position.
+
 If an invocation returns a receipt but its follow-up snapshot fails, the native
 worker retains that receipt while retrying reads, then delivers it with the
 fresh projection. It does not resend the command or discard its known result.
