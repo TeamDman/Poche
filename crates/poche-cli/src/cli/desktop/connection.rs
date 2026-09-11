@@ -9,8 +9,8 @@ mod process_probe;
 mod recovery;
 use poche_player_client::ProtectedProfileStore;
 use poche_veilid::{
-    ApplicationIdentity, IdentityStoragePolicy, PublishedRoom, RoomCode, RoomNetwork,
-    RunningDeviceService, VeilidDeviceNode, VeilidProtectedIdentityStore,
+    ApplicationIdentity, IdentityStoragePolicy, RoomCode, RoomNetwork,
+    RunningDeviceService, RunningHostRoute, VeilidDeviceNode, VeilidProtectedIdentityStore,
 };
 use std::{
     fs,
@@ -37,8 +37,7 @@ pub fn validator() -> InvitationValidator {
 // Retained by the worker closure for the whole graphical app lifetime. This
 // is initial room service ownership, not replica-based creator failover.
 struct RoomOwner {
-    _resumed: Option<poche_veilid::ResumedHostRoom>,
-    _publication: Option<PublishedRoom>,
+    _routes: Option<RunningHostRoute>,
     _service: Option<RunningDeviceService>,
     _lease: fs::File,
 }
@@ -127,6 +126,7 @@ fn connect(
             }
         }),
     )?;
+    let route_updates = node.local_route_updates();
     node.runtime()
         .block_on(node.attach_public(Duration::from_secs(90)))?;
     if invitation.is_none() {
@@ -137,18 +137,20 @@ fn connect(
                     store.save_authority_recovery(&label, "active-room", &terminal)
                         .map_err(|_| "Cannot persist the previous lobby's disbanding.")?;
                 } else {
-                    return recovery::restore(node, profile, store, &bytes, &label, receive, lease, owners);
+                    return recovery::restore(node, profile, store, &bytes, &label, receive, route_updates, lease, owners);
                 }
             }
         }
     }
-    let (mut live, code, publication, service) = if let Some(code) = invitation {
+    let (mut live, code, routes, service) = if let Some(code) = invitation {
         let (client, room_id) = poche_veilid::join_device(node, profile, store, &code, now)
             .map_err(|_| "Could not join this lobby. Check the invitation and connection.")?;
         let live = NativeLiveDevice::connect(client, room_id)
             .map_err(|_| "Could not load the live table.")?;
         (live, code, None, None)
     } else {
+        let rendezvous = poche_veilid::VeilidRendezvous::new(node.api().clone())
+            .map_err(|_| "Cannot initialize room routing.")?;
         let identity = node
             .runtime()
             .block_on(ApplicationIdentity::load_or_create(
@@ -180,13 +182,12 @@ fn connect(
                 },
             ))
             .map_err(|_| "Could not publish the lobby.")?;
+        let code = published.room_code().encode()
+            .map(|code| code.expose().to_owned())
+            .map_err(|_| "Cannot encode lobby invitation.");
+        let routes = RunningHostRoute::start(node.clone(), rendezvous.own_published_route(published), route_updates);
         let initialized = (|| {
-            let code = published
-                .room_code()
-                .encode()
-                .map_err(|_| "Cannot encode lobby invitation.")?
-                .expose()
-                .to_owned();
+            let code = code?;
             let (client, room_id) =
                 poche_veilid::create_device(node.clone(), profile, store, &code, now)
                     .map_err(|_| "Could not initialize the lobby.")?;
@@ -195,7 +196,7 @@ fn connect(
             Ok::<_, &'static str>((live, code))
         })();
         match initialized {
-            Ok((live, code)) => (live, code, Some(published), Some(service)),
+            Ok((live, code)) => (live, code, Some(routes), Some(service)),
             Err(error) => {
                 // The invitation has not been exposed to the user. Stop the
                 // pending service and explicitly release publication handles
@@ -203,7 +204,7 @@ fn connect(
                 drop(service);
                 if node
                     .runtime()
-                    .block_on(published.close(node.api()))
+                    .block_on(routes.stop())
                     .is_err()
                 {
                     eprintln!("poche: failed startup publication cleanup was incomplete");
@@ -214,8 +215,7 @@ fn connect(
     };
     live.set_room_invitation(code);
     owners.push(RoomOwner {
-        _resumed: None,
-        _publication: publication,
+        _routes: routes,
         _service: service,
         _lease: lease,
     });

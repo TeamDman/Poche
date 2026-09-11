@@ -14,6 +14,10 @@ mod device_join;
 #[cfg(feature = "device-transport")]
 mod device_node;
 #[cfg(feature = "device-transport")]
+mod device_host_route;
+#[cfg(feature = "device-transport")]
+pub use device_host_route::*;
+#[cfg(feature = "device-transport")]
 pub use device_join::*;
 #[cfg(feature = "device-transport")]
 mod device_transport;

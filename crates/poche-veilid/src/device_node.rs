@@ -16,6 +16,9 @@ struct NodeOwner {
     runtime: Handle,
     stop: Option<mpsc::Sender<()>>,
     worker: Option<JoinHandle<()>>,
+    local_routes: tokio::sync::broadcast::Sender<veilid_core::RouteId>,
+    #[cfg(feature = "veilid-mock-test")]
+    update_probe: Arc<dyn Fn(VeilidUpdate) + Send + Sync>,
 }
 
 impl Drop for NodeOwner {
@@ -36,6 +39,21 @@ impl VeilidDeviceNode {
     ) -> Result<Self, &'static str> {
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let (stop_tx, stop_rx) = mpsc::channel();
+        // Fixed-size route identifiers, never unbounded update payloads. A
+        // lagging maintenance reader must conservatively revalidate its route.
+        let (local_routes, _) = tokio::sync::broadcast::channel(32);
+        let route_sender = local_routes.clone();
+        let original_update = update;
+        let update = Arc::new(move |update: VeilidUpdate| {
+            if let VeilidUpdate::RouteChange(change) = &update {
+                for route in &change.dead_routes {
+                    let _ = route_sender.send(route.clone());
+                }
+            }
+            original_update(update);
+        });
+        #[cfg(feature = "veilid-mock-test")]
+        let update_probe = update.clone();
         let worker = thread::Builder::new()
             .name("poche-veilid-node".to_owned())
             .spawn(move || {
@@ -65,6 +83,9 @@ impl VeilidDeviceNode {
                 runtime,
                 stop: Some(stop_tx),
                 worker: Some(worker),
+                local_routes,
+                #[cfg(feature = "veilid-mock-test")]
+                update_probe,
             }))),
             _ => {
                 drop(stop_tx);
@@ -80,6 +101,21 @@ impl VeilidDeviceNode {
 
     pub fn runtime(&self) -> &Handle {
         &self.0.runtime
+    }
+
+    /// Subscribe before publishing/restoring a room, so route deaths during
+    /// startup cannot fall between publication and maintenance registration.
+    #[must_use]
+    pub fn local_route_updates(&self) -> tokio::sync::broadcast::Receiver<veilid_core::RouteId> {
+        self.0.local_routes.subscribe()
+    }
+
+    /// The pinned mock does not emit `RouteChange` on release. Acceptance tests
+    /// supply that missing notification through the production callback. This
+    /// hook is absent from production builds and cannot inject game messages.
+    #[cfg(feature = "veilid-mock-test")]
+    pub fn simulate_route_change_for_mock(&self, change: veilid_core::VeilidRouteChange) {
+        (self.0.update_probe)(VeilidUpdate::RouteChange(Box::new(change)));
     }
 
     /// Attach and wait for actual public-network readiness, with a bounded

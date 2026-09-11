@@ -278,6 +278,7 @@ fn exercise_device_dispatch(rendered: bool) {
         )
         .unwrap();
         let server = server_node.api().clone();
+        let route_updates = server_node.local_route_updates();
         config.namespace = "client".to_owned();
         let client_node = poche_veilid::VeilidDeviceNode::start(config, Arc::new(drop)).unwrap();
         let client = client_node.api().clone();
@@ -316,6 +317,11 @@ fn exercise_device_dispatch(rendered: bool) {
         .unwrap();
         assert!(saves.load(std::sync::atomic::Ordering::SeqCst) > 0);
         let room_id = published.record().room_id.clone();
+        let invitation_text = published.room_code().encode().unwrap();
+        let invitation_code = poche_veilid::RoomCode::decode(invitation_text.expose(), 100).unwrap();
+        let original_route = published.route_id().clone();
+        let routes = poche_veilid::RunningHostRoute::start(server_node.clone(),
+            VeilidRendezvous::new(server.clone()).unwrap().own_published_route(published), route_updates);
         let bytes = VeilidDeviceRequest::Observe(
             sign_observation_request(
                 &profile,
@@ -345,7 +351,8 @@ fn exercise_device_dispatch(rendered: bool) {
             VeilidDeviceReply::Observation(_)
         ));
         let creator_node = server_node.clone();
-        let creator_invitation = published.room_code().encode().unwrap();
+        let creator_invitation = invitation_code.encode().unwrap();
+        let fault_node = server_node.clone();
         // Match NativeLiveDevice's ordinary worker thread, not a nested Tokio
         // block_on inside a runtime task.
         let guest_room = room_id.clone();
@@ -377,6 +384,25 @@ fn exercise_device_dispatch(rendered: bool) {
                 ));
                 let seated = device.observe(&room_id).unwrap();
                 assert_eq!(seated.projection.current_revision, 2);
+                // Force the real route APIs stale after a certified command.
+                // The pinned mock retains imported aliases and omits the
+                // RouteChange callback, so explicitly supply those effects.
+                let adapter = VeilidRendezvous::new(fault_node.api().clone()).unwrap();
+                let code = poche_veilid::RoomCode::decode(creator_invitation.expose(), 102).unwrap();
+                let old = fault_node.runtime().block_on(adapter.resolve_room(&code, 102)).unwrap();
+                fault_node.api().release_private_route(old.route_id().clone()).unwrap();
+                fault_node.api().release_private_route(original_route.clone()).unwrap();
+                fault_node.simulate_route_change_for_mock(veilid_core::VeilidRouteChange {
+                    dead_routes: vec![original_route], dead_remote_routes: vec![],
+                });
+                let recovered = device.observe(&room_id).expect("signed observation rediscovered the renewed route");
+                assert_eq!(recovered.projection.payload, seated.projection.payload,
+                    "route repair must preserve exact authorized game state and history");
+                assert_eq!(recovered.projection.principal_id, seated.projection.principal_id);
+                assert_eq!(recovered.projection.room_id, seated.projection.room_id);
+                assert_eq!(recovered.projection.current_revision, seated.projection.current_revision);
+                assert_eq!(recovered.projection.session_epoch, seated.projection.session_epoch);
+                assert_eq!(recovered.projection.projection_epoch, seated.projection.projection_epoch);
                 let disconnected = device.disconnect_route(&room_id).unwrap();
                 assert!(!disconnected.member_connected);
                 device.rebind_route(&room_id).unwrap();
@@ -403,7 +429,7 @@ fn exercise_device_dispatch(rendered: bool) {
         let wrong_transport = VeilidDeviceTransport::from_node(
             client_node.clone(),
             joiner
-                .resolve_room(published.room_code(), 102)
+                .resolve_room(&invitation_code, 102)
                 .await
                 .unwrap(),
             TestSigner(SigningKey::from_bytes(&[42; 32])),
@@ -411,7 +437,7 @@ fn exercise_device_dispatch(rendered: bool) {
             Some(InviteProof::new("wrong-secret").unwrap()),
         )
         .unwrap();
-        let invitation = published.room_code().encode().unwrap();
+        let invitation = invitation_code.encode().unwrap();
         let guest_node = client_node.clone();
         let creator_node = server_node.clone();
         tokio::task::spawn_blocking(move || {
@@ -684,6 +710,7 @@ fn exercise_device_dispatch(rendered: bool) {
         })
         .await
         .unwrap();
+        routes.stop().await.unwrap();
         drop(handler);
         client_node.shutdown().unwrap();
         server_node.shutdown().unwrap();

@@ -21,6 +21,7 @@ pub(super) fn restore(
     bytes: &[u8],
     label: &str,
     incoming: tokio::sync::mpsc::Receiver<Box<veilid_core::VeilidAppCall>>,
+    route_updates: tokio::sync::broadcast::Receiver<veilid_core::RouteId>,
     lease: fs::File,
     owners: &mut Vec<RoomOwner>,
 ) -> Result<NativeLiveDevice, &'static str> {
@@ -59,6 +60,7 @@ pub(super) fn restore(
         .map_err(|_| "Cannot restore the original room route.")?;
     let monitor = service.clone();
     let running = service.serve(node.clone(), incoming);
+    let routes = RunningHostRoute::start(node.clone(), adapter.own_resumed_route(resumed), route_updates);
     let result = (|| {
         let started = std::time::Instant::now();
         while !monitor.recovery_ready().map_err(|_| "Recovery expired or persistence failed.")? {
@@ -73,12 +75,12 @@ pub(super) fn restore(
     })();
     match result {
         Ok(live) => {
-            owners.push(RoomOwner { _resumed: Some(resumed), _publication: None, _service: Some(running), _lease: lease });
+            owners.push(RoomOwner { _routes: Some(routes), _service: Some(running), _lease: lease });
             Ok(live)
         }
         Err(error) => {
             drop(running);
-            let _ = node.runtime().block_on(resumed.close(node.api()));
+            let _ = node.runtime().block_on(routes.stop());
             Err(error)
         }
     }

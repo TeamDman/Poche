@@ -20,6 +20,11 @@ const HOST_ROOM_MAGIC: &[u8; 4] = b"PHR1";
 const HOST_ROOM_CHECKSUM_BYTES: usize = 32;
 const MAX_HOST_ROOM_SECRET_BYTES: usize = 1_024;
 
+#[cfg(feature = "device-transport")]
+mod host_route;
+#[cfg(feature = "device-transport")]
+pub use host_route::HostRouteOwner;
+
 /// Stable, redacted Veilid rendezvous operation failures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VeilidRendezvousError {

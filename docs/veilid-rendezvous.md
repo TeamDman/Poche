@@ -82,3 +82,7 @@ cargo run -p poche-xtask --offline -- transport test veilid-public
 See `docs/veilid-native-acceptance.md` and
 `evidence/veilid-native-acceptance.json` for measured results and the opt-in
 boundary.
+
+The current desktop also has [live route recovery](veilid-live-route-recovery.md).
+That document separates the new mock-backed failure evidence from the older
+public acceptance described here and explains protected explicit-writer use.
