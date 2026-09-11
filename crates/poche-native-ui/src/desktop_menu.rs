@@ -4,8 +4,32 @@
 use bevy::{
     clipboard::{Clipboard, ClipboardRead},
     prelude::*,
-    text::{EditableText, TextCursorStyle},
+    text::{EditableText, TextCursorStyle, TextEdit},
 };
+
+mod clipboard;
+use clipboard::InvitationClipboard;
+
+#[cfg(feature = "input-probe")]
+pub mod input_probe;
+
+/// Both window and image-target UI use Bevy's picking pipeline. The legacy
+/// `Interaction` focus system only handles Window render targets.
+#[derive(Message)]
+struct ButtonActivation(Entity);
+
+fn activate_button(
+    mut click: On<Pointer<Click>>,
+    buttons: Query<(), Or<(With<Action>, With<LiveAction>, With<CopyInvitation>)>>,
+    mut activations: MessageWriter<ButtonActivation>,
+) {
+    if click.button == bevy::picking::pointer::PointerButton::Primary
+        && buttons.contains(click.entity)
+    {
+        click.propagate(false);
+        activations.write(ButtonActivation(click.entity));
+    }
+}
 
 #[derive(Message, Clone)]
 pub enum DesktopMenuRequest {
@@ -84,8 +108,9 @@ struct LiveAction(String);
 #[derive(Component)]
 struct CopyInvitation;
 
-/// Install alongside DefaultPlugins and a transport-specific validator.
-/// The owning app removes DesktopMenuRoot when a room has actually joined.
+/// Installed by `run_menu` alongside the shared DesktopLiveControlsPlugin and
+/// a transport-specific validator. The owning app removes DesktopMenuRoot
+/// only when a room has actually joined.
 pub struct DesktopMenuPlugin;
 impl Plugin for DesktopMenuPlugin {
     fn build(&self, app: &mut App) {
@@ -105,9 +130,17 @@ impl Plugin for DesktopMenuPlugin {
 pub struct DesktopLiveControlsPlugin;
 impl Plugin for DesktopLiveControlsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Clipboard>().add_systems(
+        app.init_resource::<Clipboard>()
+            .init_resource::<InvitationClipboard>()
+            .add_message::<ButtonActivation>()
+            .add_observer(activate_button)
+            .add_systems(
                 Update,
-                (live_action_buttons, refresh_live_controls, live_finding_text)
+                (
+                    live_action_buttons,
+                    refresh_live_controls,
+                    live_finding_text,
+                )
                     .chain()
                     .after(crate::poll_live_device),
             );
@@ -134,7 +167,9 @@ fn refresh_live_controls(
         return;
     }
     *revision = Some(current);
-    let card_font = card_font.get_or_insert_with(|| fonts.add(Font::from_bytes(crate::FONT_BYTES.to_vec()))).clone();
+    let card_font = card_font
+        .get_or_insert_with(|| fonts.add(Font::from_bytes(crate::FONT_BYTES.to_vec())))
+        .clone();
     for entity in &old {
         commands.entity(entity).despawn();
     }
@@ -197,10 +232,17 @@ fn refresh_live_controls(
 #[derive(Component)]
 struct LiveFinding;
 
-fn live_finding_text(controller: Option<Res<crate::NativeController>>, mut labels: Query<&mut Text, With<LiveFinding>>) {
-    let Some(controller) = controller else { return; };
+fn live_finding_text(
+    controller: Option<Res<crate::NativeController>>,
+    mut labels: Query<&mut Text, With<LiveFinding>>,
+) {
+    let Some(controller) = controller else {
+        return;
+    };
     for mut text in &mut labels {
-        if text.0 != controller.last_finding { text.0.clone_from(&controller.last_finding); }
+        if text.0 != controller.last_finding {
+            text.0.clone_from(&controller.last_finding);
+        }
     }
 }
 
@@ -208,32 +250,38 @@ fn live_finding_text(controller: Option<Res<crate::NativeController>>, mut label
 fn live_findings_are_visible_without_window_title_or_debug_overlay() {
     let mut app = App::new();
     let mut controller = crate::replay_fixture_controller().unwrap();
-    controller.last_finding = "Not played: not your turn. Physical position is unchanged.".to_owned();
+    controller.last_finding =
+        "Not played: not your turn. Physical position is unchanged.".to_owned();
     app.insert_resource(controller);
     let label = app.world_mut().spawn((LiveFinding, Text::new(""))).id();
     app.add_systems(Update, live_finding_text);
     app.update();
-    assert_eq!(app.world().get::<Text>(label).unwrap().0, "Not played: not your turn. Physical position is unchanged.");
+    assert_eq!(
+        app.world().get::<Text>(label).unwrap().0,
+        "Not played: not your turn. Physical position is unchanged."
+    );
 }
 
 fn live_action_buttons(
-    buttons: Query<(&Interaction, Option<&LiveAction>, Has<CopyInvitation>), Changed<Interaction>>,
+    mut activations: MessageReader<ButtonActivation>,
+    buttons: Query<(Option<&LiveAction>, Has<CopyInvitation>)>,
     live: Option<ResMut<crate::NativeLiveDevice>>,
     controller: Option<ResMut<crate::NativeController>>,
     mut clipboard: ResMut<Clipboard>,
+    mut invitation_clipboard: ResMut<InvitationClipboard>,
     mut confirmation: Local<Option<String>>,
 ) {
     let (Some(mut live), Some(mut controller)) = (live, controller) else {
         return;
     };
-    for (interaction, action, copy) in &buttons {
-        if *interaction != Interaction::Pressed {
+    for ButtonActivation(entity) in activations.read() {
+        let Ok((action, copy)) = buttons.get(*entity) else {
             continue;
-        }
+        };
         if copy {
             controller.last_finding = match live
                 .room_invitation()
-                .map(|code| clipboard.set_text(code.to_owned()))
+                .map(|code| invitation_clipboard.set_text(&mut clipboard, code.to_owned()))
             {
                 Some(Ok(())) => "Lobby invitation copied.".to_owned(),
                 _ => "Could not copy the lobby invitation.".to_owned(),
@@ -409,20 +457,25 @@ fn setup(mut commands: Commands, surface: Res<crate::NativeRenderSurface>) {
 }
 
 fn buttons(
-    buttons: Query<(&Interaction, &Action), Changed<Interaction>>,
+    mut activations: MessageReader<ButtonActivation>,
+    buttons: Query<&Action>,
     fields: Query<(&Field, &EditableText)>,
     mut clipboard: ResMut<Clipboard>,
+    mut invitation_clipboard: ResMut<InvitationClipboard>,
     mut pending: ResMut<PendingClipboard>,
     validator: Res<InvitationValidator>,
     mut status: ResMut<DesktopMenuStatus>,
     mut requests: MessageWriter<DesktopMenuRequest>,
 ) {
-    for (interaction, action) in &buttons {
-        if *interaction != Interaction::Pressed || status.busy {
+    for ButtonActivation(entity) in activations.read() {
+        let Ok(action) = buttons.get(*entity) else {
+            continue;
+        };
+        if status.busy {
             continue;
         }
         if matches!(action, Action::Paste) {
-            pending.0 = Some(clipboard.fetch_text());
+            pending.0 = Some(invitation_clipboard.fetch_text(&mut clipboard));
             continue;
         }
         let value = |which| {
@@ -473,12 +526,11 @@ fn clipboard_result(
         Ok(text) if text.len() <= 4096 && (validator.0)(text.trim()) => {
             for (field, mut input) in &mut fields {
                 if *field == Field::Invitation {
-                    *input = EditableText {
-                        max_characters: Some(4096),
-                        visible_lines: Some(3.),
-                        allow_newlines: true,
-                        ..EditableText::new(text.trim())
-                    };
+                    // Replacing EditableText's backing buffer can leave its
+                    // cached rendered layout untouched. Use the same editing
+                    // pipeline as keyboard input and preserve field settings.
+                    input.queue_edit(TextEdit::SelectAll);
+                    input.queue_edit(TextEdit::Insert(text.trim().into()));
                 }
             }
             status.message = "Invitation pasted. Choose Join when ready.".to_owned();
@@ -537,6 +589,8 @@ mod tests {
             .init_resource::<DesktopMenuStatus>()
             .init_resource::<PendingClipboard>()
             .init_resource::<Clipboard>()
+            .init_resource::<InvitationClipboard>()
+            .add_message::<ButtonActivation>()
             .add_message::<DesktopMenuRequest>()
             .add_systems(Update, buttons);
         app.world_mut()
@@ -545,10 +599,7 @@ mod tests {
             Field::Invitation,
             EditableText::new("valid-test-invitation"),
         ));
-        let button = app
-            .world_mut()
-            .spawn((Action::Join, Interaction::None))
-            .id();
+        let button = app.world_mut().spawn(Action::Join).id();
         app.update();
         assert!(
             app.world_mut()
@@ -557,7 +608,7 @@ mod tests {
                 .next()
                 .is_none()
         );
-        *app.world_mut().get_mut::<Interaction>(button).unwrap() = Interaction::Pressed;
+        app.world_mut().write_message(ButtonActivation(button));
         app.update();
         let requests: Vec<_> = app
             .world_mut()
@@ -569,9 +620,8 @@ mod tests {
             matches!(&requests[0], DesktopMenuRequest::Join { name, invitation } if name == "Alice" && invitation == "valid-test-invitation")
         );
         assert!(app.world().resource::<DesktopMenuStatus>().busy);
-        *app.world_mut().get_mut::<Interaction>(button).unwrap() = Interaction::None;
         app.update();
-        *app.world_mut().get_mut::<Interaction>(button).unwrap() = Interaction::Pressed;
+        app.world_mut().write_message(ButtonActivation(button));
         app.update();
         assert!(
             app.world_mut()
@@ -608,7 +658,13 @@ mod tests {
         app.world_mut().resource_mut::<PendingClipboard>().0 =
             Some(ClipboardRead::Ready(Ok("valid-test-invitation".to_owned())));
         app.update();
-        assert_eq!(value(&app), "valid-test-invitation");
+        // This narrow unit test does not install Bevy's text-edit/layout
+        // pipeline. The GPU input harness proves these queued edits become
+        // both the submitted field value and visible glyphs.
+        let input = app.world().get::<EditableText>(field).unwrap();
+        assert!(
+            matches!(input.pending_edits.as_slice(), [TextEdit::TextEnd(false), TextEdit::SelectAll, TextEdit::Insert(text)] if text == "valid-test-invitation")
+        );
         assert!(!app.world().resource::<DesktopMenuStatus>().busy);
     }
 }

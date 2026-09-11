@@ -62,6 +62,70 @@ or complete lifecycle acceptance. PLAN-6 retains those remaining obligations.
 The fixture launch commands and timings below are historical, not a substitute
 for the current desktop lobby entry point.
 
+## Rendered desktop menu checks
+
+The desktop build explicitly enables Bevy's `system_clipboard` feature. Without
+it, Copy/Paste use an in-process buffer and cannot exchange invitations between
+two independently launched games. Clipboard errors remain visible; enabling the
+feature does not guarantee that the OS will grant clipboard access.
+
+Menu and action-bar buttons now use Bevy pointer-click events on both window
+and image render targets. Invitation prefill queues normal text edits, preserving
+the field configuration and updating rendered glyphs. Replacing the text editor
+component had produced a populated-but-invisible invitation in an inspected
+capture; the input harness now checks for both the expected value and glyphs.
+
+Run the deterministic menu test with a fresh output directory:
+
+```powershell
+$env:WGPU_BACKEND = 'dx12'
+cargo run --locked -p poche-native-ui --features input-probe --offline --example menu_input -- target/my-menu-input-run
+```
+
+It clicks actual GPU-laid-out controls and supplies keyboard messages through
+Bevy's text-input pipeline. It checks blank-name validation, name entry,
+unrelated clipboard refusal, invitation prefill without auto-join, explicit
+Join, a visible connection failure and a Create retry. It opens no OS window:
+Winit is disabled and the only Window entity is a headless keyboard endpoint.
+Rendering/picking use the actual image camera, not synthetic UI geometry. The
+clipboard is an explicitly isolated test buffer; your clipboard is untouched.
+`menu.png`, `join-error.png` and `create-error.png` use the existing screenshot
+readback/persistence path. This is local developer input evidence, not OS mouse
+or cross-device capture-protocol acceptance.
+
+The corresponding opt-in public-network test uses two independent processes and
+the same protected connector as `poche desktop launch`:
+
+```powershell
+$env:WGPU_BACKEND = 'dx12'
+$env:POCHE_ALLOW_VEILID_PUBLIC_TEST = 'I_ACCEPT_PUBLIC_NETWORK_TRAFFIC'
+$env:POCHE_MENU_EVIDENCE_ROOT = "$PWD/target/my-public-menu-run"
+cargo test --locked -p poche-cli --features native-input-test --offline --lib cli::desktop::connection::process_probe::protected_desktop_rendered_menu_two_process -- --exact --ignored --nocapture --test-threads=1
+```
+
+This creates fresh protected test profiles, performs rendered Create/Copy and
+Paste/Join, then continues with the existing scripted seat/ready/deal, shared
+pose and participant-restart checks. Connection workers remain owned after each
+renderer exits so teardown cannot destroy the room under the remaining checks.
+Invitations cross processes through temporary test coordination files and are
+pasted via isolated buffers: **this is not a test of cross-process OS clipboard
+exchange**. Lobby screenshots do not prove rendered seat/ready/card input.
+Menu captures may contain bearer invitations; keep the ignored evidence local.
+
+The first September 10 public run reached both rendered lobbies but failed on a
+subsequent action timeout (72.72s). Both `creator/lobby.png` and
+`joiner/lobby.png` under `target/phase6-public-menu-01` were inspected. The exact
+new executable had Public TCP/UDP Allow rules when checked afterward; this was
+not another frozen-binary firewall experiment. Later-action failures remain
+release blockers, not successful end-to-end acceptance. Consult PLAN-6 T3 for
+the remaining OS-clipboard/lifecycle obligations. The diagnostic follow-up
+(`target/phase6-public-menu-02`) passed in 74.96s, including the later scripted
+deal/pose/participant-restart checks; its joiner lobby capture was inspected.
+Only action-stage logging changed between these runs, not transport behavior.
+The earlier timeout is therefore still unresolved. The final deterministic
+menu input run (`target/phase6-menu-input-03`) also passed with the new glyph
+assertion, and its prefilled menu was visually inspected.
+
 ## Architecture and controls
 
 - `poche-slug` is the MPL-2.0 extraction of Teamy Terminal's pinned outline,

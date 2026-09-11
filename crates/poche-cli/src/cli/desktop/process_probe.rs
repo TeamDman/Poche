@@ -41,10 +41,11 @@ fn invoke(live: &mut NativeLiveDevice, action: &str) {
             .any(|item| item.id == action)
     });
     let before = live.observation().projection.current_revision;
+    eprintln!("poche process probe: submitting {action} at revision {before}");
     live.submit_action(action)
         .expect("advertised action submission");
     wait_until(|| {
-        live.poll().expect("action observation");
+        live.poll().unwrap_or_else(|error| panic!("action {action} submitted at revision {before}: {error}"));
         live.observation().projection.current_revision > before
     });
     assert!(
@@ -67,7 +68,9 @@ fn protected_desktop_process_role() {
     let creator = role == "creator" || role == "creator-resume" || role == "alone" || role == "creator-expire" || role == "creator-after-expiry";
     let creator_loss = std::env::var("POCHE_PROCESS_PROBE_CREATOR_LOSS").as_deref() == Ok("1");
     let native_input = std::env::var("POCHE_PROCESS_PROBE_NATIVE_INPUT").as_deref() == Ok("1");
+    let rendered_menu = std::env::var("POCHE_PROCESS_PROBE_RENDERED_MENU").as_deref() == Ok("1");
     assert!(!native_input || cfg!(feature = "native-input-test"), "native input probe feature is required");
+    assert!(!rendered_menu || cfg!(feature = "native-input-test"), "rendered menu probe feature is required");
     let restarting = role.ends_with("-resume");
     assert!(creator || role == "joiner" || restarting);
     let profile_role = if creator { "creator" } else if restarting { "joiner" } else { &role };
@@ -81,6 +84,25 @@ fn protected_desktop_process_role() {
         DesktopMenuRequest::Join { name, invitation }
     };
     let mut owners = Vec::new();
+    // The successful renderer returns its connection worker too: the worker
+    // owns the production room service/lease and must survive GPU app teardown.
+    #[cfg(feature = "native-input-test")]
+    let mut _menu_owner = None;
+    #[cfg(feature = "native-input-test")]
+    let result = if rendered_menu && !restarting {
+        use poche_native_ui::desktop_menu::input_probe::{self, IsolatedClipboard, MenuScenario};
+        let (name, scenario) = match request {
+            DesktopMenuRequest::Create { name } => (name, MenuScenario::Create),
+            DesktopMenuRequest::Join { name, invitation } => (name, MenuScenario::Join { invitation }),
+        };
+        let evidence = std::path::PathBuf::from(std::env::var_os("POCHE_MENU_EVIDENCE_ROOT").expect("menu evidence root"));
+        let connected = input_probe::run(worker().unwrap(), validator(), &name, scenario,
+            IsolatedClipboard::default(), &evidence.join(&role)).expect("rendered production menu input")
+            .expect("menu connected a live device");
+        _menu_owner = Some(connected.worker);
+        Ok(connected.live)
+    } else { connect(request, &mut owners) };
+    #[cfg(not(feature = "native-input-test"))]
     let result = connect(request, &mut owners);
     if role == "creator-expire" {
         assert!(matches!(result, Err("Recovery expired or persistence failed.")), "recovery without peers must expire");
@@ -284,25 +306,34 @@ fn protected_desktop_process_role() {
 #[test]
 #[ignore = "real public Veilid and fresh persistent protected test profiles"]
 fn protected_desktop_two_process() {
-    run_two_process(false, false, false);
+    run_two_process(false, false, false, false);
 }
 
 #[cfg(feature = "native-input-test")]
 #[test]
 #[ignore = "real public Veilid, protected profiles and windowless native drag observers"]
 fn protected_desktop_native_drag_two_process() {
-    run_two_process(false, false, true);
+    run_two_process(false, false, true, false);
+}
+
+#[cfg(feature = "native-input-test")]
+#[test]
+#[ignore = "GPU menu inputs and two public Veilid processes; isolated clipboard, no visible windows"]
+fn protected_desktop_rendered_menu_two_process() {
+    let evidence = std::path::PathBuf::from(std::env::var_os("POCHE_MENU_EVIDENCE_ROOT").expect("set a fresh menu evidence root"));
+    fs::create_dir(evidence).expect("fresh menu evidence root");
+    run_two_process(false, false, false, true);
 }
 
 #[test]
 #[ignore = "real public Veilid creator crash with protected profiles"]
 fn protected_desktop_creator_crash() {
-    run_two_process(true, false, false);
+    run_two_process(true, false, false, false);
 }
 
 #[test]
 #[ignore = "real public Veilid all-peer loss and 60-second recovery expiry"]
-fn protected_desktop_all_peer_loss() { run_two_process(true, true, false); }
+fn protected_desktop_all_peer_loss() { run_two_process(true, true, false, false); }
 
 #[test]
 #[ignore = "real public Veilid and protected empty-room lifecycle"]
@@ -354,7 +385,7 @@ fn recovery_digest(live: &NativeLiveDevice) -> String {
     blake3::hash(&bytes).to_hex().to_string()
 }
 
-fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool) {
+fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool, rendered_menu: bool) {
     opt_in();
     let directory = tempfile::tempdir().unwrap();
     let suffix = now().unwrap().to_string();
@@ -367,6 +398,7 @@ fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool) {
             .env("POCHE_PROCESS_PROBE_ROLE", role)
             .env("POCHE_PROCESS_PROBE_CREATOR_LOSS", if creator_loss { "1" } else { "0" })
             .env("POCHE_PROCESS_PROBE_NATIVE_INPUT", if native_input { "1" } else { "0" })
+            .env("POCHE_PROCESS_PROBE_RENDERED_MENU", if rendered_menu { "1" } else { "0" })
             .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
         #[cfg(windows)]
         {
@@ -406,6 +438,7 @@ fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool) {
         .env("POCHE_PROCESS_PROBE_ROLE", if all_loss { "creator-expire" } else if creator_loss { "creator-resume" } else { "joiner-resume" })
         .env("POCHE_PROCESS_PROBE_CREATOR_LOSS", if creator_loss { "1" } else { "0" })
         .env("POCHE_PROCESS_PROBE_NATIVE_INPUT", if native_input { "1" } else { "0" })
+        .env("POCHE_PROCESS_PROBE_RENDERED_MENU", "0")
         .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
     #[cfg(windows)] {
         use std::os::windows::process::CommandExt;

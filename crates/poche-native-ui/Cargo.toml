@@ -13,7 +13,7 @@ description = "Bevy leaf adapter for Poche's canonical spatial presentation"
 input-probe = []
 
 [dependencies]
-bevy = { workspace = true, features = ["ui"] }
+bevy = { workspace = true, features = ["ui", "system_clipboard"] }
 blake3.workspace = true
 getrandom.workspace = true
 image.workspace = true
