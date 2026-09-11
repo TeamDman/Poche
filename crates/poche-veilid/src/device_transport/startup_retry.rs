@@ -1,8 +1,8 @@
-//! Bounded replay of one already-signed startup command, never a replacement.
+//! Bounded replay of one already-signed rules command, never a replacement.
+//! The historical module name reflects its initial startup-only scope.
 use super::{DeviceActionRequest, DeviceActionResult, DeviceClientError, VeilidDeviceRequest};
 use crate::VeilidRendezvousError;
-use poche_protocol::CommandPayload;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub(super) fn exchange(
     request: &VeilidDeviceRequest,
@@ -12,14 +12,33 @@ pub(super) fn exchange(
     // Freeze certificate, signature, command ID, payload, epoch and revision
     // together. A refreshed route never causes a new action to be prepared.
     let bytes = request.encode()?;
-    let replay_safe = matches!(request, VeilidDeviceRequest::Invoke(action)
-        if matches!(action.payload, CommandPayload::CreateRoom
-            | CommandPayload::RedeemInvite { .. } | CommandPayload::Reconnect));
+    // CertifiedDeviceRoom durably caches the exact complete signed Invoke
+    // before acknowledgement. Other RPCs have different replay contracts.
+    let replay_safe = match request {
+        VeilidDeviceRequest::Invoke(_) => true,
+        VeilidDeviceRequest::Observe(_)
+        | VeilidDeviceRequest::PhysicalPose(_)
+        | VeilidDeviceRequest::Route(_)
+        | VeilidDeviceRequest::Cooperate(_) => false,
+    };
     let mut refresh = false;
     for attempt in 0..3 {
+        let started = Instant::now();
         match send(&bytes, refresh) {
             Ok(reply) => return Ok(reply), // Wire denials are not transport loss.
             Err(error) => {
+                // Static operation/kind only: never dump signed requests,
+                // card faces, chat, invitations, or identity material.
+                let operation = match request {
+                    VeilidDeviceRequest::Invoke(action) => {
+                        format!("Invoke({:?})", action.payload.kind())
+                    }
+                    VeilidDeviceRequest::Observe(_) => "Observe".into(),
+                    VeilidDeviceRequest::PhysicalPose(_) => "PhysicalPose".into(),
+                    VeilidDeviceRequest::Route(_) => "Route".into(),
+                    VeilidDeviceRequest::Cooperate(_) => "Cooperate".into(),
+                };
+                let elapsed_ms = started.elapsed().as_millis();
                 let retry = matches!(
                     error,
                     VeilidRendezvousError::TryAgain
@@ -29,7 +48,10 @@ pub(super) fn exchange(
                         | VeilidRendezvousError::WatchRenewal
                 );
                 if !replay_safe || !retry || attempt == 2 {
-                    eprintln!("poche: device RPC failed ({error:?}); no further submission");
+                    eprintln!(
+                        "poche: {operation} RPC failed ({error:?}, attempt {} in {elapsed_ms}ms); no further submission",
+                        attempt + 1
+                    );
                     return Err(DeviceClientError::TransportUnavailable);
                 }
                 refresh = matches!(
@@ -39,7 +61,7 @@ pub(super) fn exchange(
                         | VeilidRendezvousError::WatchRenewal
                 );
                 eprintln!(
-                    "poche: startup RPC {error:?}; replaying the identical signed command ({}/3)",
+                    "poche: {operation} RPC {error:?} after {elapsed_ms}ms; replaying the identical signed command ({}/3)",
                     attempt + 2
                 );
                 pause(Duration::from_millis(250 * (attempt + 1)));

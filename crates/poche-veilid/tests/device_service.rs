@@ -18,14 +18,14 @@ struct TestSigner(SigningKey);
 mod lost_pose_reply {
     use poche_player_client::*;
     use poche_protocol::*;
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::sync::{Arc, Mutex};
 
     // Fault injection happens after the real service accepted the signed pose.
     // All reads and other operations still traverse the actual adapter.
-    pub struct DropReplies<T>(pub T, pub Arc<AtomicUsize>);
+    pub struct DropReplies<T>(pub T, pub Arc<Mutex<Vec<PhysicalPoseRequest>>>);
     impl<T: DeviceTransport> DeviceTransport for DropReplies<T> {
         fn physical_pose(&mut self, profile: &DeviceProfile, request: PhysicalPoseRequest) -> Result<PhysicalPoseState, DeviceClientError> {
-            self.1.fetch_add(1, Ordering::SeqCst);
+            self.1.lock().unwrap().push(request.clone());
             self.0.physical_pose(profile, request)?;
             Err(DeviceClientError::TransportUnavailable)
         }
@@ -625,13 +625,24 @@ fn exercise_device_dispatch(rendered: bool) {
                         TestSigner(SigningKey::from_bytes(&[44; 32])), invitation.expose(), 105,
                     ).unwrap();
                     let profile = native_client.profile().clone();
-                    let writes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
                     let native_client = poche_player_client::PlayerDeviceClient::new(profile,
                         lost_pose_reply::DropReplies(native_client.into_transport(), writes.clone())).unwrap();
                     let native = poche_native_ui::NativeLiveDevice::connect(native_client, guest_room.clone()).unwrap();
                     let native = poche_native_ui::input_probe::drag_across_viewports(native).unwrap();
-                    assert_eq!(writes.load(std::sync::atomic::Ordering::SeqCst), 3, "each drag sample is sent once even when every reply is lost");
+                    let sent = writes.lock().unwrap();
+                    assert!((1..=3).contains(&sent.len()), "only unsent intermediate samples may be coalesced");
+                    for (index, request) in sent.iter().enumerate() {
+                        assert!(!sent[..index].iter().any(|earlier| earlier.card_id == request.card_id
+                            && earlier.generation == request.generation && earlier.sequence == request.sequence),
+                            "a sent motion request must not be retried when its reply is lost");
+                    }
                     let owner = native.observation().physical_hands.iter().find(|card| card.id == motion.card_id).unwrap();
+                    let last = sent.last().unwrap();
+                    let final_pose = owner.pose.as_ref().unwrap();
+                    assert_eq!(last.position_mm, final_pose.position_mm);
+                    assert_eq!(last.rotation_millidegrees, final_pose.rotation_millidegrees);
+                    drop(sent);
                     let peer = creator.observe(&guest_room).unwrap();
                     let hidden = peer.physical_hands.iter().find(|card| card.id == motion.card_id).unwrap();
                     assert!(hidden.face.is_none());

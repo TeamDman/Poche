@@ -36,7 +36,7 @@ receipts do not erase a visible play rejection.
 To limit motion backlog, the worker combines up to eight adjacent unsent poses
 for the same card into the newest position/rotation, retaining any unsent
 ownership claim. A different card or game action stops the batch. Already sent
-requests are never rewritten or retried, and the action after a drag retains
+pose requests are never rewritten or retried, and the action after a drag retains
 its original observation and command ID. This reduces redundant queued work;
 it does not guarantee a particular network latency or transmit every intermediate
 mouse position.
@@ -44,7 +44,13 @@ mouse position.
 If an invocation returns a receipt but its follow-up snapshot fails, the native
 worker retains that receipt while retrying reads, then delivers it with the
 fresh projection. It does not resend the command or discard its known result.
-A lost invocation ACK remains an unknown outcome: a newer revision alone is
+
+Before a receipt is received, the Veilid adapter may retransmit an identical
+signed rules command up to three attempts. The authority's durable exact-command
+cache prevents a second application. The renderer never prepares a replacement
+against newer state; exhausted attempts still mean an unknown outcome. Physical
+motion uses its separate generation/sequence and read-reconciliation protocol.
+An invocation ACK still missing after retries leaves an unknown outcome: a newer revision alone is
 not treated as a receipt. Closing the client also stops a worker waiting only
 for confirmation reads. Deterministic tests exercise these boundaries against
 the real loopback rules authority; they are not proof of public-network reliability.

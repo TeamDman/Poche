@@ -13,6 +13,8 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+mod ordinary;
+
 struct TestSigner(SigningKey);
 impl DeviceSigner for TestSigner {
     fn sign_device_bytes(
@@ -85,10 +87,12 @@ struct Harness {
 impl Harness {
     fn new() -> Self {
         let room = RoomId::new("startup-replay-room").unwrap();
+        let (clock, _) = profile(11);
+        let (game, _) = profile(13);
         let mut state = SessionState::pending(
             room.clone(),
-            PrincipalId::new("clock").unwrap(),
-            PrincipalId::new("game").unwrap(),
+            clock.player_id.clone(),
+            game.player_id.clone(),
         );
         state
             .invites
@@ -99,7 +103,10 @@ impl Harness {
             RuntimeLoopbackDeviceAdapter::new(state, source, LoopbackCodec::CanonicalNdjson);
         let saves = Arc::new(AtomicUsize::new(0));
         let written = saves.clone();
-        let service = VeilidDeviceService::new(CertifiedDeviceRoom::new(adapter.clone()))
+        let mut certified = CertifiedDeviceRoom::new(adapter.clone());
+        certified.enroll_authority_service(&clock).unwrap();
+        certified.enroll_authority_service(&game).unwrap();
+        let service = VeilidDeviceService::new(certified)
             .with_recovery_sink(move |record| {
                 // Exercise real recovery serialization before the simulated
                 // network loses a reply, without writing any private fixture.
@@ -191,6 +198,7 @@ impl Harness {
         let before = self.adapter.revision().unwrap();
         let mut calls = 0;
         let mut delays = Vec::new();
+        let mut received = None;
         let reply = exchange(
             request,
             |bytes, refresh| {
@@ -203,6 +211,14 @@ impl Harness {
                 let previous_saves = self.saves.load(Ordering::SeqCst);
                 let reply = self.service.dispatch(bytes).unwrap();
                 assert!(self.saves.load(Ordering::SeqCst) > previous_saves);
+                if let Some(original) = &received {
+                    assert!(
+                        *original == reply,
+                        "exact original receipt must survive replay"
+                    );
+                } else {
+                    received = Some(reply.clone());
+                }
                 if calls == 1 {
                     Err(VeilidRendezvousError::Timeout)
                 } else {
@@ -364,25 +380,73 @@ fn startup_replay_does_not_retry_wire_errors_or_unrelated_actions() {
         assert!(actual == bytes);
         assert_eq!(calls, 1);
     }
-    let VeilidDeviceRequest::Invoke(action) = request else {
-        unreachable!()
-    };
-    for payload in [
-        CommandPayload::Chat {
-            text: "hello".to_owned(),
+    let route = sign_route_request(
+        &profile,
+        &h.room,
+        1,
+        CorrelationId::new("no-route-retry").unwrap(),
+        DeviceRouteOperationWire::Rebind,
+        &signer,
+    )
+    .unwrap();
+    let pose = PhysicalPoseRequest {
+        certificate: profile.certificate.clone(),
+        room_id: h.room.clone(),
+        session_epoch: 1,
+        card_id: "opaque-card".into(),
+        generation: 0,
+        claim: true,
+        sequence: 1,
+        position_mm: [1, 2, 3],
+        rotation_millidegrees: [4, 5, 6],
+    }
+    .sign(&profile, &signer)
+    .unwrap();
+    let observe = sign_observation_request_with_invite(
+        &profile,
+        &h.room,
+        1,
+        CorrelationId::new("no-observe-write-retry").unwrap(),
+        DeviceObservationModeWire::Snapshot,
+        None,
+        &signer,
+    )
+    .unwrap();
+    let cancel = UnsignedCaptureCancelWire {
+        schema_version: DEVICE_COOPERATION_SCHEMA_VERSION_V1,
+        request_id: CaptureRequestId::new("no-cooperation-retry").unwrap(),
+        request_hash: SemanticHash([0xaa; 32]),
+        room_id: h.room.clone(),
+        membership_epoch: 1,
+        player_id: profile.player_id.clone(),
+        requester_device_id: profile.device_id.clone(),
+        provider_device_id: profile.device_id.clone(),
+        signature_intent: DeviceSignatureIntentWire {
+            domain_version: REPLICATION_SIGNATURE_DOMAIN_V1,
+            algorithm: SignatureAlgorithm::Ed25519,
+            key_id: profile.device_id.clone(),
         },
-        CommandPayload::CloseRoom,
-        CommandPayload::TakeSeat { seat: 0 },
-        CommandPayload::Ready,
+    };
+    let signature = signer
+        .sign_device_bytes(&profile, &canonical_capture_cancel_bytes(&cancel).unwrap())
+        .unwrap();
+    let cooperation = HttpDeviceCooperationCall {
+        certificate: profile.certificate.clone(),
+        target_device: profile.device_id.clone(),
+        request: DeviceCooperationRequest::CancelCapture(
+            cancel.attach_signature(signature).unwrap(),
+        ),
+    };
+    for request in [
+        VeilidDeviceRequest::Route(route),
+        VeilidDeviceRequest::PhysicalPose(pose),
+        VeilidDeviceRequest::Observe(observe),
+        VeilidDeviceRequest::Cooperate(cooperation),
     ] {
-        // Transport policy inspects the kind, not credentials. The service
-        // remains responsible for rejecting this intentionally stale signature.
-        let mut action = action.clone();
-        action.payload = payload;
         let mut calls = 0;
         assert_eq!(
             exchange(
-                &VeilidDeviceRequest::Invoke(action),
+                &request,
                 |_, _| {
                     calls += 1;
                     Err(VeilidRendezvousError::Timeout)
@@ -432,15 +496,22 @@ fn startup_receipts_must_match_command_and_advance_revision() {
 }
 
 #[test]
-fn startup_replay_conflicts_and_evicted_receipts_cannot_reapply_create() {
+fn replay_conflicts_and_evicted_receipts_cannot_reapply_create_or_seat() {
     let h = Harness::new();
     let (profile, signer) = profile(91);
     let (prepared, request) = h.action(&profile, &signer, &CommandPayload::CreateRoom, "a-create");
     h.commit_with_loss(&prepared, &request, true);
+    let (prepared, seat_request) = h.action(
+        &profile,
+        &signer,
+        &CommandPayload::TakeSeat { seat: 0 },
+        "a-seat",
+    );
+    h.commit_with_loss(&prepared, &seat_request, true);
     // A different request with a fresh VALID signature and the original ID
     // must still fail the exact-cache comparison, without changing state.
     let mut conflicting = prepared.clone();
-    conflicting.action_id = "different-create".to_owned();
+    conflicting.action_id = "different-seat".to_owned();
     let reply = h
         .service
         .dispatch(
@@ -453,7 +524,7 @@ fn startup_replay_conflicts_and_evicted_receipts_cannot_reapply_create() {
         VeilidDeviceReply::decode(&reply).unwrap(),
         VeilidDeviceReply::Denied
     ));
-    assert_eq!(h.adapter.revision(), Some(1));
+    assert_eq!(h.adapter.revision(), Some(2));
     // The cache is bounded to 256 and evicts the first ordered command key.
     // Populate it through real, distinct committed actions, not private test
     // access to cache internals. The old expected epoch/revision stays frozen.
@@ -462,9 +533,9 @@ fn startup_replay_conflicts_and_evicted_receipts_cannot_reapply_create() {
             &profile,
             &signer,
             &if index % 2 == 0 {
-                CommandPayload::TakeSeat { seat: 0 }
-            } else {
                 CommandPayload::ReleaseSeat
+            } else {
+                CommandPayload::TakeSeat { seat: 0 }
             },
             &format!("z-seat-{index:03}"),
         );
@@ -475,7 +546,7 @@ fn startup_replay_conflicts_and_evicted_receipts_cannot_reapply_create() {
         validate_result(&action, &result).unwrap();
         assert!(matches!(result, DeviceActionResult::Committed { .. }));
     }
-    assert_eq!(h.adapter.revision(), Some(257));
+    assert_eq!(h.adapter.revision(), Some(258));
     let mut calls = 0;
     let reply = exchange(
         &request,
@@ -491,5 +562,21 @@ fn startup_replay_conflicts_and_evicted_receipts_cannot_reapply_create() {
         VeilidDeviceReply::Unavailable
     ));
     assert_eq!(calls, 1);
-    assert_eq!(h.adapter.revision(), Some(257));
+    assert_eq!(h.adapter.revision(), Some(258));
+    let mut calls = 0;
+    let reply = exchange(
+        &seat_request,
+        |bytes, _| {
+            calls += 1;
+            Ok(h.service.dispatch(bytes).unwrap())
+        },
+        |_| panic!("stale ordinary command must not be reprepared"),
+    )
+    .unwrap();
+    assert!(matches!(
+        VeilidDeviceReply::decode(&reply).unwrap(),
+        VeilidDeviceReply::StaleRevision
+    ));
+    assert_eq!(calls, 1);
+    assert_eq!(h.adapter.revision(), Some(258));
 }

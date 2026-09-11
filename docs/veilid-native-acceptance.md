@@ -44,22 +44,38 @@ rule for a different binary/profile as the same condition. Further work should
 investigate uncertain Create/join outcomes, without treating a missing reply
 as proof that a state-changing action was rejected.
 
-## September startup delivery policy
+## September command delivery policy
 
-Create, invitation redemption, and reconnect may resend the **same signed
+Rules commands (including create, join, ready, bids and plays) may resend the **same signed
 request bytes** up to three times after a classified transient transport
 failure, with 250/500ms backoff. Route failures can refresh the validated route;
 they do not generate a new command against newer state. Explicit server denials
-or unavailable responses stop immediately. Ordinary gameplay and pose writes
-are not automatically resent; a missing reply is an unknown outcome.
+or unavailable responses stop immediately. Physical-pose, route and cooperation
+writes are not automatically resent by this policy. If every command attempt
+loses its reply, the outcome remains unknown, not an authoritative rejection.
 
 The certified service stores exact-command receipts before acknowledgment.
 Deterministic tests lose a request before dispatch or its reply afterward and
 verify one state transition, including single-use admission. A conflicting
-signed request is rejected, and an evicted old Create receipt cannot recreate
-the room. This is bounded replay safety, not unlimited exactly-once delivery.
+signed request is rejected, and an evicted old receipt cannot bypass the frozen
+epoch/revision checks. This is bounded replay safety, not unlimited exactly-once delivery.
 
-On September 10 the current suite passed 40 library tests and four service
+The expanded ordinary-command policy passed 43 library tests, four service
+integrations and 39 native tests. The service regression verifies that unsent
+drag samples may be combined but transmitted motion requests are not retried,
+and the final pose still reaches the other device without revealing its face.
+Public-network acceptance and its failures are recorded separately in PLAN-6;
+these local tests do not establish live-network latency or reliability.
+
+A subsequent non-mock, windowless two-process test passed the continuous
+rendered menu-to-trick flow and scripted participant restart in 199.18s
+(`target/phase6-public-trick-06/run.log`). Captures were inspected. It exercised
+unsent motion coalescing, but no command-replay diagnostic occurred, so injected
+tests remain the evidence for lost-command-reply recovery. Pose waits were
+5.675s and 9.658s; read retries and substantial latency remain. Invitation
+buffers were isolated test substitutes, not the user's OS clipboard.
+
+The earlier startup-only implementation passed 40 library tests and four service
 integrations:
 
 ```powershell
