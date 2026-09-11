@@ -8,6 +8,9 @@ use std::{
 };
 
 struct ChildOwner(Child);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RenderedStage { None, Menu, Lobby }
 impl Drop for ChildOwner {
     fn drop(&mut self) {
         if self.0.try_wait().ok().flatten().is_none() {
@@ -69,6 +72,8 @@ fn protected_desktop_process_role() {
     let creator_loss = std::env::var("POCHE_PROCESS_PROBE_CREATOR_LOSS").as_deref() == Ok("1");
     let native_input = std::env::var("POCHE_PROCESS_PROBE_NATIVE_INPUT").as_deref() == Ok("1");
     let rendered_menu = std::env::var("POCHE_PROCESS_PROBE_RENDERED_MENU").as_deref() == Ok("1");
+    let rendered_lobby = std::env::var("POCHE_PROCESS_PROBE_RENDERED_LOBBY").as_deref() == Ok("1");
+    assert!(!rendered_lobby || rendered_menu, "rendered lobby starts through the menu");
     assert!(!native_input || cfg!(feature = "native-input-test"), "native input probe feature is required");
     assert!(!rendered_menu || cfg!(feature = "native-input-test"), "rendered menu probe feature is required");
     let restarting = role.ends_with("-resume");
@@ -91,7 +96,16 @@ fn protected_desktop_process_role() {
     #[cfg(feature = "native-input-test")]
     let result = if rendered_menu && !restarting {
         use poche_native_ui::desktop_menu::input_probe::{self, IsolatedClipboard, MenuScenario};
+        let coordination = root.to_owned();
         let (name, scenario) = match request {
+            DesktopMenuRequest::Create { name } if rendered_lobby => (name, MenuScenario::CreateAndDeal {
+                invitation_ready: Box::new(move |invitation| {
+                    fs::write(coordination.join("invitation"), invitation).map_err(|_| "could not coordinate copied invitation")?;
+                    fs::write(coordination.join("invitation-ready"), b"ready").map_err(|_| "could not publish invitation-ready marker")?;
+                    Ok(())
+                }),
+            }),
+            DesktopMenuRequest::Join { name, invitation } if rendered_lobby => (name, MenuScenario::JoinAndDeal { invitation }),
             DesktopMenuRequest::Create { name } => (name, MenuScenario::Create),
             DesktopMenuRequest::Join { name, invitation } => (name, MenuScenario::Join { invitation }),
         };
@@ -166,18 +180,16 @@ fn protected_desktop_process_role() {
         // Never print the bearer secret. TempDir owns its cleanup in the parent.
         fs::write(root.join("invitation"), live.room_invitation().unwrap()).unwrap();
     }
-    invoke(
-        &mut live,
+    if !rendered_lobby {
+        invoke(
+            &mut live,
+            if creator { "room-take-seat-0" } else { "room-take-seat-1" },
+        );
+        invoke(&mut live, "room-ready");
         if creator {
-            "room-take-seat-0"
-        } else {
-            "room-take-seat-1"
-        },
-    );
-    invoke(&mut live, "room-ready");
-    if creator {
-        fs::write(root.join("invitation-ready"), b"ready").unwrap();
-        invoke(&mut live, "countdown-arm");
+            fs::write(root.join("invitation-ready"), b"ready").unwrap();
+            invoke(&mut live, "countdown-arm");
+        }
     }
     wait_until(|| {
         live.poll().expect("deal observation");
@@ -306,14 +318,14 @@ fn protected_desktop_process_role() {
 #[test]
 #[ignore = "real public Veilid and fresh persistent protected test profiles"]
 fn protected_desktop_two_process() {
-    run_two_process(false, false, false, false);
+    run_two_process(false, false, false, RenderedStage::None);
 }
 
 #[cfg(feature = "native-input-test")]
 #[test]
 #[ignore = "real public Veilid, protected profiles and windowless native drag observers"]
 fn protected_desktop_native_drag_two_process() {
-    run_two_process(false, false, true, false);
+    run_two_process(false, false, true, RenderedStage::None);
 }
 
 #[cfg(feature = "native-input-test")]
@@ -322,18 +334,27 @@ fn protected_desktop_native_drag_two_process() {
 fn protected_desktop_rendered_menu_two_process() {
     let evidence = std::path::PathBuf::from(std::env::var_os("POCHE_MENU_EVIDENCE_ROOT").expect("set a fresh menu evidence root"));
     fs::create_dir(evidence).expect("fresh menu evidence root");
-    run_two_process(false, false, false, true);
+    run_two_process(false, false, false, RenderedStage::Menu);
+}
+
+#[cfg(feature = "native-input-test")]
+#[test]
+#[ignore = "GPU menu/seat/ready/deal and two public Veilid processes; no visible windows"]
+fn protected_desktop_rendered_lobby_two_process() {
+    let evidence = std::path::PathBuf::from(std::env::var_os("POCHE_MENU_EVIDENCE_ROOT").expect("set a fresh menu evidence root"));
+    fs::create_dir(evidence).expect("fresh rendered lobby evidence root");
+    run_two_process(false, false, false, RenderedStage::Lobby);
 }
 
 #[test]
 #[ignore = "real public Veilid creator crash with protected profiles"]
 fn protected_desktop_creator_crash() {
-    run_two_process(true, false, false, false);
+    run_two_process(true, false, false, RenderedStage::None);
 }
 
 #[test]
 #[ignore = "real public Veilid all-peer loss and 60-second recovery expiry"]
-fn protected_desktop_all_peer_loss() { run_two_process(true, true, false, false); }
+fn protected_desktop_all_peer_loss() { run_two_process(true, true, false, RenderedStage::None); }
 
 #[test]
 #[ignore = "real public Veilid and protected empty-room lifecycle"]
@@ -385,7 +406,7 @@ fn recovery_digest(live: &NativeLiveDevice) -> String {
     blake3::hash(&bytes).to_hex().to_string()
 }
 
-fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool, rendered_menu: bool) {
+fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool, rendering: RenderedStage) {
     opt_in();
     let directory = tempfile::tempdir().unwrap();
     let suffix = now().unwrap().to_string();
@@ -398,7 +419,8 @@ fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool, rende
             .env("POCHE_PROCESS_PROBE_ROLE", role)
             .env("POCHE_PROCESS_PROBE_CREATOR_LOSS", if creator_loss { "1" } else { "0" })
             .env("POCHE_PROCESS_PROBE_NATIVE_INPUT", if native_input { "1" } else { "0" })
-            .env("POCHE_PROCESS_PROBE_RENDERED_MENU", if rendered_menu { "1" } else { "0" })
+            .env("POCHE_PROCESS_PROBE_RENDERED_MENU", if matches!(rendering, RenderedStage::Menu | RenderedStage::Lobby) { "1" } else { "0" })
+            .env("POCHE_PROCESS_PROBE_RENDERED_LOBBY", if rendering == RenderedStage::Lobby { "1" } else { "0" })
             .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
         #[cfg(windows)]
         {
@@ -439,6 +461,7 @@ fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool, rende
         .env("POCHE_PROCESS_PROBE_CREATOR_LOSS", if creator_loss { "1" } else { "0" })
         .env("POCHE_PROCESS_PROBE_NATIVE_INPUT", if native_input { "1" } else { "0" })
         .env("POCHE_PROCESS_PROBE_RENDERED_MENU", "0")
+        .env("POCHE_PROCESS_PROBE_RENDERED_LOBBY", "0")
         .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
     #[cfg(windows)] {
         use std::os::windows::process::CommandExt;

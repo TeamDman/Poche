@@ -31,7 +31,15 @@ impl IsolatedClipboard {
 
 pub enum MenuScenario {
     Create,
+    /// Publish the copied invitation to the test coordinator only after the
+    /// creator has taken seat 0 and readied through the rendered controls.
+    CreateAndDeal {
+        invitation_ready: Box<dyn FnOnce(&str) -> Result<(), String> + Send + Sync>,
+    },
     Join {
+        invitation: String,
+    },
+    JoinAndDeal {
         invitation: String,
     },
     /// The supplied worker must return this redacted error on each request.
@@ -72,15 +80,28 @@ pub fn run(
     steps.extend(name.chars().map(Step::Type));
     steps.push_back(Step::Field(Field::Name, name.to_owned()));
     match scenario {
-        MenuScenario::Create => {
+        MenuScenario::Create | MenuScenario::CreateAndDeal { .. } => {
             steps.push_back(Step::Capture("menu.png", false));
             steps.push_back(Step::Click(Target::Create, 0));
             steps.push_back(Step::Live);
             steps.push_back(Step::Click(Target::Copy, 0));
             steps.push_back(Step::Copied);
             steps.push_back(Step::Capture("lobby.png", false));
+            if let MenuScenario::CreateAndDeal { invitation_ready } = scenario {
+                steps.extend([
+                    Step::Invoke("room-take-seat-0"),
+                    Step::OwnSeat(0),
+                    Step::Invoke("room-ready"),
+                    Step::OwnReady,
+                    Step::PublishInvitation(invitation_ready),
+                    Step::Invoke("countdown-arm"),
+                    Step::Dealt,
+                    Step::Capture("dealt.png", false),
+                ]);
+            }
         }
         MenuScenario::Join { ref invitation }
+        | MenuScenario::JoinAndDeal { ref invitation }
         | MenuScenario::ConnectionFailure { ref invitation, .. } => {
             // Non-invitation bytes must not enter the editor or start a request.
             steps.extend([
@@ -110,6 +131,16 @@ pub fn run(
             } else {
                 steps.push_back(Step::Live);
                 steps.push_back(Step::Capture("lobby.png", false));
+                if matches!(scenario, MenuScenario::JoinAndDeal { .. }) {
+                    steps.extend([
+                        Step::Invoke("room-take-seat-1"),
+                        Step::OwnSeat(1),
+                        Step::Invoke("room-ready"),
+                        Step::OwnReady,
+                        Step::Dealt,
+                        Step::Capture("dealt.png", false),
+                    ]);
+                }
             }
         }
     }
@@ -164,6 +195,7 @@ enum Target {
     Paste,
     Join,
     Copy,
+    LiveAction(&'static str),
 }
 
 enum Step {
@@ -175,7 +207,32 @@ enum Step {
     Idle,
     Live,
     Copied,
+    Invoke(&'static str),
+    Committed(
+        &'static str,
+        Option<poche_player_client::DeviceActionResult>,
+    ),
+    OwnSeat(u8),
+    OwnReady,
+    PublishInvitation(Box<dyn FnOnce(&str) -> Result<(), String> + Send + Sync>),
+    Dealt,
     Capture(&'static str, bool),
+}
+
+impl Step {
+    // Keep failure context useful without printing names, invitations or faces.
+    fn description(&self) -> String {
+        match self {
+            Self::Click(target, stage) => format!("click {target:?}, stage {stage}"),
+            Self::Invoke(action) => format!("waiting for advertised {action}"),
+            Self::Committed(action, _) => format!("waiting for committed {action}"),
+            Self::Dealt => "waiting for own dealt hand".to_owned(),
+            Self::OwnSeat(_) | Self::OwnReady => "checking own lobby membership".to_owned(),
+            Self::Live => "waiting for connection".to_owned(),
+            Self::Capture(_, _) => "saving screenshot".to_owned(),
+            _ => "checking menu input".to_owned(),
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -201,7 +258,13 @@ fn drive(world: &mut World) {
         return;
     }
     let result = if driver.started.elapsed() > Duration::from_secs(120) && driver.error.is_none() {
-        Err("menu input acceptance timed out".to_owned())
+        Err(format!(
+            "rendered input timed out: {}",
+            driver
+                .steps
+                .front()
+                .map_or_else(|| "finishing".to_owned(), Step::description)
+        ))
     } else {
         driver.advance(world)
     };
@@ -375,6 +438,86 @@ impl Driver {
                     return Err("Copy button did not export the live room invitation".to_owned());
                 }
             }
+            Step::Invoke(action) => {
+                let live = world.resource::<NativeLiveDevice>();
+                if !live
+                    .observation()
+                    .actions
+                    .iter()
+                    .any(|candidate| candidate.id == action)
+                {
+                    self.steps.push_front(Step::Invoke(action));
+                } else {
+                    eprintln!(
+                        "poche rendered probe: clicking {action} at revision {}",
+                        live.observation().projection.current_revision
+                    );
+                    self.steps
+                        .push_front(Step::Committed(action, live.last_result().cloned()));
+                    self.steps
+                        .push_front(Step::Click(Target::LiveAction(action), 0));
+                }
+            }
+            Step::Committed(action, previous) => {
+                let live = world.resource::<NativeLiveDevice>();
+                let result = live.last_result();
+                if result == previous.as_ref() {
+                    self.steps.push_front(Step::Committed(action, previous));
+                } else if !matches!(
+                    result,
+                    Some(poche_player_client::DeviceActionResult::Committed { .. })
+                ) {
+                    return Err(format!(
+                        "rendered {action} did not receive a committed result"
+                    ));
+                }
+            }
+            Step::OwnSeat(seat) => {
+                let view = world.resource::<NativeLiveDevice>().observation();
+                if !view.projection.payload.members.iter().any(|member| {
+                    member.principal_id == view.projection.principal_id && member.seat == Some(seat)
+                }) {
+                    return Err("rendered seat action did not assign this player's seat".to_owned());
+                }
+            }
+            Step::OwnReady => {
+                let view = world.resource::<NativeLiveDevice>().observation();
+                if !view.projection.payload.members.iter().any(|member| {
+                    member.principal_id == view.projection.principal_id && member.ready
+                }) {
+                    return Err("rendered Ready did not ready this player".to_owned());
+                }
+            }
+            Step::PublishInvitation(publish) => {
+                let copied = self.clipboard.text();
+                let live = world.resource::<NativeLiveDevice>();
+                if live.room_invitation() != Some(copied.as_str()) {
+                    return Err("copied invitation changed before publication".to_owned());
+                }
+                publish(&copied)?;
+            }
+            Step::Dealt => {
+                let view = world.resource::<NativeLiveDevice>().observation();
+                if view
+                    .projection
+                    .payload
+                    .own_hand
+                    .as_ref()
+                    .is_none_or(|hand| hand.cards.is_empty())
+                {
+                    self.steps.push_front(Step::Dealt);
+                } else {
+                    if view.projection.payload.phase != poche_protocol::RoomPhase::Running
+                        || !view.projection.payload.granted_hands.is_empty()
+                    {
+                        return Err(
+                            "dealt view has wrong phase or unexpected hand grants".to_owned()
+                        );
+                    }
+                    // Let the real projection/mesh and hand-camera update settle.
+                    self.ready_at = self.frame + 30;
+                }
+            }
             Step::Capture(name, pending) => {
                 if !pending {
                     let path = self.directory.join(name);
@@ -398,6 +541,13 @@ impl Driver {
 }
 
 fn find_target(world: &mut World, target: Target) -> Option<Entity> {
+    if let Target::LiveAction(id) = target {
+        return world
+            .query::<(Entity, &LiveAction)>()
+            .iter(world)
+            .find(|(_, action)| action.0 == id)
+            .map(|(entity, _)| entity);
+    }
     if matches!(target, Target::Name) {
         return world
             .query::<(Entity, &Field)>()

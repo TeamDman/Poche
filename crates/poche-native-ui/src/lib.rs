@@ -2804,6 +2804,24 @@ mod tests {
     }
 
     #[test]
+    fn every_card_face_raster_adds_visible_suit_coverage() {
+        let font = SlugFont::parse(FONT_BYTES, 0, '?').expect("checked font");
+        let ink = |text: &str| {
+            let raster = rasterize_slug_text(&font, text, [0, 0, 0]).unwrap();
+            raster.image.data.as_ref().unwrap().chunks_exact(4)
+                .filter(|pixel| pixel[3] >= 128).count()
+        };
+        for code in 0..52 {
+            let label = CardFace::new(code).unwrap().label();
+            let rank: String = label.chars().take(label.chars().count() - 1).collect();
+            assert!(ink(&label) > ink(&rank) + 20,
+                "standard face {code} lost its suit in the Slug raster");
+        }
+        // This checks texture generation, not GPU occlusion, framing or the
+        // visual legibility of every face at every camera pose.
+    }
+
+    #[test]
     fn slug_surface_is_filled_antialiased_and_fitted_to_its_binding() {
         let font = SlugFont::parse(FONT_BYTES, 0, '?').expect("checked font");
         let controller = replay_fixture_controller().expect("fixture controller");

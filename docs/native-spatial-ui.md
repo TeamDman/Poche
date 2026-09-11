@@ -126,6 +126,31 @@ The earlier timeout is therefore still unresolved. The final deterministic
 menu input run (`target/phase6-menu-input-03`) also passed with the new glyph
 assertion, and its prefilled menu was visually inspected.
 
+The extended rendered-lobby test keeps both renderers running through seat,
+Ready and deal. Use the same environment variables above, a fresh evidence
+directory, and this test name:
+
+```powershell
+cargo test --locked -p poche-cli --features native-input-test --offline --lib cli::desktop::connection::process_probe::protected_desktop_rendered_lobby_two_process -- --exact --ignored --nocapture --test-threads=1
+```
+
+`target/phase6-public-lobby-01` passed in 108.69s, including the later scripted
+shared-pose and participant-restart checks. Both `dealt.png` captures were
+inspected. The driver clicks the GPU-laid-out seat/Ready/countdown buttons,
+waits for this device's new committed response, then checks its actual seat,
+ready flag and dealt hand. It does not treat another player's revision change
+as proof that its own action succeeded. Timeout errors identify the waiting
+action without logging player names, invitations or faces. This test still
+uses isolated clipboard buffers; it does not yet render the subsequent card
+drag/play or prove the whole goal complete.
+
+For safe future OS clipboard testing, [Microsoft documents a clipboard per
+window station](https://learn.microsoft.com/en-us/windows/win32/winstation/window-stations).
+A separate noninteractive station may support real cross-process clipboard
+testing without touching the interactive user's clipboard. This is researched,
+not implemented: a read-only preflight found non-text formats in the current
+clipboard, so a plain-text backup/restore was deliberately not attempted.
+
 ## Architecture and controls
 
 - `poche-slug` is the MPL-2.0 extraction of Teamy Terminal's pinned outline,
