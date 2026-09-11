@@ -151,6 +151,31 @@ testing without touching the interactive user's clipboard. This is researched,
 not implemented: a read-only preflight found non-text formats in the current
 clipboard, so a plain-text backup/restore was deliberately not attempted.
 
+The continuous rendered-trick test adds bidding, an out-of-turn three-axis
+hand-to-table drag, an accepted drag, and action-palette play of the previously
+denied card. Each process keeps its original renderer and live connection from
+the menu through scoring and the next deal. Run with the same public-network
+opt-in above and a fresh `POCHE_MENU_EVIDENCE_ROOT`:
+
+```powershell
+cargo test --locked -p poche-cli --features native-input-test --offline --lib cli::desktop::connection::process_probe::protected_desktop_rendered_trick_two_process -- --exact --ignored --nocapture --test-threads=1
+```
+
+The recipient independently checks hidden-card motion without reveal or a
+logical revision change; accepted play must publish that card's identity and
+pose. Both devices compare their scored public history. Barriers carry expected
+public metadata only, never private faces for denied plays or substitute game
+commands. The overall test is bounded at eight minutes, each renderer at six,
+and each trick stage at 110 seconds. Subsequent pose/restart checks are still
+scripted, and invitation clipboard buffers are still isolated. Captures are
+private local developer evidence, not a copy-safe diagnostic export. Test
+implementation alone is not a passing network acceptance result. The first
+public run (`target/phase6-public-trick-01`) failed after 293.02s awaiting the
+legal drag's outcome, after peer-verified denied movement succeeded. The cause
+is not yet isolated. Follow-up instrumentation checks that release actually
+queues the action and records stage timings; this is not a transport fix.
+See PLAN-6 T4b for the measured result and remaining evidence gates.
+
 ## Architecture and controls
 
 - `poche-slug` is the MPL-2.0 extraction of Teamy Terminal's pinned outline,

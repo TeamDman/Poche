@@ -10,7 +10,7 @@ use std::{
 struct ChildOwner(Child);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum RenderedStage { None, Menu, Lobby }
+enum RenderedStage { None, Menu, Lobby, Trick }
 impl Drop for ChildOwner {
     fn drop(&mut self) {
         if self.0.try_wait().ok().flatten().is_none() {
@@ -73,6 +73,8 @@ fn protected_desktop_process_role() {
     let native_input = std::env::var("POCHE_PROCESS_PROBE_NATIVE_INPUT").as_deref() == Ok("1");
     let rendered_menu = std::env::var("POCHE_PROCESS_PROBE_RENDERED_MENU").as_deref() == Ok("1");
     let rendered_lobby = std::env::var("POCHE_PROCESS_PROBE_RENDERED_LOBBY").as_deref() == Ok("1");
+    let rendered_trick = std::env::var("POCHE_PROCESS_PROBE_RENDERED_TRICK").as_deref() == Ok("1");
+    assert!(!rendered_trick || rendered_lobby, "rendered trick starts through the lobby");
     assert!(!rendered_lobby || rendered_menu, "rendered lobby starts through the menu");
     assert!(!native_input || cfg!(feature = "native-input-test"), "native input probe feature is required");
     assert!(!rendered_menu || cfg!(feature = "native-input-test"), "rendered menu probe feature is required");
@@ -98,6 +100,15 @@ fn protected_desktop_process_role() {
         use poche_native_ui::desktop_menu::input_probe::{self, IsolatedClipboard, MenuScenario};
         let coordination = root.to_owned();
         let (name, scenario) = match request {
+            DesktopMenuRequest::Create { name } if rendered_trick => (name, MenuScenario::CreateAndTrick {
+                coordination: root.to_owned(),
+                invitation_ready: Box::new(move |invitation| {
+                    fs::write(coordination.join("invitation"), invitation).map_err(|_| "could not coordinate copied invitation")?;
+                    fs::write(coordination.join("invitation-ready"), b"ready").map_err(|_| "could not publish invitation-ready marker")?;
+                    Ok(())
+                }),
+            }),
+            DesktopMenuRequest::Join { name, invitation } if rendered_trick => (name, MenuScenario::JoinAndTrick { invitation, coordination }),
             DesktopMenuRequest::Create { name } if rendered_lobby => (name, MenuScenario::CreateAndDeal {
                 invitation_ready: Box::new(move |invitation| {
                     fs::write(coordination.join("invitation"), invitation).map_err(|_| "could not coordinate copied invitation")?;
@@ -346,6 +357,15 @@ fn protected_desktop_rendered_lobby_two_process() {
     run_two_process(false, false, false, RenderedStage::Lobby);
 }
 
+#[cfg(feature = "native-input-test")]
+#[test]
+#[ignore = "continuous GPU menu/lobby/bid/drag/trick across public Veilid processes; no visible windows"]
+fn protected_desktop_rendered_trick_two_process() {
+    let evidence = std::path::PathBuf::from(std::env::var_os("POCHE_MENU_EVIDENCE_ROOT").expect("set a fresh menu evidence root"));
+    fs::create_dir(evidence).expect("fresh rendered trick evidence root");
+    run_two_process(false, false, false, RenderedStage::Trick);
+}
+
 #[test]
 #[ignore = "real public Veilid creator crash with protected profiles"]
 fn protected_desktop_creator_crash() {
@@ -419,8 +439,9 @@ fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool, rende
             .env("POCHE_PROCESS_PROBE_ROLE", role)
             .env("POCHE_PROCESS_PROBE_CREATOR_LOSS", if creator_loss { "1" } else { "0" })
             .env("POCHE_PROCESS_PROBE_NATIVE_INPUT", if native_input { "1" } else { "0" })
-            .env("POCHE_PROCESS_PROBE_RENDERED_MENU", if matches!(rendering, RenderedStage::Menu | RenderedStage::Lobby) { "1" } else { "0" })
-            .env("POCHE_PROCESS_PROBE_RENDERED_LOBBY", if rendering == RenderedStage::Lobby { "1" } else { "0" })
+            .env("POCHE_PROCESS_PROBE_RENDERED_MENU", if rendering != RenderedStage::None { "1" } else { "0" })
+            .env("POCHE_PROCESS_PROBE_RENDERED_LOBBY", if matches!(rendering, RenderedStage::Lobby | RenderedStage::Trick) { "1" } else { "0" })
+            .env("POCHE_PROCESS_PROBE_RENDERED_TRICK", if rendering == RenderedStage::Trick { "1" } else { "0" })
             .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
         #[cfg(windows)]
         {
@@ -431,7 +452,7 @@ fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool, rende
             command.spawn().expect("spawn independent device process"),
         ));
     }
-    let deadline = Instant::now() + Duration::from_secs(240);
+    let deadline = Instant::now() + Duration::from_secs(if rendering == RenderedStage::Trick { 480 } else { 240 });
     loop {
         if let Some(status) = children[0].0.try_wait().unwrap() {
             assert!(status.success(), "creator failed before participant restart");
@@ -462,6 +483,7 @@ fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool, rende
         .env("POCHE_PROCESS_PROBE_NATIVE_INPUT", if native_input { "1" } else { "0" })
         .env("POCHE_PROCESS_PROBE_RENDERED_MENU", "0")
         .env("POCHE_PROCESS_PROBE_RENDERED_LOBBY", "0")
+        .env("POCHE_PROCESS_PROBE_RENDERED_TRICK", "0")
         .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
     #[cfg(windows)] {
         use std::os::windows::process::CommandExt;
@@ -485,6 +507,11 @@ fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool, rende
     assert!(directory.path().join("joiner-dealt").exists());
     assert!(directory.path().join("creator-saw-motion").exists());
     assert!(directory.path().join("joiner-motion-done").exists());
+    if rendering == RenderedStage::Trick {
+        for name in ["trick-denied.json", "trick-accepted.json", "trick-actor-result.json", "trick-follower-result.json"] {
+            assert!(directory.path().join(name).exists(), "rendered trick evidence missing: {name}");
+        }
+    }
     if native_input { assert!(directory.path().join("creator-saw-observer-motion").exists()); }
     if all_loss {
         assert!(directory.path().join("all-peer-expired").exists());

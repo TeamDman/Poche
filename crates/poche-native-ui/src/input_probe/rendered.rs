@@ -21,6 +21,44 @@ pub struct RenderedDragResult {
     pub rotation_millidegrees: [i32; 3],
 }
 
+/// Only public pose metadata crosses the test-coordination boundary. A denied
+/// play deliberately carries no face, even though its owner knows it.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct DragPose {
+    pub card_id: String,
+    pub position_mm: [i32; 3],
+    pub rotation_millidegrees: [i32; 3],
+    pub revision: u64,
+    pub public_face: Option<u8>,
+}
+
+pub(crate) type DragTicket = Arc<Mutex<Option<Result<DragPose, String>>>>;
+
+enum Completion {
+    Exit(Arc<Mutex<Option<Result<RenderedDragResult, String>>>>),
+    Continue(DragTicket),
+}
+
+/// Install the same pointer probe without leaving the caller's live app.
+pub(crate) fn begin_in_world(
+    world: &mut World,
+    expected: ExpectedPlay,
+    directory: &Path,
+) -> Result<DragTicket, String> {
+    if world.contains_resource::<Probe>() {
+        return Err("another rendered drag is already active".to_owned());
+    }
+    let result = Arc::new(Mutex::new(None));
+    let probe = prepare(
+        world.resource::<NativeLiveDevice>(),
+        expected,
+        directory,
+        Completion::Continue(result.clone()),
+    )?;
+    world.insert_resource(probe);
+    Ok(result)
+}
+
 /// Render and drag an owned card from the hand inset to PLAY. The caller must
 /// supply a fresh artifact directory; captures contain this viewer's hand.
 ///
@@ -32,6 +70,33 @@ pub fn drag_to_play(
     expected: ExpectedPlay,
     directory: &Path,
 ) -> Result<RenderedDragResult, String> {
+    let result = Arc::new(Mutex::new(None));
+    let probe = prepare(&live, expected, directory, Completion::Exit(result.clone()))?;
+    run_configured(
+        NativeUiLaunchOptions {
+            render_mode: NativeRenderMode::WindowlessImage,
+            external_tracing: bevy::log::tracing::dispatcher::has_been_set(),
+            ..default()
+        },
+        Some(live),
+        None,
+        move |app| {
+            app.insert_resource(probe).add_systems(Last, drive);
+        },
+    )?;
+    result
+        .lock()
+        .map_err(|_| "probe result unavailable")?
+        .take()
+        .ok_or("renderer stopped before completing its input probe")?
+}
+
+fn prepare(
+    live: &NativeLiveDevice,
+    expected: ExpectedPlay,
+    directory: &Path,
+    completion: Completion,
+) -> Result<Probe, String> {
     std::fs::create_dir(directory).map_err(|_| "a fresh capture directory is required")?;
     let controller = native_controller_from_observation(live.observation())?;
     let face = if expected == ExpectedPlay::Accepted {
@@ -68,14 +133,13 @@ pub fn drag_to_play(
         .ok_or("missing physical identity")?
         .id
         .clone();
-    let result = Arc::new(Mutex::new(None));
-    let shared = result.clone();
-    let probe = Probe {
+    Ok(Probe {
         directory: directory.to_owned(),
         expected,
         face,
         id,
         revision: live.observation().projection.current_revision,
+        queued_actions: live.queued_action_count(),
         initial_game: live
             .observation()
             .projection
@@ -85,6 +149,7 @@ pub fn drag_to_play(
         stage: Stage::Warmup,
         frame: 0,
         entered: 0,
+        stage_started: Instant::now(),
         started: None,
         card: None,
         play: None,
@@ -96,27 +161,11 @@ pub fn drag_to_play(
         rotation: [0; 3],
         initial_rotation: [0; 3],
         error: None,
-        result: shared,
-    };
-    run_configured(
-        NativeUiLaunchOptions {
-            render_mode: NativeRenderMode::WindowlessImage,
-            external_tracing: bevy::log::tracing::dispatcher::has_been_set(),
-            // Screenshot persistence uses the same acceptance_driver as ordinary
-            // local captures; this driver only chooses the moment and fresh path.
-            ..default()
-        },
-        Some(live),
-        None,
-        move |app| {
-            app.insert_resource(probe).add_systems(Last, drive);
-        },
-    )?;
-    let outcome = result
-        .lock()
-        .map_err(|_| "probe result unavailable")?
-        .take()
-        .ok_or("renderer stopped before completing its input probe")??;
+        completion,
+    })
+}
+
+fn validate_captures(directory: &Path) -> Result<(), String> {
     for name in ["before.png", "held.png", "after.png"] {
         let image = image::open(directory.join(name))
             .map_err(|_| "capture was not saved")?
@@ -128,7 +177,7 @@ pub fn drag_to_play(
             return Err("capture has no meaningful render content".to_owned());
         }
     }
-    Ok(outcome)
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -154,10 +203,12 @@ struct Probe {
     face: CardFace,
     id: String,
     revision: u64,
+    queued_actions: u64,
     initial_game: Option<poche_protocol::GamePublicStateWire>,
     stage: Stage,
     frame: u64,
     entered: u64,
+    stage_started: Instant,
     started: Option<Instant>,
     card: Option<Entity>,
     play: Option<Entity>,
@@ -169,17 +220,27 @@ struct Probe {
     rotation: [i32; 3],
     initial_rotation: [i32; 3],
     error: Option<String>,
-    result: Arc<Mutex<Option<Result<RenderedDragResult, String>>>>,
+    completion: Completion,
 }
 
-fn drive(world: &mut World) {
+pub(crate) fn drive(world: &mut World) {
     let Some(mut probe) = world.remove_resource::<Probe>() else {
         return;
     };
     probe.frame += 1;
     let elapsed = probe.started.get_or_insert_with(Instant::now).elapsed();
     let result = if elapsed > Duration::from_secs(90) && probe.error.is_none() {
-        Err(format!("rendered input timed out in {:?}", probe.stage))
+        let live = world.resource::<NativeLiveDevice>();
+        Err(format!(
+            "rendered input timed out in {:?}; stage {}ms / total {}ms; revision {} -> {}; queued actions {} -> {} (queue admission, not ACK)",
+            probe.stage,
+            probe.stage_started.elapsed().as_millis(),
+            elapsed.as_millis(),
+            probe.revision,
+            live.observation().projection.current_revision,
+            probe.queued_actions,
+            live.queued_action_count()
+        ))
     } else {
         probe.advance(world)
     };
@@ -197,17 +258,37 @@ fn drive(world: &mut World) {
         } else if !world.resource::<LaunchClock>().screenshot_completed {
             Err("final screenshot timed out".to_owned())
         } else {
-            Ok(RenderedDragResult {
-                live: world
-                    .remove_resource::<NativeLiveDevice>()
-                    .expect("probe owns live device"),
+            validate_captures(&probe.directory).map(|()| DragPose {
                 card_id: probe.id,
                 position_mm: probe.position,
                 rotation_millidegrees: probe.rotation,
+                revision: world
+                    .resource::<NativeLiveDevice>()
+                    .observation()
+                    .projection
+                    .current_revision,
+                public_face: (probe.expected == ExpectedPlay::Accepted)
+                    .then_some(probe.face.code()),
             })
         };
-        *probe.result.lock().expect("probe result lock") = Some(outcome);
-        world.write_message(AppExit::Success);
+        match probe.completion {
+            Completion::Continue(result) => {
+                *result.lock().expect("probe result lock") = Some(outcome)
+            }
+            Completion::Exit(result) => {
+                *result.lock().expect("probe result lock") = Some(outcome.map(|pose| {
+                    RenderedDragResult {
+                        live: world
+                            .remove_resource::<NativeLiveDevice>()
+                            .expect("probe owns live device"),
+                        card_id: pose.card_id,
+                        position_mm: pose.position_mm,
+                        rotation_millidegrees: pose.rotation_millidegrees,
+                    }
+                }));
+                world.write_message(AppExit::Success);
+            }
+        }
     } else {
         world.insert_resource(probe);
     }
@@ -215,8 +296,14 @@ fn drive(world: &mut World) {
 
 impl Probe {
     fn change(&mut self, stage: Stage) {
+        eprintln!(
+            "poche rendered drag: {:?} completed in {}ms",
+            self.stage,
+            self.stage_started.elapsed().as_millis()
+        );
         self.stage = stage;
         self.entered = self.frame;
+        self.stage_started = Instant::now();
     }
     fn capture(&self, world: &mut World, name: &str) {
         world.resource_mut::<AcceptanceOptions>().screenshot = Some(self.directory.join(name));
@@ -466,7 +553,15 @@ impl Probe {
                 );
                 self.change(Stage::Release);
             }
-            Stage::Release => self.change(Stage::AwaitOutcome),
+            Stage::Release => {
+                let live = world.resource::<NativeLiveDevice>();
+                let expected =
+                    self.queued_actions + u64::from(self.expected == ExpectedPlay::Accepted);
+                if live.queued_action_count() != expected {
+                    return Err("rendered release queued the wrong number of rules actions".into());
+                }
+                self.change(Stage::AwaitOutcome);
+            }
             Stage::AwaitOutcome => {
                 let live = world.resource::<NativeLiveDevice>();
                 let view = live.observation();

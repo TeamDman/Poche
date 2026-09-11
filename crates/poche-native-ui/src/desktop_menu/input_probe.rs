@@ -2,6 +2,7 @@
 //! Interaction, text-value mutation, menu request or privileged game command.
 //! Clipboard storage is explicitly isolated from the user's OS clipboard.
 use super::*;
+mod trick;
 use crate::{
     AcceptanceOptions, LaunchClock, NativeLiveDevice, NativeRenderMode, NativeUiLaunchOptions,
 };
@@ -42,6 +43,14 @@ pub enum MenuScenario {
     JoinAndDeal {
         invitation: String,
     },
+    CreateAndTrick {
+        invitation_ready: Box<dyn FnOnce(&str) -> Result<(), String> + Send + Sync>,
+        coordination: PathBuf,
+    },
+    JoinAndTrick {
+        invitation: String,
+        coordination: PathBuf,
+    },
     /// The supplied worker must return this redacted error on each request.
     ConnectionFailure {
         invitation: String,
@@ -72,6 +81,21 @@ pub fn run(
     directory: &Path,
 ) -> Result<Option<MenuConnection>, String> {
     std::fs::create_dir(directory).map_err(|_| "a fresh menu evidence directory is required")?;
+    let (scenario, trick) = match scenario {
+        MenuScenario::CreateAndTrick {
+            invitation_ready,
+            coordination,
+        } => (
+            MenuScenario::CreateAndDeal { invitation_ready },
+            Some(coordination),
+        ),
+        MenuScenario::JoinAndTrick {
+            invitation,
+            coordination,
+        } => (MenuScenario::JoinAndDeal { invitation }, Some(coordination)),
+        scenario => (scenario, None),
+    };
+    let timeout = Duration::from_secs(if trick.is_some() { 360 } else { 120 });
     let mut steps = VecDeque::from([
         Step::Click(Target::Create, 0),
         Step::Status("Enter a name first.".to_owned()),
@@ -89,12 +113,12 @@ pub fn run(
             steps.push_back(Step::Capture("lobby.png", false));
             if let MenuScenario::CreateAndDeal { invitation_ready } = scenario {
                 steps.extend([
-                    Step::Invoke("room-take-seat-0"),
+                    Step::Invoke("room-take-seat-0".into()),
                     Step::OwnSeat(0),
-                    Step::Invoke("room-ready"),
+                    Step::Invoke("room-ready".into()),
                     Step::OwnReady,
                     Step::PublishInvitation(invitation_ready),
-                    Step::Invoke("countdown-arm"),
+                    Step::Invoke("countdown-arm".into()),
                     Step::Dealt,
                     Step::Capture("dealt.png", false),
                 ]);
@@ -133,9 +157,9 @@ pub fn run(
                 steps.push_back(Step::Capture("lobby.png", false));
                 if matches!(scenario, MenuScenario::JoinAndDeal { .. }) {
                     steps.extend([
-                        Step::Invoke("room-take-seat-1"),
+                        Step::Invoke("room-take-seat-1".into()),
                         Step::OwnSeat(1),
-                        Step::Invoke("room-ready"),
+                        Step::Invoke("room-ready".into()),
                         Step::OwnReady,
                         Step::Dealt,
                         Step::Capture("dealt.png", false),
@@ -143,6 +167,14 @@ pub fn run(
                 }
             }
         }
+        MenuScenario::CreateAndTrick { .. } | MenuScenario::JoinAndTrick { .. } => unreachable!(),
+    }
+    if let Some(coordination) = trick {
+        steps.extend([
+            Step::Bid,
+            Step::Trick(trick::Probe::new(coordination, directory.to_owned())),
+            Step::Capture("after-trick.png", false),
+        ]);
     }
     let result = Arc::new(Mutex::new(None));
     let shared = result.clone();
@@ -154,6 +186,7 @@ pub fn run(
         frame: 0,
         ready_at: 60,
         started: Instant::now(),
+        timeout,
         error: None,
         captures: Vec::new(),
     };
@@ -178,7 +211,7 @@ pub fn run(
             ));
             app.insert_resource(InvitationClipboard::Isolated(clipboard.0))
                 .insert_resource(driver)
-                .add_systems(Last, drive);
+                .add_systems(Last, (drive, crate::input_probe::rendered::drive).chain());
         },
     )?;
     result
@@ -188,14 +221,14 @@ pub fn run(
         .ok_or_else(|| "menu stopped before finishing input acceptance".to_owned())?
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum Target {
     Name,
     Create,
     Paste,
     Join,
     Copy,
-    LiveAction(&'static str),
+    LiveAction(String),
 }
 
 enum Step {
@@ -207,15 +240,14 @@ enum Step {
     Idle,
     Live,
     Copied,
-    Invoke(&'static str),
-    Committed(
-        &'static str,
-        Option<poche_player_client::DeviceActionResult>,
-    ),
+    Invoke(String),
+    Committed(String, Option<poche_player_client::DeviceActionResult>),
     OwnSeat(u8),
     OwnReady,
     PublishInvitation(Box<dyn FnOnce(&str) -> Result<(), String> + Send + Sync>),
     Dealt,
+    Bid,
+    Trick(trick::Probe),
     Capture(&'static str, bool),
 }
 
@@ -227,6 +259,8 @@ impl Step {
             Self::Invoke(action) => format!("waiting for advertised {action}"),
             Self::Committed(action, _) => format!("waiting for committed {action}"),
             Self::Dealt => "waiting for own dealt hand".to_owned(),
+            Self::Bid => "waiting for an advertised bid".to_owned(),
+            Self::Trick(probe) => probe.description(),
             Self::OwnSeat(_) | Self::OwnReady => "checking own lobby membership".to_owned(),
             Self::Live => "waiting for connection".to_owned(),
             Self::Capture(_, _) => "saving screenshot".to_owned(),
@@ -244,6 +278,7 @@ struct Driver {
     frame: u64,
     ready_at: u64,
     started: Instant,
+    timeout: Duration,
     error: Option<String>,
     captures: Vec<PathBuf>,
 }
@@ -257,7 +292,7 @@ fn drive(world: &mut World) {
         world.insert_resource(driver);
         return;
     }
-    let result = if driver.started.elapsed() > Duration::from_secs(120) && driver.error.is_none() {
+    let result = if driver.started.elapsed() > driver.timeout && driver.error.is_none() {
         Err(format!(
             "rendered input timed out: {}",
             driver
@@ -322,7 +357,7 @@ impl Driver {
         };
         match step {
             Step::Click(target, stage) => {
-                let entity = find_target(world, target)
+                let entity = find_target(world, &target)
                     .ok_or_else(|| format!("missing {target:?} control"))?;
                 let transform = world
                     .get::<UiGlobalTransform>(entity)
@@ -453,7 +488,7 @@ impl Driver {
                         live.observation().projection.current_revision
                     );
                     self.steps
-                        .push_front(Step::Committed(action, live.last_result().cloned()));
+                        .push_front(Step::Committed(action.clone(), live.last_result().cloned()));
                     self.steps
                         .push_front(Step::Click(Target::LiveAction(action), 0));
                 }
@@ -518,6 +553,35 @@ impl Driver {
                     self.ready_at = self.frame + 30;
                 }
             }
+            Step::Bid => {
+                let action = world
+                    .resource::<NativeLiveDevice>()
+                    .observation()
+                    .actions
+                    .iter()
+                    .find(|action| {
+                        matches!(
+                            action.payload,
+                            poche_protocol::CommandPayload::GameAction {
+                                action: poche_protocol::GameActionWire::Bid { .. }
+                            }
+                        )
+                    })
+                    .map(|action| action.id.clone());
+                if let Some(action) = action {
+                    self.steps.push_front(Step::Invoke(action));
+                } else {
+                    self.steps.push_front(Step::Bid);
+                }
+            }
+            Step::Trick(mut probe) => match probe.advance(world)? {
+                trick::Progress::Wait => self.steps.push_front(Step::Trick(probe)),
+                trick::Progress::Invoke(action) => {
+                    self.steps.push_front(Step::Trick(probe));
+                    self.steps.push_front(Step::Invoke(action));
+                }
+                trick::Progress::Done => {}
+            },
             Step::Capture(name, pending) => {
                 if !pending {
                     let path = self.directory.join(name);
@@ -529,7 +593,7 @@ impl Driver {
                     self.steps.push_front(Step::Capture(name, true));
                     self.ready_at = self.frame + 3;
                 } else if !world.resource::<LaunchClock>().screenshot_completed {
-                    if self.started.elapsed() > Duration::from_secs(135) {
+                    if self.started.elapsed() > self.timeout + Duration::from_secs(15) {
                         return Err("menu screenshot timed out".to_owned());
                     }
                     self.steps.push_front(Step::Capture(name, true));
@@ -540,12 +604,12 @@ impl Driver {
     }
 }
 
-fn find_target(world: &mut World, target: Target) -> Option<Entity> {
+fn find_target(world: &mut World, target: &Target) -> Option<Entity> {
     if let Target::LiveAction(id) = target {
         return world
             .query::<(Entity, &LiveAction)>()
             .iter(world)
-            .find(|(_, action)| action.0 == id)
+            .find(|(_, action)| action.0 == *id)
             .map(|(entity, _)| entity);
     }
     if matches!(target, Target::Name) {

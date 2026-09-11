@@ -95,6 +95,8 @@ pub struct NativeLiveDevice {
     motion_outbox: MotionOutbox,
     events: Mutex<mpsc::Receiver<NativeWorkerEvent>>,
     next_command: u64,
+    #[cfg(feature = "input-probe")]
+    queued_actions: u64,
     command_namespace: String,
     last_result: Option<DeviceActionResult>,
     worker: thread::JoinHandle<()>,
@@ -316,6 +318,8 @@ impl NativeLiveDevice {
             motion_outbox: MotionOutbox::default(),
             events: Mutex::new(event_rx),
             next_command: 0,
+            #[cfg(feature = "input-probe")]
+            queued_actions: 0,
             command_namespace,
             last_result: None,
             worker,
@@ -425,8 +429,14 @@ impl NativeLiveDevice {
             action_id: action_id.to_owned(),
             command_id,
         })?;
+        #[cfg(feature = "input-probe")]
+        { self.queued_actions = self.queued_actions.saturating_add(1); }
         self.motion_outbox.flush(&self.commands)
     }
+
+    /// Read-only harness evidence: admitted to the outbox, not a network ACK.
+    #[cfg(feature = "input-probe")]
+    pub(crate) fn queued_action_count(&self) -> u64 { self.queued_actions }
 
     /// Apply all currently available worker results without blocking.
     ///
@@ -539,12 +549,16 @@ mod tests {
             events: Mutex::new(events_rx),
             next_command: 0,
             command_namespace: "outbox-test".to_owned(),
+            #[cfg(feature = "input-probe")]
+            queued_actions: 0,
             last_result: None,
             worker: thread::spawn(|| {}),
         };
         live.motion_outbox.push(pose(true, 99)).unwrap();
         live.submit_action(&action)
             .expect("explicit release must survive a full worker queue");
+        #[cfg(feature = "input-probe")]
+        assert_eq!(live.queued_action_count(), 1, "queue admission is independent of ACK");
         live.motion_outbox.push(pose(false, 100)).unwrap();
         assert_eq!(
             live.motion_outbox.0.len(),
