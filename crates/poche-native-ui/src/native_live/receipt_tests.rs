@@ -124,6 +124,8 @@ fn exercise(lose_ack: bool, stop_during_confirmation: bool) {
         room.clone(),
     )
     .unwrap();
+    #[cfg(feature = "input-probe")]
+    assert_eq!(live.successful_observation_count(), 1);
     let before = live.observation().clone();
     let action = before.actions[0].id.clone();
     live.submit_action(&action).unwrap();
@@ -200,6 +202,11 @@ fn exercise(lose_ack: bool, stop_during_confirmation: bool) {
             Some(DeviceActionResult::Committed { .. })
         ));
     }
+    #[cfg(feature = "input-probe")]
+    assert!(
+        live.successful_observation_count() > 1,
+        "successful transport receipts advance below UI deduplication"
+    );
     live.shutdown().unwrap();
 }
 

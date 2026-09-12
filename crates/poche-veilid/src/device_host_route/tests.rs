@@ -100,6 +100,29 @@ async fn callback_driven_new_and_resumed_routes_keep_the_original_invitation() {
             .unwrap(),
         b"before"
     );
+    // Losing only the client's imported cache entry does not rotate the
+    // owner's publication. A validated same-epoch refresh must reimport it.
+    peer.api()
+        .release_private_route(resolved.route_id().clone())
+        .unwrap();
+    assert!(
+        client
+            .app_call(&resolved, b"missing import".to_vec())
+            .await
+            .is_err()
+    );
+    client
+        .refresh_resolved_room(&mut resolved, 101)
+        .await
+        .unwrap();
+    assert_eq!(resolved.record(), &original_record);
+    assert_eq!(
+        client
+            .app_call(&resolved, b"reimported".to_vec())
+            .await
+            .unwrap(),
+        b"reimported"
+    );
     // These are genuine mock route releases. Its missing callbacks and alias
     // invalidation are injected explicitly, not claimed to be upstream faults.
     server
@@ -225,6 +248,9 @@ async fn notification_overflow_is_bounded_and_does_not_lose_route_recovery() {
         .await
         .unwrap();
     let route = published.route_id().clone();
+    #[cfg(feature = "native-input-test")]
+    let code =
+        crate::RoomCode::decode(published.room_code().encode().unwrap().expose(), 100).unwrap();
     for _ in 0..80 {
         death(&node, route.clone());
     }
@@ -240,6 +266,21 @@ async fn notification_overflow_is_bounded_and_does_not_lose_route_recovery() {
         HostRouteStatus::Healthy { route_epoch: 2 },
         "duplicate events must coalesce"
     );
+    #[cfg(feature = "native-input-test")]
+    {
+        let current = adapter.resolve_room(&code, 101).await.unwrap();
+        let route = RouteId::from_str(
+            std::str::from_utf8(&current.record().private_route_blob().unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(task.retire_current_route_for_acceptance().await.unwrap(), 2);
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        // The mock release omits RouteChange. If this advanced, the retirement
+        // control itself manufactured recovery and could falsely pass publicly.
+        assert_eq!(task.status(), HostRouteStatus::Healthy { route_epoch: 2 });
+        death(&node, route);
+        healthy_at(&task, 3).await;
+    }
     task.stop().await.unwrap();
     drop(adapter);
     node.shutdown().unwrap();

@@ -11,7 +11,7 @@ build = "build.rs"
 
 [features]
 # Opt-in acceptance observers; does not enable Veilid's process-local mock.
-native-input-test = ["poche-native-ui/input-probe"]
+native-input-test = ["poche-native-ui/input-probe", "poche-veilid/native-input-test"]
 
 [[bin]]
 name = "poche"

@@ -214,6 +214,85 @@ impl VeilidRendezvous {
 }
 
 impl HostRouteOwner {
+    /// Deliberate availability fault for opt-in acceptance. Do not mark the
+    /// route dead here: recovery must be driven by Veilid's actual callback.
+    #[cfg(feature = "native-input-test")]
+    pub(crate) async fn retire_for_acceptance(&self) -> Result<u64, VeilidRendezvousError> {
+        #[cfg(not(feature = "veilid-mock-test"))]
+        let before = self.owned_route_presence_for_acceptance().await?;
+        #[cfg(not(feature = "veilid-mock-test"))]
+        if !before.0 {
+            eprintln!(
+                "poche route fault: precondition failed; allocated={} imported={}",
+                before.0, before.1
+            );
+            return Err(VeilidRendezvousError::Unavailable);
+        }
+        self.io
+            .api
+            .release_private_route(self.publication.current.id.clone())
+            .map_err(|error| map_veilid_error(&error))?;
+        #[cfg(not(feature = "veilid-mock-test"))]
+        {
+            // Real Veilid 99c9616 gives a self-import the allocated route ID,
+            // unlike mock-api. Release prefers the imported entry. Inspect the
+            // exact owned ID and retire its allocation too, never another ID.
+            let after_first = self.owned_route_presence_for_acceptance().await?;
+            eprintln!(
+                "poche route fault: before allocated={} imported={}; after first release allocated={} imported={}",
+                before.0, before.1, after_first.0, after_first.1
+            );
+            if after_first.0 {
+                self.io
+                    .api
+                    .release_private_route(self.publication.current.id.clone())
+                    .map_err(|error| map_veilid_error(&error))?;
+            }
+            let after = self.owned_route_presence_for_acceptance().await?;
+            if after.0 {
+                // Concurrent reimport can race the second release; do not
+                // claim successful fault injection or retry without a bound.
+                return Err(VeilidRendezvousError::TryAgain);
+            }
+            eprintln!(
+                "poche route fault: allocated route confirmed absent; awaiting actual callback"
+            );
+        }
+        Ok(self.record().route_epoch)
+    }
+
+    // Pinned-upstream diagnostic format, acceptance only. Never log the dump:
+    // it includes other route IDs and network details. Format drift fails the
+    // probe closed rather than manufacturing a successful retirement.
+    #[cfg(all(feature = "native-input-test", not(feature = "veilid-mock-test")))]
+    async fn owned_route_presence_for_acceptance(
+        &self,
+    ) -> Result<(bool, bool), VeilidRendezvousError> {
+        let listing = self
+            .io
+            .api
+            .debug("route list".to_owned())
+            .await
+            .map_err(|error| {
+                eprintln!("poche route fault: diagnostic route-list call failed");
+                map_veilid_error(&error)
+            })?;
+        let (allocated, imported) = listing
+            .split_once("\nRemote Routes: (count = ")
+            .filter(|(allocated, _)| allocated.starts_with("Allocated Routes: (count = "))
+            .ok_or_else(|| {
+                eprintln!(
+                    "poche route fault: diagnostic route-list format did not match pinned source"
+                );
+                VeilidRendezvousError::Unavailable
+            })?;
+        let prefix = format!("{}: ", self.publication.current.id);
+        Ok((
+            allocated.lines().any(|line| line.starts_with(&prefix)),
+            imported.lines().any(|line| line.starts_with(&prefix)),
+        ))
+    }
+
     #[must_use]
     pub fn record(&self) -> &RendezvousRecord {
         &self.publication.current.record

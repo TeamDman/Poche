@@ -54,7 +54,10 @@ enum PublicationStage {
     PersistCapability,
 }
 
-fn publication_failure(stage: PublicationStage, error: VeilidRendezvousError) -> VeilidRendezvousError {
+fn publication_failure(
+    stage: PublicationStage,
+    error: VeilidRendezvousError,
+) -> VeilidRendezvousError {
     eprintln!("poche: lobby publication {stage:?}: {error:?}");
     error
 }
@@ -63,7 +66,10 @@ fn publication_failure(stage: PublicationStage, error: VeilidRendezvousError) ->
 // fails or there are insufficient peers, even after public_internet_ready.
 // Retry only that documented pre-publication condition. No DHT/game write is
 // inside this loop, and no other (potentially uncertain) API error is retried.
-async fn retry_private_route<T, F, Fut, W, Wait>(mut allocate: F, mut wait: W) -> Result<T, VeilidAPIError>
+async fn retry_private_route<T, F, Fut, W, Wait>(
+    mut allocate: F,
+    mut wait: W,
+) -> Result<T, VeilidAPIError>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, VeilidAPIError>>,
@@ -73,7 +79,10 @@ where
     for attempt in 0..3 {
         match allocate().await {
             Err(VeilidAPIError::TryAgain { .. }) if attempt < 2 => {
-                eprintln!("poche: private route not ready; allocation attempt {}/3 follows", attempt + 2);
+                eprintln!(
+                    "poche: private route not ready; allocation attempt {}/3 follows",
+                    attempt + 2
+                );
                 wait(500 * (attempt + 1)).await;
             }
             result => return result,
@@ -413,7 +422,9 @@ impl VeilidRendezvous {
     ) -> Result<PublishedRoom, VeilidRendezvousError> {
         let route = retry_private_route(|| self.api.new_private_route(), veilid_core::tools::sleep)
             .await
-            .map_err(|error| publication_failure(PublicationStage::AllocateRoute, map_veilid_error(&error)))?;
+            .map_err(|error| {
+                publication_failure(PublicationStage::AllocateRoute, map_veilid_error(&error))
+            })?;
         let schema = DHTSchema::dflt(RENDEZVOUS_DFLT_OWNER_SUBKEYS)
             .map_err(|_| VeilidRendezvousError::Unavailable)?;
         let descriptor = match self
@@ -424,14 +435,20 @@ impl VeilidRendezvous {
             Ok(descriptor) => descriptor,
             Err(error) => {
                 let _ = self.api.release_private_route(route.route_id);
-                return Err(publication_failure(PublicationStage::CreateRecord, map_veilid_error(&error)));
+                return Err(publication_failure(
+                    PublicationStage::CreateRecord,
+                    map_veilid_error(&error),
+                ));
             }
         };
         let record_key = descriptor.key();
         let Some(owner_keypair) = descriptor.owner_keypair() else {
             self.cleanup_failed_publish(record_key, route.route_id)
                 .await;
-            return Err(publication_failure(PublicationStage::ReadOwnerCapability, VeilidRendezvousError::Unavailable));
+            return Err(publication_failure(
+                PublicationStage::ReadOwnerCapability,
+                VeilidRendezvousError::Unavailable,
+            ));
         };
         let record = match RendezvousRecord::new(
             network,
@@ -487,7 +504,10 @@ impl VeilidRendezvous {
             Err(error) => {
                 self.cleanup_failed_publish(record_key, route.route_id)
                     .await;
-                return Err(publication_failure(PublicationStage::WriteRecord, map_veilid_error(&error)));
+                return Err(publication_failure(
+                    PublicationStage::WriteRecord,
+                    map_veilid_error(&error),
+                ));
             }
         }
         let flush_result = self
@@ -506,7 +526,10 @@ impl VeilidRendezvous {
             {
                 self.cleanup_failed_publish(record_key, route.route_id)
                     .await;
-                return Err(publication_failure(PublicationStage::PersistCapability, error));
+                return Err(publication_failure(
+                    PublicationStage::PersistCapability,
+                    error,
+                ));
             }
             Ok(PublishedRoom {
                 record_key,
@@ -519,7 +542,10 @@ impl VeilidRendezvous {
                 .await;
             // Upstream Ok(false) means the flush deadline elapsed, not an
             // unclassified permanent failure. Never print the API error text.
-            let error = flush_result.as_ref().err().map_or(VeilidRendezvousError::Timeout, map_veilid_error);
+            let error = flush_result
+                .as_ref()
+                .err()
+                .map_or(VeilidRendezvousError::Timeout, map_veilid_error);
             Err(publication_failure(PublicationStage::FlushRecord, error))
         }
     }
@@ -629,24 +655,45 @@ impl VeilidRendezvous {
 
     /// Refresh an already trusted room after a lost read. Never switch host,
     /// room, network or session, and never roll its route epoch backwards.
-    pub async fn refresh_resolved_room(&self, room: &mut ResolvedRoom, now_unix_ms: u64) -> Result<(), VeilidRendezvousError> {
-        let value = self.routing.get_dht_value(room.record_key.clone(), RENDEZVOUS_DHT_SUBKEY, true).await
-            .map_err(|_| VeilidRendezvousError::Unavailable)?.ok_or(VeilidRendezvousError::NotFound)?;
+    pub async fn refresh_resolved_room(
+        &self,
+        room: &mut ResolvedRoom,
+        now_unix_ms: u64,
+    ) -> Result<(), VeilidRendezvousError> {
+        let value = self
+            .routing
+            .get_dht_value(room.record_key.clone(), RENDEZVOUS_DHT_SUBKEY, true)
+            .await
+            .map_err(|_| VeilidRendezvousError::Unavailable)?
+            .ok_or(VeilidRendezvousError::NotFound)?;
         let record = RendezvousRecord::decode(value.data())?;
-        if record.room_id != room.record.room_id || record.host_identity != room.record.host_identity
-            || record.network != room.record.network || record.session_epoch != room.record.session_epoch
-            || record.route_epoch < room.record.route_epoch || record.expires_at_unix_ms <= now_unix_ms {
+        if record.room_id != room.record.room_id
+            || record.host_identity != room.record.host_identity
+            || record.network != room.record.network
+            || record.session_epoch != room.record.session_epoch
+            || record.route_epoch < room.record.route_epoch
+            || record.expires_at_unix_ms <= now_unix_ms
+        {
             return Err(VeilidRendezvousError::InvalidMembership);
         }
         if record.route_epoch == room.record.route_epoch {
-            if record.private_route_blob()? != room.record.private_route_blob()? { return Err(VeilidRendezvousError::InvalidRecord); }
-            return Ok(());
+            if record != room.record {
+                return Err(VeilidRendezvousError::InvalidRecord);
+            }
+            // The local import may have expired or been released while the
+            // owner's publication stayed healthy. Reimport the validated blob
+            // even at the same epoch; unchanged DHT bytes do not prove that a
+            // usable local route cache entry still exists.
         }
-        let route_id = self.api.import_remote_private_route(record.private_route_blob()?)
+        let route_id = self
+            .api
+            .import_remote_private_route(record.private_route_blob()?)
             .map_err(|_| VeilidRendezvousError::InvalidRecord)?;
         let previous = std::mem::replace(&mut room.route_id, route_id);
         room.record = record;
-        if previous != room.route_id { let _ = self.api.release_private_route(previous); }
+        if previous != room.route_id {
+            let _ = self.api.release_private_route(previous);
+        }
         Ok(())
     }
 
@@ -846,7 +893,9 @@ impl VeilidRendezvous {
         }
         let route = retry_private_route(|| self.api.new_private_route(), veilid_core::tools::sleep)
             .await
-            .map_err(|error| publication_failure(PublicationStage::AllocateRoute, map_veilid_error(&error)))?;
+            .map_err(|error| {
+                publication_failure(PublicationStage::AllocateRoute, map_veilid_error(&error))
+            })?;
         let Some(route_epoch) = existing.route_epoch.checked_add(1) else {
             let _ = self.api.release_private_route(route.route_id);
             return Err(VeilidRendezvousError::InvalidRecord);
@@ -1007,22 +1056,43 @@ mod tests {
     async fn route_allocation_retries_only_try_again_with_bounded_backoff() {
         let mut calls = 0;
         let mut waits = Vec::new();
-        let result = retry_private_route(|| {
-            calls += 1;
-            std::future::ready(if calls < 3 {
-                Err(VeilidAPIError::TryAgain { message: "not logged".to_owned() })
-            } else { Ok(7_u8) })
-        }, |millis| { waits.push(millis); std::future::ready(()) }).await;
+        let result = retry_private_route(
+            || {
+                calls += 1;
+                std::future::ready(if calls < 3 {
+                    Err(VeilidAPIError::TryAgain {
+                        message: "not logged".to_owned(),
+                    })
+                } else {
+                    Ok(7_u8)
+                })
+            },
+            |millis| {
+                waits.push(millis);
+                std::future::ready(())
+            },
+        )
+        .await;
         assert_eq!(result, Ok(7));
         assert_eq!(calls, 3);
         assert_eq!(waits, [500, 1000]);
-        for failure in [VeilidAPIError::TryAgain { message: "not logged".to_owned() }, VeilidAPIError::Timeout, VeilidAPIError::Shutdown] {
+        for failure in [
+            VeilidAPIError::TryAgain {
+                message: "not logged".to_owned(),
+            },
+            VeilidAPIError::Timeout,
+            VeilidAPIError::Shutdown,
+        ] {
             let mut calls = 0;
             let retryable = matches!(failure, VeilidAPIError::TryAgain { .. });
-            let result: Result<(), _> = retry_private_route(|| {
-                calls += 1;
-                std::future::ready(Err(failure.clone()))
-            }, |_| std::future::ready(())).await;
+            let result: Result<(), _> = retry_private_route(
+                || {
+                    calls += 1;
+                    std::future::ready(Err(failure.clone()))
+                },
+                |_| std::future::ready(()),
+            )
+            .await;
             assert_eq!(result, Err(failure));
             assert_eq!(calls, if retryable { 3 } else { 1 });
         }

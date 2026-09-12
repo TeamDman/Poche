@@ -7,6 +7,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, oneshot, watch};
 use veilid_core::RouteId;
 
+#[cfg(feature = "native-input-test")]
+type RetirementReply = oneshot::Sender<Result<u64, VeilidRendezvousError>>;
+
 #[cfg(all(test, feature = "veilid-mock-test"))]
 mod tests;
 
@@ -29,6 +32,8 @@ pub struct RunningHostRoute {
     stop: Option<oneshot::Sender<()>>,
     task: Option<tokio::task::JoinHandle<Result<(), VeilidRendezvousError>>>,
     status: watch::Receiver<HostRouteStatus>,
+    #[cfg(feature = "native-input-test")]
+    retirement: tokio::sync::mpsc::Sender<RetirementReply>,
 }
 
 impl RunningHostRoute {
@@ -43,8 +48,18 @@ impl RunningHostRoute {
             route_epoch: owner.record().route_epoch,
         });
         let runtime = node.runtime().clone();
+        #[cfg(feature = "native-input-test")]
+        let (retirement, retirement_rx) = tokio::sync::mpsc::channel(1);
         let task = runtime.spawn(async move {
-            let result = maintain(owner, updates, receiver, &status).await;
+            let result = maintain(
+                owner,
+                updates,
+                receiver,
+                &status,
+                #[cfg(feature = "native-input-test")]
+                retirement_rx,
+            )
+            .await;
             status.send_replace(match result {
                 Ok(()) => HostRouteStatus::Stopped,
                 Err(error) => HostRouteStatus::Failed(error),
@@ -56,12 +71,30 @@ impl RunningHostRoute {
             stop: Some(stop),
             task: Some(task),
             status: reader,
+            #[cfg(feature = "native-input-test")]
+            retirement,
         }
     }
 
     #[must_use]
     pub fn status(&self) -> HostRouteStatus {
         *self.status.borrow()
+    }
+
+    /// Retire this task's currently published real route. Available only in
+    /// opt-in acceptance builds; not a game command or callback simulation.
+    /// Returns the retired route epoch, never its capability-bearing bytes.
+    ///
+    /// # Errors
+    /// Returns a redacted stopped-task or actual API-release failure.
+    #[cfg(feature = "native-input-test")]
+    pub async fn retire_current_route_for_acceptance(&self) -> Result<u64, VeilidRendezvousError> {
+        let (send, receive) = oneshot::channel();
+        self.retirement
+            .send(send)
+            .await
+            .map_err(|_| VeilidRendezvousError::Shutdown)?;
+        receive.await.map_err(|_| VeilidRendezvousError::Shutdown)?
     }
 
     /// Stop maintenance and wait for local route/record cleanup, not disbanding.
@@ -123,6 +156,9 @@ async fn maintain(
     mut updates: broadcast::Receiver<RouteId>,
     mut stop: oneshot::Receiver<()>,
     status: &watch::Sender<HostRouteStatus>,
+    #[cfg(feature = "native-input-test")] mut retirement: tokio::sync::mpsc::Receiver<
+        RetirementReply,
+    >,
 ) -> Result<(), VeilidRendezvousError> {
     let mut failures = 0_u32;
     let result = loop {
@@ -182,10 +218,30 @@ async fn maintain(
                 }
             }
         }
-        tokio::select! {
-            biased;
-            _ = &mut stop => break Ok(()),
-            update = updates.recv() => if !apply_update(&mut owner, update) { break Ok(()); },
+        match wait_event(
+            &mut updates,
+            &mut stop,
+            #[cfg(feature = "native-input-test")]
+            &mut retirement,
+        )
+        .await
+        {
+            RouteEvent::Stop => break Ok(()),
+            RouteEvent::Update(update) => {
+                if !apply_update(&mut owner, update) {
+                    break Ok(());
+                }
+            }
+            #[cfg(feature = "native-input-test")]
+            RouteEvent::Retire(reply) => {
+                let retired = tokio::select! {
+                    biased;
+                    _ = &mut stop => break Ok(()),
+                    result = tokio::time::timeout(Duration::from_secs(10), owner.retire_for_acceptance()) =>
+                        result.unwrap_or(Err(VeilidRendezvousError::Timeout)),
+                };
+                let _ = reply.send(retired);
+            }
         }
     };
     // Even a timeout drops the owner and synchronously releases known routes.
@@ -193,4 +249,37 @@ async fn maintain(
         .await
         .unwrap_or(Err(VeilidRendezvousError::Timeout));
     result.and(closed)
+}
+
+enum RouteEvent {
+    Stop,
+    Update(Result<RouteId, broadcast::error::RecvError>),
+    #[cfg(feature = "native-input-test")]
+    Retire(RetirementReply),
+}
+
+async fn wait_event(
+    updates: &mut broadcast::Receiver<RouteId>,
+    stop: &mut oneshot::Receiver<()>,
+    #[cfg(feature = "native-input-test")] retirement: &mut tokio::sync::mpsc::Receiver<
+        RetirementReply,
+    >,
+) -> RouteEvent {
+    #[cfg(feature = "native-input-test")]
+    {
+        tokio::select! {
+            biased;
+            _ = stop => RouteEvent::Stop,
+            update = updates.recv() => RouteEvent::Update(update),
+            request = retirement.recv() => request.map_or(RouteEvent::Stop, RouteEvent::Retire),
+        }
+    }
+    #[cfg(not(feature = "native-input-test"))]
+    {
+        tokio::select! {
+            biased;
+            _ = stop => RouteEvent::Stop,
+            update = updates.recv() => RouteEvent::Update(update),
+        }
+    }
 }

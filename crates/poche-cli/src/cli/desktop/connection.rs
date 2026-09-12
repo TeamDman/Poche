@@ -9,8 +9,8 @@ mod process_probe;
 mod recovery;
 use poche_player_client::ProtectedProfileStore;
 use poche_veilid::{
-    ApplicationIdentity, IdentityStoragePolicy, RoomCode, RoomNetwork,
-    RunningDeviceService, RunningHostRoute, VeilidDeviceNode, VeilidProtectedIdentityStore,
+    ApplicationIdentity, IdentityStoragePolicy, RoomCode, RoomNetwork, RunningDeviceService,
+    RunningHostRoute, VeilidDeviceNode, VeilidProtectedIdentityStore,
 };
 use std::{
     fs,
@@ -39,7 +39,6 @@ pub fn validator() -> InvitationValidator {
 struct RoomOwner {
     _routes: Option<RunningHostRoute>,
     _service: Option<RunningDeviceService>,
-    _lease: fs::File,
 }
 
 pub fn worker() -> Result<DesktopConnectionWorker, &'static str> {
@@ -81,7 +80,7 @@ fn connect(
         .open(directory.join("instance.lock"))
         .map_err(|_| "Cannot lock local node storage.")?;
     lease.try_lock().map_err(
-        |_| "This local player is already open. Choose a different name for a second player.",
+        |_| "This local player is open or still shutting down. Choose a different name for a second player.",
     )?;
     let existing = fs::read_dir(&directory)
         .map_err(|_| "Cannot inspect local node storage.")?
@@ -118,26 +117,43 @@ fn connect(
     config.network.protocol.tcp.listen = false;
     config.network.protocol.ws.listen = false;
     let (send, receive) = tokio::sync::mpsc::channel(32);
-    let node = VeilidDeviceNode::start(
+    let node = VeilidDeviceNode::start_with_storage_lease(
         config,
         std::sync::Arc::new(move |update| {
             if let veilid_core::VeilidUpdate::AppCall(call) = update {
-                let _ = send.try_send(call);
+                if send.try_send(call).is_err() {
+                    #[cfg(feature = "native-input-test")]
+                    eprintln!("poche route probe: incoming AppCall could not be queued");
+                }
             }
         }),
+        lease,
     )?;
     let route_updates = node.local_route_updates();
     node.runtime()
         .block_on(node.attach_public(Duration::from_secs(90)))?;
     if invitation.is_none() {
-        if let Some(bytes) = store.load_authority_recovery(&label, "active-room")
-            .map_err(|_| "Cannot read protected room recovery state.")? {
+        if let Some(bytes) = store
+            .load_authority_recovery(&label, "active-room")
+            .map_err(|_| "Cannot read protected room recovery state.")?
+        {
             if poche_veilid::DesktopRoomDisbanded::decode(&bytes).is_err() {
-                if let Some(terminal) = recovery::terminal_if_no_peers(&bytes, &profile.player_id)? {
-                    store.save_authority_recovery(&label, "active-room", &terminal)
+                if let Some(terminal) = recovery::terminal_if_no_peers(&bytes, &profile.player_id)?
+                {
+                    store
+                        .save_authority_recovery(&label, "active-room", &terminal)
                         .map_err(|_| "Cannot persist the previous lobby's disbanding.")?;
                 } else {
-                    return recovery::restore(node, profile, store, &bytes, &label, receive, route_updates, lease, owners);
+                    return recovery::restore(
+                        node,
+                        profile,
+                        store,
+                        &bytes,
+                        &label,
+                        receive,
+                        route_updates,
+                        owners,
+                    );
                 }
             }
         }
@@ -158,8 +174,10 @@ fn connect(
                 IdentityStoragePolicy::RequireProtected,
             ))
             .map_err(|_| "Cannot recover the node identity.")?;
-        let recovery_store = std::sync::Mutex::new(ProtectedProfileStore::open_default()
-            .map_err(|_| "Cannot open protected room recovery storage.")?);
+        let recovery_store = std::sync::Mutex::new(
+            ProtectedProfileStore::open_default()
+                .map_err(|_| "Cannot open protected room recovery storage.")?,
+        );
         let recovery_label = label.clone();
         let (published, service) = node
             .runtime()
@@ -172,7 +190,8 @@ fn connect(
                 receive,
                 move |genesis, recovery| {
                     let bytes = zeroize::Zeroizing::new(genesis.encode_recovery(recovery)?);
-                    recovery_store.lock()
+                    recovery_store
+                        .lock()
                         .map_err(|_| poche_player_client::DeviceClientError::TransportUnavailable)?
                         .save_authority_recovery(&recovery_label, "active-room", &bytes)
                         .map_err(|error| {
@@ -182,10 +201,16 @@ fn connect(
                 },
             ))
             .map_err(|_| "Could not publish the lobby.")?;
-        let code = published.room_code().encode()
+        let code = published
+            .room_code()
+            .encode()
             .map(|code| code.expose().to_owned())
             .map_err(|_| "Cannot encode lobby invitation.");
-        let routes = RunningHostRoute::start(node.clone(), rendezvous.own_published_route(published), route_updates);
+        let routes = RunningHostRoute::start(
+            node.clone(),
+            rendezvous.own_published_route(published),
+            route_updates,
+        );
         let initialized = (|| {
             let code = code?;
             let (client, room_id) =
@@ -202,11 +227,7 @@ fn connect(
                 // pending service and explicitly release publication handles
                 // while its owning node/runtime is still alive.
                 drop(service);
-                if node
-                    .runtime()
-                    .block_on(routes.stop())
-                    .is_err()
-                {
+                if node.runtime().block_on(routes.stop()).is_err() {
                     eprintln!("poche: failed startup publication cleanup was incomplete");
                 }
                 return Err(error);
@@ -217,7 +238,6 @@ fn connect(
     owners.push(RoomOwner {
         _routes: routes,
         _service: service,
-        _lease: lease,
     });
     Ok(live)
 }

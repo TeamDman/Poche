@@ -11,7 +11,7 @@ publish = false
 [features]
 default = []
 # Optional native observer acceptance, composed with mock or real transport tests.
-native-input-test = ["dep:poche-native-ui", "poche-native-ui/input-probe"]
+native-input-test = ["dep:poche-native-ui", "poche-native-ui/input-probe", "veilid-core?/debug-api"]
 veilid = ["dep:veilid-core"]
 device-transport = ["veilid", "dep:tokio", "dep:poche-player-client"]
 device-service = ["device-transport", "dep:poche-runtime", "dep:poche-session"]

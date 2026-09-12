@@ -197,9 +197,17 @@ impl<S> VeilidDeviceTransport<S> {
         let reply = if matches!(request, VeilidDeviceRequest::Observe(_)) {
             let bytes = encode(&request)?;
             let call = || {
-                self.runtime
-                    .block_on(self.adapter.app_call(&self.room, bytes.clone()))
-                    .map_err(|_| DeviceClientError::TransportUnavailable)
+                let result = self
+                    .runtime
+                    .block_on(self.adapter.app_call(&self.room, bytes.clone()));
+                #[cfg(feature = "native-input-test")]
+                if let Err(error) = &result {
+                    eprintln!(
+                        "poche route probe: observation AppCall at route epoch {} failed: {error:?}",
+                        self.room.record().route_epoch
+                    );
+                }
+                result.map_err(|_| DeviceClientError::TransportUnavailable)
             };
             match retry_observation(call) {
                 Err(DeviceClientError::TransportUnavailable) => {
@@ -208,9 +216,16 @@ impl<S> VeilidDeviceTransport<S> {
                         .ok()
                         .and_then(|time| u64::try_from(time.as_millis()).ok())
                         .ok_or(DeviceClientError::TransportUnavailable)?;
+                    #[cfg(feature = "native-input-test")]
+                    let previous_epoch = self.room.record().route_epoch;
                     self.runtime
                         .block_on(self.adapter.refresh_resolved_room(&mut self.room, now))
                         .map_err(|_| DeviceClientError::TransportUnavailable)?;
+                    #[cfg(feature = "native-input-test")]
+                    eprintln!(
+                        "poche route probe: refreshed client route epoch {previous_epoch} -> {}",
+                        self.room.record().route_epoch
+                    );
                     // Retry only the identical signed observation, never a
                     // write whose first outcome may have been committed.
                     retry_observation(|| {

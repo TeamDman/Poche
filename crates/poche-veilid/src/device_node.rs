@@ -37,6 +37,28 @@ impl VeilidDeviceNode {
         config: VeilidConfig,
         update: Arc<dyn Fn(VeilidUpdate) + Send + Sync>,
     ) -> Result<Self, &'static str> {
+        Self::start_inner(config, update, None)
+    }
+
+    /// Start while owning the caller's already-locked storage lease. The
+    /// network worker retains it until API shutdown and runtime destruction,
+    /// including startup failures and asynchronous last-owner Drop.
+    ///
+    /// # Errors
+    /// Returns the same redacted startup failures as [`Self::start`].
+    pub fn start_with_storage_lease(
+        config: VeilidConfig,
+        update: Arc<dyn Fn(VeilidUpdate) + Send + Sync>,
+        lease: std::fs::File,
+    ) -> Result<Self, &'static str> {
+        Self::start_inner(config, update, Some(lease))
+    }
+
+    fn start_inner(
+        config: VeilidConfig,
+        update: Arc<dyn Fn(VeilidUpdate) + Send + Sync>,
+        lease: Option<std::fs::File>,
+    ) -> Result<Self, &'static str> {
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let (stop_tx, stop_rx) = mpsc::channel();
         // Fixed-size route identifiers, never unbounded update payloads. A
@@ -57,6 +79,9 @@ impl VeilidDeviceNode {
         let worker = thread::Builder::new()
             .name("poche-veilid-node".to_owned())
             .spawn(move || {
+                // Declared before Runtime: reverse drop order holds the lock
+                // through shutdown, runtime destruction and all early returns.
+                let _storage_lease = lease;
                 let Ok(runtime) = Runtime::new() else {
                     let _ = ready_tx.send(Err("network runtime could not start"));
                     return;
@@ -182,5 +207,72 @@ mod tests {
         survivor.shutdown().unwrap();
         let restarted = VeilidDeviceNode::start(config, Arc::new(drop)).unwrap();
         restarted.shutdown().unwrap();
+    }
+
+    #[test]
+    fn storage_lease_survives_frontend_drop_until_network_shutdown() {
+        let directory = tempfile::tempdir().unwrap();
+        let lock_path = directory.path().join("instance.lock");
+        let open_lock = || {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&lock_path)
+                .unwrap()
+        };
+        let lease = open_lock();
+        lease.try_lock().unwrap();
+        let path = directory.path().to_str().unwrap();
+        let config = VeilidConfig::new(
+            "poche_node_lease",
+            "teamdman",
+            "org",
+            Some(path),
+            Some(path),
+        );
+        let node =
+            VeilidDeviceNode::start_with_storage_lease(config.clone(), Arc::new(drop), lease)
+                .unwrap();
+        let maintenance_owner = node.clone();
+        drop(node);
+        assert!(
+            open_lock().try_lock().is_err(),
+            "frontend drop must not release storage still used by a network task"
+        );
+        let failure_lock_path = directory.path().join("failed-start.lock");
+        let open_failure_lock = || {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&failure_lock_path)
+                .unwrap()
+        };
+        let failed_lease = open_failure_lock();
+        failed_lease.try_lock().unwrap();
+        assert!(
+            VeilidDeviceNode::start_with_storage_lease(
+                config.clone(),
+                Arc::new(drop),
+                failed_lease
+            )
+            .is_err(),
+            "duplicate node namespace must fail startup"
+        );
+        open_failure_lock()
+            .try_lock()
+            .expect("failed startup must release its supplied lease");
+        maintenance_owner.shutdown().unwrap();
+        let lease = open_lock();
+        lease
+            .try_lock()
+            .expect("shutdown must release the profile lock");
+        let restarted =
+            VeilidDeviceNode::start_with_storage_lease(config, Arc::new(drop), lease).unwrap();
+        restarted.shutdown().unwrap();
+        open_lock().try_lock().unwrap();
     }
 }

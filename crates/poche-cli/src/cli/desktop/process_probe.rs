@@ -7,10 +7,19 @@ use std::{
     time::Instant,
 };
 
+#[cfg(feature = "native-input-test")]
+#[path = "process_probe/route_repair.rs"]
+mod route_repair;
+
 struct ChildOwner(Child);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum RenderedStage { None, Menu, Lobby, Trick }
+enum RenderedStage {
+    None,
+    Menu,
+    Lobby,
+    Trick,
+}
 impl Drop for ChildOwner {
     fn drop(&mut self) {
         if self.0.try_wait().ok().flatten().is_none() {
@@ -48,7 +57,9 @@ fn invoke(live: &mut NativeLiveDevice, action: &str) {
     live.submit_action(action)
         .expect("advertised action submission");
     wait_until(|| {
-        live.poll().unwrap_or_else(|error| panic!("action {action} submitted at revision {before}: {error}"));
+        live.poll().unwrap_or_else(|error| {
+            panic!("action {action} submitted at revision {before}: {error}")
+        });
         live.observation().projection.current_revision > before
     });
     assert!(
@@ -68,19 +79,46 @@ fn protected_desktop_process_role() {
     let root = Path::new(&root);
     let role = std::env::var("POCHE_PROCESS_PROBE_ROLE").expect("parent role");
     let suffix = std::env::var("POCHE_PROCESS_PROBE_SUFFIX").expect("parent suffix");
-    let creator = role == "creator" || role == "creator-resume" || role == "alone" || role == "creator-expire" || role == "creator-after-expiry";
+    let creator = role == "creator"
+        || role == "creator-resume"
+        || role == "alone"
+        || role == "creator-expire"
+        || role == "creator-after-expiry";
     let creator_loss = std::env::var("POCHE_PROCESS_PROBE_CREATOR_LOSS").as_deref() == Ok("1");
     let native_input = std::env::var("POCHE_PROCESS_PROBE_NATIVE_INPUT").as_deref() == Ok("1");
     let rendered_menu = std::env::var("POCHE_PROCESS_PROBE_RENDERED_MENU").as_deref() == Ok("1");
     let rendered_lobby = std::env::var("POCHE_PROCESS_PROBE_RENDERED_LOBBY").as_deref() == Ok("1");
     let rendered_trick = std::env::var("POCHE_PROCESS_PROBE_RENDERED_TRICK").as_deref() == Ok("1");
-    assert!(!rendered_trick || rendered_lobby, "rendered trick starts through the lobby");
-    assert!(!rendered_lobby || rendered_menu, "rendered lobby starts through the menu");
-    assert!(!native_input || cfg!(feature = "native-input-test"), "native input probe feature is required");
-    assert!(!rendered_menu || cfg!(feature = "native-input-test"), "rendered menu probe feature is required");
+    let repair_route = std::env::var("POCHE_PROCESS_PROBE_ROUTE_REPAIR").as_deref() == Ok("1");
+    assert!(
+        !repair_route || cfg!(feature = "native-input-test"),
+        "route retirement requires acceptance features"
+    );
+    assert!(
+        !rendered_trick || rendered_lobby,
+        "rendered trick starts through the lobby"
+    );
+    assert!(
+        !rendered_lobby || rendered_menu,
+        "rendered lobby starts through the menu"
+    );
+    assert!(
+        !native_input || cfg!(feature = "native-input-test"),
+        "native input probe feature is required"
+    );
+    assert!(
+        !rendered_menu || cfg!(feature = "native-input-test"),
+        "rendered menu probe feature is required"
+    );
     let restarting = role.ends_with("-resume");
     assert!(creator || role == "joiner" || restarting);
-    let profile_role = if creator { "creator" } else if restarting { "joiner" } else { &role };
+    let profile_role = if creator {
+        "creator"
+    } else if restarting {
+        "joiner"
+    } else {
+        &role
+    };
     let name = format!("process-{profile_role}-{suffix}");
     let request = if creator {
         DesktopMenuRequest::Create { name }
@@ -100,47 +138,93 @@ fn protected_desktop_process_role() {
         use poche_native_ui::desktop_menu::input_probe::{self, IsolatedClipboard, MenuScenario};
         let coordination = root.to_owned();
         let (name, scenario) = match request {
-            DesktopMenuRequest::Create { name } if rendered_trick => (name, MenuScenario::CreateAndTrick {
-                coordination: root.to_owned(),
-                invitation_ready: Box::new(move |invitation| {
-                    fs::write(coordination.join("invitation"), invitation).map_err(|_| "could not coordinate copied invitation")?;
-                    fs::write(coordination.join("invitation-ready"), b"ready").map_err(|_| "could not publish invitation-ready marker")?;
-                    Ok(())
-                }),
-            }),
-            DesktopMenuRequest::Join { name, invitation } if rendered_trick => (name, MenuScenario::JoinAndTrick { invitation, coordination }),
-            DesktopMenuRequest::Create { name } if rendered_lobby => (name, MenuScenario::CreateAndDeal {
-                invitation_ready: Box::new(move |invitation| {
-                    fs::write(coordination.join("invitation"), invitation).map_err(|_| "could not coordinate copied invitation")?;
-                    fs::write(coordination.join("invitation-ready"), b"ready").map_err(|_| "could not publish invitation-ready marker")?;
-                    Ok(())
-                }),
-            }),
-            DesktopMenuRequest::Join { name, invitation } if rendered_lobby => (name, MenuScenario::JoinAndDeal { invitation }),
+            DesktopMenuRequest::Create { name } if rendered_trick => (
+                name,
+                MenuScenario::CreateAndTrick {
+                    coordination: root.to_owned(),
+                    invitation_ready: Box::new(move |invitation| {
+                        fs::write(coordination.join("invitation"), invitation)
+                            .map_err(|_| "could not coordinate copied invitation")?;
+                        fs::write(coordination.join("invitation-ready"), b"ready")
+                            .map_err(|_| "could not publish invitation-ready marker")?;
+                        Ok(())
+                    }),
+                },
+            ),
+            DesktopMenuRequest::Join { name, invitation } if rendered_trick => (
+                name,
+                MenuScenario::JoinAndTrick {
+                    invitation,
+                    coordination,
+                },
+            ),
+            DesktopMenuRequest::Create { name } if rendered_lobby => (
+                name,
+                MenuScenario::CreateAndDeal {
+                    invitation_ready: Box::new(move |invitation| {
+                        fs::write(coordination.join("invitation"), invitation)
+                            .map_err(|_| "could not coordinate copied invitation")?;
+                        fs::write(coordination.join("invitation-ready"), b"ready")
+                            .map_err(|_| "could not publish invitation-ready marker")?;
+                        Ok(())
+                    }),
+                },
+            ),
+            DesktopMenuRequest::Join { name, invitation } if rendered_lobby => {
+                (name, MenuScenario::JoinAndDeal { invitation })
+            }
             DesktopMenuRequest::Create { name } => (name, MenuScenario::Create),
-            DesktopMenuRequest::Join { name, invitation } => (name, MenuScenario::Join { invitation }),
+            DesktopMenuRequest::Join { name, invitation } => {
+                (name, MenuScenario::Join { invitation })
+            }
         };
-        let evidence = std::path::PathBuf::from(std::env::var_os("POCHE_MENU_EVIDENCE_ROOT").expect("menu evidence root"));
-        let connected = input_probe::run(worker().unwrap(), validator(), &name, scenario,
-            IsolatedClipboard::default(), &evidence.join(&role)).expect("rendered production menu input")
-            .expect("menu connected a live device");
+        let evidence = std::path::PathBuf::from(
+            std::env::var_os("POCHE_MENU_EVIDENCE_ROOT").expect("menu evidence root"),
+        );
+        let connected = input_probe::run(
+            worker().unwrap(),
+            validator(),
+            &name,
+            scenario,
+            IsolatedClipboard::default(),
+            &evidence.join(&role),
+        )
+        .expect("rendered production menu input")
+        .expect("menu connected a live device");
         _menu_owner = Some(connected.worker);
         Ok(connected.live)
-    } else { connect(request, &mut owners) };
+    } else {
+        connect(request, &mut owners)
+    };
     #[cfg(not(feature = "native-input-test"))]
     let result = connect(request, &mut owners);
     if role == "creator-expire" {
-        assert!(matches!(result, Err("Recovery expired or persistence failed.")), "recovery without peers must expire");
-        let label = format!("desktop-{}", &blake3::hash(format!("process-creator-{suffix}").as_bytes()).to_hex()[..24]);
+        assert!(
+            matches!(result, Err("Recovery expired or persistence failed.")),
+            "recovery without peers must expire"
+        );
+        let label = format!(
+            "desktop-{}",
+            &blake3::hash(format!("process-creator-{suffix}").as_bytes()).to_hex()[..24]
+        );
         let store = ProtectedProfileStore::open_default().unwrap();
-        let bytes = store.load_authority_recovery(&label, "active-room").unwrap().unwrap();
-        assert!(poche_veilid::DesktopRoomDisbanded::decode(&bytes).is_ok(), "expiry did not persist disbanding");
+        let bytes = store
+            .load_authority_recovery(&label, "active-room")
+            .unwrap()
+            .unwrap();
+        assert!(
+            poche_veilid::DesktopRoomDisbanded::decode(&bytes).is_ok(),
+            "expiry did not persist disbanding"
+        );
         fs::write(root.join("all-peer-expired"), b"verified").unwrap();
         return;
     }
     let mut live = result.expect("production process connection");
     if role == "creator-after-expiry" {
-        assert!(live.room_invitation().unwrap() != fs::read_to_string(root.join("invitation")).unwrap(), "expired room resurrected");
+        assert!(
+            live.room_invitation().unwrap() != fs::read_to_string(root.join("invitation")).unwrap(),
+            "expired room resurrected"
+        );
         fs::write(root.join("all-peer-replaced"), b"verified").unwrap();
         return;
     }
@@ -148,17 +232,32 @@ fn protected_desktop_process_role() {
         let path = root.join("previous-invitation");
         let invitation = live.room_invitation().unwrap();
         if path.exists() {
-            assert!(fs::read_to_string(&path).unwrap() != invitation, "empty room was resurrected");
+            assert!(
+                fs::read_to_string(&path).unwrap() != invitation,
+                "empty room was resurrected"
+            );
             fs::write(root.join("empty-room-replaced"), b"verified").unwrap();
         }
         fs::write(path, invitation).unwrap();
         if std::env::var("POCHE_PROCESS_PROBE_EXPLICIT_LEAVE").as_deref() == Ok("1") {
             invoke(&mut live, "room-leave");
-            assert_eq!(live.observation().projection.payload.phase, poche_protocol::RoomPhase::Closed);
-            let label = format!("desktop-{}", &blake3::hash(format!("process-creator-{suffix}").as_bytes()).to_hex()[..24]);
+            assert_eq!(
+                live.observation().projection.payload.phase,
+                poche_protocol::RoomPhase::Closed
+            );
+            let label = format!(
+                "desktop-{}",
+                &blake3::hash(format!("process-creator-{suffix}").as_bytes()).to_hex()[..24]
+            );
             let store = ProtectedProfileStore::open_default().unwrap();
-            let bytes = store.load_authority_recovery(&label, "active-room").unwrap().unwrap();
-            assert!(poche_veilid::DesktopRoomDisbanded::decode(&bytes).is_ok(), "explicit departure did not persist disbanding");
+            let bytes = store
+                .load_authority_recovery(&label, "active-room")
+                .unwrap()
+                .unwrap();
+            assert!(
+                poche_veilid::DesktopRoomDisbanded::decode(&bytes).is_ok(),
+                "explicit departure did not persist disbanding"
+            );
             fs::write(root.join("explicit-leave-saved"), b"verified").unwrap();
         }
         return;
@@ -166,25 +265,65 @@ fn protected_desktop_process_role() {
     if restarting {
         wait_until(|| {
             live.poll().expect("restarted observation");
-            live.observation().projection.payload.own_hand.as_ref().is_some_and(|hand| !hand.cards.is_empty())
+            live.observation()
+                .projection
+                .payload
+                .own_hand
+                .as_ref()
+                .is_some_and(|hand| !hand.cards.is_empty())
         });
-        assert!(live.observation().projection.payload.members.iter().any(|member| member.principal_id == live.observation().projection.principal_id && member.seat == Some(if creator { 0 } else { 1 })));
-        assert!(live.observation().physical_hands.iter().any(|card| card.face.is_some() != creator && card.pose.is_some()));
+        assert!(
+            live.observation()
+                .projection
+                .payload
+                .members
+                .iter()
+                .any(
+                    |member| member.principal_id == live.observation().projection.principal_id
+                        && member.seat == Some(if creator { 0 } else { 1 })
+                )
+        );
+        assert!(
+            live.observation()
+                .physical_hands
+                .iter()
+                .any(|card| card.face.is_some() != creator && card.pose.is_some())
+        );
         if native_input && !creator {
             let (id, expected_position, expected_rotation): (String, [i32; 3], [i32; 3]) =
                 serde_json::from_slice(&fs::read(root.join("observer-motion")).unwrap()).unwrap();
-            assert!(live.observation().physical_hands.iter().any(|card| {
-                card.id == id && card.face.is_some() && card.pose.as_ref().is_some_and(|pose| {
-                    pose.position_mm == expected_position && pose.rotation_millidegrees == expected_rotation
-                })
-            }), "restarted player lost the exact pointer-driven pose");
+            assert!(
+                live.observation().physical_hands.iter().any(|card| {
+                    card.id == id
+                        && card.face.is_some()
+                        && card.pose.as_ref().is_some_and(|pose| {
+                            pose.position_mm == expected_position
+                                && pose.rotation_millidegrees == expected_rotation
+                        })
+                }),
+                "restarted player lost the exact pointer-driven pose"
+            );
         }
         if creator {
-            assert!(live.room_invitation().unwrap() == fs::read_to_string(root.join("invitation")).unwrap());
+            assert!(
+                live.room_invitation().unwrap()
+                    == fs::read_to_string(root.join("invitation")).unwrap()
+            );
             let digest = recovery_digest(&live);
-            assert!(digest == fs::read_to_string(root.join("creator-state-digest")).unwrap(), "recovered creator state differs");
+            assert!(
+                digest == fs::read_to_string(root.join("creator-state-digest")).unwrap(),
+                "recovered creator state differs"
+            );
         }
-        fs::write(root.join(if creator { "creator-resumed" } else { "joiner-resumed" }), b"verified").unwrap();
+        fs::write(
+            root.join(if creator {
+                "creator-resumed"
+            } else {
+                "joiner-resumed"
+            }),
+            b"verified",
+        )
+        .unwrap();
         return;
     }
     if creator {
@@ -194,7 +333,11 @@ fn protected_desktop_process_role() {
     if !rendered_lobby {
         invoke(
             &mut live,
-            if creator { "room-take-seat-0" } else { "room-take-seat-1" },
+            if creator {
+                "room-take-seat-0"
+            } else {
+                "room-take-seat-1"
+            },
         );
         invoke(&mut live, "room-ready");
         if creator {
@@ -219,6 +362,14 @@ fn protected_desktop_process_role() {
             .is_empty()
     );
     fs::write(root.join(format!("{role}-dealt")), b"dealt").unwrap();
+    #[cfg(feature = "native-input-test")]
+    if repair_route {
+        assert!(
+            !rendered_menu,
+            "this route-fault probe uses the production connector without a renderer"
+        );
+        route_repair::run(root, &role, creator, &mut live, &owners);
+    }
     let revision = live.observation().projection.current_revision;
     let game = live
         .observation()
@@ -254,15 +405,21 @@ fn protected_desktop_process_role() {
             wait_until(|| {
                 live.poll().expect("observer-driven remote pose");
                 live.observation().physical_hands.iter().any(|card| {
-                    card.id == id && card.face.is_none() && card.pose.as_ref().is_some_and(|pose| {
-                        pose.position_mm == expected_position && pose.rotation_millidegrees == expected_rotation
-                    })
+                    card.id == id
+                        && card.face.is_none()
+                        && card.pose.as_ref().is_some_and(|pose| {
+                            pose.position_mm == expected_position
+                                && pose.rotation_millidegrees == expected_rotation
+                        })
                 })
             });
             assert_ne!(expected_position, position);
             assert_ne!(expected_rotation, rotation);
             assert_eq!(live.observation().projection.current_revision, revision);
-            assert_eq!(live.observation().projection.payload.public_game_state, game);
+            assert_eq!(
+                live.observation().projection.payload.public_game_state,
+                game
+            );
             fs::write(root.join("creator-saw-observer-motion"), b"verified").unwrap();
         }
         if creator_loss {
@@ -299,13 +456,26 @@ fn protected_desktop_process_role() {
         wait_until(|| root.join("creator-saw-motion").exists());
         #[cfg(feature = "native-input-test")]
         if native_input {
-            live = poche_native_ui::input_probe::drag_across_viewports(live).expect("native drag observers over real Veilid");
-            let own = live.observation().physical_hands.iter().find(|entry| entry.id == card).unwrap();
+            live = poche_native_ui::input_probe::drag_across_viewports(live)
+                .expect("native drag observers over real Veilid");
+            let own = live
+                .observation()
+                .physical_hands
+                .iter()
+                .find(|entry| entry.id == card)
+                .unwrap();
             let pose = own.pose.as_ref().unwrap();
             assert!(own.face.is_some());
             assert_eq!(live.observation().projection.current_revision, revision);
-            assert_eq!(live.observation().projection.payload.public_game_state, game);
-            fs::write(root.join("observer-motion"), serde_json::to_vec(&(&card, pose.position_mm, pose.rotation_millidegrees)).unwrap()).unwrap();
+            assert_eq!(
+                live.observation().projection.payload.public_game_state,
+                game
+            );
+            fs::write(
+                root.join("observer-motion"),
+                serde_json::to_vec(&(&card, pose.position_mm, pose.rotation_millidegrees)).unwrap(),
+            )
+            .unwrap();
             fs::write(root.join("observer-motion-ready"), b"ready").unwrap();
             wait_until(|| root.join("creator-saw-observer-motion").exists());
         }
@@ -317,12 +487,20 @@ fn protected_desktop_process_role() {
                 // Read failures during creator downtime must not resubmit a
                 // game action. The worker refreshes its route on later reads.
                 if let Err(error) = live.poll() {
-                    assert!(error.contains("transport") || error.contains("progress"), "unexpected recovery error: {error}");
+                    assert!(
+                        error.contains("transport") || error.contains("progress"),
+                        "unexpected recovery error: {error}"
+                    );
                 }
                 root.join("creator-resumed").exists()
             });
-            assert_eq!(live.observation().projection.payload.public_game_state, game);
-        } else { wait_until(|| false); }
+            assert_eq!(
+                live.observation().projection.payload.public_game_state,
+                game
+            );
+        } else {
+            wait_until(|| false);
+        }
     }
 }
 
@@ -330,6 +508,13 @@ fn protected_desktop_process_role() {
 #[ignore = "real public Veilid and fresh persistent protected test profiles"]
 fn protected_desktop_two_process() {
     run_two_process(false, false, false, RenderedStage::None);
+}
+
+#[cfg(feature = "native-input-test")]
+#[test]
+#[ignore = "real public Veilid route retirement, two protected processes, no graphical windows"]
+fn protected_desktop_route_repair_two_process() {
+    run_two_process_with_route_repair(false, false, false, RenderedStage::None, true);
 }
 
 #[cfg(feature = "native-input-test")]
@@ -343,7 +528,9 @@ fn protected_desktop_native_drag_two_process() {
 #[test]
 #[ignore = "GPU menu inputs and two public Veilid processes; isolated clipboard, no visible windows"]
 fn protected_desktop_rendered_menu_two_process() {
-    let evidence = std::path::PathBuf::from(std::env::var_os("POCHE_MENU_EVIDENCE_ROOT").expect("set a fresh menu evidence root"));
+    let evidence = std::path::PathBuf::from(
+        std::env::var_os("POCHE_MENU_EVIDENCE_ROOT").expect("set a fresh menu evidence root"),
+    );
     fs::create_dir(evidence).expect("fresh menu evidence root");
     run_two_process(false, false, false, RenderedStage::Menu);
 }
@@ -352,7 +539,9 @@ fn protected_desktop_rendered_menu_two_process() {
 #[test]
 #[ignore = "GPU menu/seat/ready/deal and two public Veilid processes; no visible windows"]
 fn protected_desktop_rendered_lobby_two_process() {
-    let evidence = std::path::PathBuf::from(std::env::var_os("POCHE_MENU_EVIDENCE_ROOT").expect("set a fresh menu evidence root"));
+    let evidence = std::path::PathBuf::from(
+        std::env::var_os("POCHE_MENU_EVIDENCE_ROOT").expect("set a fresh menu evidence root"),
+    );
     fs::create_dir(evidence).expect("fresh rendered lobby evidence root");
     run_two_process(false, false, false, RenderedStage::Lobby);
 }
@@ -361,7 +550,9 @@ fn protected_desktop_rendered_lobby_two_process() {
 #[test]
 #[ignore = "continuous GPU menu/lobby/bid/drag/trick across public Veilid processes; no visible windows"]
 fn protected_desktop_rendered_trick_two_process() {
-    let evidence = std::path::PathBuf::from(std::env::var_os("POCHE_MENU_EVIDENCE_ROOT").expect("set a fresh menu evidence root"));
+    let evidence = std::path::PathBuf::from(
+        std::env::var_os("POCHE_MENU_EVIDENCE_ROOT").expect("set a fresh menu evidence root"),
+    );
     fs::create_dir(evidence).expect("fresh rendered trick evidence root");
     run_two_process(false, false, false, RenderedStage::Trick);
 }
@@ -374,7 +565,9 @@ fn protected_desktop_creator_crash() {
 
 #[test]
 #[ignore = "real public Veilid all-peer loss and 60-second recovery expiry"]
-fn protected_desktop_all_peer_loss() { run_two_process(true, true, false, RenderedStage::None); }
+fn protected_desktop_all_peer_loss() {
+    run_two_process(true, true, false, RenderedStage::None);
+}
 
 #[test]
 #[ignore = "real public Veilid and protected empty-room lifecycle"]
@@ -394,12 +587,17 @@ fn run_empty_room(explicit_leave: bool) {
     let suffix = now().unwrap().to_string();
     for _ in 0..2 {
         let mut command = Command::new(std::env::current_exe().unwrap());
-        command.args(["protected_desktop_process_role", "--ignored", "--nocapture"])
+        command
+            .args(["protected_desktop_process_role", "--ignored", "--nocapture"])
             .env("POCHE_PROCESS_PROBE_ROOT", directory.path())
             .env("POCHE_PROCESS_PROBE_ROLE", "alone")
-            .env("POCHE_PROCESS_PROBE_EXPLICIT_LEAVE", if explicit_leave { "1" } else { "0" })
+            .env(
+                "POCHE_PROCESS_PROBE_EXPLICIT_LEAVE",
+                if explicit_leave { "1" } else { "0" },
+            )
             .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
-        #[cfg(windows)] {
+        #[cfg(windows)]
+        {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x0800_0000);
         }
@@ -422,11 +620,31 @@ fn run_empty_room(explicit_leave: bool) {
 
 fn recovery_digest(live: &NativeLiveDevice) -> String {
     let view = live.observation();
-    let bytes = serde_json::to_vec(&(&view.projection.payload.own_hand, &view.projection.payload.public_game_state, &view.physical_hands)).unwrap();
+    let bytes = serde_json::to_vec(&(
+        &view.projection.payload.own_hand,
+        &view.projection.payload.public_game_state,
+        &view.physical_hands,
+    ))
+    .unwrap();
     blake3::hash(&bytes).to_hex().to_string()
 }
 
-fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool, rendering: RenderedStage) {
+fn run_two_process(
+    creator_loss: bool,
+    all_loss: bool,
+    native_input: bool,
+    rendering: RenderedStage,
+) {
+    run_two_process_with_route_repair(creator_loss, all_loss, native_input, rendering, false);
+}
+
+fn run_two_process_with_route_repair(
+    creator_loss: bool,
+    all_loss: bool,
+    native_input: bool,
+    rendering: RenderedStage,
+    repair_route: bool,
+) {
     opt_in();
     let directory = tempfile::tempdir().unwrap();
     let suffix = now().unwrap().to_string();
@@ -437,11 +655,42 @@ fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool, rende
             .args(["protected_desktop_process_role", "--ignored", "--nocapture"])
             .env("POCHE_PROCESS_PROBE_ROOT", directory.path())
             .env("POCHE_PROCESS_PROBE_ROLE", role)
-            .env("POCHE_PROCESS_PROBE_CREATOR_LOSS", if creator_loss { "1" } else { "0" })
-            .env("POCHE_PROCESS_PROBE_NATIVE_INPUT", if native_input { "1" } else { "0" })
-            .env("POCHE_PROCESS_PROBE_RENDERED_MENU", if rendering != RenderedStage::None { "1" } else { "0" })
-            .env("POCHE_PROCESS_PROBE_RENDERED_LOBBY", if matches!(rendering, RenderedStage::Lobby | RenderedStage::Trick) { "1" } else { "0" })
-            .env("POCHE_PROCESS_PROBE_RENDERED_TRICK", if rendering == RenderedStage::Trick { "1" } else { "0" })
+            .env(
+                "POCHE_PROCESS_PROBE_CREATOR_LOSS",
+                if creator_loss { "1" } else { "0" },
+            )
+            .env(
+                "POCHE_PROCESS_PROBE_NATIVE_INPUT",
+                if native_input { "1" } else { "0" },
+            )
+            .env(
+                "POCHE_PROCESS_PROBE_RENDERED_MENU",
+                if rendering != RenderedStage::None {
+                    "1"
+                } else {
+                    "0"
+                },
+            )
+            .env(
+                "POCHE_PROCESS_PROBE_RENDERED_LOBBY",
+                if matches!(rendering, RenderedStage::Lobby | RenderedStage::Trick) {
+                    "1"
+                } else {
+                    "0"
+                },
+            )
+            .env(
+                "POCHE_PROCESS_PROBE_RENDERED_TRICK",
+                if rendering == RenderedStage::Trick {
+                    "1"
+                } else {
+                    "0"
+                },
+            )
+            .env(
+                "POCHE_PROCESS_PROBE_ROUTE_REPAIR",
+                if repair_route { "1" } else { "0" },
+            )
             .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
         #[cfg(windows)]
         {
@@ -452,16 +701,34 @@ fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool, rende
             command.spawn().expect("spawn independent device process"),
         ));
     }
-    let deadline = Instant::now() + Duration::from_secs(if rendering == RenderedStage::Trick { 480 } else { 240 });
+    let deadline = Instant::now()
+        + Duration::from_secs(if rendering == RenderedStage::Trick {
+            480
+        } else if repair_route {
+            360
+        } else {
+            240
+        });
     loop {
         if let Some(status) = children[0].0.try_wait().unwrap() {
-            assert!(status.success(), "creator failed before participant restart");
+            assert!(
+                status.success(),
+                "creator failed before participant restart"
+            );
         }
         if let Some(status) = children[1].0.try_wait().unwrap() {
             panic!("joiner exited before forced termination: {status}");
         }
-        if directory.path().join(if creator_loss { "creator-ready-for-kill" } else { "joiner-motion-done" }).exists()
-            && (!all_loss || directory.path().join("joiner-motion-done").exists()) {
+        if directory
+            .path()
+            .join(if creator_loss {
+                "creator-ready-for-kill"
+            } else {
+                "joiner-motion-done"
+            })
+            .exists()
+            && (!all_loss || directory.path().join("joiner-motion-done").exists())
+        {
             let mut victim = children.remove(if creator_loss { 0 } else { 1 });
             victim.0.kill().expect("terminate owned joiner process");
             assert!(!victim.0.wait().unwrap().success());
@@ -476,16 +743,34 @@ fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool, rende
         std::thread::sleep(Duration::from_millis(50));
     }
     let mut restart = Command::new(std::env::current_exe().unwrap());
-    restart.args(["protected_desktop_process_role", "--ignored", "--nocapture"])
+    restart
+        .args(["protected_desktop_process_role", "--ignored", "--nocapture"])
         .env("POCHE_PROCESS_PROBE_ROOT", directory.path())
-        .env("POCHE_PROCESS_PROBE_ROLE", if all_loss { "creator-expire" } else if creator_loss { "creator-resume" } else { "joiner-resume" })
-        .env("POCHE_PROCESS_PROBE_CREATOR_LOSS", if creator_loss { "1" } else { "0" })
-        .env("POCHE_PROCESS_PROBE_NATIVE_INPUT", if native_input { "1" } else { "0" })
+        .env(
+            "POCHE_PROCESS_PROBE_ROLE",
+            if all_loss {
+                "creator-expire"
+            } else if creator_loss {
+                "creator-resume"
+            } else {
+                "joiner-resume"
+            },
+        )
+        .env(
+            "POCHE_PROCESS_PROBE_CREATOR_LOSS",
+            if creator_loss { "1" } else { "0" },
+        )
+        .env(
+            "POCHE_PROCESS_PROBE_NATIVE_INPUT",
+            if native_input { "1" } else { "0" },
+        )
         .env("POCHE_PROCESS_PROBE_RENDERED_MENU", "0")
         .env("POCHE_PROCESS_PROBE_RENDERED_LOBBY", "0")
         .env("POCHE_PROCESS_PROBE_RENDERED_TRICK", "0")
+        .env("POCHE_PROCESS_PROBE_ROUTE_REPAIR", "0")
         .env("POCHE_PROCESS_PROBE_SUFFIX", &suffix);
-    #[cfg(windows)] {
+    #[cfg(windows)]
+    {
         use std::os::windows::process::CommandExt;
         restart.creation_flags(0x0800_0000);
     }
@@ -507,24 +792,63 @@ fn run_two_process(creator_loss: bool, all_loss: bool, native_input: bool, rende
     assert!(directory.path().join("joiner-dealt").exists());
     assert!(directory.path().join("creator-saw-motion").exists());
     assert!(directory.path().join("joiner-motion-done").exists());
-    if rendering == RenderedStage::Trick {
-        for name in ["trick-denied.json", "trick-accepted.json", "trick-actor-result.json", "trick-follower-result.json"] {
-            assert!(directory.path().join(name).exists(), "rendered trick evidence missing: {name}");
+    if repair_route {
+        for marker in [
+            "route-republished",
+            "creator-route-verified",
+            "joiner-route-verified",
+        ] {
+            assert!(
+                directory.path().join(marker).exists(),
+                "missing public route recovery proof: {marker}"
+            );
         }
     }
-    if native_input { assert!(directory.path().join("creator-saw-observer-motion").exists()); }
+    if rendering == RenderedStage::Trick {
+        for name in [
+            "trick-denied.json",
+            "trick-accepted.json",
+            "trick-actor-result.json",
+            "trick-follower-result.json",
+        ] {
+            assert!(
+                directory.path().join(name).exists(),
+                "rendered trick evidence missing: {name}"
+            );
+        }
+    }
+    if native_input {
+        assert!(
+            directory
+                .path()
+                .join("creator-saw-observer-motion")
+                .exists()
+        );
+    }
     if all_loss {
         assert!(directory.path().join("all-peer-expired").exists());
         restart.env("POCHE_PROCESS_PROBE_ROLE", "creator-after-expiry");
         let mut child = ChildOwner(restart.spawn().unwrap());
         loop {
-            if let Some(status) = child.0.try_wait().unwrap() { assert!(status.success()); break; }
+            if let Some(status) = child.0.try_wait().unwrap() {
+                assert!(status.success());
+                break;
+            }
             assert!(Instant::now() < deadline, "replacement room timed out");
             std::thread::sleep(Duration::from_millis(50));
         }
         assert!(directory.path().join("all-peer-replaced").exists());
     } else {
-        assert!(directory.path().join(if creator_loss { "creator-resumed" } else { "joiner-resumed" }).exists());
+        assert!(
+            directory
+                .path()
+                .join(if creator_loss {
+                    "creator-resumed"
+                } else {
+                    "joiner-resumed"
+                })
+                .exists()
+        );
     }
     eprintln!(
         "two independent protected desktop processes dealt and shared private-safe motion; profile suffix {suffix}"

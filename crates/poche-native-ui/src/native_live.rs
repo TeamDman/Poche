@@ -5,6 +5,12 @@ use std::{
     time::Duration,
 };
 
+#[cfg(feature = "input-probe")]
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+
 use bevy::prelude::Resource;
 use poche_player_client::{
     DeviceActionResult, DeviceClientError, DeviceObservation, DeviceTransport, PlayerDeviceClient,
@@ -14,7 +20,7 @@ use poche_protocol::{CommandId, RoomId};
 use crate::{CommittedPresentation, advertised_action_for_play};
 
 mod motion_queue;
-use motion_queue::{CommandInbox, COMMAND_CAPACITY};
+use motion_queue::{COMMAND_CAPACITY, CommandInbox};
 
 enum NativeWorkerCommand {
     Pose {
@@ -44,7 +50,11 @@ struct MotionOutbox(VecDeque<NativeWorkerCommand>);
 
 impl MotionOutbox {
     fn push(&mut self, command: NativeWorkerCommand) -> Result<(), String> {
-        if self.0.back_mut().is_some_and(|previous| previous.absorb_pose(&command)) {
+        if self
+            .0
+            .back_mut()
+            .is_some_and(|previous| previous.absorb_pose(&command))
+        {
             return Ok(());
         }
         if self.0.len() >= 52 {
@@ -85,6 +95,8 @@ pub struct NativeLiveDevice {
     next_command: u64,
     #[cfg(feature = "input-probe")]
     queued_actions: u64,
+    #[cfg(feature = "input-probe")]
+    successful_observations: Arc<AtomicU64>,
     command_namespace: String,
     last_result: Option<DeviceActionResult>,
     worker: thread::JoinHandle<()>,
@@ -114,6 +126,10 @@ impl NativeLiveDevice {
         let initial_revision = observation.projection.current_revision;
         let initial_hands = observation.physical_hands.clone();
         let initial_epoch = observation.projection.session_epoch;
+        #[cfg(feature = "input-probe")]
+        let successful_observations = Arc::new(AtomicU64::new(1));
+        #[cfg(feature = "input-probe")]
+        let worker_observations = Arc::clone(&successful_observations);
         let worker = thread::Builder::new()
             .name("poche-native-device".to_owned())
             .spawn(move || {
@@ -219,6 +235,8 @@ impl NativeLiveDevice {
                             match result {
                                 Ok(result) => match client.observe(&room_id) {
                                     Ok(observation) => {
+                                        #[cfg(feature = "input-probe")]
+                                        worker_observations.fetch_add(1, Ordering::Relaxed);
                                         retry_delay = Duration::from_millis(50);
                                         latest_revision = observation.projection.current_revision;
                                         latest_epoch = observation.projection.session_epoch;
@@ -271,6 +289,8 @@ impl NativeLiveDevice {
                             // rules or physical hand state to the render thread.
                             match client.observe(&room_id) {
                                 Ok(observation) => {
+                                    #[cfg(feature = "input-probe")]
+                                    worker_observations.fetch_add(1, Ordering::Relaxed);
                                     retry_delay = Duration::from_millis(50);
                                     if !force_snapshot
                                         && latest_epoch == observation.projection.session_epoch
@@ -327,6 +347,8 @@ impl NativeLiveDevice {
             next_command: 0,
             #[cfg(feature = "input-probe")]
             queued_actions: 0,
+            #[cfg(feature = "input-probe")]
+            successful_observations,
             command_namespace,
             last_result: None,
             worker,
@@ -439,13 +461,26 @@ impl NativeLiveDevice {
             command_id,
         })?;
         #[cfg(feature = "input-probe")]
-        { self.queued_actions = self.queued_actions.saturating_add(1); }
+        {
+            self.queued_actions = self.queued_actions.saturating_add(1);
+        }
         self.motion_outbox.flush(&self.commands)
     }
 
     /// Read-only harness evidence: admitted to the outbox, not a network ACK.
     #[cfg(feature = "input-probe")]
-    pub(crate) fn queued_action_count(&self) -> u64 { self.queued_actions }
+    pub(crate) fn queued_action_count(&self) -> u64 {
+        self.queued_actions
+    }
+
+    /// Successful transport reads, including unchanged snapshots suppressed
+    /// before the render thread. Acceptance probes use this to distinguish a
+    /// healthy unchanged room from a cached UI projection.
+    #[cfg(feature = "input-probe")]
+    #[must_use]
+    pub fn successful_observation_count(&self) -> u64 {
+        self.successful_observations.load(Ordering::Relaxed)
+    }
 
     /// Apply all currently available worker results without blocking.
     ///
@@ -565,6 +600,8 @@ mod tests {
             command_namespace: "outbox-test".to_owned(),
             #[cfg(feature = "input-probe")]
             queued_actions: 0,
+            #[cfg(feature = "input-probe")]
+            successful_observations: Arc::new(AtomicU64::new(1)),
             last_result: None,
             worker: thread::spawn(|| {}),
         };
@@ -572,7 +609,11 @@ mod tests {
         live.submit_action(&action)
             .expect("explicit release must survive a full worker queue");
         #[cfg(feature = "input-probe")]
-        assert_eq!(live.queued_action_count(), 1, "queue admission is independent of ACK");
+        assert_eq!(
+            live.queued_action_count(),
+            1,
+            "queue admission is independent of ACK"
+        );
         live.motion_outbox.push(pose(false, 100)).unwrap();
         assert_eq!(
             live.motion_outbox.0.len(),
