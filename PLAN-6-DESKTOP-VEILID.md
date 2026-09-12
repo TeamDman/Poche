@@ -1,6 +1,6 @@
 # Desktop Veilid lobby and recovery
 
-**Plan status:** Complete; implementation, acceptance, documentation and publication finished
+**Plan status:** Active; implementation, acceptance and documentation are complete and committed, while remote publication awaits explicit destination approval
 **Primary implementation root:** `D:\Repos\Games\poche-3`, `model-checking`
 **Last updated:** 2026-09-12
 **Intent audit:** Final extraction, traceability and adversarial-omission passes completed; no evidence gate remains within the authorized goal scope
@@ -670,9 +670,11 @@ Complete when a killed/relaunched player resumes the same authorized identity/st
 
 U13 acceptance: final intentional departure disbands the lobby; reuse of its invitation reports closed/unavailable rather than recreating it. A new lobby uses a fresh identity/invitation. No all-peer offline restoration promise. Add unexpected-all-peer-loss tests under the chosen grace/expiry policy, temporary partition tests that cannot independently finalize conflicting histories, creator crash with a surviving peer, and multiple-device presence tests (one device closing is not automatically its player's final departure). Grace duration and protocol remain design decisions, not user-confirmed timing requirements.
 
-### [x] T6 Acceptance, docs, and handoff
+### [~] T6 Acceptance, docs, and handoff
 
-**Completion disposition:** the exact final source passes the default workspace suite, all-target builds, scoped developer-control suites, GPU retained-instance test, independent formal/coverage evidence and a two-process public Veilid Create/Join witness controlled incrementally without the OS clipboard. The two fresh 1280x800 captures were inspected and both processes reached a clean terminal state. Documentation distinguishes Codex sandbox escape from Windows UAC, keeps human Copy/Paste as convenience rather than an automated gate, and explains that file control drives Bevy input but never becomes a game device or transport. The diff and plan received a final three-pass audit, were committed locally, and the user-authorized `model-checking` branch was pushed to `origin`.
+**Implementation disposition:** the exact final source passes the default workspace suite, all-target builds, scoped developer-control suites, GPU retained-instance test, independent formal/coverage evidence and a two-process public Veilid Create/Join witness controlled incrementally without the OS clipboard. The two fresh 1280x800 captures were inspected and both processes reached a clean terminal state. Documentation distinguishes Codex sandbox escape from Windows UAC, keeps human Copy/Paste as convenience rather than an automated gate, and explains that file control drives Bevy input but never becomes a game device or transport. The diff and plan received a final three-pass audit and were committed locally as `420ca6e`.
+
+**Publication gate:** the September 12 push of the then-35-commit `model-checking` branch to `https://github.com/TeamDman/Poche.git` was rejected by the execution approval reviewer because it requires explicit authorization for that full payload and exact external destination. No network write occurred and no workaround was attempted. Resume only after the user explicitly approves pushing the entire current `model-checking` branch to that URL; after success, compare local and remote hashes, mark T6/plan complete and commit/push that final status update.
 
 **Current-source acceptance checkpoint:** `cargo test --workspace --locked --offline` passed the complete default workspace, including the outside-sandbox Windows credential-vault probe, formal adapters, decoder fuzzing, protected storage, runtime/session/spatial/UI/web-preservation/RL suites and compile-fail privacy doctests. The unified build exposed two cfg-only warnings; their imports/acceptance enum were scoped and `cargo test --locked -p poche-veilid -p poche-cli --offline --lib` then passed without warnings (47 Veilid tests; 12 CLI tests plus seven public ignores). `cargo check --workspace --all-targets --locked --offline` passed without warnings. `cargo fmt --all -- --check` is not a green gate: it reports thousands of formatting differences across the existing branch, so no bulk formatting churn was silently applied.
 
