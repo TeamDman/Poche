@@ -34,6 +34,9 @@ veilid-public-test = [
     "dep:tempfile",
     "dep:tokio",
 ]
+# Standalone public-network latency probe. This intentionally excludes the
+# Poche reducer, session authority, persistence, DHT rendezvous, and UI.
+veilid-latency-probe = ["veilid", "dep:tempfile", "dep:tokio"]
 insecure-development = []
 
 [dependencies]
@@ -70,6 +73,11 @@ required-features = ["veilid-local-test"]
 name = "poche-veilid-public-probe"
 path = "src/bin/public_probe.rs"
 required-features = ["veilid-public-test"]
+
+[[bin]]
+name = "poche-veilid-latency-probe"
+path = "src/bin/latency_probe.rs"
+required-features = ["veilid-latency-probe"]
 
 [[bin]]
 name = "poche-veilid-native-smoke"
