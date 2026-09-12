@@ -4,14 +4,24 @@ use super::{DeviceActionRequest, DeviceActionResult, DeviceClientError, VeilidDe
 use crate::VeilidRendezvousError;
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
 pub(super) fn exchange(
     request: &VeilidDeviceRequest,
-    mut send: impl FnMut(&[u8], bool) -> Result<Vec<u8>, VeilidRendezvousError>,
-    mut pause: impl FnMut(Duration),
+    send: impl FnMut(&[u8], bool) -> Result<Vec<u8>, VeilidRendezvousError>,
+    pause: impl FnMut(Duration),
 ) -> Result<Vec<u8>, DeviceClientError> {
     // Freeze certificate, signature, command ID, payload, epoch and revision
     // together. A refreshed route never causes a new action to be prepared.
     let bytes = request.encode()?;
+    exchange_encoded(request, &bytes, send, pause)
+}
+
+pub(super) fn exchange_encoded(
+    request: &VeilidDeviceRequest,
+    bytes: &[u8],
+    mut send: impl FnMut(&[u8], bool) -> Result<Vec<u8>, VeilidRendezvousError>,
+    mut pause: impl FnMut(Duration),
+) -> Result<Vec<u8>, DeviceClientError> {
     // CertifiedDeviceRoom durably caches the exact complete signed Invoke
     // before acknowledgement. Other RPCs have different replay contracts.
     let replay_safe = match request {
@@ -24,7 +34,7 @@ pub(super) fn exchange(
     let mut refresh = false;
     for attempt in 0..3 {
         let started = Instant::now();
-        match send(&bytes, refresh) {
+        match send(bytes, refresh) {
             Ok(reply) => return Ok(reply), // Wire denials are not transport loss.
             Err(error) => {
                 // Static operation/kind only: never dump signed requests,

@@ -30,6 +30,7 @@ poche-spatial = { path = "../poche-spatial" }
 poche-ui = { path = "../poche-ui" }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

@@ -16,9 +16,16 @@ pub(crate) fn init(global: &GlobalArgs) -> Result<LoggingGuard> {
     if global.debug && global.log_filter.is_some() {
         bail!("--debug and --log-filter cannot be used together");
     }
-    let filter = global.log_filter.clone().unwrap_or_else(|| {
+    let stderr_filter = global.log_filter.clone().unwrap_or_else(|| {
         if global.debug {
             "warn,poche_cli=debug".to_owned()
+        } else {
+            "warn,poche_cli=info".to_owned()
+        }
+    });
+    let file_filter = global.log_filter.clone().unwrap_or_else(|| {
+        if global.debug {
+            "warn,poche_cli=debug,poche_latency=trace".to_owned()
         } else {
             "warn,poche_cli=info".to_owned()
         }
@@ -29,7 +36,7 @@ pub(crate) fn init(global: &GlobalArgs) -> Result<LoggingGuard> {
         .with_ansi(false)
         .with_target(true)
         .with_writer(std::io::stderr)
-        .with_filter(EnvFilter::builder().parse(&filter)?);
+        .with_filter(EnvFilter::builder().parse(&stderr_filter)?);
 
     let ndjson_layer = if let Some(path) = &global.log_file {
         let path = std::path::Path::new(path);
@@ -54,7 +61,7 @@ pub(crate) fn init(global: &GlobalArgs) -> Result<LoggingGuard> {
                 .json()
                 .with_target(true)
                 .with_writer(writer)
-                .with_filter(EnvFilter::builder().parse(&filter)?),
+                .with_filter(EnvFilter::builder().parse(&file_filter)?),
         )
     } else {
         None

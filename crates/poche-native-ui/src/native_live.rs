@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     sync::{Mutex, mpsc},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[cfg(feature = "input-probe")]
@@ -24,6 +24,8 @@ use motion_queue::{COMMAND_CAPACITY, CommandInbox};
 
 enum NativeWorkerCommand {
     Pose {
+        ui_pose_id: u64,
+        submitted_at: Instant,
         card_id: String,
         claim: bool,
         position_mm: [i32; 3],
@@ -36,13 +38,35 @@ enum NativeWorkerCommand {
     },
 }
 
-enum NativeWorkerEvent {
+enum NativeWorkerEventPayload {
     Updated {
         result: DeviceActionResult,
         observation: Box<DeviceObservation>,
     },
     Observed(Box<DeviceObservation>),
     Failed(String),
+}
+
+struct NativeWorkerEvent {
+    payload: NativeWorkerEventPayload,
+    ready_at: Instant,
+}
+
+impl NativeWorkerEvent {
+    fn ready(payload: NativeWorkerEventPayload) -> Self {
+        Self {
+            payload,
+            ready_at: Instant::now(),
+        }
+    }
+}
+
+fn elapsed_micros(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
+}
+
+fn card_trace(card_id: &str) -> String {
+    blake3::hash(card_id.as_bytes()).to_hex()[..12].to_owned()
 }
 
 #[derive(Default)]
@@ -93,6 +117,7 @@ pub struct NativeLiveDevice {
     events: Mutex<mpsc::Receiver<NativeWorkerEvent>>,
     worker_lifetime: mpsc::Sender<()>,
     next_command: u64,
+    next_pose: u64,
     #[cfg(feature = "input-probe")]
     queued_actions: u64,
     #[cfg(feature = "input-probe")]
@@ -114,9 +139,15 @@ impl NativeLiveDevice {
     where
         T: DeviceTransport + Send + 'static,
     {
+        let initial_observe_started = Instant::now();
         let observation = client
             .observe(&room_id)
             .map_err(|error| error.to_string())?;
+        tracing::trace!(
+            target: "poche_latency",
+            event = "ui_initial_observation_complete",
+            observe_us = elapsed_micros(initial_observe_started),
+        );
         let mut random = [0_u8; 16];
         getrandom::fill(&mut random).map_err(|_| "cannot allocate command identity".to_owned())?;
         let command_namespace = blake3::hash(&random).to_hex()[..32].to_owned();
@@ -137,6 +168,7 @@ impl NativeLiveDevice {
                 let mut latest_hands = initial_hands;
                 let mut latest_epoch = initial_epoch;
                 let mut force_snapshot = false;
+                let mut confirming_pose: Option<(u64, Instant, String)> = None;
                 let mut pending_result = None;
                 let mut inbox = CommandInbox::default();
                 let mut retry_delay = Duration::from_millis(50);
@@ -156,11 +188,23 @@ impl NativeLiveDevice {
                     };
                     match next {
                         Ok(NativeWorkerCommand::Pose {
+                            ui_pose_id,
+                            submitted_at,
                             card_id,
                             claim,
                             position_mm,
                             rotation_millidegrees,
                         }) => {
+                            let traced_card = card_trace(&card_id);
+                            tracing::trace!(
+                                target: "poche_latency",
+                                event = "ui_pose_worker_dequeued",
+                                ui_pose_id,
+                                card_trace = %traced_card,
+                                queue_us = elapsed_micros(submitted_at),
+                                claim,
+                            );
+                            let rpc_started = Instant::now();
                             let result = (|| {
                                 let card = latest_hands
                                     .iter()
@@ -195,6 +239,15 @@ impl NativeLiveDevice {
                                 };
                                 client.physical_pose(request)
                             })();
+                            tracing::trace!(
+                                target: "poche_latency",
+                                event = "ui_pose_rpc_complete",
+                                ui_pose_id,
+                                card_trace = %traced_card,
+                                rpc_us = elapsed_micros(rpc_started),
+                                input_to_reply_us = elapsed_micros(submitted_at),
+                                success = result.is_ok(),
+                            );
                             match result {
                                 Ok(pose) => {
                                     if let Some(card) =
@@ -205,6 +258,7 @@ impl NativeLiveDevice {
                                     // Force the next snapshot through to the UI even
                                     // though the worker already knows its own receipt.
                                     force_snapshot = true;
+                                    confirming_pose = Some((ui_pose_id, submitted_at, traced_card));
                                 }
                                 Err(error) => {
                                     let message = if error == DeviceClientError::TransportUnavailable {
@@ -218,7 +272,9 @@ impl NativeLiveDevice {
                                         format!("physical motion rejected: {error}")
                                     };
                                     if event_tx
-                                        .send(NativeWorkerEvent::Failed(message))
+                                        .send(NativeWorkerEvent::ready(
+                                            NativeWorkerEventPayload::Failed(message),
+                                        ))
                                         .is_err()
                                     {
                                         break;
@@ -243,10 +299,12 @@ impl NativeLiveDevice {
                                         force_snapshot = false;
                                         latest_hands = observation.physical_hands.clone();
                                         if event_tx
-                                            .send(NativeWorkerEvent::Updated {
+                                            .send(NativeWorkerEvent::ready(
+                                                NativeWorkerEventPayload::Updated {
                                                 result,
                                                 observation: Box::new(observation),
-                                            })
+                                                },
+                                            ))
                                             .is_err()
                                         {
                                             break;
@@ -254,7 +312,9 @@ impl NativeLiveDevice {
                                     }
                                     Err(error) => {
                                         if event_tx
-                                            .send(NativeWorkerEvent::Failed(error.to_string()))
+                                            .send(NativeWorkerEvent::ready(
+                                                NativeWorkerEventPayload::Failed(error.to_string()),
+                                            ))
                                             .is_err()
                                             || !retryable_observation_error(error)
                                         {
@@ -273,7 +333,9 @@ impl NativeLiveDevice {
                                     // Resume reads and let the user act on the
                                     // refreshed authority projection instead.
                                     if event_tx
-                                        .send(NativeWorkerEvent::Failed(error.to_string()))
+                                        .send(NativeWorkerEvent::ready(
+                                            NativeWorkerEventPayload::Failed(error.to_string()),
+                                        ))
                                         .is_err()
                                         || !retryable_observation_error(error)
                                     {
@@ -287,8 +349,10 @@ impl NativeLiveDevice {
                             // A rules-revision wait cannot see physical-only
                             // changes. Poll snapshots and publish only changed
                             // rules or physical hand state to the render thread.
+                            let observe_started = Instant::now();
                             match client.observe(&room_id) {
                                 Ok(observation) => {
+                                    let observe_us = elapsed_micros(observe_started);
                                     #[cfg(feature = "input-probe")]
                                     worker_observations.fetch_add(1, Ordering::Relaxed);
                                     retry_delay = Duration::from_millis(50);
@@ -298,21 +362,47 @@ impl NativeLiveDevice {
                                             == observation.projection.current_revision
                                         && latest_hands == observation.physical_hands
                                     {
+                                        tracing::trace!(
+                                            target: "poche_latency",
+                                            event = "ui_poll_observation_complete",
+                                            observe_us,
+                                            changed = false,
+                                            confirming_pose = false,
+                                        );
                                         continue;
+                                    }
+                                    tracing::trace!(
+                                        target: "poche_latency",
+                                        event = "ui_poll_observation_complete",
+                                        observe_us,
+                                        changed = true,
+                                        confirming_pose = force_snapshot,
+                                    );
+                                    if let Some((ui_pose_id, submitted_at, traced_card)) =
+                                        confirming_pose.take()
+                                    {
+                                        tracing::trace!(
+                                            target: "poche_latency",
+                                            event = "ui_pose_confirmation_observed",
+                                            ui_pose_id,
+                                            card_trace = %traced_card,
+                                            confirmation_observe_us = observe_us,
+                                            input_to_confirmation_us = elapsed_micros(submitted_at),
+                                        );
                                     }
                                     latest_revision = observation.projection.current_revision;
                                     latest_epoch = observation.projection.session_epoch;
                                     force_snapshot = false;
                                     latest_hands = observation.physical_hands.clone();
                                     let event = if let Some(result) = pending_result.take() {
-                                        NativeWorkerEvent::Updated {
+                                        NativeWorkerEventPayload::Updated {
                                             result,
                                             observation: Box::new(observation),
                                         }
                                     } else {
-                                        NativeWorkerEvent::Observed(Box::new(observation))
+                                        NativeWorkerEventPayload::Observed(Box::new(observation))
                                     };
-                                    if event_tx.send(event).is_err() {
+                                    if event_tx.send(NativeWorkerEvent::ready(event)).is_err() {
                                         break;
                                     }
                                 }
@@ -322,7 +412,9 @@ impl NativeLiveDevice {
                                 ) => {}
                                 Err(error) => {
                                     if event_tx
-                                        .send(NativeWorkerEvent::Failed(error.to_string()))
+                                        .send(NativeWorkerEvent::ready(
+                                            NativeWorkerEventPayload::Failed(error.to_string()),
+                                        ))
                                         .is_err()
                                         || !retryable_observation_error(error)
                                     {
@@ -345,6 +437,7 @@ impl NativeLiveDevice {
             events: Mutex::new(event_rx),
             worker_lifetime,
             next_command: 0,
+            next_pose: 0,
             #[cfg(feature = "input-probe")]
             queued_actions: 0,
             #[cfg(feature = "input-probe")]
@@ -397,7 +490,20 @@ impl NativeLiveDevice {
         {
             return Err("physical card is not in this viewer's hand".to_owned());
         }
+        let ui_pose_id = self.next_pose;
+        self.next_pose = self.next_pose.saturating_add(1);
+        let submitted_at = Instant::now();
+        tracing::trace!(
+            target: "poche_latency",
+            event = "ui_pose_submitted",
+            ui_pose_id,
+            card_trace = card_trace(card_id),
+            claim,
+            outbox_depth = self.motion_outbox.0.len(),
+        );
         self.motion_outbox.push(NativeWorkerCommand::Pose {
+            ui_pose_id,
+            submitted_at,
             card_id: card_id.to_owned(),
             claim,
             position_mm,
@@ -496,19 +602,33 @@ impl NativeLiveDevice {
             .map_err(|_| "native device event queue is unavailable".to_owned())?;
         loop {
             match receiver.try_recv() {
-                Ok(NativeWorkerEvent::Updated {
-                    result,
-                    observation,
-                }) => {
-                    self.last_result = Some(result);
-                    self.observation = *observation;
-                    changed = true;
+                Ok(event) => {
+                    tracing::trace!(
+                        target: "poche_latency",
+                        event = "ui_worker_event_applied",
+                        event_queue_us = elapsed_micros(event.ready_at),
+                        event_kind = match &event.payload {
+                            NativeWorkerEventPayload::Updated { .. } => "updated",
+                            NativeWorkerEventPayload::Observed(_) => "observed",
+                            NativeWorkerEventPayload::Failed(_) => "failed",
+                        },
+                    );
+                    match event.payload {
+                        NativeWorkerEventPayload::Updated {
+                            result,
+                            observation,
+                        } => {
+                            self.last_result = Some(result);
+                            self.observation = *observation;
+                            changed = true;
+                        }
+                        NativeWorkerEventPayload::Observed(observation) => {
+                            self.observation = *observation;
+                            changed = true;
+                        }
+                        NativeWorkerEventPayload::Failed(error) => return Err(error),
+                    }
                 }
-                Ok(NativeWorkerEvent::Observed(observation)) => {
-                    self.observation = *observation;
-                    changed = true;
-                }
-                Ok(NativeWorkerEvent::Failed(error)) => return Err(error),
                 Err(mpsc::TryRecvError::Empty) => return Ok(changed),
                 Err(mpsc::TryRecvError::Disconnected) => {
                     return Err("native device worker disconnected".to_owned());
@@ -543,6 +663,8 @@ mod tests {
 
     fn pose(claim: bool, x: i32) -> NativeWorkerCommand {
         NativeWorkerCommand::Pose {
+            ui_pose_id: u64::try_from(x).unwrap_or(0),
+            submitted_at: Instant::now(),
             card_id: "card".to_owned(),
             claim,
             position_mm: [x, 0, 0],
@@ -597,6 +719,7 @@ mod tests {
             events: Mutex::new(events_rx),
             worker_lifetime,
             next_command: 0,
+            next_pose: 0,
             command_namespace: "outbox-test".to_owned(),
             #[cfg(feature = "input-probe")]
             queued_actions: 0,

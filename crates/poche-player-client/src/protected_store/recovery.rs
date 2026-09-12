@@ -8,7 +8,7 @@ use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit, Payload},
 };
-use std::io::Read as _;
+use std::{io::Read as _, time::Instant};
 
 const HEADER: &[u8] = b"POCHE-AUTHORITY-RECOVERY-1\0";
 const MAX_BYTES: usize = 32 * 1024 * 1024;
@@ -24,16 +24,24 @@ impl ProtectedProfileStore {
         room: &str,
         plaintext: &[u8],
     ) -> Result<(), ProfileStoreError> {
+        let total_started = Instant::now();
+        let location_started = Instant::now();
         let (path, aad) = self.recovery_location(label, room)?;
+        let location_us = elapsed_micros(location_started);
         if plaintext.len() > MAX_BYTES {
             return Err(ProfileStoreError::CorruptPublicProfile);
         }
+        let lock_started = Instant::now();
         let _guard = self.lock_creation()?;
+        let lock_us = elapsed_micros(lock_started);
         // Missing keys behind an existing checkpoint must never be replaced.
+        let key_started = Instant::now();
         let exists = path
             .try_exists()
             .map_err(|_| ProfileStoreError::PublicStoreUnavailable)?;
         let key = self.recovery_key(label, !exists)?;
+        let key_us = elapsed_micros(key_started);
+        let encrypt_started = Instant::now();
         let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref())
             .map_err(|_| ProfileStoreError::CorruptProtectedSecret)?;
         let mut nonce = [0_u8; 24];
@@ -47,6 +55,8 @@ impl ProtectedProfileStore {
                 },
             )
             .map_err(|_| ProfileStoreError::CorruptProtectedSecret)?;
+        let encrypt_us = elapsed_micros(encrypt_started);
+        let temporary_started = Instant::now();
         let parent = path
             .parent()
             .ok_or(ProfileStoreError::PublicStoreUnavailable)?;
@@ -55,15 +65,40 @@ impl ProtectedProfileStore {
             .prefix(".poche-recovery-")
             .tempfile_in(parent)
             .map_err(|_| ProfileStoreError::PublicStoreUnavailable)?;
+        let temporary_us = elapsed_micros(temporary_started);
+        let write_started = Instant::now();
         temporary
             .write_all(HEADER)
             .and_then(|()| temporary.write_all(&nonce))
             .and_then(|()| temporary.write_all(&ciphertext))
-            .and_then(|()| temporary.as_file().sync_all())
             .map_err(|_| ProfileStoreError::PublicStoreUnavailable)?;
+        let write_us = elapsed_micros(write_started);
+        let sync_started = Instant::now();
+        temporary
+            .as_file()
+            .sync_all()
+            .map_err(|_| ProfileStoreError::PublicStoreUnavailable)?;
+        let sync_us = elapsed_micros(sync_started);
+        let persist_started = Instant::now();
         temporary
             .persist(&path)
             .map_err(|_| ProfileStoreError::PublicStoreUnavailable)?;
+        let persist_us = elapsed_micros(persist_started);
+        tracing::trace!(
+            target: "poche_latency",
+            event = "authority_checkpoint_saved",
+            plaintext_bytes = plaintext.len(),
+            ciphertext_bytes = ciphertext.len(),
+            location_us,
+            lock_us,
+            key_us,
+            encrypt_us,
+            temporary_us,
+            write_us,
+            sync_us,
+            persist_us,
+            total_us = elapsed_micros(total_started),
+        );
         Ok(())
     }
 
@@ -145,4 +180,8 @@ impl ProtectedProfileStore {
             None => Err(ProfileStoreError::NotFound),
         }
     }
+}
+
+fn elapsed_micros(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
 }

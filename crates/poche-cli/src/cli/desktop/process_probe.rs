@@ -51,6 +51,19 @@ fn wait_until(mut predicate: impl FnMut() -> bool) {
     }
 }
 
+fn init_latency_log(role: &str) -> Option<crate::logging::LoggingGuard> {
+    let directory = std::env::var_os("POCHE_LATENCY_LOG_DIR")?;
+    let directory = std::path::PathBuf::from(directory);
+    fs::create_dir_all(&directory).expect("latency log directory");
+    let path = directory.join(format!("{role}.ndjson"));
+    let global = crate::cli::GlobalArgs {
+        debug: true,
+        log_file: Some(path.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+    Some(crate::logging::init(&global).expect("latency logging"))
+}
+
 fn invoke(live: &mut NativeLiveDevice, action: &str) {
     wait_until(|| {
         live.poll().expect("device observation");
@@ -85,6 +98,12 @@ fn protected_desktop_process_role() {
     let root = std::env::var("POCHE_PROCESS_PROBE_ROOT").expect("parent probe directory");
     let root = Path::new(&root);
     let role = std::env::var("POCHE_PROCESS_PROBE_ROLE").expect("parent role");
+    let _latency_log = init_latency_log(&role);
+    tracing::trace!(
+        target: "poche_latency",
+        event = "process_probe_started",
+        role = %role,
+    );
     let suffix = std::env::var("POCHE_PROCESS_PROBE_SUFFIX").expect("parent suffix");
     let creator = role == "creator"
         || role == "creator-resume"

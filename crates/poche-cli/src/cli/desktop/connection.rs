@@ -15,7 +15,7 @@ use poche_veilid::{
 use std::{
     fs,
     net::UdpSocket,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 fn now() -> Result<u64, &'static str> {
@@ -121,7 +121,20 @@ fn connect(
         config,
         std::sync::Arc::new(move |update| {
             if let veilid_core::VeilidUpdate::AppCall(call) = update {
-                if send.try_send(call).is_err() {
+                let callback_started = Instant::now();
+                let call_id = poche_veilid::redacted_device_call_id(call.message());
+                let request_bytes = call.message().len();
+                let queued = send.try_send(call).is_ok();
+                tracing::trace!(
+                    target: "poche_latency",
+                    event = "authority_call_callback",
+                    call_id,
+                    request_bytes,
+                    queue_us = u64::try_from(callback_started.elapsed().as_micros())
+                        .unwrap_or(u64::MAX),
+                    queued,
+                );
+                if !queued {
                     #[cfg(feature = "native-input-test")]
                     eprintln!("poche route probe: incoming AppCall could not be queued");
                 }

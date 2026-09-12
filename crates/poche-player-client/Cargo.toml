@@ -36,6 +36,7 @@ poche-capture = { path = "../poche-capture", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tempfile = { workspace = true, optional = true }
+tracing.workspace = true
 ureq = { workspace = true, optional = true }
 zeroize = { workspace = true, optional = true }
 

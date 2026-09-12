@@ -15,6 +15,7 @@ use poche_protocol::{
     DeviceRouteResultWire, InviteProof, RoomId,
 };
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
 const MAX_DEVICE_CALL: usize = 30_000;
 
@@ -97,6 +98,19 @@ impl VeilidDeviceRequest {
     pub fn decode(bytes: &[u8]) -> Result<Self, DeviceClientError> {
         decode(bytes)
     }
+
+    /// Static operation class for local diagnostics. This intentionally omits
+    /// identities, commands, invitations, card faces, and coordinates.
+    #[must_use]
+    pub const fn operation_name(&self) -> &'static str {
+        match self {
+            Self::Observe(_) => "observe",
+            Self::Invoke(_) => "invoke",
+            Self::Route(_) => "route",
+            Self::Cooperate(_) => "cooperate",
+            Self::PhysicalPose(_) => "physical_pose",
+        }
+    }
 }
 impl VeilidDeviceReply {
     pub fn decode(bytes: &[u8]) -> Result<Self, DeviceClientError> {
@@ -105,6 +119,17 @@ impl VeilidDeviceReply {
     pub fn encode(&self) -> Result<Vec<u8>, DeviceClientError> {
         encode(self)
     }
+}
+
+/// Correlate the same encoded request across client and authority logs without
+/// exposing any signed request material.
+#[must_use]
+pub fn redacted_device_call_id(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex()[..16].to_owned()
+}
+
+fn elapsed_micros(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
 }
 
 /// Owns a resolved room and signer, not a second game implementation. The
@@ -194,12 +219,39 @@ impl<S> VeilidDeviceTransport<S> {
         if tokio::runtime::Handle::try_current().is_ok() {
             return Err(DeviceClientError::TransportUnavailable);
         }
+        let exchange_started = Instant::now();
+        let encode_started = Instant::now();
+        let diagnostic_bytes = encode(&request)?;
+        let encode_us = elapsed_micros(encode_started);
+        let operation = request.operation_name();
+        let call_id = redacted_device_call_id(&diagnostic_bytes);
+        tracing::trace!(
+            target: "poche_latency",
+            event = "client_exchange_encoded",
+            operation,
+            call_id,
+            encode_us,
+            request_bytes = diagnostic_bytes.len(),
+        );
+        let mut app_call_attempt = 0_u64;
         let reply = if matches!(request, VeilidDeviceRequest::Observe(_)) {
-            let bytes = encode(&request)?;
+            let bytes = diagnostic_bytes;
             let call = || {
+                app_call_attempt = app_call_attempt.saturating_add(1);
+                let app_call_started = Instant::now();
                 let result = self
                     .runtime
                     .block_on(self.adapter.app_call(&self.room, bytes.clone()));
+                tracing::trace!(
+                    target: "poche_latency",
+                    event = "client_app_call_complete",
+                    operation,
+                    call_id,
+                    attempt = app_call_attempt,
+                    route_refresh = false,
+                    app_call_us = elapsed_micros(app_call_started),
+                    success = result.is_ok(),
+                );
                 #[cfg(feature = "native-input-test")]
                 if let Err(error) = &result {
                     eprintln!(
@@ -218,9 +270,17 @@ impl<S> VeilidDeviceTransport<S> {
                         .ok_or(DeviceClientError::TransportUnavailable)?;
                     #[cfg(feature = "native-input-test")]
                     let previous_epoch = self.room.record().route_epoch;
+                    let refresh_started = Instant::now();
                     self.runtime
                         .block_on(self.adapter.refresh_resolved_room(&mut self.room, now))
                         .map_err(|_| DeviceClientError::TransportUnavailable)?;
+                    tracing::trace!(
+                        target: "poche_latency",
+                        event = "client_route_refreshed",
+                        operation,
+                        call_id,
+                        refresh_us = elapsed_micros(refresh_started),
+                    );
                     #[cfg(feature = "native-input-test")]
                     eprintln!(
                         "poche route probe: refreshed client route epoch {previous_epoch} -> {}",
@@ -229,17 +289,34 @@ impl<S> VeilidDeviceTransport<S> {
                     // Retry only the identical signed observation, never a
                     // write whose first outcome may have been committed.
                     retry_observation(|| {
-                        self.runtime
+                        app_call_attempt = app_call_attempt.saturating_add(1);
+                        let app_call_started = Instant::now();
+                        let result = self
+                            .runtime
                             .block_on(self.adapter.app_call(&self.room, bytes.clone()))
-                            .map_err(|_| DeviceClientError::TransportUnavailable)
+                            .map_err(|_| DeviceClientError::TransportUnavailable);
+                        tracing::trace!(
+                            target: "poche_latency",
+                            event = "client_app_call_complete",
+                            operation,
+                            call_id,
+                            attempt = app_call_attempt,
+                            route_refresh = true,
+                            app_call_us = elapsed_micros(app_call_started),
+                            success = result.is_ok(),
+                        );
+                        result
                     })?
                 }
                 result => result?,
             }
         } else {
-            startup_retry::exchange(
+            startup_retry::exchange_encoded(
                 &request,
+                &diagnostic_bytes,
                 |bytes, refresh| {
+                    app_call_attempt = app_call_attempt.saturating_add(1);
+                    let app_call_started = Instant::now();
                     if refresh {
                         let now = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
@@ -249,13 +326,50 @@ impl<S> VeilidDeviceTransport<S> {
                         self.runtime
                             .block_on(self.adapter.refresh_resolved_room(&mut self.room, now))?;
                     }
-                    self.runtime
-                        .block_on(self.adapter.app_call(&self.room, bytes.to_vec()))
+                    let result = self
+                        .runtime
+                        .block_on(self.adapter.app_call(&self.room, bytes.to_vec()));
+                    tracing::trace!(
+                        target: "poche_latency",
+                        event = "client_app_call_complete",
+                        operation,
+                        call_id,
+                        attempt = app_call_attempt,
+                        route_refresh = refresh,
+                        app_call_us = elapsed_micros(app_call_started),
+                        success = result.is_ok(),
+                    );
+                    result
                 },
                 std::thread::sleep,
             )?
         };
-        match decode(&reply)? {
+        let decode_started = Instant::now();
+        let decoded = decode(&reply)?;
+        let outcome = match &decoded {
+            VeilidDeviceReply::Observation(_) => "observation",
+            VeilidDeviceReply::Action(_) => "action",
+            VeilidDeviceReply::Route(_) => "route",
+            VeilidDeviceReply::Cooperation(_) => "cooperation",
+            VeilidDeviceReply::PhysicalPose(_) => "physical_pose",
+            VeilidDeviceReply::Denied => "denied",
+            VeilidDeviceReply::NoProgress => "no_progress",
+            VeilidDeviceReply::StaleRevision => "stale_revision",
+            VeilidDeviceReply::Unavailable => "unavailable",
+            VeilidDeviceReply::RecoveryChallenge(_) => "recovery_challenge",
+        };
+        tracing::trace!(
+            target: "poche_latency",
+            event = "client_reply_decoded",
+            operation,
+            call_id,
+            outcome,
+            attempts = app_call_attempt,
+            reply_bytes = reply.len(),
+            decode_us = elapsed_micros(decode_started),
+            exchange_us = elapsed_micros(exchange_started),
+        );
+        match decoded {
             VeilidDeviceReply::Denied => Err(DeviceClientError::AuthorizationDenied),
             VeilidDeviceReply::NoProgress => Err(DeviceClientError::NoProgress),
             VeilidDeviceReply::StaleRevision => Err(DeviceClientError::StaleRevision),
@@ -287,7 +401,17 @@ impl<S: DeviceSigner> DeviceTransport for VeilidDeviceTransport<S> {
         request: poche_player_client::PhysicalPoseRequest,
     ) -> Result<poche_player_client::PhysicalPoseState, DeviceClientError> {
         self.require_room(&request.room_id)?;
+        let sign_started = Instant::now();
+        let generation = request.generation;
+        let sequence = request.sequence;
         let signed = request.sign(profile, &self.signer)?;
+        tracing::trace!(
+            target: "poche_latency",
+            event = "client_pose_signed",
+            generation,
+            sequence,
+            sign_us = elapsed_micros(sign_started),
+        );
         match self.exchange(VeilidDeviceRequest::PhysicalPose(signed))? {
             VeilidDeviceReply::PhysicalPose(state) => Ok(state),
             _ => Err(DeviceClientError::ProtocolViolation),

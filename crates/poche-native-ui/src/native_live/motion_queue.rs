@@ -9,18 +9,24 @@ impl NativeWorkerCommand {
         match (self, newer) {
             (
                 Self::Pose {
+                    ui_pose_id,
+                    submitted_at,
                     card_id,
                     claim,
                     position_mm,
                     rotation_millidegrees,
                 },
                 Self::Pose {
+                    ui_pose_id: next_ui_pose_id,
+                    submitted_at: next_submitted_at,
                     card_id: next_id,
                     claim: next_claim,
                     position_mm: next_position,
                     rotation_millidegrees: next_rotation,
                 },
             ) if card_id == next_id => {
+                *ui_pose_id = *next_ui_pose_id;
+                *submitted_at = *next_submitted_at;
                 *claim |= *next_claim;
                 *position_mm = *next_position;
                 *rotation_millidegrees = *next_rotation;
@@ -68,6 +74,13 @@ impl CommandInbox {
                 "poche native motion: {superseded} older queued samples superseded before dispatch"
             );
         }
+        if superseded > 0 {
+            tracing::trace!(
+                target: "poche_latency",
+                event = "ui_pose_samples_coalesced",
+                superseded,
+            );
+        }
         Ok(next)
     }
 }
@@ -79,6 +92,8 @@ mod tests {
 
     fn pose(card: &str, claim: bool, n: i32) -> NativeWorkerCommand {
         NativeWorkerCommand::Pose {
+            ui_pose_id: u64::try_from(n).unwrap_or(0),
+            submitted_at: std::time::Instant::now(),
             card_id: card.to_owned(),
             claim,
             position_mm: [n, n + 1, n + 2],
@@ -91,6 +106,7 @@ mod tests {
             claim,
             position_mm,
             rotation_millidegrees,
+            ..
         } = command
         else {
             panic!("expected a pose");
