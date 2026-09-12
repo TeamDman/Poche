@@ -24,6 +24,13 @@ use std::{
 #[derive(Clone, Default)]
 pub struct IsolatedClipboard(Arc<Mutex<String>>);
 
+/// One-use evidence that an external Windows acceptance broker launched this
+/// exact process on a noninteractive clipboard station. Constructing this
+/// consumes a PID-bound attestation before Bevy initializes its OS clipboard.
+pub struct PrivateSystemClipboard {
+    _private: (),
+}
+
 /// Check the production UI's measured geometry, not a fixture rectangle.
 /// Called after layout settles in the rendered card-input acceptance harness.
 pub(crate) fn validate_live_controls_frame(world: &mut World) -> Result<(), String> {
@@ -52,6 +59,80 @@ impl IsolatedClipboard {
     }
 }
 
+impl PrivateSystemClipboard {
+    /// Validate and consume the external broker's fail-closed attestation.
+    ///
+    /// # Errors
+    /// Returns an error before any clipboard access when the expected
+    /// station, desktop, role, nonce, process ID or evidence root differs.
+    pub fn from_broker_environment(root: &Path, role: &str) -> Result<Self, String> {
+        #[cfg(not(windows))]
+        {
+            let _ = (root, role);
+            return Err("private system clipboard acceptance is Windows-only".to_owned());
+        }
+        #[cfg(windows)]
+        {
+            let station = std::env::var("POCHE_PRIVATE_CLIPBOARD_STATION")
+                .map_err(|_| "private clipboard station is missing")?;
+            let desktop = std::env::var("POCHE_PRIVATE_CLIPBOARD_DESKTOP")
+                .map_err(|_| "private clipboard desktop is missing")?;
+            let nonce = std::env::var("POCHE_PRIVATE_CLIPBOARD_NONCE")
+                .map_err(|_| "private clipboard nonce is missing")?;
+            let path = PathBuf::from(
+                std::env::var_os("POCHE_PRIVATE_CLIPBOARD_ATTESTATION")
+                    .ok_or("private clipboard attestation is missing")?,
+            );
+            if station.is_empty()
+                || station.eq_ignore_ascii_case("WinSta0")
+                || desktop.is_empty()
+                || nonce.len() < 32
+            {
+                return Err("private clipboard broker values are invalid".to_owned());
+            }
+            let expected_root = std::fs::canonicalize(root)
+                .map_err(|_| "private clipboard evidence root is unavailable")?;
+            let parent = path
+                .parent()
+                .and_then(|value| std::fs::canonicalize(value).ok())
+                .ok_or("private clipboard attestation parent is unavailable")?;
+            if parent != expected_root {
+                return Err("private clipboard attestation escaped its evidence root".to_owned());
+            }
+            let contents = std::fs::read_to_string(&path)
+                .map_err(|_| "private clipboard attestation is unavailable")?;
+            let expected = [
+                ("version", "1".to_owned()),
+                ("pid", std::process::id().to_string()),
+                ("station", station),
+                ("desktop", desktop),
+                ("role", role.to_owned()),
+                ("nonce", nonce),
+                ("elevated", "false".to_owned()),
+            ];
+            let mut parsed = std::collections::BTreeMap::new();
+            for line in contents.lines() {
+                let (key, value) = line
+                    .split_once('=')
+                    .ok_or("private clipboard attestation is malformed")?;
+                if parsed.insert(key, value).is_some() {
+                    return Err("private clipboard attestation repeats a field".to_owned());
+                }
+            }
+            if parsed.len() != expected.len()
+                || expected
+                .iter()
+                .any(|(key, value)| parsed.get(key).copied() != Some(value.as_str()))
+            {
+                return Err("private clipboard attestation did not match this process".to_owned());
+            }
+            std::fs::remove_file(path)
+                .map_err(|_| "private clipboard attestation was not consumed")?;
+            Ok(Self { _private: () })
+        }
+    }
+}
+
 pub enum MenuScenario {
     Create,
     /// Exercise real spatial seating, readiness and returning to the room edge.
@@ -75,6 +156,14 @@ pub enum MenuScenario {
         invitation: String,
         coordination: PathBuf,
     },
+    /// Copy the created room invitation through the actual OS clipboard, then
+    /// signal an external broker without serializing the invitation to disk.
+    PrivateSystemClipboardCreate {
+        clipboard_ready: Box<dyn FnOnce() -> Result<(), String> + Send + Sync>,
+    },
+    /// Paste and join using only the actual OS clipboard contents established
+    /// by `PrivateSystemClipboardCreate` in another process.
+    PrivateSystemClipboardJoin,
     /// The supplied worker must return this redacted error on each request.
     ConnectionFailure {
         invitation: String,
@@ -102,6 +191,67 @@ pub fn run(
     name: &str,
     scenario: MenuScenario,
     clipboard: IsolatedClipboard,
+    directory: &Path,
+) -> Result<Option<MenuConnection>, String> {
+    if matches!(
+        &scenario,
+        MenuScenario::PrivateSystemClipboardCreate { .. }
+            | MenuScenario::PrivateSystemClipboardJoin
+    ) {
+        return Err("private system clipboard scenario requires broker evidence".to_owned());
+    }
+    run_with_clipboard(
+        worker,
+        validator,
+        name,
+        scenario,
+        ProbeClipboard::Isolated(clipboard),
+        directory,
+    )
+}
+
+/// Exercise the production OS clipboard only after consuming an external
+/// broker attestation for a private, noninteractive Windows clipboard station.
+///
+/// # Errors
+/// Returns an error when a non-system scenario is supplied or the ordinary
+/// rendered menu acceptance fails.
+pub fn run_private_system_clipboard(
+    worker: DesktopConnectionWorker,
+    validator: InvitationValidator,
+    name: &str,
+    scenario: MenuScenario,
+    clipboard: PrivateSystemClipboard,
+    directory: &Path,
+) -> Result<Option<MenuConnection>, String> {
+    if !matches!(
+        &scenario,
+        MenuScenario::PrivateSystemClipboardCreate { .. }
+            | MenuScenario::PrivateSystemClipboardJoin
+    ) {
+        return Err("private system clipboard requires a system scenario".to_owned());
+    }
+    run_with_clipboard(
+        worker,
+        validator,
+        name,
+        scenario,
+        ProbeClipboard::System(clipboard),
+        directory,
+    )
+}
+
+enum ProbeClipboard {
+    Isolated(IsolatedClipboard),
+    System(PrivateSystemClipboard),
+}
+
+fn run_with_clipboard(
+    worker: DesktopConnectionWorker,
+    validator: InvitationValidator,
+    name: &str,
+    scenario: MenuScenario,
+    clipboard: ProbeClipboard,
     directory: &Path,
 ) -> Result<Option<MenuConnection>, String> {
     std::fs::create_dir(directory).map_err(|_| "a fresh menu evidence directory is required")?;
@@ -157,6 +307,29 @@ pub fn run(
                     Step::Capture("dealt.png", false),
                 ]);
             }
+        }
+        MenuScenario::PrivateSystemClipboardCreate { clipboard_ready } => {
+            steps.extend([
+                Step::Capture("menu.png", false),
+                Step::Click(Target::Create, 0),
+                Step::Live,
+                Step::Click(Target::Copy, 0),
+                Step::Copied,
+                Step::SignalClipboardReady(clipboard_ready),
+                Step::Capture("lobby.png", false),
+            ]);
+        }
+        MenuScenario::PrivateSystemClipboardJoin => {
+            steps.extend([
+                Step::Capture("menu.png", false),
+                Step::Click(Target::Paste, 0),
+                Step::Status("Invitation pasted. Choose Join when ready.".to_owned()),
+                Step::ValidInvitation,
+                Step::Idle,
+                Step::Click(Target::Join, 0),
+                Step::Live,
+                Step::Capture("lobby.png", false),
+            ]);
         }
         MenuScenario::Join { ref invitation }
         | MenuScenario::JoinAndDeal { ref invitation }
@@ -215,7 +388,7 @@ pub fn run(
     let driver = Driver {
         steps,
         directory: directory.to_owned(),
-        clipboard: clipboard.clone(),
+        clipboard,
         result: shared,
         frame: 0,
         ready_at: 60,
@@ -243,8 +416,10 @@ pub fn run(
                 },
                 PrimaryWindow,
             ));
-            app.insert_resource(InvitationClipboard::Isolated(clipboard.0))
-                .insert_resource(driver)
+            if let ProbeClipboard::Isolated(clipboard) = &driver.clipboard {
+                app.insert_resource(InvitationClipboard::Isolated(clipboard.0.clone()));
+            }
+            app.insert_resource(driver)
                 .add_systems(Last, (drive, crate::input_probe::rendered::drive).chain());
         },
     )?;
@@ -275,6 +450,8 @@ enum Step {
     Idle,
     Live,
     Copied,
+    ValidInvitation,
+    SignalClipboardReady(Box<dyn FnOnce() -> Result<(), String> + Send + Sync>),
     Invoke(String),
     Committed(String, Option<poche_player_client::DeviceActionResult>),
     OwnSeat(u8),
@@ -309,7 +486,7 @@ impl Step {
 struct Driver {
     steps: VecDeque<Step>,
     directory: PathBuf,
-    clipboard: IsolatedClipboard,
+    clipboard: ProbeClipboard,
     result: Arc<Mutex<Option<Result<Option<MenuConnection>, String>>>>,
     frame: u64,
     ready_at: u64,
@@ -473,7 +650,10 @@ impl Driver {
                 }
             }
             Step::Clipboard(text) => {
-                *self.clipboard.0.lock().expect("isolated clipboard") = text;
+                let ProbeClipboard::Isolated(clipboard) = &self.clipboard else {
+                    return Err("system clipboard scenario attempted test mutation".to_owned());
+                };
+                *clipboard.0.lock().expect("isolated clipboard") = text;
             }
             Step::Idle => {
                 if world.resource::<DesktopMenuStatus>().busy
@@ -511,10 +691,36 @@ impl Driver {
             }
             Step::Copied => {
                 let live = world.resource::<NativeLiveDevice>();
-                if live.room_invitation() != Some(self.clipboard.text().as_str()) {
-                    return Err("Copy button did not export the live room invitation".to_owned());
+                match &self.clipboard {
+                    ProbeClipboard::Isolated(clipboard) => {
+                        if live.room_invitation() != Some(clipboard.text().as_str()) {
+                            return Err(
+                                "Copy button did not export the live room invitation".to_owned()
+                            );
+                        }
+                    }
+                    ProbeClipboard::System(_) => {
+                        if live.room_invitation().is_none()
+                            || world.resource::<crate::NativeController>().last_finding
+                                != "Lobby invitation copied."
+                        {
+                            return Err("OS clipboard Copy did not report success".to_owned());
+                        }
+                    }
                 }
             }
+            Step::ValidInvitation => {
+                let value = world
+                    .query::<(&Field, &EditableText)>()
+                    .iter(world)
+                    .find(|(field, _)| **field == Field::Invitation)
+                    .map(|(_, text)| text.value().into_iter().collect::<String>())
+                    .ok_or("invitation field missing")?;
+                if value.len() > 4096 || !(world.resource::<InvitationValidator>().0)(value.trim()) {
+                    return Err("OS clipboard Paste did not produce a valid invitation".to_owned());
+                }
+            }
+            Step::SignalClipboardReady(signal) => signal()?,
             Step::Invoke(action) => {
                 let live = world.resource::<NativeLiveDevice>();
                 if !live
@@ -576,7 +782,10 @@ impl Driver {
                 }
             }
             Step::PublishInvitation(publish) => {
-                let copied = self.clipboard.text();
+                let ProbeClipboard::Isolated(clipboard) = &self.clipboard else {
+                    return Err("system invitation must not be serialized by the probe".to_owned());
+                };
+                let copied = clipboard.text();
                 let live = world.resource::<NativeLiveDevice>();
                 if live.room_invitation() != Some(copied.as_str()) {
                     return Err("copied invitation changed before publication".to_owned());
