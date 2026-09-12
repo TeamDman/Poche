@@ -12,7 +12,8 @@ symbolic, queried, sampled, experimental, or merely empirical.
 - [Completed multiplayer, rendering, and RL plan](PLAN-2-MULTIPLAYER-RL-RENDERING.md)
 - [Completed spatial tabletop and distributed-agency plan](PLAN-3-DISTRIBUTED-TABLETOP-SPATIAL.md)
 - [Completed player-facing web plan](PLAN-4-PLAYER-WEB-EXPERIENCE.md)
-- [Active desktop Veilid, shared card movement, and recovery plan](PLAN-6-DESKTOP-VEILID.md) — implementation in progress; not yet a playable Veilid desktop release.
+- [Active desktop Veilid, shared card movement, and recovery plan](PLAN-6-DESKTOP-VEILID.md) — the playable slice is implemented; final clipboard/release evidence remains.
+- [Play the native Veilid desktop client](docs/desktop-veilid.md)
 - [Previous unified executable, device-orchestration, capture, and puppet plan](PLAN-5-LIVE-CONTROL-PUPPETS.md)
 - [Unified executable, device, capture, agent, and puppet guide](docs/live-control-puppets.md)
 - [Contributor and evidence guide](CONTRIBUTING.md)
@@ -168,6 +169,29 @@ protected profiles, live GUI/CLI/agent participation, sibling-device capture,
 artifact inspection, puppet authoring, and the precise transport/privacy
 qualifications.
 
+## Play in two native windows
+
+Build once, then launch the same executable twice:
+
+```powershell
+cargo build --locked --offline -p poche-cli
+target\debug\poche.exe
+```
+
+The first player enters a name and chooses **Create lobby**, then copies the
+lobby invitation. The second player enters a different name, chooses **Paste
+invitation from clipboard**, reviews the valid prefilled invitation, and clicks
+**Join**. Take different seats, ready both players and arm the countdown. The
+action bar exposes bids and plays; cards can also be dragged between the lower
+hand camera and the shared table, with Shift/Control/Alt changing their three
+rotation axes.
+
+This path uses protected identities and native Veilid, not the development web
+server. Participant and creator restart, private-route rotation and empty-room
+disbanding have separate real-process acceptance. See the
+[desktop play and recovery guide](docs/desktop-veilid.md) for the exact recovery,
+privacy, firewall and evidence boundaries.
+
 ## Play in two browser tabs
 
 Run the local server, then open `http://127.0.0.1:4174/`:
@@ -202,12 +226,11 @@ semantics remain separately scoped experiments. See
 
 The same executable includes `room`, `game`, `chat`, `spectator`, `transcript`,
 `identity`, `device`, `agent`, and `puppet` commands with text/JSON/NDJSON
-output. The live device commands are packaged against the disclosed HTTP
-gateway endpoint and use protected, independently certified profiles. This is
-not a claim that the CLI currently joins through public Veilid: native/public
-Veilid lifecycle acceptance remains a separately guarded transport test, and
-public Veilid capture transfer is not advertised. Run `poche.exe --help` for
-the complete command vocabulary.
+output. The no-argument desktop menu uses the protected native Veilid
+connector. The older explicit live-device command family remains packaged
+against the disclosed HTTP gateway; it is a separate adapter and does not
+remote-control an open Bevy window. Public Veilid capture transfer is not
+advertised. Run `poche.exe --help` for the complete command vocabulary.
 
 The checked script is the most inspectable lifecycle: host and join, seat and
 ready, abort and re-arm a countdown, start, pause by Alice, resume by Bob, chat,
@@ -252,11 +275,11 @@ is a packaged live client or a production security claim.
 | Mode | What is proven | Privacy and operational boundary |
 | --- | --- | --- |
 | GitHub Pages replay | Static rulebook and exact checked projections | No live room, authority, identity, or network |
-| Native Veilid protocol | Guarded two-process public DHT/private-route lifecycle, stable keys, signed commands/events, encrypted recipient projections | The packaged live CLI currently uses HTTP/gateway rather than Veilid; public capture transfer is unqualified; Veilid peers can observe network metadata; the host sees all hands |
+| Native Veilid desktop | Guarded two-process public DHT/private-route lifecycle, graphical create/join/seat/deal/bid/play, shared exact poses, strict recipient projections, route rotation, and protected participant/creator recovery | Host-authoritative checkpoint recovery, not peer-elected failover; public-network availability is empirical; OS clipboard cross-process evidence remains a final gate; Veilid peers can observe network metadata; the authority sees all hands |
 | Direct browser Veilid | Not supported with Veilid 0.5.7 from a Pages HTTPS origin | Public WSS bootstrap still resets before TLS; upstream deprecated WSS and the replacement WebTransport checklist remains open; no companion app is implied |
 | Self-hosted Datastar demo | Host-colocated Axum authority and accessible semantic HTML work on loopback | Development invite/viewer routes are not production authentication; the operator sees connection metadata and, as host, all state |
 | Signed browser-device gateway lab | Browser-local WebCrypto key, signed bounded typed HTTP, idempotent receipts, reconnectable exact-recipient SSE, and independent device revocation work on loopback | Still host-authoritative and plaintext to the gateway; lab enrollment is not the replicated root-certificate path |
-| Native spatial mirror | Bevy 0.19 renders checked and live exact-recipient scenes, filled antialiased Slug card/score surfaces, typed/drag parity, deterministic tween, and real windowless capture targets | The live carrier is currently HTTP/gateway, not a packaged Veilid player; Slug fill is CPU-rasterized from the analytic coverage contract rather than a transplanted Vulkan shader, and this is not physics authority or input-to-photon evidence |
+| Native spatial mirror | Bevy 0.19.1 renders checked and live exact-recipient scenes, filled antialiased Slug card/score surfaces, typed/drag parity, cross-viewport shared movement, and real windowless capture targets | The default desktop carrier is native Veilid; Bevy remains a renderer/input adapter, not rules or physics authority; small labels and production art remain polish work |
 | Unified device and puppet workflows | One `poche.exe`, protected sibling profiles, GUI/CLI/policy parity, same-player capture, and full headless/browser/native multi-device runs | Captures are presentation evidence, not state authority or formal proof; public Veilid capture transfer is unsupported |
 | Semantic HTML tabletop | Ordinary landmarks, tables, lists, POST forms, keyboard controls, optional drag/drop, exact-recipient privacy, audit, governance, and reconnect run over the same spatial semantics | Loopback development identities are not production authentication; live authority remains host-colocated and trusted |
 | Published spatial evidence | One checked 185-record NDJSON stream, native/HTML scene fingerprint, Rust-rendered endpoint, and retained bounded Alloy overlap witness | Static composition of registered fixtures and reducers; not one atomic network execution, a live authority, or an unbounded spatial theorem |

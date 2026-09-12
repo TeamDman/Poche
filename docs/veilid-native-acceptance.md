@@ -2,6 +2,37 @@
 
 Status: Tasks 5.2, 5.4, and 5.6 complete (2026-08-05).
 
+## September 12 desktop completion evidence
+
+The current-source `protected_desktop_rendered_trick_two_process` acceptance
+passed in 214.56 seconds. Two independent protected processes kept their
+windowless Bevy 0.19.1 renderers and production Veilid connections alive from
+the main menu through seating, readiness, deal, bidding, one complete trick and
+the next round. It verified exact shared position plus yaw/pitch/roll, no
+logical revision change for pose-only movement, a visible out-of-turn denial
+without reveal or snap-back, later legal play, public-history agreement and
+participant restart. All retained menu/lobby/dealt/held/after frames were
+inspected. Invitation clipboard buffers were isolated test doubles; Windows
+clipboard exchange is not claimed by this run.
+
+The same source revision passed the independent public lifecycle probes:
+
+- live owner-route retirement and genuine callback-driven epoch 1 to 2 repair:
+  76.35 seconds;
+- creator forced loss and protected restart while a participant survived:
+  60.57 seconds;
+- unexpected loss of all peers, 60-second grace expiry, terminal marker and
+  fresh-room replacement: 114.97 seconds;
+- sole-member shutdown followed by fresh-room replacement: 32.44 seconds;
+- explicit final Leave, terminal persistence and fresh-room replacement: 27.69
+  seconds.
+
+Creator recovery restores the original authority checkpoint after a fresh
+signed survivor challenge; it is not election of a replacement authority. The
+two-player quorum is unchanged, and a lone survivor cannot finalize new game
+transitions during the outage. These are public-network empirical passes, not
+a universal availability or cryptographic-security theorem.
+
 ## September desktop firewall experiment
 
 On September 9–10, 2026, the protected desktop two-process native-input test

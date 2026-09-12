@@ -14,6 +14,13 @@ mod route_repair;
 struct ChildOwner(Child);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(feature = "native-input-test"),
+    allow(
+        dead_code,
+        reason = "rendered acceptance variants are constructed only by the opt-in native-input feature"
+    )
+)]
 enum RenderedStage {
     None,
     Menu,

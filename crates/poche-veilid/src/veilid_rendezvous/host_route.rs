@@ -430,7 +430,9 @@ mod tests {
     use super::*;
     use crate::{ApplicationIdentity, IdentityStoragePolicy, PublicRoomMetadata, RoomNetwork};
     use poche_protocol::RoomId;
-    use std::{sync::Mutex, time::Duration};
+    use std::sync::Mutex;
+    #[cfg(feature = "veilid-mock-test")]
+    use std::time::Duration;
     use veilid_core::{BareRouteId, CRYPTO_KIND_VLD0};
 
     #[derive(Default)]
