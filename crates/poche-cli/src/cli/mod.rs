@@ -123,6 +123,10 @@ impl Command {
                     Err(ParseError::new(
                         "--exit-after-seconds must be finite and at least one second",
                     ))
+                } else if !valid_desktop_dev_control(command) {
+                    Err(ParseError::new(
+                        "developer control requires a root and instance together, no fixture options, and windowless requires a root",
+                    ))
                 } else {
                     Ok(())
                 }
@@ -135,6 +139,27 @@ impl Command {
             | Self::Device(_) => Ok(()),
             Self::Puppet(command) => command.validate(),
         }
+    }
+}
+
+fn valid_desktop_dev_control(command: &DesktopArgs) -> bool {
+    #[cfg(feature = "dev-control")]
+    {
+        let paired = command.dev_control_root.is_some() == command.dev_control_instance.is_some();
+        let windowless = !command.dev_control_windowless || command.dev_control_root.is_some();
+        let exclusive = command.dev_control_root.is_none()
+            || (command.room.is_none()
+                && command.capture_artifact_root.is_none()
+                && command.play_card.is_none()
+                && command.screenshot.is_none()
+                && command.acceptance_report.is_none()
+                && command.exit_after_seconds.is_none());
+        paired && windowless && exclusive
+    }
+    #[cfg(not(feature = "dev-control"))]
+    {
+        let _ = command;
+        true
     }
 }
 

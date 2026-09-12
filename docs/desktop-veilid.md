@@ -80,7 +80,77 @@ and limits.
 Each rebuilt executable path can be treated separately by Windows Firewall, so
 development builds may prompt again. This is executable-specific network
 permission, not a request to disable the firewall, reconfigure a router, or run
-the game elevated.
+the game elevated. Running a development command outside the Codex filesystem
+sandbox is likewise not Windows elevation: Poche never invokes UAC or requires
+an Administrator token.
+
+## Incremental live control for development
+
+The opt-in `dev-control` feature lets a developer or Codex explore retained
+Bevy instances one action at a time. It is deliberately different from the
+semantic puppet scenarios: there is no predeclared action list. Each instance
+watches one fresh explicit directory for bounded typed JSON, drives measured
+Bevy pointer or keyboard input, and returns a correlated observation or GPU
+capture. Veilid still carries every room/game action between processes.
+
+This surface never reads or changes the OS clipboard, never executes command
+strings, never writes `EditableText` directly, and is not a player device. The
+ordinary Copy/Paste buttons remain available to humans in non-automated play.
+Developer observations are private local artifacts; only an explicit
+`--include-invitation` request returns the room bearer secret.
+
+Build the opt-in executable, then start two instances in separate terminals.
+Omit `--dev-control-windowless` when you want to see and interact with the
+ordinary game windows:
+
+```powershell
+cargo build --locked --offline -p poche-cli --features dev-control
+
+target\debug\poche.exe desktop `
+  --dev-control-root target\live-poche\alice `
+  --dev-control-instance alice `
+  --dev-control-windowless
+
+target\debug\poche.exe desktop `
+  --dev-control-root target\live-poche\bob `
+  --dev-control-instance bob `
+  --dev-control-windowless
+```
+
+From other terminals, make incremental decisions. Roots must be fresh for each
+run; they contain private evidence and already live under ignored `target/`:
+
+```powershell
+$poche = 'target\debug\poche.exe'
+$alice = 'target\live-poche\alice'
+$bob = 'target\live-poche\bob'
+
+& $poche --output json puppet live type $alice name Alice
+& $poche --output json puppet live click $alice create
+$created = & $poche --output json puppet live observe $alice --include-invitation |
+  ConvertFrom-Json
+$invitation = $created.observation.room_invitation
+
+& $poche --output json puppet live type $bob name Bob
+& $poche --output json puppet live type $bob invitation $invitation
+& $poche --output json puppet live click $bob join
+
+& $poche --output json puppet live observe $alice
+& $poche --output json puppet live observe $bob
+& $poche --output json puppet live click $alice seat:0
+& $poche --output json puppet live click $bob seat:1
+& $poche --output json puppet live capture $alice
+& $poche --output json puppet live capture $bob
+& $poche --output json puppet live stop $alice
+& $poche --output json puppet live stop $bob
+```
+
+For dynamic action-bar controls, read `available_actions` from Observe and use
+`action:ID`, for example `puppet live click $alice action:room-ready`. A click
+response means the pointer gesture reached the presented control; a later
+observation distinguishes an accepted authority revision from a pending,
+denied, or stale command. That distinction intentionally revealed concurrent
+seat requests during acceptance instead of silently replaying one.
 
 ## What has been accepted
 

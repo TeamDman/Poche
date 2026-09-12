@@ -8800,6 +8800,7 @@ dependencies = [
  "poche-ui",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

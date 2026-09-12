@@ -49,6 +49,52 @@ pub enum PuppetCommand {
         show_window: bool,
     },
     Artifacts(PuppetArtifactsArgs),
+    /// Incrementally control one explicitly enabled live Bevy instance.
+    #[cfg(feature = "dev-control")]
+    Live(PuppetLiveArgs),
+}
+
+#[cfg(feature = "dev-control")]
+#[derive(Facet, PartialEq, Eq)]
+pub struct PuppetLiveArgs {
+    #[facet(args::subcommand)]
+    pub command: PuppetLiveCommand,
+}
+
+#[cfg(feature = "dev-control")]
+#[derive(Facet, PartialEq, Eq)]
+#[facet(rename_all = "kebab-case")]
+#[repr(u8)]
+pub enum PuppetLiveCommand {
+    Observe {
+        #[facet(args::positional)]
+        root: String,
+        /// Include the bearer invitation in this one private local response.
+        #[facet(args::named, default)]
+        include_invitation: bool,
+    },
+    Type {
+        #[facet(args::positional)]
+        root: String,
+        #[facet(args::positional)]
+        field: String,
+        #[facet(args::positional)]
+        text: String,
+    },
+    Click {
+        #[facet(args::positional)]
+        root: String,
+        #[facet(args::positional)]
+        target: String,
+    },
+    Capture {
+        #[facet(args::positional)]
+        root: String,
+    },
+    Stop {
+        #[facet(args::positional)]
+        root: String,
+    },
 }
 
 #[derive(Facet, PartialEq, Eq)]
@@ -73,6 +119,8 @@ impl PuppetArgs {
             PuppetCommand::Show { .. } => "show",
             PuppetCommand::Run { .. } => "run",
             PuppetCommand::Artifacts(_) => "artifacts",
+            #[cfg(feature = "dev-control")]
+            PuppetCommand::Live(_) => "live",
         }
     }
 
@@ -113,6 +161,8 @@ impl PuppetArgs {
             | PuppetCommand::Show { .. }
             | PuppetCommand::Run { .. }
             | PuppetCommand::Artifacts(_) => Ok(()),
+            #[cfg(feature = "dev-control")]
+            PuppetCommand::Live(_) => Ok(()),
         }
     }
 
@@ -199,8 +249,90 @@ impl PuppetArgs {
                 }
             }
             PuppetCommand::Artifacts(arguments) => invoke_artifacts(&arguments.command, format)?,
+            #[cfg(feature = "dev-control")]
+            PuppetCommand::Live(arguments) => invoke_live(arguments.command, format)?,
         }
         Ok(true)
+    }
+}
+
+#[cfg(feature = "dev-control")]
+fn invoke_live(command: PuppetLiveCommand, format: OutputFormat) -> Result<()> {
+    use poche_native_ui::desktop_menu::live_control::{
+        FileControlAction, FileControlField, FileControlStatus, send_file_control_request,
+    };
+    let (root, action) = match command {
+        PuppetLiveCommand::Observe {
+            root,
+            include_invitation,
+        } => (root, FileControlAction::Observe { include_invitation }),
+        PuppetLiveCommand::Type { root, field, text } => {
+            let field = match field.as_str() {
+                "name" => FileControlField::Name,
+                "invitation" => FileControlField::Invitation,
+                _ => return Err(eyre::eyre!("field must be name or invitation")),
+            };
+            (root, FileControlAction::TypeText { field, text })
+        }
+        PuppetLiveCommand::Click { root, target } => {
+            let target = parse_live_target(&target)?;
+            (root, FileControlAction::Click { target })
+        }
+        PuppetLiveCommand::Capture { root } => (root, FileControlAction::Capture),
+        PuppetLiveCommand::Stop { root } => (root, FileControlAction::Stop),
+    };
+    let response = send_file_control_request(
+        std::path::Path::new(&root),
+        action,
+        Some(std::time::Duration::from_secs(90)),
+    )
+    .map_err(|error| eyre::eyre!(error))?;
+    let text = format!(
+        "request: {}\nstatus: {:?}\ninstance: {}\nsurface: {}\nrevision: {}\nroom: {}\ncapture: {}",
+        response.request_id,
+        response.status,
+        response.observation.instance_id,
+        response.observation.surface,
+        response
+            .observation
+            .revision
+            .map_or_else(|| "none".to_owned(), |revision| revision.to_string()),
+        response.observation.room_id.as_deref().unwrap_or("none"),
+        response.capture_path.as_deref().unwrap_or("none")
+    );
+    emit_serializable(&response, &text, format)?;
+    if response.status == FileControlStatus::Rejected {
+        return Err(eyre::eyre!(
+            response
+                .error
+                .unwrap_or_else(|| "live input was rejected".to_owned())
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "dev-control")]
+fn parse_live_target(
+    value: &str,
+) -> Result<poche_native_ui::desktop_menu::live_control::FileControlTarget> {
+    use poche_native_ui::desktop_menu::live_control::FileControlTarget;
+    match value {
+        "create" => Ok(FileControlTarget::CreateLobby),
+        "join" => Ok(FileControlTarget::JoinLobby),
+        _ => {
+            if let Some(ordinal) = value.strip_prefix("seat:") {
+                return ordinal
+                    .parse::<u8>()
+                    .map(|ordinal| FileControlTarget::Seat { ordinal })
+                    .map_err(|_| eyre::eyre!("seat target must use seat:N"));
+            }
+            if let Some(id) = value.strip_prefix("action:") {
+                return Ok(FileControlTarget::LiveAction { id: id.to_owned() });
+            }
+            Err(eyre::eyre!(
+                "target must be create, join, seat:N, or action:ID"
+            ))
+        }
     }
 }
 

@@ -11,6 +11,9 @@ description = "Bevy leaf adapter for Poche's canonical spatial presentation"
 [features]
 # Acceptance harness only; never enabled by the normal desktop entrypoint.
 input-probe = []
+# Opt-in local developer control. It drives Bevy input and observations through
+# bounded files; it is not a game transport or a player device.
+dev-control = []
 
 [dependencies]
 bevy = { workspace = true, features = ["ui", "system_clipboard"] }
@@ -30,3 +33,6 @@ serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

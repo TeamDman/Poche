@@ -959,6 +959,48 @@ pub fn run_menu(
     run_with_live_device(options, None, Some((worker, validator)))
 }
 
+/// Open a normal main menu with an explicitly enabled, local developer input
+/// endpoint. Multiplayer traffic still uses the supplied connection worker.
+///
+/// # Errors
+///
+/// Returns when the control root is not fresh or normal native launch fails.
+#[cfg(feature = "dev-control")]
+pub fn run_menu_with_file_control(
+    options: NativeUiLaunchOptions,
+    worker: desktop_menu::DesktopConnectionWorker,
+    validator: desktop_menu::InvitationValidator,
+    control: desktop_menu::live_control::FileControlOptions,
+) -> Result<(), String> {
+    let windowless = options.render_mode == NativeRenderMode::WindowlessImage;
+    let control_root = control.root.clone();
+    let plugin = desktop_menu::live_control::FileControlPlugin::prepare(control, render_mode_name(options.render_mode))?;
+    let result = run_configured(options, None, Some((worker, validator)), move |app| {
+        if windowless {
+            // Focused Bevy keyboard input needs an endpoint even though Winit
+            // and the OS window are deliberately absent.
+            app.world_mut().spawn((
+                Window {
+                    visible: false,
+                    ..default()
+                },
+                PrimaryWindow,
+            ));
+        }
+        app.add_plugins(plugin);
+    });
+    desktop_menu::live_control::mark_file_control_stopped(&control_root);
+    result
+}
+
+#[cfg(feature = "dev-control")]
+const fn render_mode_name(mode: NativeRenderMode) -> &'static str {
+    match mode {
+        NativeRenderMode::InteractiveWindow => "interactive_window",
+        NativeRenderMode::WindowlessImage => "windowless_image",
+    }
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "the Bevy application contract is kept together so windowed and windowless plugin selection cannot drift"

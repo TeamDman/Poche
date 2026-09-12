@@ -12,6 +12,8 @@ use clipboard::InvitationClipboard;
 
 #[cfg(feature = "input-probe")]
 pub mod input_probe;
+#[cfg(feature = "dev-control")]
+pub mod live_control;
 
 /// Both window and image-target UI use Bevy's picking pipeline. The legacy
 /// `Interaction` focus system only handles Window render targets.
@@ -354,6 +356,7 @@ fn connection(
                 commands.insert_resource(live);
                 commands.run_system_cached(crate::setup_native_scene);
                 status.busy = false;
+                status.message = "Connected.".to_owned();
             }
             Err(_) => {
                 status.busy = false;
