@@ -254,11 +254,11 @@ or the latency distributions required by T6.4.
 - Reconciled every task heading below against its full completion criteria.
   Tasks with an implemented positive slice but an untested negative, recovery,
   formal, load, or reproducibility criterion are `[~]`, not prematurely `[x]`.
-- T1.3, T3.4, T4.1, T4.3, and T7.2 are complete at their named scope: the
-  Poche-owned crate boundary, owned Bevy bridge, create/join menu, private-hand
-  rendering, and default SpacetimeDB desktop selection all have checked
-  implementation evidence. T0 remains complete. T2.3 stays partial until the
-  same authorized hand is proved across multiple connections for one identity.
+- At the time of this reconciliation, T1.3, T3.4, the original T4.1
+  create/join scope, T4.3, and T7.2 had checked implementation evidence. T0
+  remains complete. The later multi-account correction below deliberately
+  reopens T4.1. T2.3 stays partial until the same authorized hand is proved
+  across multiple connections for one identity.
 - Compile profiling, pinned-tool orchestration, generated-binding drift checks,
   full DTO/action conformance, multi-connection presence, callback
   backpressure, GUI/CLI parity, denied-drop automation, formal adapter parity,
@@ -276,6 +276,34 @@ or the latency distributions required by T6.4.
   leave already deletes an empty room. The missing proof is end-to-end resume,
   connection-counted presence for multiple devices, and clear visible states
   around reconnect, missing authority, and disbandment.
+
+## 2026-09-13 multi-account identity-flow correction
+
+- The installation is expected to retain several authenticated Poche
+  identities, like the Azure CLI retains several accounts. There is no single
+  installation-global active player: each running game window selects its own
+  identity so two local windows can deliberately be Alice and Bob, or both be
+  Alice for multi-device testing.
+- A launch begins at an identity gate. Existing identities can be selected and
+  a new local identity can be created. Only after selection does that window
+  connect and discover whether the chosen identity has resumable membership;
+  an unrelated identity must never see another identity's rejoin prompt.
+- The title screen keeps the selected identity visible at its top. Left/right
+  arrows cycle stored identities, and activating the identity name opens the
+  full identity screen for selection and creation. Switching identities is a
+  disconnect for the old identity, never an implicit room leave.
+- A local account record has an immutable account ID, user-facing label, and
+  authority association. Display names remain mutable presentation and may not
+  be used as credential keys. The SpacetimeDB token remains in its protected
+  credential store under the immutable account ID.
+- “Several accounts logged in” means their credentials are retained and ready
+  for selection. The MVP keeps one live selected identity per process; it does
+  not maintain background network connections for every stored account.
+- This supersedes the prior plan assumption that Poche should automatically
+  connect the last-used profile before identity selection. T4.1 returns to
+  `[~]` until the identity gate/title selector replaces the current conflated
+  player-name/profile-name field. No implementation is claimed by this design
+  correction.
 
 ## Authoritative user guidance ledger
 
@@ -318,6 +346,7 @@ or the latency distributions required by T6.4.
 | U35 | Vulkan startup emits repeated wgpu presentation-layout and acquire-semaphore validation errors on the user's Windows/NVIDIA machine. | Default Windows to DX12, retain explicit auto/Vulkan overrides, link the upstream reproductions, and require visible-window evidence rather than treating an offscreen test as proof. | — |
 | U36 | Pointer position must not implicitly rotate cards; Q/E should rotate, and a prominent control should cycle common rotation-lock increments such as 45° and 90°. | Separate translation from rotation input, make the table-normal axis visible, add a local snap-mode control, and test exact wrap/cycle behavior. | — |
 | U37 | The desktop environment should remain the established 3D table rather than regress to a 2D replacement. | Keep the restored perspective 3D table as the SpacetimeDB presentation boundary; complete the dedicated hand camera and diegetic picking/capture refinements in T4. | — |
+| U38 | One installation should retain multiple authenticated identities. Each launched window chooses its identity before any resume prompt; the title shows an identity carousel and its name opens an identity selection/creation screen. | Separate immutable local account ID, mutable display name, protected token, and per-process active selection. Add an identity gate and title selector; scope resume discovery to the chosen identity. | Supersedes T3.1's 2026-09-13 automatic-last-profile assumption. |
 
 ## Guidance traceability
 
@@ -338,6 +367,7 @@ or the latency distributions required by T6.4.
 | U27 | T3.1–T3.3, T4.1, T7.1 | GUI and CLI invoke the same client adapter |
 | U30 | Scope, T1.3, T7.2 | Default dependency graph excludes Veilid; history retained |
 | U34–U37 | T4.3, T4.4, T6.2–T6.4 | Exact angle tests, visible Q/E/snap behavior, real 3D two-window captures, and a clean Windows DX12 startup log |
+| U38 | G5, T3.1, T4.1, T4.5, T6.2, T6.3 | Multi-account identity-gate captures plus Alice/Bob and same-Alice two-process receipts |
 
 ## Purpose
 
@@ -879,9 +909,14 @@ idle clients write nothing, and pose traffic does not mutate logical state.
   actionable error diagnostics.
 - Support two local profiles and multiple connections for one profile without
   conflating display names.
-- Persist a non-secret last-used profile selector separately from the protected
-  SpacetimeDB credential. On launch, connect with that credential before asking
-  the player to create or join another room.
+- Add a device-local identity vault/index containing only immutable account ID,
+  user-facing account label, and authority metadata. Store each actual token in
+  the protected SDK credential store under authority plus immutable account ID;
+  renaming an account or room display name must not change identity.
+- Make active identity a per-process selection. Multiple windows read the same
+  account catalogue but may choose different accounts without overwriting a
+  shared global “current account.” Retained credentials do not require every
+  account to keep a background connection open.
 - Treat each SDK connection as presence for one device, keyed by connection ID.
   The member is connected while at least one such row is live; disconnecting
   one of two devices must not mark their shared player offline.
@@ -975,12 +1010,20 @@ code or reference dependency.
 
 ## Phase 4 — Deliver the two-window card-table MVP
 
-### [x] T4.1 Reconnect the main menu to create/join flows
+### [~] T4.1 Reconnect the main menu to create/join flows
 
 **Work:**
 
-- Keep the game-like full-window main menu with editable player/profile name,
-  Create lobby, Join lobby, valid-shape-gated paste, and explicit status/errors.
+- Add a launch identity gate that lists locally retained identities and can
+  create a new one. Do not connect or offer room resumption until this window
+  explicitly chooses an identity.
+- Keep the game-like full-window title menu with Create lobby, Join lobby,
+  valid-shape-gated paste, and explicit status/errors. Show the chosen identity
+  at the top with left/right account cycling; activating its name opens the
+  identity selection/creation screen.
+- Treat identity/account label, SpacetimeDB principal/token, and mutable room
+  display name as separate fields. Remove the current behavior in which typed
+  display name doubles as the credential-profile key.
 - Generate an opaque code that identifies the authoritative module/room without
   embedding player secrets.
 - Make Copy a human convenience; use direct observed text in automated tests.
@@ -993,9 +1036,11 @@ cargo test -p poche-native-ui desktop_menu --locked
 cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario create-join
 ```
 
-**Completion criteria:** One window creates and displays/copies a code; another
-profile joins it; invalid/unknown/stale codes give useful errors without
-changing identity.
+**Completion criteria:** Two windows independently choose stored identities;
+one creates and displays/copies a code and the other joins it. The title always
+identifies the acting account, switching it cannot impersonate or implicitly
+leave, and invalid/unknown/stale codes give useful errors without changing
+identity.
 
 ### [~] T4.2 Render shared lobby membership, spectators, and seats
 
@@ -1071,11 +1116,16 @@ not.
 - Closing a window, Alt-F4, a process crash, or a temporary network loss is a
   disconnect, never an implicit leave. Preserve durable membership, seat,
   active-room focus, private-hand authorization, and game state.
-- On reopen, load the last-used non-secret profile selector, recover its
-  protected SpacetimeDB token, connect, and wait for the initial sender-scoped
-  subscription. If that identity still has an active-room membership, rebuild
-  the table directly with the same seat and authorized private view; do not ask
-  for the join code again and do not create a replacement player.
+- On reopen, show the identity gate before any room-specific prompt. When this
+  window selects an existing account, recover that account's protected
+  SpacetimeDB token, connect, and wait for the initial sender-scoped
+  subscription. Only if the chosen identity still has active-room membership
+  show a rejoin-lobby prompt; accepting it rebuilds the table with the same seat
+  and authorized private view without the join code or a replacement player.
+- Identity arrows on the title screen perform the same explicit selection flow.
+  Switching from Alice to Bob disconnects Alice in that process, connects Bob,
+  and only then may show Bob's own resume prompt. It does not leave Alice's
+  durable room membership.
 - If the authority is unavailable, remain in an explicit reconnecting screen
   with retry/backoff and a deliberate return-to-profile-selection action. If
   the authority exists but the room was disbanded, clear the stale resume hint
@@ -1468,13 +1518,18 @@ Implement that lifecycle slice in this order:
 1. Replace the lossy member-level connection Boolean mutation with ephemeral
    connection rows keyed by identity and SDK connection ID; derive public
    presence from “at least one connection exists.”
-2. Persist only the last local profile selector and authority choice in Poche;
-   continue letting the SDK credential store protect the actual identity token.
-3. Add startup `Connecting -> Resuming -> Table | MainMenu | LobbyEnded`
-   states. Enter the table only after the initial scoped subscription proves
-   membership; never infer resume from a local hint alone.
-4. Extend the windowless harness to close/relaunch Alice, attach a simultaneous
+2. Add the installation identity vault and per-process selector. Start at
+   `IdentityGate`, create/select an immutable account, and keep the protected
+   token outside the non-secret account index.
+3. Add `IdentityGate -> Connecting -> ResumeOffer | Title | LobbyEnded` states.
+   Show `ResumeOffer` only after the selected identity's initial scoped
+   subscription proves membership; enter the table only when the player accepts
+   it and never infer resume from a local hint alone.
+4. Add the title-bar identity name, left/right cycling, and identity management
+   screen. Prove two windows can select Alice/Bob independently and that
+   switching an account disconnects without leaving.
+5. Extend the windowless harness to close/relaunch Alice, attach a simultaneous
    second Alice connection, close each connection independently, explicitly
    leave both durable members, and prove the stale room code no longer joins.
-5. Repeat the lifecycle once in two visible ordinary-user windows, then begin
+6. Repeat the lifecycle once in two visible ordinary-user windows, then begin
    the complete multi-round rules adapter.
