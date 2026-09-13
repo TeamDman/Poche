@@ -186,16 +186,52 @@ encrypted I/O, the synchronous tick competes with network request scheduling,
 and each sent pose is followed by a blocking snapshot before the next pose. A
 release run should be recorded before setting a numerical performance target.
 
+### Idle-tick checkpoint experiment
+
+The first experiment kept the 50 ms scheduler and every certified rules path,
+but stopped creating and saving a recovery checkpoint when
+`drive_authority_services_elapsed` returned `Ok(0)`. An idle service
+observation can still advance an in-memory delivery-only projection ID. That
+ID is excluded from the semantic projection hash and is captured by the next
+meaningful checkpoint. A tick that commits one or more actions, or returns an
+error after possible partial mutation, still requests persistence.
+
+The otherwise identical public-network acceptance passed in 41.95 seconds,
+down from 59.47 seconds (29%):
+
+| Measurement | Before | Idle-write suppression |
+| --- | ---: | ---: |
+| Encrypted checkpoints | 831 | 90 |
+| Authority ticks | 742 | 621 |
+| Ticks requesting persistence | 742 | 1 |
+| Tick total, mean / p50 / p95 | 48.2 / 35.7 / 132.1 ms | 8.2 / 0.149 / 63.3 ms |
+| Async-handler scheduling, mean / p50 / p95 / max | 245.2 / 33.1 / 738.0 / 2,702.7 ms | 0.027 / 0.018 / 0.028 / 0.287 ms |
+| Invoke AppCall, mean | 593.9 ms (7 calls) | 385.9 ms (7 calls) |
+| Observe AppCall, mean | 749.4 ms (78 calls) | 471.5 ms (77 calls) |
+| Physical-pose AppCall, mean | 715.8 ms (2 calls) | 450.1 ms (3 calls) |
+| Pose input through confirmation, mean | 2,399.9 ms | 1,361.1 ms |
+| Complete acceptance scenario | 59.47 s | 41.95 s |
+
+The changed run wrote 90 checkpoints: the initial recovery attachment, the
+ordinary request operations, and one tick that committed a real authority
+transition. The remaining 620 idle ticks wrote none. Blocking-worker
+scheduling remained negligible at a 0.027 ms p95.
+
+This comparison was not aided by a faster public route. The changed run's
+three measured pose requests took roughly 173-199 ms to reach the authority
+and 162-197 ms for the reply leg, compared with roughly 69-71 ms outbound and
+59-234 ms inbound in the earlier run. Despite that network variation, removing
+idle persistence eliminated the large async scheduling backlog and improved
+the complete interactions.
+
 The next implementation experiments should preserve the certified rules
 boundary while measuring each change separately:
 
-1. checkpoint only when the durable room state actually changes; an idle clock
-   tick must not rewrite identical encrypted recovery;
-2. keep actual mutation acknowledgement behind durable save, but move scheduled
+1. keep actual mutation acknowledgement behind durable save, but move scheduled
    blocking work off the Tokio service-loop thread;
-3. deliver the already-authoritative `PhysicalPoseState` reply directly to the
+2. deliver the already-authoritative `PhysicalPoseState` reply directly to the
    submitting renderer instead of requiring an immediate snapshot;
-4. separate high-rate, latest-wins physical pose replication from durable game
+3. separate high-rate, latest-wins physical pose replication from durable game
    commands, then measure AppMessage push/preview against AppCall settlement;
-5. replace peer snapshot polling with a pushed invalidation or pose stream,
+4. replace peer snapshot polling with a pushed invalidation or pose stream,
    retaining snapshots for reconciliation and restart.

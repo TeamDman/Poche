@@ -18,6 +18,14 @@ fn elapsed_micros(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
 }
 
+// An idle scheduler observation may advance delivery-only projection IDs, but
+// it does not change the semantic projection or authoritative game history.
+// Capture that counter with the next meaningful checkpoint instead of writing
+// an otherwise idle encrypted checkpoint twenty times per second.
+fn tick_requires_persistence(result: &Result<usize, DeviceClientError>) -> bool {
+    !matches!(result, Ok(0))
+}
+
 /// Lifetime of a bounded service task. Keep this beside the room, not the
 /// menu. Dropping it stops accepting calls and cancels the async handlers.
 /// It is not replica persistence or a substitute for creator failover.
@@ -154,6 +162,16 @@ where
         call_id: &str,
         operation: impl FnOnce(&mut CertifiedDeviceRoom<G, A>) -> Result<T, DeviceClientError>,
     ) -> Result<T, DeviceClientError> {
+        self.with_room_if(operation_name, call_id, |_| true, operation)
+    }
+
+    fn with_room_if<T>(
+        &self,
+        operation_name: &'static str,
+        call_id: &str,
+        should_persist: impl FnOnce(&Result<T, DeviceClientError>) -> bool,
+        operation: impl FnOnce(&mut CertifiedDeviceRoom<G, A>) -> Result<T, DeviceClientError>,
+    ) -> Result<T, DeviceClientError> {
         let total_started = Instant::now();
         let lock_started = Instant::now();
         let mut room = self
@@ -171,22 +189,24 @@ where
         // changed before rejection. Never release the lock before saving.
         let mut snapshot_us = 0;
         let mut persistence_us = 0;
-        let persistence: Result<(), DeviceClientError> = if let Some(sink) = &self.recovery_sink {
-            let snapshot_started = Instant::now();
-            let snapshot = room.durable_recovery();
-            snapshot_us = elapsed_micros(snapshot_started);
-            match snapshot {
-                Ok(snapshot) => {
-                    let persistence_started = Instant::now();
-                    let saved = sink(&snapshot);
-                    persistence_us = elapsed_micros(persistence_started);
-                    saved
+        let persistence_requested = should_persist(&result);
+        let persistence: Result<(), DeviceClientError> =
+            if persistence_requested && let Some(sink) = &self.recovery_sink {
+                let snapshot_started = Instant::now();
+                let snapshot = room.durable_recovery();
+                snapshot_us = elapsed_micros(snapshot_started);
+                match snapshot {
+                    Ok(snapshot) => {
+                        let persistence_started = Instant::now();
+                        let saved = sink(&snapshot);
+                        persistence_us = elapsed_micros(persistence_started);
+                        saved
+                    }
+                    Err(error) => Err(error),
                 }
-                Err(error) => Err(error),
-            }
-        } else {
-            Ok(())
-        };
+            } else {
+                Ok(())
+            };
         tracing::trace!(
             target: "poche_latency",
             event = "authority_room_operation",
@@ -200,6 +220,7 @@ where
             operation_success = result.is_ok(),
             persistence_success = persistence.is_ok(),
             recovery_enabled = self.recovery_sink.is_some(),
+            persistence_requested,
         );
         if persistence.is_err() {
             self.recovery_failed.store(true, Ordering::Release);
@@ -235,8 +256,16 @@ where
                         }
                         // No player command is invented here. Only explicitly
                         // enrolled clock/environment services can act.
-                        let result = self.with_room("authority_tick", "local", |room| room.drive_authority_services_elapsed(
-                                4, started.elapsed(), std::time::Duration::from_secs(3)));
+                        let result = self.with_room_if(
+                            "authority_tick",
+                            "local",
+                            tick_requires_persistence,
+                            |room| room.drive_authority_services_elapsed(
+                                4,
+                                started.elapsed(),
+                                std::time::Duration::from_secs(3),
+                            ),
+                        );
                         if result.is_err() {
                             eprintln!("poche: authority service tick failed");
                         }
@@ -420,5 +449,20 @@ where
             success = reply.is_ok(),
         );
         reply
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tick_requires_persistence;
+    use poche_player_client::DeviceClientError;
+
+    #[test]
+    fn idle_ticks_skip_persistence_but_progress_and_errors_do_not() {
+        assert!(!tick_requires_persistence(&Ok(0)));
+        assert!(tick_requires_persistence(&Ok(1)));
+        assert!(tick_requires_persistence(&Err(
+            DeviceClientError::TransportUnavailable
+        )));
     }
 }
