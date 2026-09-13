@@ -23,7 +23,7 @@ use bevy::{
     camera::{RenderTarget, Viewport, visibility::RenderLayers},
     clipboard::{Clipboard, ClipboardRead},
     image::Image,
-    input::mouse::AccumulatedMouseMotion,
+    input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit},
     log::LogPlugin,
     prelude::*,
     render::{
@@ -65,6 +65,9 @@ const AUTOMATION_HEIGHT: u32 = 760;
 const CAMERA_ORBIT_SENSITIVITY: f32 = 0.0045;
 const CAMERA_PAN_SENSITIVITY: f32 = 0.0014;
 const CAMERA_KEYBOARD_SPEED: f32 = 0.72;
+const CAMERA_ZOOM_SENSITIVITY: f32 = 0.14;
+const CAMERA_MIN_DISTANCE: f32 = 0.58;
+const CAMERA_MAX_DISTANCE: f32 = 4.5;
 const CAMERA_SMOOTHING: f32 = 10.0;
 const CAMERA_MIN_PITCH: f32 = 18.0_f32.to_radians();
 const CAMERA_MAX_PITCH: f32 = 78.0_f32.to_radians();
@@ -1509,7 +1512,7 @@ fn enter_room(
                 bar.spawn((
                     LatencyLabel,
                     Text::new(
-                        "Drag card · Q/E rotate · RMB orbit · MMB/WASD pan · Space reset · Esc menu",
+                        "Drag card · Q/E rotate · RMB orbit · MMB/WASD pan · Wheel zoom · Space reset · Esc menu",
                     ),
                     TextFont::from_font_size(15.),
                     TextColor(Color::srgb(0.72, 0.82, 0.8)),
@@ -1756,10 +1759,10 @@ fn sync_room_labels(
     }
     for mut text in &mut latency {
         text.0 = model.last_command_latency.map_or_else(
-            || "Drag: move · hold Q/E: rotate".into(),
+            || "Drag: move · hold Q/E: rotate · wheel: zoom".into(),
             |value| {
                 format!(
-                    "Last authority response {:.1} ms · drag · hold Q/E rotate",
+                    "Last authority response {:.1} ms · drag · hold Q/E rotate · wheel zoom",
                     value.as_secs_f64() * 1000.
                 )
             },
@@ -2126,6 +2129,7 @@ fn update_table_camera(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
+    mouse_scroll: Res<AccumulatedMouseScroll>,
     model: Res<BridgeModel>,
     layout: Res<CanonicalLayout>,
     state: Res<UiState>,
@@ -2141,6 +2145,13 @@ fn update_table_camera(
         if keys.just_pressed(KeyCode::Space) {
             controller.reset_for_seat(seat, false);
         }
+        let scroll_lines = match mouse_scroll.unit {
+            MouseScrollUnit::Line => mouse_scroll.delta.y,
+            MouseScrollUnit::Pixel => {
+                mouse_scroll.delta.y / MouseScrollUnit::SCROLL_UNIT_CONVERSION_FACTOR
+            }
+        };
+        controller.target.distance = zoom_camera_distance(controller.target.distance, scroll_lines);
         let delta = mouse_motion.delta;
         if mouse_buttons.pressed(MouseButton::Right) {
             controller.target.yaw = (controller.target.yaw - delta.x * CAMERA_ORBIT_SENSITIVITY)
@@ -2222,6 +2233,11 @@ fn lerp_angle(from: f32, to: f32, alpha: f32) -> f32 {
     let delta =
         (to - from + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
     from + delta * alpha
+}
+
+fn zoom_camera_distance(distance: f32, scroll_lines: f32) -> f32 {
+    (distance * (-CAMERA_ZOOM_SENSITIVITY * scroll_lines).exp())
+        .clamp(CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE)
 }
 
 fn fifths(value: u32, numerator: u32) -> u32 {
@@ -2636,6 +2652,18 @@ mod tests {
         assert_eq!(controller.current.focus, before.focus);
         assert_eq!(controller.target.focus, camera_home(Some(1)).focus);
         assert_ne!(controller.current.focus, controller.target.focus);
+    }
+
+    #[test]
+    fn camera_wheel_zoom_is_proportional_and_bounded() {
+        let start = camera_home(None).distance;
+        let zoomed_in = zoom_camera_distance(start, 1.0);
+        assert!(zoomed_in < start);
+        assert!((zoom_camera_distance(zoomed_in, -1.0) - start).abs() < 0.000_01);
+        assert!((zoom_camera_distance(start, 10_000.0) - CAMERA_MIN_DISTANCE).abs() < f32::EPSILON);
+        assert!(
+            (zoom_camera_distance(start, -10_000.0) - CAMERA_MAX_DISTANCE).abs() < f32::EPSILON
+        );
     }
 
     #[test]
