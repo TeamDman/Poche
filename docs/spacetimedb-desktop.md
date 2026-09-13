@@ -14,6 +14,63 @@ scoped sample hands, and face-free physical poses. A future durable play/drop
 reducer must call the pure Rust transition boundary; moving a card presently
 does not change its logical `hand` location.
 
+## Choose Maincloud or local development
+
+The same binary supports named authority profiles. Maincloud is convenient for
+ordinary cross-device development and exercises the hosted topology players will
+eventually use:
+
+```powershell
+target\debug\poche.exe --server maincloud
+```
+
+That shorthand selects `https://maincloud.spacetimedb.com` and the development
+database `poche-6quz6`. A different hosted database can be selected explicitly:
+
+```powershell
+target\debug\poche.exe --server maincloud --database poche-staging-1
+```
+
+The same selection can be sent explicitly to the windowless two-device
+acceptance harness:
+
+```powershell
+target\debug\poche-puppet.exe acceptance --server maincloud
+```
+
+Its JSON report records the resolved profile, URI, and database with the
+latency evidence.
+
+Publish module changes from the repository root with the existing Rust module;
+no web or React template is involved:
+
+```powershell
+$spacetime = 'C:\Users\Teamy\AppData\Local\SpacetimeDB\spacetime.exe'
+& $spacetime login show
+wasm-opt --version
+& $spacetime publish poche-6quz6 `
+    --module-path crates\poche-spacetimedb-module `
+    --server maincloud `
+    --yes
+```
+
+Binaryen 131 is the currently verified optimizer. Binaryen 132 enables compact
+imports through SpacetimeDB's `-all` invocation, which SpacetimeDB 2.10 cannot
+load; track [SpacetimeDB issue #5828](https://github.com/clockworklabs/SpacetimeDB/issues/5828)
+before upgrading it again. Do not add `--delete-data` to the ordinary update
+workflow.
+
+Local remains the safe default for offline work, repeatable automation, and
+latency comparisons:
+
+```powershell
+target\debug\poche.exe --server local
+```
+
+An explicit HTTP(S) URL is also accepted by `--server`. The existing
+`POCHE_SPACETIMEDB_URI` and `POCHE_SPACETIMEDB_DATABASE` environment variables
+remain supported when no corresponding command-line option is supplied.
+
 ## Run a local table
 
 The checked implementation pins its CLI, module bindings, and Rust SDK to

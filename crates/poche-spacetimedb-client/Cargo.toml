@@ -9,6 +9,7 @@ repository.workspace = true
 description = "Renderer-neutral native SpacetimeDB client for Poche"
 
 [dependencies]
+blake3.workspace = true
 getrandom.workspace = true
 spacetimedb-sdk.workspace = true
 

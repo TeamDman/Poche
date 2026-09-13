@@ -37,7 +37,9 @@ use bevy::{
 use poche_bevy_spacetimedb::{
     BridgeHandle, BridgeIntent, BridgeModel, BridgeNotice, PocheSpacetimePlugin,
 };
-use poche_spacetimedb_client::{CardPoseView, ClientConfig, RoomCapability, valid_join_code};
+use poche_spacetimedb_client::{
+    CardPoseView, ClientConfig, DEFAULT_DATABASE, DEFAULT_URI, RoomCapability, valid_join_code,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -48,6 +50,119 @@ const POSE_PERIOD: Duration = Duration::from_millis(50);
 const AUTOMATION_WIDTH: u32 = 1180;
 const AUTOMATION_HEIGHT: u32 = 760;
 const FONT_BYTES: &[u8] = include_bytes!("../../poche-native-ui/assets/CaskaydiaCove-Regular.ttf");
+const MAINCLOUD_URI: &str = "https://maincloud.spacetimedb.com";
+const MAINCLOUD_DATABASE: &str = "poche-6quz6";
+
+#[derive(Clone, Debug, Resource, Eq, PartialEq)]
+pub struct AuthorityEndpoint {
+    pub profile: String,
+    pub uri: String,
+    pub database: String,
+}
+
+impl AuthorityEndpoint {
+    fn from_environment() -> Self {
+        let uri = std::env::var("POCHE_SPACETIMEDB_URI").unwrap_or_else(|_| DEFAULT_URI.into());
+        let database = std::env::var("POCHE_SPACETIMEDB_DATABASE").unwrap_or_else(|_| {
+            if is_maincloud_uri(&uri) {
+                MAINCLOUD_DATABASE.into()
+            } else {
+                DEFAULT_DATABASE.into()
+            }
+        });
+        Self {
+            profile: classify_authority(&uri).into(),
+            uri,
+            database,
+        }
+    }
+
+    /// Resolve a named or explicit authority, with environment fallbacks when omitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown server shorthand or an invalid database name.
+    pub fn select(server: Option<&str>, database: Option<&str>) -> Result<Self, String> {
+        let mut selected = match server {
+            None => Self::from_environment(),
+            Some("local") => Self {
+                profile: "local".into(),
+                uri: DEFAULT_URI.into(),
+                database: DEFAULT_DATABASE.into(),
+            },
+            Some("maincloud") => Self {
+                profile: "maincloud".into(),
+                uri: MAINCLOUD_URI.into(),
+                database: MAINCLOUD_DATABASE.into(),
+            },
+            Some(uri) if uri.starts_with("http://") || uri.starts_with("https://") => Self {
+                profile: classify_authority(uri).into(),
+                uri: uri.trim_end_matches('/').into(),
+                database: DEFAULT_DATABASE.into(),
+            },
+            Some(value) => {
+                return Err(format!(
+                    "--server expects local, maincloud, or an http(s) URL; got {value:?}"
+                ));
+            }
+        };
+        if let Some(database) = database {
+            selected.database = database.into();
+        }
+        if !valid_database_name(&selected.database) {
+            return Err(format!(
+                "database names must contain lowercase letters or digits separated by single hyphens; got {:?}",
+                selected.database
+            ));
+        }
+        Ok(selected)
+    }
+
+    fn client_config(&self, profile_name: impl Into<String>) -> ClientConfig {
+        ClientConfig {
+            uri: self.uri.clone(),
+            database: self.database.clone(),
+            profile_name: profile_name.into(),
+        }
+    }
+
+    fn summary(&self) -> String {
+        format!("{} · {}", self.profile, self.database)
+    }
+}
+
+impl Default for AuthorityEndpoint {
+    fn default() -> Self {
+        Self::from_environment()
+    }
+}
+
+fn is_maincloud_uri(uri: &str) -> bool {
+    uri.trim_end_matches('/') == MAINCLOUD_URI
+}
+
+fn classify_authority(uri: &str) -> &'static str {
+    if is_maincloud_uri(uri) {
+        "maincloud"
+    } else if matches!(
+        uri.trim_end_matches('/'),
+        "http://127.0.0.1:3000" | "http://localhost:3000"
+    ) {
+        "local"
+    } else {
+        "custom"
+    }
+}
+
+fn valid_database_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        })
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RenderMode {
@@ -60,6 +175,7 @@ pub enum RenderMode {
 pub struct LaunchOptions {
     pub render_mode: RenderMode,
     pub file_control: Option<file_control::FileControlOptions>,
+    pub authority: AuthorityEndpoint,
 }
 
 #[derive(Clone, Debug, Resource)]
@@ -115,6 +231,8 @@ pub fn run_from_env() -> Result<(), String> {
     let mut options = LaunchOptions::default();
     let mut control_root: Option<PathBuf> = None;
     let mut instance_id: Option<String> = None;
+    let mut server: Option<String> = None;
+    let mut database: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(argument) = args.next() {
         match argument.as_str() {
@@ -126,12 +244,21 @@ pub fn run_from_env() -> Result<(), String> {
             "--instance-id" => {
                 instance_id = Some(args.next().ok_or("--instance-id requires a value")?);
             }
+            "--server" => {
+                server = Some(args.next().ok_or("--server requires a value")?);
+            }
+            "--database" => {
+                database = Some(args.next().ok_or("--database requires a value")?);
+            }
             "--windowless" => options.render_mode = RenderMode::WindowlessImage,
             "--help" | "-h" => {
                 println!(
-                    "poche [--control-root PATH --instance-id ID] [--windowless]\n\
-                     Ordinary play needs no options. Developer control publishes a fresh, local,\n\
-                     file-driven endpoint; --windowless renders to a GPU image without an OS window."
+                    "poche [--server local|maincloud|URL] [--database NAME]\n\
+                     \x20     [--control-root PATH --instance-id ID] [--windowless]\n\
+                     The safe default is local. The maincloud shorthand selects\n\
+                     https://maincloud.spacetimedb.com and poche-6quz6. Explicit options override\n\
+                     POCHE_SPACETIMEDB_URI and POCHE_SPACETIMEDB_DATABASE. Developer control\n\
+                     publishes a fresh file endpoint; --windowless avoids an OS window."
                 );
                 return Ok(());
             }
@@ -145,6 +272,7 @@ pub fn run_from_env() -> Result<(), String> {
         (None, None) => None,
         _ => return Err("--control-root and --instance-id must be supplied together".into()),
     };
+    options.authority = AuthorityEndpoint::select(server.as_deref(), database.as_deref())?;
     run(options)
 }
 
@@ -154,6 +282,7 @@ pub fn run_from_env() -> Result<(), String> {
 ///
 /// Returns before Bevy starts when the file-control endpoint cannot be prepared.
 pub fn run(options: LaunchOptions) -> Result<(), String> {
+    let authority = options.authority.clone();
     let windowless = options.render_mode == RenderMode::WindowlessImage;
     let surface = RenderSurface::from_mode(options.render_mode);
     let window_plugin = if windowless {
@@ -218,9 +347,10 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
         ));
     }
     app.insert_resource(surface)
+        .insert_resource(authority.clone())
         .add_plugins(PocheSpacetimePlugin)
         .init_resource::<Clipboard>()
-        .init_resource::<UiState>()
+        .insert_resource(UiState::for_authority(&authority))
         .init_resource::<PendingClipboard>()
         .init_resource::<PoseDisplay>()
         .init_resource::<DragState>()
@@ -274,9 +404,15 @@ fn apply_poche_font(font: Res<PocheFont>, mut text: Query<&mut TextFont, Added<T
 
 impl Default for UiState {
     fn default() -> Self {
+        Self::for_authority(&AuthorityEndpoint::default())
+    }
+}
+
+impl UiState {
+    fn for_authority(authority: &AuthorityEndpoint) -> Self {
         Self {
             busy: false,
-            status: "Start the local database, then create or join.".into(),
+            status: format!("Using {}. Create or join a lobby.", authority.summary()),
             display_name: String::new(),
             capability: None,
             joined_once: false,
@@ -368,7 +504,12 @@ fn setup_render_target(mut images: ResMut<Assets<Image>>, mut surface: ResMut<Re
     *target = Some(images.add(image));
 }
 
-fn setup_menu(mut commands: Commands, surface: Res<RenderSurface>) {
+fn setup_menu(
+    mut commands: Commands,
+    surface: Res<RenderSurface>,
+    authority: Res<AuthorityEndpoint>,
+    state: Res<UiState>,
+) {
     let mut camera = commands.spawn((Camera2d, PocheUiCamera));
     if let Some(target) = surface.render_target() {
         camera.insert(target);
@@ -400,6 +541,11 @@ fn setup_menu(mut commands: Commands, surface: Res<RenderSurface>) {
                 TextFont::from_font_size(22.),
                 TextColor(Color::srgb(0.7, 0.82, 0.8)),
             ));
+            parent.spawn((
+                Text::new(format!("Authority: {}", authority.summary())),
+                TextFont::from_font_size(16.),
+                TextColor(Color::srgb(0.58, 0.72, 0.7)),
+            ));
             parent.spawn(Text::new("Player profile name"));
             spawn_field(parent, Field::Name, 380., 32, false);
             spawn_button(parent, "Create lobby", UiAction::Create, true);
@@ -425,7 +571,7 @@ fn setup_menu(mut commands: Commands, surface: Res<RenderSurface>) {
                 });
             parent.spawn((
                 StatusLabel,
-                Text::new("Start the local database, then create or join."),
+                Text::new(&state.status),
                 TextFont::from_font_size(17.),
                 TextColor(Color::srgb(0.88, 0.9, 0.86)),
                 Node {
@@ -494,6 +640,7 @@ fn handle_buttons(
     mut clipboard: ResMut<Clipboard>,
     mut pending: ResMut<PendingClipboard>,
     mut state: ResMut<UiState>,
+    authority: Res<AuthorityEndpoint>,
 ) {
     for ButtonActivation(entity) in activations.read() {
         let Ok(action) = actions.get(*entity) else {
@@ -521,7 +668,7 @@ fn handle_buttons(
                 state.busy = true;
                 state.status = "Connecting to the table authority…".into();
                 if let Err(error) = bridge.send(BridgeIntent::Create {
-                    config: ClientConfig::local(&name),
+                    config: authority.client_config(&name),
                     display_name: name,
                 }) {
                     state.busy = false;
@@ -547,7 +694,7 @@ fn handle_buttons(
                 state.busy = true;
                 state.status = "Joining the shared table…".into();
                 if let Err(error) = bridge.send(BridgeIntent::Join {
-                    config: ClientConfig::local(&name),
+                    config: authority.client_config(&name),
                     display_name: name,
                     join_code: code,
                 }) {
@@ -1244,5 +1391,25 @@ mod tests {
             assert!((source[0] - round_trip[0]).abs() < 0.01);
             assert!((source[2] - round_trip[2]).abs() < 0.01);
         }
+    }
+
+    #[test]
+    fn named_authorities_select_distinct_endpoints() {
+        let local = AuthorityEndpoint::select(Some("local"), None).expect("local profile");
+        assert_eq!(local.uri, DEFAULT_URI);
+        assert_eq!(local.database, DEFAULT_DATABASE);
+
+        let maincloud =
+            AuthorityEndpoint::select(Some("maincloud"), None).expect("maincloud profile");
+        assert_eq!(maincloud.uri, MAINCLOUD_URI);
+        assert_eq!(maincloud.database, MAINCLOUD_DATABASE);
+    }
+
+    #[test]
+    fn explicit_database_overrides_a_named_authority() {
+        let selected = AuthorityEndpoint::select(Some("maincloud"), Some("poche-staging-1"))
+            .expect("maincloud override");
+        assert_eq!(selected.database, "poche-staging-1");
+        assert!(AuthorityEndpoint::select(Some("maincloud"), Some("Poche_bad")).is_err());
     }
 }

@@ -8,10 +8,10 @@
     clippy::single_match_else
 )]
 
-use super::{PoseDisplay, RenderMode, RenderSurface, UiState};
+use super::{AuthorityEndpoint, PoseDisplay, RenderMode, RenderSurface, UiState};
 use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 use poche_bevy_spacetimedb::{BridgeHandle, BridgeIntent, BridgeModel};
-use poche_spacetimedb_client::{ClientConfig, RoomCapability, valid_join_code};
+use poche_spacetimedb_client::{RoomCapability, valid_join_code};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -276,6 +276,7 @@ fn drive_file_control(
     mut poses: ResMut<PoseDisplay>,
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
+    authority: Res<AuthorityEndpoint>,
 ) {
     endpoint.frame = endpoint.frame.saturating_add(1);
     if let Some(mut pending) = endpoint.pending.take() {
@@ -368,7 +369,7 @@ fn drive_file_control(
             state.status = "Connecting to the table authority…".into();
             pending.completion = Completion::RoomJoined;
             bridge.send(BridgeIntent::Create {
-                config: ClientConfig::local(&name),
+                config: authority.client_config(&name),
                 display_name: name,
             })
         }
@@ -383,7 +384,7 @@ fn drive_file_control(
             state.status = "Joining the shared table…".into();
             pending.completion = Completion::RoomJoined;
             bridge.send(BridgeIntent::Join {
-                config: ClientConfig::local(&name),
+                config: authority.client_config(&name),
                 display_name: name,
                 join_code: code,
             })

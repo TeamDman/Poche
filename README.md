@@ -158,9 +158,14 @@ database directly and does not use the human clipboard.
 
 ```powershell
 cargo build --locked -p poche-spacetimedb-desktop --bins
-target\debug\poche.exe
-target\debug\poche-puppet.exe acceptance
+target\debug\poche.exe --server maincloud
+target\debug\poche-puppet.exe acceptance --server maincloud
 ```
+
+Use `poche.exe --server local` with the disposable server instructions in the
+desktop guide. Local remains the default when no server profile or environment
+override is supplied, so automated acceptance never contacts Maincloud by
+accident.
 
 The acceptance command is windowless. It launches two copies of the ordinary
 game binary, creates and joins a room, seats both identities, proves private

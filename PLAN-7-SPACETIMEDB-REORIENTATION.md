@@ -3,7 +3,7 @@
 **Plan status:** Active; the create/join/seat/private-hand/shared-pose desktop MVP is implemented and accepted, while durable Poche play, recovery, and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-12 (desktop MVP, SFM-style live control, and rendered two-device evidence recorded)
+**Last updated:** 2026-09-13 (Maincloud deployment, explicit hosted/local profiles, scoped credentials, and dual acceptance evidence recorded)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
@@ -94,6 +94,36 @@ semantics and formal lifecycle adapters remain open. The existing Rust,
 Alloy, NuSMV, and Prolog rule sources were retained rather than replaced by
 the database schema. See `docs/spacetimedb-desktop.md` for the exact run,
 acceptance, trust, privacy, and license boundaries.
+
+## 2026-09-13 hosted/local authority checkpoint
+
+- Published the existing Rust Poche module—not a React template—to the owned
+  Maincloud development database `poche-6quz6`. The migration created the
+  private room/member/hand/pose tables and caller-scoped views without deleting
+  data.
+- The ordinary binary now accepts `--server maincloud`, `--server local`, or an
+  explicit HTTP(S) URL plus an optional `--database`. The selected profile and
+  database are visible on the main menu. Local remains the no-argument default
+  so offline automation cannot contact Maincloud accidentally; environment
+  overrides remain compatible.
+- Persisted player credentials are scoped by authority URI and database. The
+  existing default-local credential namespace is preserved, while a same-name
+  Maincloud player cannot accidentally reuse a local server token.
+- `poche-puppet acceptance` accepts the same authority options, forwards the
+  exact resolved URI/database to both ordinary windowless clients, and records
+  them in its versioned JSON receipt.
+- Maincloud acceptance passed with two identities, 5+5 private cards, ten
+  face-free shared poses, 54.25 ms authority acknowledgement, and 108.34 ms
+  exact peer observation. A fresh isolated `--server local` run passed the same
+  checks at 18.51 ms and 68.43 ms respectively.
+- Binaryen 131 passed normal `spacetime build` and module-path publication on
+  both local SpacetimeDB 2.10 and Maincloud. Binaryen 132 remains excluded by
+  upstream issue #5828 because its compact-import output is rejected by the
+  current server parser.
+
+This proves deployment selection and the current physical-pose slice on both
+authorities. It does not yet prove durable logical card movement, reconnect,
+multiple devices for one identity, full Poche play, or production operations.
 
 ## Authoritative user guidance ledger
 
@@ -1189,11 +1219,11 @@ remote branch contains all intended commits.
 | Native Rust SDK client | Supported on Windows first | Connect/subscribe/reducer/reconnect tests | Generated bindings, subscription cache, reducers, credential persistence, and live two-client flow pass; forced reconnect remains |
 | Poche-owned Bevy bridge | Supported with Bevy 0.19.1 | Headless App and real rendered clients | Owned channel bridge and rendered windowless clients pass; no `bevy_spacetimedb` dependency |
 | Two visible `poche.exe` processes | Primary player acceptance | Create/join/seat/deal/wiggle/drop/restart | The identical ordinary binary passes create/join/seat/deal/wiggle through its windowless target; final human visible-window check and restart remain |
-| Windowless two-player puppet | Primary repeatable acceptance | Two private captures plus semantic/latency transcript | Passed: 5+5 private cards, 10 face-free poses, 18.09 ms authority, 101.96 ms peer, four-view contact sheet |
+| Windowless two-player puppet | Primary repeatable acceptance | Two private captures plus semantic/latency transcript | Passed on Maincloud (54.25 ms authority, 108.34 ms peer) and fresh local (18.51 ms authority, 68.43 ms peer); both receipts identify the exact authority |
 | Web/browser client | Explicitly unsupported this phase | Build graph/doc audit; no accidental promise | Pending |
 | Veilid transport | Retained research, non-default | Historical tests/docs remain; default tree excludes it | Default member/package is SpacetimeDB; dependency audit required at release |
 | Untrusted-host/zero-trust play | Not supported | Threat-model statement | Trusted-server boundary documented in `docs/spacetimedb-desktop.md` |
-| Hosted production database | Not supported | License/deployment note; no hosted success claim | Local-only acceptance; BSL additional grant and hosted non-claim documented |
+| Hosted Maincloud development | Supported for the current physical-table slice; production operations not claimed | Owned publish plus explicit hosted acceptance | `poche-6quz6` published and two-client acceptance passed; local remains supported independently |
 
 ## Overall completion criteria
 

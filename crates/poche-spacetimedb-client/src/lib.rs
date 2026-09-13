@@ -216,7 +216,7 @@ impl PocheClient {
             }),
             Condvar::new(),
         ));
-        let credential_key = credential_key(&config.profile_name);
+        let credential_key = credential_key(&config);
         let token = credentials::File::new(&credential_key)
             .load()
             .map_err(|error| ClientError::Credentials(error.to_string()))?;
@@ -608,21 +608,27 @@ fn finish_command<RemoteError: fmt::Display>(
     });
 }
 
-fn credential_key(profile_name: &str) -> String {
-    let normalized: String = profile_name
+fn credential_key(config: &ClientConfig) -> String {
+    let normalized: String = config
+        .profile_name
         .chars()
         .filter(char::is_ascii_alphanumeric)
         .flat_map(char::to_lowercase)
         .take(32)
         .collect();
-    format!(
-        "poche-spacetimedb-{}",
-        if normalized.is_empty() {
-            "player"
-        } else {
-            &normalized
-        }
+    let player = if normalized.is_empty() {
+        "player"
+    } else {
+        &normalized
+    };
+    if config.uri.trim_end_matches('/') == DEFAULT_URI && config.database == DEFAULT_DATABASE {
+        return format!("poche-spacetimedb-{player}");
+    }
+    let scope = blake3::hash(
+        format!("{}\0{}", config.uri.trim_end_matches('/'), config.database).as_bytes(),
     )
+    .to_hex();
+    format!("poche-spacetimedb-{}-{player}", &scope.as_str()[..16])
 }
 
 fn encode_hex(bytes: &[u8], uppercase: bool) -> String {
@@ -664,5 +670,26 @@ mod tests {
         assert!(!valid_join_code("PCH-ALICE"));
         assert!(!valid_join_code("PCH-0000-0000-0000-000Z"));
         assert!(!valid_join_code("PCH0000000000000000"));
+    }
+
+    #[test]
+    fn credentials_are_scoped_without_changing_the_legacy_local_profile() {
+        let local = ClientConfig {
+            uri: DEFAULT_URI.into(),
+            database: DEFAULT_DATABASE.into(),
+            profile_name: "Alice".into(),
+        };
+        let hosted = ClientConfig {
+            uri: "https://maincloud.spacetimedb.com".into(),
+            database: "poche-6quz6".into(),
+            profile_name: "Alice".into(),
+        };
+        let staging = ClientConfig {
+            database: "poche-staging".into(),
+            ..hosted.clone()
+        };
+        assert_eq!(credential_key(&local), "poche-spacetimedb-alice");
+        assert_ne!(credential_key(&hosted), credential_key(&local));
+        assert_ne!(credential_key(&hosted), credential_key(&staging));
     }
 }

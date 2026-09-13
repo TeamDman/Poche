@@ -8,6 +8,7 @@
 #![allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
 
 use image::{Rgba, RgbaImage, imageops};
+use poche_spacetimedb_desktop::AuthorityEndpoint;
 use poche_spacetimedb_desktop::file_control::{
     FileControlAction, FileControlObservation, FileControlResponse, FileControlStatus,
     send_file_control_request,
@@ -34,15 +35,24 @@ fn run() -> Result<(), String> {
     match args.next().as_deref() {
         None | Some("acceptance") => {
             let mut output = PathBuf::from("target/poche-puppet/acceptance-contact-sheet.png");
+            let mut server = None;
+            let mut database = None;
             while let Some(argument) = args.next() {
                 match argument.as_str() {
                     "--output" => {
                         output = PathBuf::from(args.next().ok_or("--output requires a path")?);
                     }
+                    "--server" => {
+                        server = Some(args.next().ok_or("--server requires a value")?);
+                    }
+                    "--database" => {
+                        database = Some(args.next().ok_or("--database requires a value")?);
+                    }
                     unknown => return Err(format!("unknown acceptance option {unknown:?}")),
                 }
             }
-            acceptance(&absolute(output)?)
+            let authority = AuthorityEndpoint::select(server.as_deref(), database.as_deref())?;
+            acceptance(&absolute(output)?, &authority)
         }
         Some("observe") => {
             let root = PathBuf::from(args.next().ok_or("observe requires CONTROL_ROOT")?);
@@ -105,7 +115,8 @@ fn run() -> Result<(), String> {
         }
         Some("--help" | "-h") => {
             println!(
-                "poche-puppet acceptance [--output PATH]\n\
+                "poche-puppet acceptance [--server local|maincloud|URL] [--database NAME]\n\
+                 \x20                       [--output PATH]\n\
                  poche-puppet observe ROOT [--include-join-code]\n\
                  poche-puppet set-name ROOT NAME | create ROOT | join ROOT CODE\n\
                  poche-puppet seat ROOT 0|1 | stand ROOT\n\
@@ -155,6 +166,9 @@ fn print_response(response: FileControlResponse) -> Result<(), String> {
 struct AcceptanceReport {
     schema: &'static str,
     completed_unix_ms: u64,
+    authority_profile: String,
+    authority_uri: String,
+    authority_database: String,
     room_id: String,
     alice_identity: String,
     bob_identity: String,
@@ -169,7 +183,7 @@ struct AcceptanceReport {
     contact_sheet: String,
 }
 
-fn acceptance(output: &Path) -> Result<(), String> {
+fn acceptance(output: &Path, authority: &AuthorityEndpoint) -> Result<(), String> {
     let executable = std::env::current_exe()
         .map_err(|error| format!("could not locate puppet executable: {error}"))?
         .parent()
@@ -190,10 +204,16 @@ fn acceptance(output: &Path) -> Result<(), String> {
         .map_err(|error| format!("could not create puppet run root: {error}"))?;
     let alice_root = run_root.join("alice");
     let bob_root = run_root.join("bob");
-    let mut alice = spawn_device(&executable, &alice_root, "alice-window", &run_root)?;
-    let mut bob = spawn_device(&executable, &bob_root, "bob-window", &run_root)?;
+    let mut alice = spawn_device(
+        &executable,
+        &alice_root,
+        "alice-window",
+        &run_root,
+        authority,
+    )?;
+    let mut bob = spawn_device(&executable, &bob_root, "bob-window", &run_root, authority)?;
 
-    let result = acceptance_inner(output, &run_id, &alice_root, &bob_root);
+    let result = acceptance_inner(output, &run_id, &alice_root, &bob_root, authority);
     stop_and_wait(&alice_root, &mut alice);
     stop_and_wait(&bob_root, &mut bob);
     result
@@ -204,6 +224,7 @@ fn acceptance_inner(
     run_id: &str,
     alice_root: &Path,
     bob_root: &Path,
+    authority: &AuthorityEndpoint,
 ) -> Result<(), String> {
     wait_for_descriptor(alice_root)?;
     wait_for_descriptor(bob_root)?;
@@ -276,8 +297,11 @@ fn acceptance_inner(
     compose_contact_sheet(&captures, output)?;
 
     let report = AcceptanceReport {
-        schema: "poche-spacetimedb-two-device-acceptance-v1",
+        schema: "poche-spacetimedb-two-device-acceptance-v2",
         completed_unix_ms: unix_millis()?,
+        authority_profile: authority.profile.clone(),
+        authority_uri: authority.uri.clone(),
+        authority_database: authority.database.clone(),
         room_id: alice_ready.room_id.clone().ok_or("Alice omitted room id")?,
         alice_identity: alice_ready
             .viewer_identity
@@ -362,19 +386,23 @@ fn spawn_device(
     root: &Path,
     instance_id: &str,
     log_root: &Path,
+    authority: &AuthorityEndpoint,
 ) -> Result<Child, String> {
     let stdout = File::create(log_root.join(format!("{instance_id}.stdout.log")))
         .map_err(|error| format!("could not create device stdout log: {error}"))?;
     let stderr = File::create(log_root.join(format!("{instance_id}.stderr.log")))
         .map_err(|error| format!("could not create device stderr log: {error}"))?;
-    Command::new(executable)
-        .args([
-            "--control-root",
-            &root.to_string_lossy(),
-            "--instance-id",
-            instance_id,
-            "--windowless",
-        ])
+    let mut command = Command::new(executable);
+    command.args([
+        "--control-root",
+        &root.to_string_lossy(),
+        "--instance-id",
+        instance_id,
+        "--windowless",
+    ]);
+    command.args(["--server", &authority.uri]);
+    command.args(["--database", &authority.database]);
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))
