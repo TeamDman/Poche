@@ -3,7 +3,7 @@
 **Plan status:** Active; worktree and reconnaissance are complete, implementation has not started
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-12
+**Last updated:** 2026-09-12 (installed CLI evidence amended after initial plan commit)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
@@ -180,7 +180,7 @@ card wiggling. “Uses SpacetimeDB” alone is not success.
 | Identity/reconnect | Current docs return identity/token on connect, recommend saving the token, distinguish `Identity` from `ConnectionId`, and require application reconnection. | Persist a profile token; model multiple connections separately. |
 | Reference Bevy adapter | `G:\Programming\Repos\bevy_spacetimedb` is Apache-2.0, targets older Bevy/SDK versions, and bridges SDK callbacks to Bevy messages through channels. It also leaks a connection and contains unsafe delayed-connect casts. | Reimplement only the small callback/channel pattern with owned lifetimes and no unsafe code. |
 | Compile references | Cloud Terrastodon uses workspace crates, optional heavy entrypoint features, and stable `rust-lld`. Cursor Hero uses workspace dependencies, many leaf crates, dev opt-level 1/dependency opt-level 3, and historical nightly rustflags. | Prefer Cloud's stable pattern; benchmark before copying profiles and do not adopt Cursor Hero's nightly flags. |
-| Local tool availability | `spacetime` was not present on either the sandbox or host-user PATH. | T1.2 must establish and document the tool before module work. |
+| Local tool availability | The user installed `C:\Users\Teamy\AppData\Local\SpacetimeDB\spacetime.exe`. Direct execution reports CLI/library 2.10.0 at commit `baca5cdf77577ed4e3f30da48a5158189c4ea43f`; `spacetime version list` marks 2.10.0 current. The source checkout inspected above identifies 2.10.1, so they are not assumed interchangeable. | T1.2 must choose one coherent CLI/module/SDK version, record the mismatch resolution, and document invocation without relying on sandbox PATH inheritance. |
 
 ## Confirmed constraints
 
@@ -429,8 +429,14 @@ without weakening `--workspace` validation.
 
 **Work:**
 
-- Install or build one reviewed SpacetimeDB CLI version as an explicit developer
-  prerequisite; current PATH has none.
+- Select one reviewed SpacetimeDB version as the project prerequisite. The
+  installed launcher currently provides 2.10.0 while the local source checkout
+  identifies 2.10.1; resolve that mismatch deliberately rather than mixing
+  generated bindings or protocols across them.
+- Teach the doctor command to discover the installed launcher at
+  `C:\Users\Teamy\AppData\Local\SpacetimeDB\spacetime.exe` when ordinary PATH
+  discovery is unavailable, without committing a user-specific path as the
+  only supported configuration.
 - Pin matching module and Rust SDK versions in the lockfile.
 - Inspect `spacetime help` for exact local start, publish, generate, logs, and
   database-reset commands before wrapping them.
@@ -1179,6 +1185,7 @@ remote branch contains all intended commits.
 | --- | --- | --- |
 | SpacetimeDB does not improve integrated latency or pose updates still teleport. | Critical | G7, early T2.5 spike, local prediction, bounded samples, T6.4 stop condition |
 | BSL terms conflict with intended distribution/hosting. | Critical | G9 before broad implementation; T7.1 exact disclosure; no production claim |
+| Installed CLI 2.10.0, source checkout 2.10.1, and selected crates drift. | High | T1.2 coherent pin, doctor version check, lockfile and generated-schema fingerprint |
 | Private tables/views leak another player's cards through cache, bindings, logs, or diagnostics. | Critical | G10, T2.3 negative tests, T5.3 adversarial SDK identities |
 | Database schema becomes a second rules engine and diverges from formal Rust. | Critical | G12, pure reducer call, DTO round trips, T2.4/T5 conformance |
 | High-frequency pose transactions inflate commit logs or starve logical actions. | High | Latest-value schema, 15 Hz starting cap, coalescing, priority/backpressure tests, load report |
