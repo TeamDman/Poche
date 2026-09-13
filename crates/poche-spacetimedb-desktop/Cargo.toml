@@ -18,7 +18,7 @@ name = "poche"
 path = "src/main.rs"
 
 [dependencies]
-bevy = { workspace = true, features = ["system_clipboard", "ui"] }
+bevy = { workspace = true, features = ["bevy_dev_tools", "system_clipboard", "ui"] }
 getrandom.workspace = true
 image.workspace = true
 poche-bevy-spacetimedb = { path = "../poche-bevy-spacetimedb" }

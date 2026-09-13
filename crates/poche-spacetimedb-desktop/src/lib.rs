@@ -22,6 +22,9 @@ use bevy::{
     asset::RenderAssetUsages,
     camera::{RenderTarget, Viewport, visibility::RenderLayers},
     clipboard::{Clipboard, ClipboardRead},
+    dev_tools::fps_overlay::{
+        FpsOverlayConfig, FpsOverlayPlugin, FpsOverlaySystems, FrameTimeGraphConfig,
+    },
     image::Image,
     input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit},
     log::LogPlugin,
@@ -74,6 +77,29 @@ const CAMERA_MAX_PITCH: f32 = 78.0_f32.to_radians();
 const FONT_BYTES: &[u8] = include_bytes!("../../poche-native-ui/assets/CaskaydiaCove-Regular.ttf");
 const MAINCLOUD_URI: &str = "https://maincloud.spacetimedb.com";
 const MAINCLOUD_DATABASE: &str = "poche-6quz6";
+
+fn hidden_fps_overlay_config(font: Handle<Font>) -> FpsOverlayConfig {
+    FpsOverlayConfig {
+        text_config: TextFont {
+            font: FontSource::Handle(font),
+            font_size: FontSize::Px(18.0),
+            ..default()
+        },
+        text_color: Color::srgb(0.96, 0.88, 0.58),
+        enabled: false,
+        refresh_interval: Duration::from_millis(100),
+        frame_time_graph_config: FrameTimeGraphConfig {
+            enabled: false,
+            min_fps: 30.0,
+            target_fps: 60.0,
+        },
+    }
+}
+
+fn set_fps_overlay_visible(config: &mut FpsOverlayConfig, visible: bool) {
+    config.enabled = visible;
+    config.frame_time_graph_config.enabled = visible;
+}
 
 #[derive(Clone, Debug, Resource, Eq, PartialEq)]
 pub struct AuthorityEndpoint {
@@ -436,6 +462,11 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
         .world_mut()
         .resource_mut::<Assets<Font>>()
         .add(Font::from_bytes(FONT_BYTES.to_vec()));
+    if !windowless {
+        app.add_plugins(FpsOverlayPlugin {
+            config: hidden_fps_overlay_config(font.clone()),
+        });
+    }
     app.insert_resource(PocheFont(font));
     if windowless {
         app.add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
@@ -464,6 +495,10 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
         .init_resource::<TableCameraController>()
         .add_message::<ButtonActivation>()
         .add_observer(activate_button)
+        .add_systems(
+            Update,
+            toggle_fps_overlay.before(FpsOverlaySystems::Customize),
+        )
         .add_systems(
             Startup,
             (setup_render_target, setup_spatial_renderer, setup_menu).chain(),
@@ -929,7 +964,7 @@ fn setup_menu(
     authority: Res<AuthorityEndpoint>,
     state: Res<UiState>,
 ) {
-    let mut camera = commands.spawn((Camera2d, PocheUiCamera));
+    let mut camera = commands.spawn((Camera2d, IsDefaultUiCamera, PocheUiCamera));
     if let Some(target) = surface.render_target() {
         camera.insert(target);
     }
@@ -1007,6 +1042,11 @@ fn spawn_main_menu(
                     margin: px(12.).top(),
                     ..default()
                 },
+            ));
+            parent.spawn((
+                Text::new("F3 · performance overlay"),
+                TextFont::from_font_size(14.),
+                TextColor(Color::srgb(0.52, 0.65, 0.64)),
             ));
         });
 }
@@ -1246,6 +1286,16 @@ fn handle_escape_key(
 ) {
     if !room.is_empty() && keys.just_pressed(KeyCode::Escape) {
         toggle_escape_menu(&mut state);
+    }
+}
+
+fn toggle_fps_overlay(keys: Res<ButtonInput<KeyCode>>, overlay: Option<ResMut<FpsOverlayConfig>>) {
+    if !keys.just_pressed(KeyCode::F3) {
+        return;
+    }
+    if let Some(mut overlay) = overlay {
+        let visible = !overlay.enabled;
+        set_fps_overlay_visible(&mut overlay, visible);
     }
 }
 
@@ -1512,7 +1562,7 @@ fn enter_room(
                 bar.spawn((
                     LatencyLabel,
                     Text::new(
-                        "Drag card · Q turn left · E turn right · RMB orbit · MMB/WASD pan · Wheel zoom · Space reset · Esc menu",
+                        "Drag card · Q turn left · E turn right · RMB orbit · MMB/WASD pan · Wheel zoom · Space reset · Esc menu · F3 stats",
                     ),
                     TextFont::from_font_size(15.),
                     TextColor(Color::srgb(0.72, 0.82, 0.8)),
@@ -2693,6 +2743,21 @@ mod tests {
         assert!(
             (zoom_camera_distance(start, -10_000.0) - CAMERA_MAX_DISTANCE).abs() < f32::EPSILON
         );
+    }
+
+    #[test]
+    fn fps_overlay_starts_hidden_and_toggles_text_and_graph_together() {
+        let mut config = hidden_fps_overlay_config(Handle::<Font>::default());
+        assert!(!config.enabled);
+        assert!(!config.frame_time_graph_config.enabled);
+
+        set_fps_overlay_visible(&mut config, true);
+        assert!(config.enabled);
+        assert!(config.frame_time_graph_config.enabled);
+
+        set_fps_overlay_visible(&mut config, false);
+        assert!(!config.enabled);
+        assert!(!config.frame_time_graph_config.enabled);
     }
 
     #[test]
