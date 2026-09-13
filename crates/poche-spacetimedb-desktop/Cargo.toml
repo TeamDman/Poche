@@ -23,6 +23,7 @@ getrandom.workspace = true
 image.workspace = true
 poche-bevy-spacetimedb = { path = "../poche-bevy-spacetimedb" }
 poche-slug = { path = "../poche-slug" }
+poche-spatial = { path = "../poche-spatial" }
 poche-spacetimedb-client = { path = "../poche-spacetimedb-client" }
 serde.workspace = true
 serde_json.workspace = true

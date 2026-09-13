@@ -2,26 +2,29 @@
 
 The default Poche desktop path is now a Bevy 0.19.1 client connected directly
 to SpacetimeDB 2.10.0. Two copies of the same `poche.exe` can create and join a
-lobby, occupy distinct seats, receive distinct private five-card hands, and
-move and rotate cards with local prediction and subscription-driven peer
-updates.
+lobby, occupy distinct seats, receive distinct private rule-generated hands,
+bid, play a complete first-round trick, and move/rotate cards with local
+prediction and subscription-driven peer updates.
 
 The current SpacetimeDB window draws those three-axis poses into a real Bevy 3D
-scene: a perspective camera, lit table and rail meshes, dimensional cards,
+scene: a perspective camera, the canonical `poche-spatial` table/seat/zone
+geometry, dimensional cards,
 avatars, shadows, and renderer-neutral filled Slug card labels. Network
 millimetres and millidegrees cross into metres and quaternions only at this
 rendering boundary. A transparent Bevy UI camera remains above the world for
-room codes, status, rotation snap, and actions; it is no longer pretending to
-be the tabletop. A dedicated private-hand inset camera and more diegetic input
-targets remain later renderer refinements over the same world.
+room codes, game phase, status, rotation snap, and actions. A dedicated inset
+camera renders the viewer's private hand from the same world and hands dragging
+off to the table camera when the pointer crosses viewports.
 
-This is the physical-table multiplayer slice, not a claim that the complete
-Poche rules have been ported into SpacetimeDB. The existing transport-free
-Rust rules and Alloy/NuSMV/Prolog evidence remain the authority for Poche game
-behavior. The new module currently owns room membership, two seats, recipient-
-scoped sample hands, and face-free physical poses. A future durable play/drop
-reducer must call the pure Rust transition boundary; moving a card presently
-does not change its logical `hand` location.
+This remains a first-round vertical slice rather than the complete Poche game.
+The module persists a deterministic shuffle seed and ordered typed action log;
+each bid/play reducer reconstructs that log through the transport-free
+`OracleEnvironment<2>` and commits only an accepted pure transition. Physical
+poses remain independent latest-value rows. Dragging into PLAY proposes the
+typed play, reveals the accepted card, and changes its logical location;
+out-of-turn drops return to the hand without changing logical state. The
+existing Alloy/NuSMV/Prolog evidence still checks the same pure rules boundary,
+not SpacetimeDB or Bevy execution.
 
 ## Choose Maincloud or local development
 
@@ -144,13 +147,15 @@ Start-Process -FilePath .\target\debug\poche.exe
 
 In the first window, enter a name and choose **Create lobby**, then copy the
 opaque `PCH-…` code. In the second window, enter a different name, paste the
-code, and choose **Join lobby**. Take different seats. Each player sees only
-their own card faces; the peer sees opaque `P` card backs. Dragging changes only
-the physical position. Hold Q or E while dragging to rotate around the table's
-up axis. The **Rotation snap** button at the top cycles through off, 15°, 30°,
-45°, 60°, and 90° increments. The initiating window predicts the pose
-immediately, while the other window interpolates toward updates from the
-server subscription.
+code, and choose **Join lobby**. Take different seats. The round-one oracle
+deal gives each player one private card while the peer sees an opaque `P` back.
+Use **Bid 0 tricks** or **Bid 1 trick** when it is your turn. During play, drag
+your card from the private-hand inset into the highlighted central PLAY zone.
+An accepted play reveals the face to both clients; after the second play both
+cards move to the winner's logical won zone. Wiggling within the hand remains
+only physical state. Hold Q or E while dragging to rotate around table-up Y.
+The **Rotation snap** button cycles through off, 15°, 30°, 45°, 60°, and 90°.
+Local motion is immediate while the peer interpolates subscribed updates.
 
 The replicated integer angle unit is one millidegree: one full turn is
 `360_000`, so `18_000` is 18° and `180_000` is 180°. Radians are only a Bevy
@@ -176,9 +181,11 @@ mutation API:
 target\debug\poche-puppet.exe acceptance
 ```
 
-The command creates a room, joins Bob, seats both devices, verifies five
-private cards per player and ten face-free shared poses, moves Alice's first
-card, waits until Bob observes the exact position and rotation, and writes:
+The command creates a room, joins Bob, seats both devices, verifies one
+rule-generated private card per player and two face-free shared poses, moves
+Alice's card, waits until Bob observes its exact position/rotation, submits two
+legal bids and two legal plays, and verifies both devices converge on two
+revealed cards in one winner's logical won zone. It writes:
 
 - `target/poche-puppet/acceptance-contact-sheet.png` — seated and moved views
   for Alice and Bob in one image;
@@ -200,7 +207,9 @@ target\debug\poche-puppet.exe set-name target\live\alice Alice
 target\debug\poche-puppet.exe create target\live\alice
 target\debug\poche-puppet.exe observe target\live\alice --include-join-code
 target\debug\poche-puppet.exe seat target\live\alice 0
-target\debug\poche-puppet.exe move target\live\alice 0 650 160 -250 18000
+target\debug\poche-puppet.exe move target\live\alice 0 60 40 500 18000
+target\debug\poche-puppet.exe bid target\live\alice 0
+target\debug\poche-puppet.exe play target\live\alice 0
 target\debug\poche-puppet.exe capture target\live\alice
 target\debug\poche-puppet.exe stop target\live\alice
 ```

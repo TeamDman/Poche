@@ -103,6 +103,8 @@ pub struct ClientSnapshot {
     pub members: Vec<MemberView>,
     pub hand: Vec<HandCardView>,
     pub card_poses: Vec<CardPoseView>,
+    pub game: Option<GameView>,
+    pub revealed_cards: Vec<RevealedCardView>,
 }
 
 impl ClientSnapshot {
@@ -118,6 +120,21 @@ impl ClientSnapshot {
             .iter()
             .find(|member| member.identity == identity)
             .and_then(|member| member.seat)
+    }
+
+    /// Return the face this exact viewer is authorized to render.
+    #[must_use]
+    pub fn visible_card_face(&self, card_key: &str) -> Option<&str> {
+        self.hand
+            .iter()
+            .find(|card| card.card_key == card_key)
+            .map(|card| card.face.as_str())
+            .or_else(|| {
+                self.revealed_cards
+                    .iter()
+                    .find(|card| card.card_key == card_key)
+                    .map(|card| card.face.as_str())
+            })
     }
 }
 
@@ -152,6 +169,31 @@ pub struct CardPoseView {
     pub position_mm: [i32; 3],
     pub rotation_mdeg: [i32; 3],
     pub sequence: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RevealedCardView {
+    pub card_key: String,
+    pub face: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GameView {
+    pub phase: String,
+    pub actor_seat: Option<u8>,
+    pub dealer_seat: Option<u8>,
+    pub round_index: u16,
+    pub hand_size: u8,
+    pub hand_counts: [u8; 2],
+    pub bids: [Option<u8>; 2],
+    pub trick_count: u8,
+    pub trick_seats: [Option<u8>; 2],
+    pub trick_cards: [Option<u8>; 2],
+    pub tricks_won: [u8; 2],
+    pub scores: [u16; 2],
+    pub pot_cents: u32,
+    pub trump: Option<u8>,
+    pub action_count: u64,
 }
 
 #[derive(Debug)]
@@ -440,6 +482,34 @@ impl PocheClient {
         Ok(request_id)
     }
 
+    pub fn bid(&self, room_id: String, tricks: u8) -> Result<u64, ClientError> {
+        let request_id = self.next_request();
+        let started = Instant::now();
+        let tx = self.inner.event_tx.clone();
+        self.inner
+            .connection
+            .reducers
+            .bid_then(room_id, tricks, move |_ctx, result| {
+                finish_command(&tx, request_id, "bid", started, result);
+            })
+            .map_err(|error| ClientError::Request(error.to_string()))?;
+        Ok(request_id)
+    }
+
+    pub fn play_card(&self, room_id: String, card_id: String) -> Result<u64, ClientError> {
+        let request_id = self.next_request();
+        let started = Instant::now();
+        let tx = self.inner.event_tx.clone();
+        self.inner
+            .connection
+            .reducers
+            .play_card_then(room_id, card_id, move |_ctx, result| {
+                finish_command(&tx, request_id, "play_card", started, result);
+            })
+            .map_err(|error| ClientError::Request(error.to_string()))?;
+        Ok(request_id)
+    }
+
     pub fn leave_room(&self, room_id: String) -> Result<u64, ClientError> {
         let request_id = self.next_request();
         let started = Instant::now();
@@ -499,9 +569,45 @@ fn register_change_callbacks(connection: &DbConnection, event_tx: mpsc::Sender<C
         .on_update(move |_, _, _| {
             let _ = tx.send(ClientEvent::ModelChanged);
         });
+    let tx = event_tx.clone();
     connection.db.visible_card_poses().on_delete(move |_, _| {
-        let _ = event_tx.send(ClientEvent::ModelChanged);
+        let _ = tx.send(ClientEvent::ModelChanged);
     });
+    let tx = event_tx.clone();
+    connection.db.visible_room_games().on_insert(move |_, _| {
+        let _ = tx.send(ClientEvent::ModelChanged);
+    });
+    let tx = event_tx.clone();
+    connection
+        .db
+        .visible_room_games()
+        .on_update(move |_, _, _| {
+            let _ = tx.send(ClientEvent::ModelChanged);
+        });
+    let tx = event_tx.clone();
+    connection.db.visible_room_games().on_delete(move |_, _| {
+        let _ = tx.send(ClientEvent::ModelChanged);
+    });
+    let tx = event_tx.clone();
+    connection
+        .db
+        .visible_revealed_cards()
+        .on_insert(move |_, _| {
+            let _ = tx.send(ClientEvent::ModelChanged);
+        });
+    let tx = event_tx.clone();
+    connection
+        .db
+        .visible_revealed_cards()
+        .on_delete(move |_, _| {
+            let _ = tx.send(ClientEvent::ModelChanged);
+        });
+    connection
+        .db
+        .visible_revealed_cards()
+        .on_update(move |_, _, _| {
+            let _ = event_tx.send(ClientEvent::ModelChanged);
+        });
 }
 
 fn subscribe(
@@ -525,6 +631,8 @@ fn subscribe(
         .add_query(|query| query.from.room_members())
         .add_query(|query| query.from.my_hand())
         .add_query(|query| query.from.visible_card_poses())
+        .add_query(|query| query.from.visible_room_games())
+        .add_query(|query| query.from.visible_revealed_cards())
         .subscribe();
 }
 
@@ -580,12 +688,45 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
             sequence: pose.sequence,
         })
         .collect();
+    let game = context
+        .db
+        .visible_room_games()
+        .iter()
+        .next()
+        .map(|game| GameView {
+            phase: game.phase,
+            actor_seat: game.actor_seat,
+            dealer_seat: game.dealer_seat,
+            round_index: game.round_index,
+            hand_size: game.hand_size,
+            hand_counts: [game.hand_count_0, game.hand_count_1],
+            bids: [game.bid_0, game.bid_1],
+            trick_count: game.trick_count,
+            trick_seats: [game.trick_seat_0, game.trick_seat_1],
+            trick_cards: [game.trick_card_0, game.trick_card_1],
+            tricks_won: [game.tricks_won_0, game.tricks_won_1],
+            scores: [game.score_0, game.score_1],
+            pot_cents: game.pot_cents,
+            trump: game.trump,
+            action_count: game.action_count,
+        });
+    let revealed_cards = context
+        .db
+        .visible_revealed_cards()
+        .iter()
+        .map(|card| RevealedCardView {
+            card_key: card.card_key,
+            face: card.face,
+        })
+        .collect();
     ClientSnapshot {
         identity,
         rooms,
         members,
         hand,
         card_poses,
+        game,
+        revealed_cards,
     }
 }
 

@@ -89,6 +89,16 @@ fn run() -> Result<(), String> {
             let root = PathBuf::from(args.next().ok_or("stand requires CONTROL_ROOT")?);
             print_response(send(&root, FileControlAction::ReleaseSeat)?)
         }
+        Some("bid") => {
+            let root = PathBuf::from(args.next().ok_or("bid requires CONTROL_ROOT")?);
+            let tricks = parse(&mut args, "TRICKS")?;
+            print_response(send(&root, FileControlAction::Bid { tricks })?)
+        }
+        Some("play") => {
+            let root = PathBuf::from(args.next().ok_or("play requires CONTROL_ROOT")?);
+            let card_index = parse(&mut args, "CARD_INDEX")?;
+            print_response(send(&root, FileControlAction::PlayOwnCard { card_index })?)
+        }
         Some("move") => {
             let root = PathBuf::from(args.next().ok_or("move requires CONTROL_ROOT")?);
             let card_index = parse(&mut args, "CARD_INDEX")?;
@@ -119,7 +129,8 @@ fn run() -> Result<(), String> {
                  \x20                       [--output PATH]\n\
                  poche-puppet observe ROOT [--include-join-code]\n\
                  poche-puppet set-name ROOT NAME | create ROOT | join ROOT CODE\n\
-                 poche-puppet seat ROOT 0|1 | stand ROOT\n\
+                 poche-puppet seat ROOT 0|1 | stand ROOT | bid ROOT TRICKS\n\
+                 poche-puppet play ROOT CARD_INDEX\n\
                  poche-puppet move ROOT CARD_INDEX X_MM Y_MM Z_MM RY_MDEG\n\
                  poche-puppet capture ROOT | stop ROOT"
             );
@@ -174,11 +185,17 @@ struct AcceptanceReport {
     bob_identity: String,
     alice_private_cards: usize,
     bob_private_cards: usize,
+    distinct_private_faces: bool,
+    initial_public_revealed_cards: usize,
     shared_face_free_poses: usize,
     moved_card_key: String,
     moved_position_mm: [i32; 3],
     move_authority_ms: f64,
     move_peer_observation_ms: f64,
+    completed_actions: u64,
+    final_phase: String,
+    revealed_cards: usize,
+    winning_logical_location: String,
     screenshots: Vec<String>,
     contact_sheet: String,
 }
@@ -256,12 +273,24 @@ fn acceptance_inner(
     send(bob_root, FileControlAction::JoinLobby { join_code })?;
     send(alice_root, FileControlAction::TakeSeat { seat: 0 })?;
     send(bob_root, FileControlAction::TakeSeat { seat: 1 })?;
-    let alice_ready = wait_until(alice_root, |observation| observation.own_hand.len() == 5)?;
-    let bob_ready = wait_until(bob_root, |observation| observation.own_hand.len() == 5)?;
+    let alice_ready = wait_until(alice_root, |observation| {
+        observation.own_hand.len() == 1 && observation.game.is_some()
+    })?;
+    let bob_ready = wait_until(bob_root, |observation| {
+        observation.own_hand.len() == 1 && observation.game.is_some()
+    })?;
+    if !alice_ready.revealed_cards.is_empty() || !bob_ready.revealed_cards.is_empty() {
+        return Err("the deal exposed a card face through the public revealed-card view".into());
+    }
+    let distinct_private_faces = alice_ready.own_hand[0].face != bob_ready.own_hand[0].face;
+    if !distinct_private_faces {
+        return Err("the deterministic deal duplicated a card face".into());
+    }
+    let initial_shared_poses = bob_ready.card_poses.len();
 
     let seated_alice = capture(alice_root)?;
     let seated_bob = capture(bob_root)?;
-    let moved_position = [650, 160, -250];
+    let moved_position = [60, 40, 500];
     let moved_rotation = [0, 45_000, 0];
     let mut owned_keys = alice_ready
         .own_hand
@@ -291,13 +320,63 @@ fn acceptance_inner(
         })
     })?;
     let peer_ms = started.elapsed().as_secs_f64() * 1_000.;
-    let moved_alice = capture(alice_root)?;
-    let moved_bob = capture(bob_root)?;
-    let captures = [seated_alice, seated_bob, moved_alice, moved_bob];
+
+    let mut turn = bob_after;
+    for _ in 0..2 {
+        let actor = turn
+            .game
+            .as_ref()
+            .and_then(|game| game.actor_seat)
+            .ok_or("bidding projection omitted its actor")?;
+        let previous = turn.game.as_ref().map_or(0, |game| game.action_count);
+        send(
+            root_for_seat(actor, alice_root, bob_root),
+            FileControlAction::Bid { tricks: 0 },
+        )?;
+        turn = wait_until(alice_root, |observation| {
+            observation
+                .game
+                .as_ref()
+                .is_some_and(|game| game.action_count > previous)
+        })?;
+    }
+    if turn.game.as_ref().map(|game| game.phase.as_str()) != Some("playing") {
+        return Err("two legal bids did not enter the playing phase".into());
+    }
+    for _ in 0..2 {
+        let actor = turn
+            .game
+            .as_ref()
+            .and_then(|game| game.actor_seat)
+            .ok_or("playing projection omitted its actor")?;
+        send(
+            root_for_seat(actor, alice_root, bob_root),
+            FileControlAction::PlayOwnCard { card_index: 0 },
+        )?;
+        let previous = turn.game.as_ref().map_or(0, |game| game.action_count);
+        turn = wait_until(alice_root, |observation| {
+            observation
+                .game
+                .as_ref()
+                .is_some_and(|game| game.action_count > previous)
+        })?;
+    }
+    let alice_resolved = wait_until(alice_root, trick_is_resolved)?;
+    let bob_resolved = wait_until(bob_root, trick_is_resolved)?;
+    let same_reveals = alice_resolved
+        .revealed_cards
+        .iter()
+        .all(|alice| bob_resolved.revealed_cards.iter().any(|bob| bob == alice));
+    if alice_resolved.game != bob_resolved.game || !same_reveals {
+        return Err("the two devices did not converge on one public resolved trick".into());
+    }
+    let resolved_alice = capture(alice_root)?;
+    let resolved_bob = capture(bob_root)?;
+    let captures = [seated_alice, seated_bob, resolved_alice, resolved_bob];
     compose_contact_sheet(&captures, output)?;
 
     let report = AcceptanceReport {
-        schema: "poche-spacetimedb-two-device-acceptance-v2",
+        schema: "poche-spacetimedb-two-device-acceptance-v3",
         completed_unix_ms: unix_millis()?,
         authority_profile: authority.profile.clone(),
         authority_uri: authority.uri.clone(),
@@ -313,11 +392,26 @@ fn acceptance_inner(
             .ok_or("Bob omitted identity")?,
         alice_private_cards: alice_ready.own_hand.len(),
         bob_private_cards: bob_ready.own_hand.len(),
-        shared_face_free_poses: bob_after.card_poses.len(),
+        distinct_private_faces,
+        initial_public_revealed_cards: bob_ready.revealed_cards.len(),
+        shared_face_free_poses: initial_shared_poses,
         moved_card_key: moved_key,
         moved_position_mm: moved_position,
         move_authority_ms: authority_ms,
         move_peer_observation_ms: peer_ms,
+        completed_actions: alice_resolved
+            .game
+            .as_ref()
+            .map_or(0, |game| game.action_count),
+        final_phase: alice_resolved
+            .game
+            .as_ref()
+            .map_or_else(|| "missing".into(), |game| game.phase.clone()),
+        revealed_cards: alice_resolved.revealed_cards.len(),
+        winning_logical_location: alice_resolved
+            .card_poses
+            .first()
+            .map_or_else(|| "missing".into(), |pose| pose.logical_location.clone()),
         screenshots: captures
             .iter()
             .map(|path| path.to_string_lossy().into_owned())
@@ -337,6 +431,24 @@ fn acceptance_inner(
         report_path.display()
     );
     Ok(())
+}
+
+fn root_for_seat<'a>(seat: u8, alice: &'a Path, bob: &'a Path) -> &'a Path {
+    if seat == 0 { alice } else { bob }
+}
+
+fn trick_is_resolved(observation: &FileControlObservation) -> bool {
+    observation.own_hand.is_empty()
+        && observation.revealed_cards.len() == 2
+        && observation.card_poses.len() == 2
+        && observation
+            .card_poses
+            .iter()
+            .all(|pose| pose.logical_location.starts_with("won:"))
+        && observation
+            .game
+            .as_ref()
+            .is_some_and(|game| game.phase == "scoring" && game.action_count == 4)
 }
 
 fn capture(root: &Path) -> Result<PathBuf, String> {

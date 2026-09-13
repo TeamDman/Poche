@@ -12,6 +12,8 @@ description = "Authoritative SpacetimeDB module for the Poche desktop table"
 crate-type = ["cdylib"]
 
 [dependencies]
+poche-environment = { path = "../poche-environment" }
+poche-oracle-rust = { path = "../poche-oracle-rust" }
 spacetimedb.workspace = true
 
 [lints]

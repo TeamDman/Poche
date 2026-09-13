@@ -9270,6 +9270,7 @@ dependencies = [
  "poche-bevy-spacetimedb",
  "poche-slug",
  "poche-spacetimedb-client",
+ "poche-spatial",
  "serde",
  "serde_json",
  "tempfile",
@@ -9279,6 +9280,8 @@ dependencies = [
 name = "poche-spacetimedb-module"
 version = "0.1.0"
 dependencies = [
+ "poche-environment",
+ "poche-oracle-rust",
  "spacetimedb",
 ]
 

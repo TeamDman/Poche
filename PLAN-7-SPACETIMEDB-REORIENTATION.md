@@ -3,7 +3,7 @@
 **Plan status:** Active; the create/join/seat/private-hand/shared-pose desktop MVP is implemented and accepted, while durable Poche play, recovery, and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-13 (SpacetimeDB desktop restored to a real Bevy 3D scene; Windows backend and rotation corrections retained)
+**Last updated:** 2026-09-13 (first oracle-backed bid/play trick accepted through two Maincloud clients and canonical 3D/private-hand projection)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
@@ -168,6 +168,48 @@ multiple devices for one identity, full Poche play, or production operations.
   camera, diegetic seat/action targets, durable logical drop/play reducers,
   denial presentation, and recovery semantics are not claimed by this visual
   restoration.
+
+## 2026-09-13 oracle-backed first-trick checkpoint
+
+- Replaced the five-card sample deal with the real deterministic first round
+  from `OracleEnvironment<2>`. The module persists only its seed, an ordered
+  typed bid/play log, a public latest projection, private card identities, and
+  revealed faces. Every durable player action reconstructs and validates the
+  full pure Rust game before its transaction commits.
+- Added caller-scoped game/revealed-card subscriptions and carried typed Bid
+  and PlayCard intents through the renderer-neutral client, Poche-owned Bevy
+  bridge, visible action bar, and file-control puppet. Physical pose remains a
+  separate latest-value channel; accepted play alone changes `hand` to
+  `play:{seat}` and then `won:{winner}`.
+- Replaced provisional oversized scene geometry with registered
+  `poche-spatial` revision-one geometry. The shared table camera and dedicated
+  private-hand camera render the same card entities on explicit render layers;
+  pointer movement crosses viewports back into one world. Dropping in PLAY
+  proposes typed play, while an out-of-turn drop restores the physical card to
+  its hand and leaves logical state unchanged with visible status.
+- Published the additive schema/reducers to Maincloud database `poche-6quz6`.
+  The v3 windowless acceptance then created/joined/seated two independent
+  clients, verified one distinct private card apiece and two face-free public
+  poses, propagated a 45° card wiggle, submitted two legal bids and two legal
+  plays, and converged on two revealed cards in `won:1` with phase `scoring`.
+  Five reviewed runs measured 78.92–129.29 ms for caller observation and
+  198.81–281.90 ms for peer observation of the sampled wiggle; this is
+  acceptance evidence, not a p95 result, and keeps T6.4's latency investigation
+  open.
+- Reviewed the four-view PNG. It visibly shows opposite seat projections,
+  private enlarged hand views, opaque peer backs before play, and common won
+  cards after play. That review caught and fixed seat-label occlusion plus the
+  seat-one hand camera's upside-down orientation. Remaining polish includes
+  diegetic seat/bid controls and a less crowded HUD.
+- Targeted tests (12 total), module WASM build, package-scoped formatting, and
+  strict Clippy for all changed handwritten packages pass. The dependency
+  `poche-spatial` still has a pre-existing `missing_panics_doc` warning under a
+  workspace-wide `-D warnings`, so changed-package lint used `--no-deps`.
+
+This checkpoint advances T4.3 substantially and T4.4/T6.2 partially. It does
+not claim the complete multi-round game, denied-drop puppet coverage, restart,
+multiple devices per player, explicit final-leave UX, formal adapter parity,
+or the latency distributions required by T6.4.
 
 ## Authoritative user guidance ledger
 
@@ -899,7 +941,7 @@ cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario
 **Completion criteria:** Both clients converge on membership and seats without
 manual refresh, and denied seat races appear as explicit receipts.
 
-### [ ] T4.3 Deal and render recipient-private hands
+### [~] T4.3 Deal and render recipient-private hands
 
 **Work:**
 
@@ -919,7 +961,7 @@ cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario
 **Completion criteria:** Captures and semantic observations prove distinct own
 hands and negative peer-face visibility for both clients.
 
-### [ ] T4.4 Make card manipulation immediate, shared, and rule-aware
+### [~] T4.4 Make card manipulation immediate, shared, and rule-aware
 
 **Work:**
 
@@ -1060,7 +1102,7 @@ cargo run -p poche-xtask -- spacetimedb smoke --keep-artifacts
 **Completion criteria:** Repeated runs allocate no shared state, leave no
 process behind, and produce correlated server/client logs on failure.
 
-### [ ] T6.2 Port the windowless two-player puppet to the new client
+### [~] T6.2 Port the windowless two-player puppet to the new client
 
 **Work:**
 

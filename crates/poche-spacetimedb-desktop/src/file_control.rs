@@ -74,6 +74,12 @@ pub enum FileControlAction {
         seat: u8,
     },
     ReleaseSeat,
+    Bid {
+        tricks: u8,
+    },
+    PlayOwnCard {
+        card_index: usize,
+    },
     MoveOwnCard {
         card_index: usize,
         position_mm: [i32; 3],
@@ -126,6 +132,9 @@ pub struct FileControlObservation {
     pub members: Vec<FileControlMember>,
     pub card_poses: Vec<FileControlCardPose>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game: Option<FileControlGame>,
+    pub revealed_cards: Vec<FileControlRevealedCard>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_authority_latency_ms: Option<f64>,
 }
 
@@ -160,6 +169,32 @@ pub struct FileControlCardPose {
     pub rotation_mdeg: [i32; 3],
     pub sequence: u64,
     pub is_own: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FileControlGame {
+    pub phase: String,
+    pub actor_seat: Option<u8>,
+    pub dealer_seat: Option<u8>,
+    pub round_index: u16,
+    pub hand_size: u8,
+    pub hand_counts: [u8; 2],
+    pub bids: [Option<u8>; 2],
+    pub trick_count: u8,
+    pub trick_seats: [Option<u8>; 2],
+    pub tricks_won: [u8; 2],
+    pub scores: [u16; 2],
+    pub pot_cents: u32,
+    pub trump: Option<u8>,
+    pub action_count: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FileControlRevealedCard {
+    pub card_key: String,
+    pub face: String,
 }
 
 pub struct FileControlPlugin {
@@ -206,6 +241,7 @@ impl FileControlPlugin {
                 "observe_private_local".into(),
                 "create_or_join_as_device".into(),
                 "take_or_release_seat".into(),
+                "bid_or_play_owned_card".into(),
                 "move_owned_card".into(),
                 "capture_gpu".into(),
                 "stop".into(),
@@ -259,6 +295,7 @@ enum Completion {
         position_mm: [i32; 3],
         rotation_mdeg: [i32; 3],
     },
+    GameAction(u64),
     Capture {
         path: PathBuf,
         requested: bool,
@@ -408,6 +445,15 @@ fn drive_file_control(
                 })
             },
         ),
+        FileControlAction::Bid { tricks } => submit_game_action(
+            &model,
+            &mut pending,
+            |room_id| BridgeIntent::Bid { room_id, tricks },
+            &bridge,
+        ),
+        FileControlAction::PlayOwnCard { card_index } => {
+            submit_play_action(card_index, &model, &mut pending, &bridge)
+        }
         FileControlAction::MoveOwnCard {
             card_index,
             position_mm,
@@ -520,6 +566,12 @@ fn pending_result(
                     && pose.rotation_mdeg == *rotation_mdeg
             })
             .map(|_| Ok(())),
+        Completion::GameAction(expected) => model
+            .snapshot
+            .game
+            .as_ref()
+            .filter(|game| game.action_count >= *expected)
+            .map(|_| Ok(())),
         Completion::Capture {
             path,
             requested,
@@ -551,8 +603,7 @@ fn submit_pose(
         .snapshot
         .room_id()
         .ok_or("join a room before moving a card")?;
-    let mut hand = model.snapshot.hand.iter().collect::<Vec<_>>();
-    hand.sort_by(|left, right| left.card_key.cmp(&right.card_key));
+    let hand = sorted_hand(model);
     let card = hand
         .get(card_index)
         .ok_or("owned card index is outside this device's private hand")?;
@@ -584,6 +635,52 @@ fn submit_pose(
     })
 }
 
+fn sorted_hand(model: &BridgeModel) -> Vec<&poche_spacetimedb_client::HandCardView> {
+    let mut hand = model.snapshot.hand.iter().collect::<Vec<_>>();
+    hand.sort_by(|left, right| left.card_key.cmp(&right.card_key));
+    hand
+}
+
+fn submit_game_action(
+    model: &BridgeModel,
+    pending: &mut PendingRequest,
+    intent: impl FnOnce(String) -> BridgeIntent,
+    bridge: &BridgeHandle,
+) -> Result<(), String> {
+    let room_id = model
+        .snapshot
+        .room_id()
+        .ok_or("join a room before taking a game action")?;
+    let expected = model
+        .snapshot
+        .game
+        .as_ref()
+        .ok_or("take a seat and wait for the deal before taking a game action")?
+        .action_count
+        .saturating_add(1);
+    pending.completion = Completion::GameAction(expected);
+    bridge.send(intent(room_id.into()))
+}
+
+fn submit_play_action(
+    card_index: usize,
+    model: &BridgeModel,
+    pending: &mut PendingRequest,
+    bridge: &BridgeHandle,
+) -> Result<(), String> {
+    let card_id = sorted_hand(model)
+        .get(card_index)
+        .ok_or("owned card index is outside this device's private hand")?
+        .card_id
+        .clone();
+    submit_game_action(
+        model,
+        pending,
+        |room_id| BridgeIntent::PlayCard { room_id, card_id },
+        bridge,
+    )
+}
+
 fn validate_request(
     endpoint: &FileControlEndpoint,
     request: &FileControlRequest,
@@ -612,6 +709,9 @@ fn validate_request(
         }
         FileControlAction::TakeSeat { seat } if *seat > 1 => {
             return Err("seat must be 0 or 1".into());
+        }
+        FileControlAction::Bid { tricks } if *tricks > 2 => {
+            return Err("the first two-player round permits bids from 0 through 2".into());
         }
         FileControlAction::MoveOwnCard {
             position_mm,
@@ -781,6 +881,31 @@ fn observation(
                 rotation_mdeg: pose.rotation_mdeg,
                 sequence: pose.sequence,
                 is_own: Some(pose.owner.as_str()) == identity,
+            })
+            .collect(),
+        game: model.snapshot.game.as_ref().map(|game| FileControlGame {
+            phase: game.phase.clone(),
+            actor_seat: game.actor_seat,
+            dealer_seat: game.dealer_seat,
+            round_index: game.round_index,
+            hand_size: game.hand_size,
+            hand_counts: game.hand_counts,
+            bids: game.bids,
+            trick_count: game.trick_count,
+            trick_seats: game.trick_seats,
+            tricks_won: game.tricks_won,
+            scores: game.scores,
+            pot_cents: game.pot_cents,
+            trump: game.trump,
+            action_count: game.action_count,
+        }),
+        revealed_cards: model
+            .snapshot
+            .revealed_cards
+            .iter()
+            .map(|card| FileControlRevealedCard {
+                card_key: card.card_key.clone(),
+                face: card.face.clone(),
             })
             .collect(),
         last_authority_latency_ms: model

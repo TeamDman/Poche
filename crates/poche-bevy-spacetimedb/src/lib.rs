@@ -38,6 +38,14 @@ pub enum BridgeIntent {
         position_mm: [i32; 3],
         rotation_mdeg: [i32; 3],
     },
+    Bid {
+        room_id: String,
+        tricks: u8,
+    },
+    PlayCard {
+        room_id: String,
+        card_id: String,
+    },
     Leave {
         room_id: String,
     },
@@ -171,6 +179,10 @@ fn pump_bridge(
 }
 
 #[allow(clippy::needless_pass_by_value)] // The worker thread owns both channel endpoints.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the single bridge owner serializes the complete small command vocabulary in one auditable loop"
+)]
 fn worker_loop(requests: mpsc::Receiver<BridgeIntent>, events: mpsc::Sender<WorkerEvent>) {
     let mut client: Option<PocheClient> = None;
     loop {
@@ -231,6 +243,10 @@ fn worker_loop(requests: mpsc::Receiver<BridgeIntent>, events: mpsc::Sender<Work
                         position_mm,
                         rotation_mdeg,
                     ),
+                    BridgeIntent::Bid { room_id, tricks } => connected.bid(room_id, tricks),
+                    BridgeIntent::PlayCard { room_id, card_id } => {
+                        connected.play_card(room_id, card_id)
+                    }
                     BridgeIntent::Leave { room_id } => connected.leave_room(room_id),
                     BridgeIntent::Create { .. }
                     | BridgeIntent::Join { .. }

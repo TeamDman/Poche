@@ -169,9 +169,11 @@ accident.
 
 The acceptance command is windowless. It launches two copies of the ordinary
 game binary, creates and joins a room, seats both identities, proves private
-hands and face-free peer poses, moves one card, measures peer observation, and
-writes one four-view contact sheet plus a machine-readable report under
-ignored `target/poche-puppet/` storage. See the
+hands and face-free peer poses, moves one card, measures peer observation,
+submits two bids and two plays through the pure rules boundary, and verifies
+both viewers converge on the revealed won trick. It writes one four-view
+contact sheet plus a machine-readable report under ignored
+`target/poche-puppet/` storage. See the
 [SpacetimeDB desktop guide](docs/spacetimedb-desktop.md) for local server setup,
 ad-hoc control commands, trust, privacy, and license boundaries. The earlier
 Veilid/certified-device puppet remains documented as retained research in the
@@ -191,10 +193,13 @@ Start-Process -FilePath .\target\debug\poche.exe
 
 The first player enters a name and chooses **Create lobby**, then copies the
 opaque `PCH-…` code. The second enters a different name, pastes the code, and
-chooses **Join lobby**. Take different seats. Dragging an owned card is locally
-predicted immediately and published at a bounded rate; the peer interpolates
-the same face-free physical pose. Q/E rotates a dragged card. Physical motion
-does not yet change the card's logical `hand` location or execute Poche rules.
+chooses **Join lobby**. Take different seats. The first rule-generated round
+gives each player one private card. Bid from the action bar, then drag the
+current actor's card from the private-hand inset into the highlighted PLAY
+zone. The server replays the typed action log through the pure Rust oracle
+before revealing or changing the card's logical location. Ordinary hand
+wiggling is locally predicted and published at a bounded rate; peers
+interpolate the face-free pose. Q/E rotates a dragged card.
 
 ## Play in two browser tabs
 

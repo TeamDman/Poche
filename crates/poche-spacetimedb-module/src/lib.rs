@@ -2,18 +2,34 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! SpacetimeDB authority for the Poche desktop vertical slice.
+//! `SpacetimeDB` authority for the Poche desktop vertical slice.
 //!
 //! Logical room membership and seats are durable, card faces are private, and
 //! physical card poses are public latest-value rows.  Renderers remain clients
 //! of this model; no Bevy type crosses this boundary.
 
+#![allow(
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::needless_borrows_for_generic_args,
+    clippy::needless_pass_by_value,
+    clippy::similar_names,
+    reason = "SpacetimeDB exports fixed owned reducer/view signatures and pose axes use the established rx/ry/rz schema"
+)]
+
+use poche_environment::{
+    EnvironmentAction, GameEnvironment, OracleChanceAction, OracleEnvironment, OraclePlayerAction,
+};
+use poche_oracle_rust::{Card, Game, PhaseTag, Seat, Turn};
 use spacetimedb::{Identity, ReducerContext, Table, Timestamp, ViewContext};
 
 const MAX_NAME_LEN: usize = 32;
 const MAX_POSE_MM: i32 = 10_000;
 const MAX_ROTATION_MDEG: i32 = 360_000;
-const CARDS_PER_PLAYER: u8 = 5;
+const PLAYERS: usize = 2;
+const LAYOUT_HAND_Z_MM: i32 = 520;
+const LAYOUT_PLAY_Z_MM: i32 = 50;
+const LAYOUT_WON_Z_MM: i32 = 300;
 
 #[spacetimedb::table(accessor = room)]
 pub struct Room {
@@ -58,6 +74,71 @@ pub struct PrivateHandCard {
     pub face: String,
 }
 
+/// Private mapping from an opaque physical object to the rules engine's card.
+#[spacetimedb::table(accessor = private_card_identity)]
+pub struct PrivateCardIdentity {
+    #[primary_key]
+    pub card_key: String,
+    #[index(btree)]
+    pub room_id: String,
+    #[index(btree)]
+    pub owner: Identity,
+    pub card_id: String,
+    pub face_code: u8,
+}
+
+/// Replay root and viewer-safe latest game projection for one room.
+#[spacetimedb::table(accessor = room_game)]
+pub struct RoomGame {
+    #[primary_key]
+    pub room_id: String,
+    pub seed: u64,
+    pub action_count: u64,
+    pub phase: String,
+    pub actor_seat: Option<u8>,
+    pub dealer_seat: Option<u8>,
+    pub round_index: u16,
+    pub hand_size: u8,
+    pub hand_count_0: u8,
+    pub hand_count_1: u8,
+    pub bid_0: Option<u8>,
+    pub bid_1: Option<u8>,
+    pub trick_count: u8,
+    pub trick_seat_0: Option<u8>,
+    pub trick_card_0: Option<u8>,
+    pub trick_seat_1: Option<u8>,
+    pub trick_card_1: Option<u8>,
+    pub tricks_won_0: u8,
+    pub tricks_won_1: u8,
+    pub score_0: u16,
+    pub score_1: u16,
+    pub pot_cents: u32,
+    pub trump: Option<u8>,
+}
+
+/// One ordered player action. Chance is reconstructed from [`RoomGame::seed`].
+#[spacetimedb::table(accessor = game_action)]
+pub struct GameAction {
+    #[primary_key]
+    pub action_key: String,
+    #[index(btree)]
+    pub room_id: String,
+    pub sequence: u64,
+    pub seat: u8,
+    pub kind: String,
+    pub value: u8,
+}
+
+/// A face becomes public only after the pure rules engine accepts its play.
+#[spacetimedb::table(accessor = revealed_card)]
+pub struct RevealedCard {
+    #[primary_key]
+    pub card_key: String,
+    #[index(btree)]
+    pub room_id: String,
+    pub face: String,
+}
+
 /// Rooms are visible only after the caller has joined them.
 #[spacetimedb::view(accessor = my_rooms, public, primary_key = room_id)]
 pub fn my_rooms(ctx: &ViewContext) -> Vec<Room> {
@@ -92,6 +173,32 @@ pub fn my_hand(ctx: &ViewContext) -> Vec<PrivateHandCard> {
         .private_hand_card()
         .owner()
         .filter(&ctx.sender())
+        .collect()
+}
+
+/// Members receive the latest public game projection for their rooms.
+#[spacetimedb::view(accessor = visible_room_games, public, primary_key = room_id)]
+pub fn visible_room_games(ctx: &ViewContext) -> Vec<RoomGame> {
+    let memberships: Vec<_> = ctx.db.member().identity().filter(&ctx.sender()).collect();
+    memberships
+        .into_iter()
+        .filter_map(|membership| ctx.db.room_game().room_id().find(&membership.room_id))
+        .collect()
+}
+
+/// Members receive only card faces already revealed by accepted play.
+#[spacetimedb::view(accessor = visible_revealed_cards, public, primary_key = card_key)]
+pub fn visible_revealed_cards(ctx: &ViewContext) -> Vec<RevealedCard> {
+    let memberships: Vec<_> = ctx.db.member().identity().filter(&ctx.sender()).collect();
+    memberships
+        .into_iter()
+        .flat_map(|membership| {
+            ctx.db
+                .revealed_card()
+                .room_id()
+                .filter(&membership.room_id)
+                .collect::<Vec<_>>()
+        })
         .collect()
 }
 
@@ -213,7 +320,7 @@ pub fn take_seat(ctx: &ReducerContext, room_id: String, seat: u8) -> Result<(), 
     caller.seat = Some(seat);
     caller.connected = true;
     ctx.db.member().member_key().update(caller);
-    ensure_deal(ctx, &room_id);
+    ensure_deal(ctx, &room_id)?;
     Ok(())
 }
 
@@ -263,6 +370,9 @@ pub fn set_card_pose(
         .card_key()
         .find(&card_key)
         .ok_or_else(|| "card pose is missing".to_string())?;
+    if pose.logical_location != "hand" {
+        return Err("only a card still in your hand may be manipulated".into());
+    }
     if sequence <= pose.sequence {
         return Err("stale card pose sequence".into());
     }
@@ -278,6 +388,107 @@ pub fn set_card_pose(
     Ok(())
 }
 
+/// Submit a fixed bid through the full pure Poche rules engine.
+#[spacetimedb::reducer]
+pub fn bid(ctx: &ReducerContext, room_id: String, tricks: u8) -> Result<(), String> {
+    let seat = caller_seat(ctx, &room_id)?;
+    let mut record = ctx
+        .db
+        .room_game()
+        .room_id()
+        .find(&room_id)
+        .ok_or_else(|| "the room does not have an active deal".to_string())?;
+    let game = reconstruct_game(ctx, &record)?;
+    let player = Seat::new(usize::from(seat)).map_err(rule_error)?;
+    let next = transition_game(
+        &game,
+        EnvironmentAction::Player(OraclePlayerAction::Bid { player, tricks }),
+    )?;
+    append_action(ctx, &record, seat, "bid", tricks);
+    record.action_count = record.action_count.saturating_add(1);
+    write_room_game(ctx, record, &next)?;
+    Ok(())
+}
+
+/// Play one owned card. Physical placement proposes this typed transition; it
+/// cannot bypass actor, ownership, phase, or follow-suit validation.
+#[spacetimedb::reducer]
+pub fn play_card(ctx: &ReducerContext, room_id: String, card_id: String) -> Result<(), String> {
+    let seat = caller_seat(ctx, &room_id)?;
+    let key = card_key(&room_id, ctx.sender(), &card_id);
+    let private = ctx
+        .db
+        .private_card_identity()
+        .card_key()
+        .find(&key)
+        .ok_or_else(|| "card is not in this player's private hand".to_string())?;
+    let mut pose = ctx
+        .db
+        .card_pose()
+        .card_key()
+        .find(&key)
+        .ok_or_else(|| "card pose is missing".to_string())?;
+    if private.owner != ctx.sender() || pose.logical_location != "hand" {
+        return Err("card is not in this player's private hand".into());
+    }
+
+    let mut record = ctx
+        .db
+        .room_game()
+        .room_id()
+        .find(&room_id)
+        .ok_or_else(|| "the room does not have an active deal".to_string())?;
+    let game = reconstruct_game(ctx, &record)?;
+    let player = Seat::new(usize::from(seat)).map_err(rule_error)?;
+    let card = card_from_code(private.face_code)?;
+    let play_index = game
+        .observe(Seat::new(0).map_err(rule_error)?)
+        .current_trick
+        .len();
+    let next = transition_game(
+        &game,
+        EnvironmentAction::Player(OraclePlayerAction::Play { player, card }),
+    )?;
+
+    append_action(ctx, &record, seat, "play", private.face_code);
+    record.action_count = record.action_count.saturating_add(1);
+    write_room_game(ctx, record, &next)?;
+
+    pose.logical_location = format!("play:{seat}");
+    pose.x_mm = 0;
+    pose.y_mm = 40;
+    pose.z_mm = if seat == 0 {
+        LAYOUT_PLAY_Z_MM
+    } else {
+        -LAYOUT_PLAY_Z_MM
+    };
+    pose.ry_mdeg = 0;
+    pose.sequence = pose.sequence.saturating_add(1);
+    pose.committed_at = ctx.timestamp;
+    ctx.db.card_pose().card_key().update(pose);
+    ctx.db.revealed_card().insert(RevealedCard {
+        card_key: key.clone(),
+        room_id: room_id.clone(),
+        face: card_label(private.face_code)?.to_string(),
+    });
+    ctx.db.private_hand_card().card_key().delete(&key);
+    ctx.db.private_card_identity().card_key().delete(&key);
+
+    let observation = next.observe(Seat::new(0).map_err(rule_error)?);
+    if observation.phase == PhaseTag::Scoring {
+        let winner = observation
+            .tricks_won
+            .iter()
+            .position(|tricks| *tricks == 1)
+            .and_then(|index| u8::try_from(index).ok())
+            .ok_or_else(|| "completed trick has no unique winner".to_string())?;
+        finish_trick_poses(ctx, &room_id, winner);
+    } else if play_index > 0 {
+        return Err("rules transition did not complete the expected trick".into());
+    }
+    Ok(())
+}
+
 #[spacetimedb::reducer]
 pub fn leave_room(ctx: &ReducerContext, room_id: String) -> Result<(), String> {
     let key = member_key(&room_id, ctx.sender());
@@ -288,6 +499,25 @@ pub fn leave_room(ctx: &ReducerContext, room_id: String) -> Result<(), String> {
     if ctx.db.member().room_id().filter(&room_id).next().is_none() {
         ctx.db.room().room_id().delete(&room_id);
         ctx.db.room_secret().room_id().delete(&room_id);
+        ctx.db.room_game().room_id().delete(&room_id);
+        for action in ctx
+            .db
+            .game_action()
+            .room_id()
+            .filter(&room_id)
+            .collect::<Vec<_>>()
+        {
+            ctx.db.game_action().action_key().delete(&action.action_key);
+        }
+        for card in ctx
+            .db
+            .revealed_card()
+            .room_id()
+            .filter(&room_id)
+            .collect::<Vec<_>>()
+        {
+            ctx.db.revealed_card().card_key().delete(&card.card_key);
+        }
     }
     Ok(())
 }
@@ -315,7 +545,7 @@ fn insert_member(ctx: &ReducerContext, room_id: String, display_name: String) {
     });
 }
 
-fn ensure_deal(ctx: &ReducerContext, room_id: &str) {
+fn ensure_deal(ctx: &ReducerContext, room_id: &str) -> Result<(), String> {
     let seated: Vec<_> = ctx
         .db
         .member()
@@ -323,27 +553,50 @@ fn ensure_deal(ctx: &ReducerContext, room_id: &str) {
         .filter(room_id)
         .filter(|member| member.seat.is_some())
         .collect();
-    if seated.len() != 2 {
-        return;
+    if seated.len() != PLAYERS
+        || ctx
+            .db
+            .room_game()
+            .room_id()
+            .find(&room_id.to_string())
+            .is_some()
+    {
+        return Ok(());
     }
+    let seed = seed_for_room(room_id);
+    let game = initial_game(seed)?;
+    ctx.db
+        .room_game()
+        .insert(project_room_game(room_id, seed, 0, &game)?);
+
     for member in seated {
         let seat = member.seat.expect("filtered to seated members");
-        for slot in 0..CARDS_PER_PLAYER {
+        let player = Seat::new(usize::from(seat)).map_err(rule_error)?;
+        let hand = game.observe(player).private_hand;
+        let hand_count = u8::try_from(hand.len()).map_err(|_| "hand exceeds u8".to_string())?;
+        for (slot, card) in hand.iter().enumerate() {
+            let slot = u8::try_from(slot).map_err(|_| "hand slot exceeds u8".to_string())?;
+            let face_code = card_code(card)?;
             let card_id = format!("card-{seat}-{slot}");
             let key = card_key(room_id, member.identity, &card_id);
             if ctx.db.private_hand_card().card_key().find(&key).is_some() {
                 continue;
             }
-            let face = card_face(seat, slot).to_string();
             ctx.db.private_hand_card().insert(PrivateHandCard {
                 card_key: key.clone(),
                 room_id: room_id.to_string(),
                 owner: member.identity,
                 card_id: card_id.clone(),
-                face,
+                face: card_label(face_code)?.to_string(),
             });
-            let base_x = if seat == 0 { -1_800 } else { 1_800 };
-            let base_z = if seat == 0 { 1_200 } else { -1_200 };
+            ctx.db.private_card_identity().insert(PrivateCardIdentity {
+                card_key: key.clone(),
+                room_id: room_id.to_string(),
+                owner: member.identity,
+                card_id: card_id.clone(),
+                face_code,
+            });
+            let [x_mm, y_mm, z_mm] = hand_position(seat, slot, hand_count);
             ctx.db.card_pose().insert(CardPose {
                 card_key: key,
                 room_id: room_id.to_string(),
@@ -351,9 +604,9 @@ fn ensure_deal(ctx: &ReducerContext, room_id: &str) {
                 owner: member.identity,
                 owner_seat: seat,
                 logical_location: "hand".into(),
-                x_mm: base_x + i32::from(slot) * 180,
-                y_mm: 80,
-                z_mm: base_z,
+                x_mm,
+                y_mm,
+                z_mm,
                 rx_mdeg: 0,
                 ry_mdeg: if seat == 0 { 0 } else { 180_000 },
                 rz_mdeg: 0,
@@ -362,19 +615,22 @@ fn ensure_deal(ctx: &ReducerContext, room_id: &str) {
             });
         }
     }
+    Ok(())
 }
 
 fn delete_identity_cards(ctx: &ReducerContext, room_id: &str, identity: Identity) {
     let keys: Vec<_> = ctx
         .db
-        .private_hand_card()
-        .owner()
-        .filter(&identity)
-        .filter(|card| card.room_id == room_id)
+        .card_pose()
+        .room_id()
+        .filter(room_id)
+        .filter(|card| card.owner == identity)
         .map(|card| card.card_key)
         .collect();
     for key in keys {
         ctx.db.private_hand_card().card_key().delete(&key);
+        ctx.db.private_card_identity().card_key().delete(&key);
+        ctx.db.revealed_card().card_key().delete(&key);
         ctx.db.card_pose().card_key().delete(&key);
     }
 }
@@ -441,12 +697,230 @@ fn validate_pose(
     Ok(())
 }
 
-fn card_face(seat: u8, slot: u8) -> &'static str {
-    const FACES: [[&str; CARDS_PER_PLAYER as usize]; 2] = [
-        ["A♣", "3♦", "5♥", "7♠", "9♣"],
-        ["2♣", "4♦", "6♥", "8♠", "10♣"],
+fn caller_seat(ctx: &ReducerContext, room_id: &str) -> Result<u8, String> {
+    ctx.db
+        .member()
+        .member_key()
+        .find(&member_key(room_id, ctx.sender()))
+        .ok_or_else(|| "join the room before acting".to_string())?
+        .seat
+        .ok_or_else(|| "take a seat before acting".to_string())
+}
+
+fn initial_game(seed: u64) -> Result<Game<PLAYERS>, String> {
+    let dealer = Seat::new(0).map_err(rule_error)?;
+    let game = OracleEnvironment::<PLAYERS>::initial(dealer).map_err(rule_error)?;
+    transition_game(
+        &game,
+        EnvironmentAction::Chance(OracleChanceAction::seeded(seed, 0)),
+    )
+}
+
+fn reconstruct_game(ctx: &ReducerContext, record: &RoomGame) -> Result<Game<PLAYERS>, String> {
+    let mut game = initial_game(record.seed)?;
+    let mut actions = ctx
+        .db
+        .game_action()
+        .room_id()
+        .filter(&record.room_id)
+        .collect::<Vec<_>>();
+    actions.sort_by_key(|action| action.sequence);
+    if u64::try_from(actions.len()).ok() != Some(record.action_count) {
+        return Err("game action log does not match its projection revision".into());
+    }
+    for (expected, action) in actions.into_iter().enumerate() {
+        if action.sequence != u64::try_from(expected).unwrap_or(u64::MAX) {
+            return Err("game action log is not contiguous".into());
+        }
+        let player = Seat::new(usize::from(action.seat)).map_err(rule_error)?;
+        let player_action = match action.kind.as_str() {
+            "bid" => OraclePlayerAction::Bid {
+                player,
+                tricks: action.value,
+            },
+            "play" => OraclePlayerAction::Play {
+                player,
+                card: card_from_code(action.value)?,
+            },
+            _ => return Err("game action log contains an unknown action".into()),
+        };
+        game = transition_game(&game, EnvironmentAction::Player(player_action))?;
+    }
+    Ok(game)
+}
+
+fn transition_game(
+    game: &Game<PLAYERS>,
+    action: EnvironmentAction<OraclePlayerAction<PLAYERS>, OracleChanceAction>,
+) -> Result<Game<PLAYERS>, String> {
+    OracleEnvironment::<PLAYERS>::transition(game, action)
+        .map(|outcome| outcome.state)
+        .map_err(rule_error)
+}
+
+fn append_action(ctx: &ReducerContext, record: &RoomGame, seat: u8, kind: &str, value: u8) {
+    ctx.db.game_action().insert(GameAction {
+        action_key: format!("{}:{}", record.room_id, record.action_count),
+        room_id: record.room_id.clone(),
+        sequence: record.action_count,
+        seat,
+        kind: kind.to_string(),
+        value,
+    });
+}
+
+fn write_room_game(
+    ctx: &ReducerContext,
+    record: RoomGame,
+    game: &Game<PLAYERS>,
+) -> Result<(), String> {
+    ctx.db.room_game().room_id().update(project_room_game(
+        &record.room_id,
+        record.seed,
+        record.action_count,
+        game,
+    )?);
+    Ok(())
+}
+
+fn project_room_game(
+    room_id: &str,
+    seed: u64,
+    action_count: u64,
+    game: &Game<PLAYERS>,
+) -> Result<RoomGame, String> {
+    let observer = Seat::new(0).map_err(rule_error)?;
+    let view = game.observe(observer);
+    let trick = view.current_trick.iter().collect::<Vec<_>>();
+    let actor_seat = match view.actor {
+        Turn::Player(player) => {
+            Some(u8::try_from(player.index()).map_err(|_| "actor seat exceeds u8".to_string())?)
+        }
+        Turn::Chance | Turn::Environment | Turn::Finished => None,
+    };
+    Ok(RoomGame {
+        room_id: room_id.to_string(),
+        seed,
+        action_count,
+        phase: phase_label(view.phase).to_string(),
+        actor_seat,
+        dealer_seat: view
+            .dealer
+            .map(|seat| u8::try_from(seat.index()))
+            .transpose()
+            .map_err(|_| "dealer seat exceeds u8".to_string())?,
+        round_index: u16::try_from(view.round_index)
+            .map_err(|_| "round index exceeds u16".to_string())?,
+        hand_size: view.hand_size,
+        hand_count_0: view.hand_counts[0],
+        hand_count_1: view.hand_counts[1],
+        bid_0: view.bids[0],
+        bid_1: view.bids[1],
+        trick_count: u8::try_from(trick.len()).map_err(|_| "trick count exceeds u8".to_string())?,
+        trick_seat_0: trick
+            .first()
+            .and_then(|play| u8::try_from(play.player.index()).ok()),
+        trick_card_0: trick.first().map(|play| card_code(play.card)).transpose()?,
+        trick_seat_1: trick
+            .get(1)
+            .and_then(|play| u8::try_from(play.player.index()).ok()),
+        trick_card_1: trick.get(1).map(|play| card_code(play.card)).transpose()?,
+        tricks_won_0: view.tricks_won[0],
+        tricks_won_1: view.tricks_won[1],
+        score_0: view.scores[0],
+        score_1: view.scores[1],
+        pot_cents: view.pot_cents,
+        trump: view.trump.map(card_code).transpose()?,
+    })
+}
+
+fn finish_trick_poses(ctx: &ReducerContext, room_id: &str, winner: u8) {
+    let mut cards = ctx
+        .db
+        .revealed_card()
+        .room_id()
+        .filter(room_id)
+        .collect::<Vec<_>>();
+    cards.sort_by(|left, right| left.card_key.cmp(&right.card_key));
+    let count = i32::try_from(cards.len()).unwrap_or_default();
+    for (index, card) in cards.into_iter().enumerate() {
+        let Some(mut pose) = ctx.db.card_pose().card_key().find(&card.card_key) else {
+            continue;
+        };
+        pose.logical_location = format!("won:{winner}");
+        pose.x_mm = (2 * i32::try_from(index).unwrap_or_default() + 1 - count) * 7;
+        pose.y_mm = 40;
+        pose.z_mm = if winner == 0 {
+            LAYOUT_WON_Z_MM
+        } else {
+            -LAYOUT_WON_Z_MM
+        };
+        pose.ry_mdeg = 0;
+        pose.sequence = pose.sequence.saturating_add(1);
+        pose.committed_at = ctx.timestamp;
+        ctx.db.card_pose().card_key().update(pose);
+    }
+}
+
+fn hand_position(seat: u8, slot: u8, count: u8) -> [i32; 3] {
+    let x = (2 * i32::from(slot) + 1 - i32::from(count)) * 7;
+    [
+        x,
+        40,
+        if seat == 0 {
+            LAYOUT_HAND_Z_MM
+        } else {
+            -LAYOUT_HAND_Z_MM
+        },
+    ]
+}
+
+fn seed_for_room(room_id: &str) -> u64 {
+    room_id.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+fn card_from_code(code: u8) -> Result<Card, String> {
+    Card::standard_deck()
+        .get(usize::from(code))
+        .copied()
+        .ok_or_else(|| "card code is outside the standard deck".to_string())
+}
+
+fn card_code(card: Card) -> Result<u8, String> {
+    Card::standard_deck()
+        .iter()
+        .position(|candidate| *candidate == card)
+        .and_then(|index| u8::try_from(index).ok())
+        .ok_or_else(|| "card is outside the standard deck".to_string())
+}
+
+fn card_label(code: u8) -> Result<&'static str, String> {
+    const LABELS: [&str; 52] = [
+        "2♣", "3♣", "4♣", "5♣", "6♣", "7♣", "8♣", "9♣", "10♣", "J♣", "Q♣", "K♣", "A♣", "2♦", "3♦",
+        "4♦", "5♦", "6♦", "7♦", "8♦", "9♦", "10♦", "J♦", "Q♦", "K♦", "A♦", "2♥", "3♥", "4♥", "5♥",
+        "6♥", "7♥", "8♥", "9♥", "10♥", "J♥", "Q♥", "K♥", "A♥", "2♠", "3♠", "4♠", "5♠", "6♠", "7♠",
+        "8♠", "9♠", "10♠", "J♠", "Q♠", "K♠", "A♠",
     ];
-    FACES[usize::from(seat)][usize::from(slot)]
+    LABELS
+        .get(usize::from(code))
+        .copied()
+        .ok_or_else(|| "card code is outside the standard deck".to_string())
+}
+
+const fn phase_label(phase: PhaseTag) -> &'static str {
+    match phase {
+        PhaseTag::AwaitingDeal => "awaiting-deal",
+        PhaseTag::Bidding => "bidding",
+        PhaseTag::Playing => "playing",
+        PhaseTag::Scoring => "scoring",
+        PhaseTag::Finished => "finished",
+    }
+}
+
+fn rule_error(error: poche_oracle_rust::RuleViolation) -> String {
+    format!("Poche rule rejected the action: {error:?}")
 }
 
 #[cfg(test)]
@@ -454,14 +928,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn card_face_sets_are_distinct() {
-        let alice: Vec<_> = (0..CARDS_PER_PLAYER)
-            .map(|slot| card_face(0, slot))
-            .collect();
-        let bob: Vec<_> = (0..CARDS_PER_PLAYER)
-            .map(|slot| card_face(1, slot))
-            .collect();
-        assert!(alice.iter().all(|face| !bob.contains(face)));
+    fn first_oracle_trick_is_replayed_through_the_pure_rules_engine() {
+        let mut game = initial_game(7).expect("seeded first deal");
+        for _ in 0..2 {
+            let actor = match game.turn() {
+                Turn::Player(actor) => actor,
+                other => panic!("expected bidder, got {other:?}"),
+            };
+            game = transition_game(
+                &game,
+                EnvironmentAction::Player(OraclePlayerAction::Bid {
+                    player: actor,
+                    tricks: 0,
+                }),
+            )
+            .expect("zero bid is legal in round one");
+        }
+        for _ in 0..2 {
+            let actor = match game.turn() {
+                Turn::Player(actor) => actor,
+                other => panic!("expected card player, got {other:?}"),
+            };
+            let card = game
+                .observe(actor)
+                .private_hand
+                .iter()
+                .next()
+                .expect("round-one hand has one card");
+            game = transition_game(
+                &game,
+                EnvironmentAction::Player(OraclePlayerAction::Play {
+                    player: actor,
+                    card,
+                }),
+            )
+            .expect("only round-one card is legal");
+        }
+        assert_eq!(game.observe(Seat::new(0).unwrap()).phase, PhaseTag::Scoring);
+    }
+
+    #[test]
+    fn card_labels_cover_the_dense_standard_deck() {
+        assert_eq!(card_label(0), Ok("2♣"));
+        assert_eq!(card_label(51), Ok("A♠"));
+        assert!(card_label(52).is_err());
     }
 
     #[test]

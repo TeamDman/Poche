@@ -6,37 +6,53 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
+pub mod bid_reducer;
 pub mod card_pose_type;
 pub mod create_room_reducer;
+pub mod game_action_type;
 pub mod join_room_reducer;
 pub mod leave_room_reducer;
 pub mod member_type;
 pub mod my_hand_table;
 pub mod my_rooms_table;
+pub mod play_card_reducer;
+pub mod private_card_identity_type;
 pub mod private_hand_card_type;
 pub mod release_seat_reducer;
+pub mod revealed_card_type;
+pub mod room_game_type;
 pub mod room_members_table;
 pub mod room_secret_type;
 pub mod room_type;
 pub mod set_card_pose_reducer;
 pub mod take_seat_reducer;
 pub mod visible_card_poses_table;
+pub mod visible_revealed_cards_table;
+pub mod visible_room_games_table;
 
+pub use bid_reducer::bid;
 pub use card_pose_type::CardPose;
 pub use create_room_reducer::create_room;
+pub use game_action_type::GameAction;
 pub use join_room_reducer::join_room;
 pub use leave_room_reducer::leave_room;
 pub use member_type::Member;
 pub use my_hand_table::*;
 pub use my_rooms_table::*;
+pub use play_card_reducer::play_card;
+pub use private_card_identity_type::PrivateCardIdentity;
 pub use private_hand_card_type::PrivateHandCard;
 pub use release_seat_reducer::release_seat;
+pub use revealed_card_type::RevealedCard;
+pub use room_game_type::RoomGame;
 pub use room_members_table::*;
 pub use room_secret_type::RoomSecret;
 pub use room_type::Room;
 pub use set_card_pose_reducer::set_card_pose;
 pub use take_seat_reducer::take_seat;
 pub use visible_card_poses_table::*;
+pub use visible_revealed_cards_table::*;
+pub use visible_room_games_table::*;
 
 #[derive(Clone, PartialEq, Debug)]
 
@@ -46,6 +62,10 @@ pub use visible_card_poses_table::*;
 /// to indicate which reducer caused the event.
 
 pub enum Reducer {
+    Bid {
+        room_id: String,
+        tricks: u8,
+    },
     CreateRoom {
         room_id: String,
         join_code: String,
@@ -57,6 +77,10 @@ pub enum Reducer {
     },
     LeaveRoom {
         room_id: String,
+    },
+    PlayCard {
+        room_id: String,
+        card_id: String,
     },
     ReleaseSeat {
         room_id: String,
@@ -85,9 +109,11 @@ impl __sdk::InModule for Reducer {
 impl __sdk::Reducer for Reducer {
     fn reducer_name(&self) -> &'static str {
         match self {
+            Reducer::Bid { .. } => "bid",
             Reducer::CreateRoom { .. } => "create_room",
             Reducer::JoinRoom { .. } => "join_room",
             Reducer::LeaveRoom { .. } => "leave_room",
+            Reducer::PlayCard { .. } => "play_card",
             Reducer::ReleaseSeat { .. } => "release_seat",
             Reducer::SetCardPose { .. } => "set_card_pose",
             Reducer::TakeSeat { .. } => "take_seat",
@@ -97,6 +123,10 @@ impl __sdk::Reducer for Reducer {
     #[allow(clippy::clone_on_copy)]
     fn args_bsatn(&self) -> Result<Vec<u8>, __sats::bsatn::EncodeError> {
         match self {
+            Reducer::Bid { room_id, tricks } => __sats::bsatn::to_vec(&bid_reducer::BidArgs {
+                room_id: room_id.clone(),
+                tricks: tricks.clone(),
+            }),
             Reducer::CreateRoom {
                 room_id,
                 join_code,
@@ -116,6 +146,12 @@ impl __sdk::Reducer for Reducer {
             Reducer::LeaveRoom { room_id } => {
                 __sats::bsatn::to_vec(&leave_room_reducer::LeaveRoomArgs {
                     room_id: room_id.clone(),
+                })
+            }
+            Reducer::PlayCard { room_id, card_id } => {
+                __sats::bsatn::to_vec(&play_card_reducer::PlayCardArgs {
+                    room_id: room_id.clone(),
+                    card_id: card_id.clone(),
                 })
             }
             Reducer::ReleaseSeat { room_id } => {
@@ -163,6 +199,8 @@ pub struct DbUpdate {
     my_rooms: __sdk::TableUpdate<Room>,
     room_members: __sdk::TableUpdate<Member>,
     visible_card_poses: __sdk::TableUpdate<CardPose>,
+    visible_revealed_cards: __sdk::TableUpdate<RevealedCard>,
+    visible_room_games: __sdk::TableUpdate<RoomGame>,
 }
 
 impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
@@ -183,6 +221,12 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
                 "visible_card_poses" => db_update
                     .visible_card_poses
                     .append(visible_card_poses_table::parse_table_update(table_update)?),
+                "visible_revealed_cards" => db_update.visible_revealed_cards.append(
+                    visible_revealed_cards_table::parse_table_update(table_update)?,
+                ),
+                "visible_room_games" => db_update
+                    .visible_room_games
+                    .append(visible_room_games_table::parse_table_update(table_update)?),
 
                 unknown => {
                     return Err(__sdk::InternalError::unknown_name(
@@ -221,6 +265,15 @@ impl __sdk::DbUpdate for DbUpdate {
         diff.visible_card_poses = cache
             .apply_diff_to_table::<CardPose>("visible_card_poses", &self.visible_card_poses)
             .with_updates_by_pk(|row| &row.card_key);
+        diff.visible_revealed_cards = cache
+            .apply_diff_to_table::<RevealedCard>(
+                "visible_revealed_cards",
+                &self.visible_revealed_cards,
+            )
+            .with_updates_by_pk(|row| &row.card_key);
+        diff.visible_room_games = cache
+            .apply_diff_to_table::<RoomGame>("visible_room_games", &self.visible_room_games)
+            .with_updates_by_pk(|row| &row.room_id);
 
         diff
     }
@@ -239,6 +292,12 @@ impl __sdk::DbUpdate for DbUpdate {
                     .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "visible_card_poses" => db_update
                     .visible_card_poses
+                    .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "visible_revealed_cards" => db_update
+                    .visible_revealed_cards
+                    .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "visible_room_games" => db_update
+                    .visible_room_games
                     .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 unknown => {
                     return Err(
@@ -265,6 +324,12 @@ impl __sdk::DbUpdate for DbUpdate {
                 "visible_card_poses" => db_update
                     .visible_card_poses
                     .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "visible_revealed_cards" => db_update
+                    .visible_revealed_cards
+                    .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "visible_room_games" => db_update
+                    .visible_room_games
+                    .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 unknown => {
                     return Err(
                         __sdk::InternalError::unknown_name("table", unknown, "QueryRows").into(),
@@ -284,6 +349,8 @@ pub struct AppliedDiff<'r> {
     my_rooms: __sdk::TableAppliedDiff<'r, Room>,
     room_members: __sdk::TableAppliedDiff<'r, Member>,
     visible_card_poses: __sdk::TableAppliedDiff<'r, CardPose>,
+    visible_revealed_cards: __sdk::TableAppliedDiff<'r, RevealedCard>,
+    visible_room_games: __sdk::TableAppliedDiff<'r, RoomGame>,
     __unused: std::marker::PhantomData<&'r ()>,
 }
 
@@ -303,6 +370,16 @@ impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
         callbacks.invoke_table_row_callbacks::<CardPose>(
             "visible_card_poses",
             &self.visible_card_poses,
+            event,
+        );
+        callbacks.invoke_table_row_callbacks::<RevealedCard>(
+            "visible_revealed_cards",
+            &self.visible_revealed_cards,
+            event,
+        );
+        callbacks.invoke_table_row_callbacks::<RoomGame>(
+            "visible_room_games",
+            &self.visible_room_games,
             event,
         );
     }
@@ -969,7 +1046,15 @@ impl __sdk::SpacetimeModule for RemoteModule {
         my_rooms_table::register_table(client_cache);
         room_members_table::register_table(client_cache);
         visible_card_poses_table::register_table(client_cache);
+        visible_revealed_cards_table::register_table(client_cache);
+        visible_room_games_table::register_table(client_cache);
     }
-    const ALL_TABLE_NAMES: &'static [&'static str] =
-        &["my_hand", "my_rooms", "room_members", "visible_card_poses"];
+    const ALL_TABLE_NAMES: &'static [&'static str] = &[
+        "my_hand",
+        "my_rooms",
+        "room_members",
+        "visible_card_poses",
+        "visible_revealed_cards",
+        "visible_room_games",
+    ];
 }

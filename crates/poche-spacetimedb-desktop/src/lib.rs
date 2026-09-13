@@ -20,7 +20,7 @@ pub mod file_control;
 use bevy::{
     app::ScheduleRunnerPlugin,
     asset::RenderAssetUsages,
-    camera::RenderTarget,
+    camera::{RenderTarget, Viewport, visibility::RenderLayers},
     clipboard::{Clipboard, ClipboardRead},
     image::Image,
     log::LogPlugin,
@@ -42,17 +42,18 @@ use poche_slug::{SlugFont, rasterize_text_rgba};
 use poche_spacetimedb_client::{
     CardPoseView, ClientConfig, DEFAULT_DATABASE, DEFAULT_URI, RoomCapability, valid_join_code,
 };
+use poche_spatial::{
+    AabbMm, HalfExtentsMm, LayoutId, ObjectId, Point3Mm, SceneObjectKind, SpatialLayout, TableId,
+    ZoneClassification, ZoneId, registered_layout,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 const CARD_PICK_RADIUS_PX: f32 = 68.0;
-// The SpacetimeDB prototype spaces dealt cards 180 mm apart. These deliberately
-// display-sized meshes remain distinct at that spacing while the authoritative
-// database layout converges on the canonical physical 64 x 88 mm dimensions.
-const CARD_WORLD_WIDTH: f32 = 0.16;
-const CARD_WORLD_HEIGHT: f32 = 0.22;
-const CARD_WORLD_THICKNESS: f32 = 0.012;
+const CARD_WORLD_WIDTH: f32 = 0.064;
+const CARD_WORLD_HEIGHT: f32 = 0.088;
+const CARD_WORLD_THICKNESS: f32 = 0.002;
 const POSE_PERIOD: Duration = Duration::from_millis(50);
 const FULL_TURN_MDEG: i32 = 360_000;
 const ROTATION_REPEAT_DELAY: Duration = Duration::from_millis(300);
@@ -467,6 +468,7 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
                 sync_card_entities,
                 sync_player_entities,
                 update_table_camera,
+                update_hand_camera,
                 drag_cards,
                 animate_and_place_cards,
                 update_status_labels,
@@ -539,6 +541,9 @@ struct PocheUiCamera;
 struct TabletopCamera;
 
 #[derive(Component)]
+struct HandCamera;
+
+#[derive(Component)]
 struct SpatialPlayer;
 
 #[derive(Resource)]
@@ -552,6 +557,9 @@ struct SpatialAssets {
     peer_avatar_material: Handle<StandardMaterial>,
 }
 
+#[derive(Resource)]
+struct CanonicalLayout(SpatialLayout);
+
 #[derive(Component)]
 struct StatusLabel;
 
@@ -563,6 +571,9 @@ struct SeatLabel(u8);
 
 #[derive(Component)]
 struct HandSummary;
+
+#[derive(Component)]
+struct GameStatusLabel;
 
 #[derive(Component)]
 struct LatencyLabel;
@@ -584,6 +595,8 @@ enum UiAction {
     CopyCode,
     TakeSeat(u8),
     ReleaseSeat,
+    Bid(u8),
+    PlayFirstCard,
     Leave,
     CycleRotationSnap,
 }
@@ -633,6 +646,11 @@ fn setup_spatial_renderer(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let layout = registered_layout(
+        TableId::new(1),
+        LayoutId::new(2, 1).expect("two-player layout id is valid"),
+    )
+    .expect("registered two-player layout is valid");
     let mut camera = commands.spawn((
         Camera3d::default(),
         Camera {
@@ -641,9 +659,25 @@ fn setup_spatial_renderer(
         },
         spectator_camera_transform(),
         TabletopCamera,
+        RenderLayers::layer(0),
     ));
     if let Some(target) = surface.render_target() {
         camera.insert(target);
+    }
+    let mut hand_camera = commands.spawn((
+        Camera3d::default(),
+        Camera {
+            is_active: false,
+            order: 1,
+            clear_color: bevy::camera::ClearColorConfig::None,
+            ..default()
+        },
+        Transform::from_xyz(0.0, 0.48, 0.52).looking_at(Vec3::new(0.0, 0.04, 0.52), Vec3::NEG_Z),
+        HandCamera,
+        RenderLayers::layer(1),
+    ));
+    if let Some(target) = surface.render_target() {
+        hand_camera.insert(target);
     }
 
     commands.insert_resource(ClearColor(Color::srgb(0.012, 0.022, 0.026)));
@@ -659,6 +693,7 @@ fn setup_spatial_renderer(
             ..default()
         },
         Transform::from_xyz(-2.5, 6.0, 3.0).looking_at(Vec3::ZERO, Vec3::Y),
+        RenderLayers::layer(0).with(1),
     ));
 
     let floor_material = materials.add(StandardMaterial {
@@ -671,38 +706,65 @@ fn setup_spatial_renderer(
         perceptual_roughness: 0.84,
         ..default()
     });
-    let rail_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.25, 0.13, 0.055),
-        perceptual_roughness: 0.72,
-        ..default()
-    });
     let seat_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.18, 0.10, 0.045),
         perceptual_roughness: 0.78,
         ..default()
     });
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(9.0, 0.12, 9.0))),
+        Mesh3d(meshes.add(Cuboid::new(3.0, 0.12, 3.0))),
         MeshMaterial3d(floor_material),
-        Transform::from_xyz(0.0, -0.24, 0.0),
+        Transform::from_xyz(0.0, -0.08, 0.0),
+        RenderLayers::layer(0),
     ));
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(5.5, 0.16, 3.7))),
-        MeshMaterial3d(rail_material),
-        Transform::from_xyz(0.0, -0.01, 0.0),
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(5.22, 0.008, 3.42))),
-        MeshMaterial3d(table_material),
-        Transform::from_xyz(0.0, 0.071, 0.0),
-    ));
-    let seat_mesh = meshes.add(Cylinder::new(0.48, 0.18));
-    for z in [-2.15, 2.15] {
-        commands.spawn((
-            Mesh3d(seat_mesh.clone()),
-            MeshMaterial3d(seat_material.clone()),
-            Transform::from_xyz(0.0, -0.02, z),
-        ));
+    for object in layout.scene_objects() {
+        let position = point_to_world(object.pose.translation);
+        match object.kind {
+            SceneObjectKind::Table => {
+                commands.spawn((
+                    Mesh3d(meshes.add(cuboid_from_half_extents(object.half_extents))),
+                    MeshMaterial3d(table_material.clone()),
+                    Transform::from_translation(position),
+                    RenderLayers::layer(0),
+                ));
+            }
+            SceneObjectKind::Seat => {
+                commands.spawn((
+                    Mesh3d(meshes.add(Cylinder::new(0.22, 0.12))),
+                    MeshMaterial3d(seat_material.clone()),
+                    Transform::from_translation(position),
+                    RenderLayers::layer(0),
+                ));
+            }
+            SceneObjectKind::ScoreSheet => {
+                commands.spawn((
+                    Mesh3d(meshes.add(cuboid_from_half_extents(object.half_extents))),
+                    MeshMaterial3d(materials.add(Color::srgb(0.88, 0.84, 0.67))),
+                    Transform::from_translation(position),
+                    RenderLayers::layer(0),
+                ));
+            }
+            SceneObjectKind::Zone => {
+                let color = match object.id {
+                    ObjectId::Zone(ZoneId::Play) => Color::srgba(0.92, 0.72, 0.18, 0.22),
+                    ObjectId::Zone(ZoneId::Hand(_)) => Color::srgba(0.16, 0.62, 0.78, 0.18),
+                    ObjectId::Zone(ZoneId::Won(_)) => Color::srgba(0.62, 0.28, 0.74, 0.18),
+                    _ => Color::srgba(0.82, 0.86, 0.9, 0.12),
+                };
+                commands.spawn((
+                    Mesh3d(meshes.add(cuboid_from_half_extents(object.half_extents))),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: color,
+                        alpha_mode: AlphaMode::Blend,
+                        unlit: true,
+                        ..default()
+                    })),
+                    Transform::from_translation(position),
+                    RenderLayers::layer(0),
+                ));
+            }
+            SceneObjectKind::Player => {}
+        }
     }
 
     commands.insert_resource(SpatialAssets {
@@ -722,23 +784,40 @@ fn setup_spatial_renderer(
             ..default()
         }),
         card_label_mesh: meshes.add(Plane3d::default()),
-        avatar_mesh: meshes.add(Sphere::new(0.30)),
+        avatar_mesh: meshes.add(Capsule3d::new(0.12, 0.24)),
         self_avatar_material: materials.add(Color::srgb(0.92, 0.72, 0.20)),
         peer_avatar_material: materials.add(Color::srgb(0.22, 0.48, 0.82)),
     });
+    commands.insert_resource(CanonicalLayout(layout));
+}
+
+fn point_to_world(point: Point3Mm) -> Vec3 {
+    Vec3::new(
+        point.x.get() as f32,
+        point.y.get() as f32,
+        point.z.get() as f32,
+    ) / 1_000.0
+}
+
+fn cuboid_from_half_extents(half: HalfExtentsMm) -> Cuboid {
+    Cuboid::new(
+        half.x as f32 * 0.002,
+        half.y as f32 * 0.002,
+        half.z as f32 * 0.002,
+    )
 }
 
 fn spectator_camera_transform() -> Transform {
-    Transform::from_xyz(4.8, 5.2, 4.8).looking_at(Vec3::new(0.0, 0.0, 0.0), Vec3::Y)
+    Transform::from_xyz(1.25, 1.45, 1.25).looking_at(Vec3::new(0.0, 0.04, 0.0), Vec3::Y)
 }
 
 fn player_camera_transform(seat: Option<u8>) -> Transform {
     match seat {
         Some(0) => {
-            Transform::from_xyz(0.0, 4.7, 5.4).looking_at(Vec3::new(0.0, 0.0, -0.2), Vec3::Y)
+            Transform::from_xyz(0.0, 1.3, 1.35).looking_at(Vec3::new(0.0, 0.04, -0.08), Vec3::Y)
         }
         Some(1) => {
-            Transform::from_xyz(0.0, 4.7, -5.4).looking_at(Vec3::new(0.0, 0.0, 0.2), Vec3::Y)
+            Transform::from_xyz(0.0, 1.3, -1.35).looking_at(Vec3::new(0.0, 0.04, 0.08), Vec3::Y)
         }
         _ => spectator_camera_transform(),
     }
@@ -971,6 +1050,30 @@ fn handle_buttons(
                     });
                 }
             }
+            UiAction::Bid(tricks) => {
+                if let Some(room_id) = model.snapshot.room_id() {
+                    state.status = format!("Bidding {tricks} trick(s)…");
+                    if let Err(error) = bridge.send(BridgeIntent::Bid {
+                        room_id: room_id.into(),
+                        tricks: *tricks,
+                    }) {
+                        state.status = error;
+                    }
+                }
+            }
+            UiAction::PlayFirstCard => {
+                if let (Some(room_id), Some(card)) =
+                    (model.snapshot.room_id(), model.snapshot.hand.first())
+                {
+                    state.status = format!("Playing {}…", card.face);
+                    if let Err(error) = bridge.send(BridgeIntent::PlayCard {
+                        room_id: room_id.into(),
+                        card_id: card.card_id.clone(),
+                    }) {
+                        state.status = error;
+                    }
+                }
+            }
             UiAction::Leave => {
                 if !state.confirm_leave {
                     state.confirm_leave = true;
@@ -1145,7 +1248,7 @@ fn enter_room(
                     TextColor(Color::WHITE),
                     Node {
                         position_type: PositionType::Absolute,
-                        left: percent(42.),
+                        left: px(26.),
                         top: px(top),
                         ..default()
                     },
@@ -1160,6 +1263,18 @@ fn enter_room(
                     position_type: PositionType::Absolute,
                     left: px(26.),
                     bottom: px(110.),
+                    ..default()
+                },
+            ));
+            root.spawn((
+                GameStatusLabel,
+                Text::new("Waiting for both seats to begin the first deal."),
+                TextFont::from_font_size(20.),
+                TextColor(Color::srgb(0.96, 0.88, 0.58)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(26.),
+                    bottom: px(150.),
                     ..default()
                 },
             ));
@@ -1181,6 +1296,9 @@ fn enter_room(
                 spawn_button(bar, "Take seat 1", UiAction::TakeSeat(0), true);
                 spawn_button(bar, "Take seat 2", UiAction::TakeSeat(1), true);
                 spawn_button(bar, "Stand up", UiAction::ReleaseSeat, false);
+                spawn_button(bar, "Bid 0 tricks", UiAction::Bid(0), true);
+                spawn_button(bar, "Bid 1 trick", UiAction::Bid(1), true);
+                spawn_button(bar, "Play your card", UiAction::PlayFirstCard, true);
                 spawn_button(bar, "Leave lobby", UiAction::Leave, false);
                 bar.spawn((
                     LatencyLabel,
@@ -1271,6 +1389,16 @@ fn sync_room_labels(
             Without<SeatLabel>,
         ),
     >,
+    mut game_status: Query<
+        &mut Text,
+        (
+            With<GameStatusLabel>,
+            Without<RoomCodeLabel>,
+            Without<HandSummary>,
+            Without<SeatLabel>,
+            Without<LatencyLabel>,
+        ),
+    >,
     mut actions: Query<(&UiAction, &mut Node), Without<SeatLabel>>,
 ) {
     if !(model.is_changed() || state.is_changed()) {
@@ -1304,8 +1432,10 @@ fn sync_room_labels(
         node.top = px(if presented_at_bottom { 535. } else { 96. });
     }
     for mut text in &mut hands {
-        text.0 = if model.snapshot.hand.is_empty() {
+        text.0 = if own_seat.is_none() {
             "Take a seat; cards are dealt when both seats are occupied.".into()
+        } else if model.snapshot.hand.is_empty() {
+            "Your hand is empty; the first round is complete.".into()
         } else {
             format!(
                 "Your private hand · {} cards · drag any card to wiggle it for the other player",
@@ -1324,30 +1454,72 @@ fn sync_room_labels(
             },
         );
     }
+    for mut text in &mut game_status {
+        text.0 = model.snapshot.game.as_ref().map_or_else(
+            || "Waiting for both seats to begin the first deal.".into(),
+            |game| {
+                let actor = game
+                    .actor_seat
+                    .map_or_else(|| "none".into(), |seat| format!("seat {}", seat + 1));
+                format!(
+                    "{} · round {} · actor {actor} · bids {:?} · trick {}/{}",
+                    game.phase,
+                    game.round_index + 1,
+                    game.bids,
+                    game.trick_count,
+                    game.hand_size
+                )
+            },
+        );
+    }
     for (action, mut node) in &mut actions {
-        node.display = match action {
-            UiAction::TakeSeat(seat) => {
-                let occupied = model
-                    .snapshot
-                    .members
-                    .iter()
-                    .any(|member| member.seat == Some(*seat));
-                if own_seat.is_none() && !occupied {
-                    Display::Flex
-                } else {
-                    Display::None
+        node.display =
+            match action {
+                UiAction::TakeSeat(seat) => {
+                    let occupied = model
+                        .snapshot
+                        .members
+                        .iter()
+                        .any(|member| member.seat == Some(*seat));
+                    if own_seat.is_none() && !occupied {
+                        Display::Flex
+                    } else {
+                        Display::None
+                    }
                 }
-            }
-            UiAction::ReleaseSeat => {
-                if own_seat.is_some() {
-                    Display::Flex
-                } else {
-                    Display::None
+                UiAction::ReleaseSeat => {
+                    if own_seat.is_some() {
+                        Display::Flex
+                    } else {
+                        Display::None
+                    }
                 }
-            }
-            UiAction::Leave | UiAction::CopyCode | UiAction::CycleRotationSnap => Display::Flex,
-            UiAction::Create | UiAction::Paste | UiAction::Join => continue,
-        };
+                UiAction::Bid(tricks) => {
+                    let may_bid = model.snapshot.game.as_ref().is_some_and(|game| {
+                        game.phase == "bidding"
+                            && game.actor_seat == own_seat
+                            && *tricks <= game.hand_size
+                    });
+                    if may_bid {
+                        Display::Flex
+                    } else {
+                        Display::None
+                    }
+                }
+                UiAction::PlayFirstCard => {
+                    let may_play =
+                        model.snapshot.game.as_ref().is_some_and(|game| {
+                            game.phase == "playing" && game.actor_seat == own_seat
+                        }) && !model.snapshot.hand.is_empty();
+                    if may_play {
+                        Display::Flex
+                    } else {
+                        Display::None
+                    }
+                }
+                UiAction::Leave | UiAction::CopyCode | UiAction::CycleRotationSnap => Display::Flex,
+                UiAction::Create | UiAction::Paste | UiAction::Join => continue,
+            };
     }
 }
 
@@ -1375,7 +1547,10 @@ struct DisplayPose {
 struct PoseDisplay(HashMap<String, DisplayPose>);
 
 #[derive(Component)]
-struct CardVisual(String);
+struct CardVisual {
+    key: String,
+    label: String,
+}
 
 #[derive(Resource, Default)]
 struct DragState {
@@ -1430,12 +1605,21 @@ fn sync_card_entities(
         .map(|pose| pose.card_key.clone())
         .collect();
     for (entity, card) in &existing {
-        if !wanted.contains(&card.0) {
+        let desired = model.snapshot.visible_card_face(&card.key).unwrap_or("P");
+        if !wanted.contains(&card.key) || desired != card.label {
             commands.entity(entity).despawn();
-            poses.0.remove(&card.0);
+            if !wanted.contains(&card.key) {
+                poses.0.remove(&card.key);
+            }
         }
     }
-    let existing: HashSet<_> = existing.iter().map(|(_, card)| card.0.clone()).collect();
+    let existing: HashSet<_> = existing
+        .iter()
+        .filter(|(_, card)| {
+            model.snapshot.visible_card_face(&card.key).unwrap_or("P") == card.label
+        })
+        .map(|(_, card)| card.key.clone())
+        .collect();
     for network in &model.snapshot.card_poses {
         let target = network.position_mm.map(|value| value as f32);
         let display = poses
@@ -1453,17 +1637,22 @@ fn sync_card_entities(
         if existing.contains(&network.card_key) {
             continue;
         }
-        let own_face = model
+        let visible_face = model.snapshot.visible_card_face(&network.card_key);
+        let label = visible_face.unwrap_or("P");
+        let is_own = model
             .snapshot
             .hand
             .iter()
-            .find(|card| card.card_key == network.card_key)
-            .map(|card| card.face.as_str());
-        let label = own_face.unwrap_or("P");
+            .any(|card| card.card_key == network.card_key);
+        let layers = if is_own {
+            RenderLayers::layer(0).with(1)
+        } else {
+            RenderLayers::layer(0)
+        };
         let (texture, aspect) = card_label_texture(
             &mut images,
             label,
-            if own_face.is_some() {
+            if visible_face.is_some() {
                 [18, 18, 16]
             } else {
                 [224, 232, 248]
@@ -1476,18 +1665,21 @@ fn sync_card_entities(
             unlit: true,
             ..default()
         });
-        let label_height = 0.070;
-        let label_width = (label_height * aspect).min(0.13);
+        let (label_width, label_height) = card_label_size(aspect);
         let card = commands
             .spawn((
-                CardVisual(network.card_key.clone()),
+                CardVisual {
+                    key: network.card_key.clone(),
+                    label: label.into(),
+                },
                 Mesh3d(assets.card_mesh.clone()),
-                MeshMaterial3d(if own_face.is_some() {
+                MeshMaterial3d(if visible_face.is_some() {
                     assets.card_face_material.clone()
                 } else {
                     assets.card_back_material.clone()
                 }),
                 pose_transform(target, network.rotation_mdeg),
+                layers.clone(),
             ))
             .id();
         let label =
@@ -1497,10 +1689,18 @@ fn sync_card_entities(
                     MeshMaterial3d(label_material),
                     Transform::from_xyz(0.0, CARD_WORLD_THICKNESS * 0.55, 0.0)
                         .with_scale(Vec3::new(label_width, 1.0, label_height)),
+                    layers,
                 ))
                 .id();
         commands.entity(card).add_child(label);
     }
+}
+
+fn card_label_size(aspect: f32) -> (f32, f32) {
+    let maximum_width = CARD_WORLD_WIDTH * 0.82;
+    let maximum_height = CARD_WORLD_HEIGHT * 0.72;
+    let height = maximum_height.min(maximum_width / aspect.max(0.01));
+    (height * aspect, height)
 }
 
 fn card_label_texture(
@@ -1544,6 +1744,7 @@ fn mdeg_radians(value: i32) -> f32 {
 
 fn sync_player_entities(
     model: Res<BridgeModel>,
+    layout: Res<CanonicalLayout>,
     assets: Res<SpatialAssets>,
     existing: Query<(Entity, &SpatialPlayer)>,
     mut commands: Commands,
@@ -1556,8 +1757,17 @@ fn sync_player_entities(
     }
     for (index, member) in model.snapshot.members.iter().enumerate() {
         let position = member.seat.map_or_else(
-            || Vec3::new(-3.2 + index as f32 * 0.7, 0.28, 0.0),
-            |seat| Vec3::new(0.0, 0.35, if seat == 0 { 2.2 } else { -2.2 }),
+            || Vec3::new(-1.1 + index as f32 * 0.28, 0.18, 0.0),
+            |seat| {
+                layout
+                    .0
+                    .seats()
+                    .iter()
+                    .find(|placement| placement.seat.get() == seat)
+                    .map_or(Vec3::ZERO, |placement| {
+                        point_to_world(placement.player_pose.translation)
+                    })
+            },
         );
         commands.spawn((
             SpatialPlayer,
@@ -1585,14 +1795,93 @@ fn update_table_camera(
     }
 }
 
+fn fifths(value: u32, numerator: u32) -> u32 {
+    value / 5 * numerator + value % 5 * numerator / 5
+}
+
+fn update_hand_camera(
+    surface: Res<RenderSurface>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    model: Res<BridgeModel>,
+    poses: Res<PoseDisplay>,
+    room: Query<(), With<RoomRoot>>,
+    mut hand_cameras: Query<
+        (&mut Camera, &mut Transform, &Projection),
+        (With<HandCamera>, Without<TabletopCamera>),
+    >,
+    mut table_cameras: Query<&mut Camera, (With<TabletopCamera>, Without<HandCamera>)>,
+) {
+    let size = match &*surface {
+        RenderSurface::Windowless { width, height, .. } => UVec2::new(*width, *height),
+        RenderSurface::Windowed => {
+            let Ok(window) = windows.single() else { return };
+            UVec2::new(window.physical_width(), window.physical_height())
+        }
+    };
+    let own_positions = model
+        .snapshot
+        .hand
+        .iter()
+        .filter_map(|card| {
+            poses
+                .0
+                .get(&card.card_key)
+                .map(|pose| mm_position(pose.current))
+        })
+        .collect::<Vec<_>>();
+    let has_hand = !own_positions.is_empty();
+    let hand_top = fifths(size.y, 3);
+    let actions_top = fifths(size.y, 4);
+    for mut camera in &mut table_cameras {
+        camera.viewport = Some(Viewport {
+            physical_position: UVec2::ZERO,
+            physical_size: UVec2::new(size.x, if has_hand { hand_top } else { actions_top }),
+            ..default()
+        });
+    }
+    for (mut camera, mut transform, projection) in &mut hand_cameras {
+        camera.is_active = has_hand && !room.is_empty() && size.x >= 10 && size.y >= 10;
+        if !camera.is_active {
+            continue;
+        }
+        let center = own_positions.iter().copied().sum::<Vec3>() / own_positions.len() as f32;
+        let Projection::Perspective(projection) = projection else {
+            continue;
+        };
+        let viewport_size = UVec2::new(fifths(size.x, 3), actions_top - hand_top);
+        let aspect = viewport_size.x as f32 / viewport_size.y.max(1) as f32;
+        let width = (own_positions.len().saturating_sub(1) as f32 * 0.072 + 0.064) * 1.2;
+        let distance =
+            (0.106_f32.max(width / aspect) / (2.0 * (projection.fov * 0.5).tan())).max(0.15);
+        let hand_up = hand_camera_up(model.snapshot.own_seat());
+        *transform =
+            Transform::from_translation(center + Vec3::Y * distance).looking_at(center, hand_up);
+        camera.viewport = Some(Viewport {
+            physical_position: UVec2::new(size.x / 5, hand_top),
+            physical_size: viewport_size,
+            ..default()
+        });
+    }
+}
+
+fn hand_camera_up(seat: Option<u8>) -> Vec3 {
+    if seat == Some(1) {
+        Vec3::Z
+    } else {
+        Vec3::NEG_Z
+    }
+}
+
 fn drag_cards(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     rotation_snap: Res<RotationSnap>,
     windows: Query<&Window>,
-    cameras: Query<(&Camera, &GlobalTransform), With<TabletopCamera>>,
+    cameras: Query<(&Camera, &GlobalTransform), Or<(With<TabletopCamera>, With<HandCamera>)>>,
     model: Res<BridgeModel>,
     bridge: Res<BridgeHandle>,
+    layout: Res<CanonicalLayout>,
+    mut state: ResMut<UiState>,
     mut poses: ResMut<PoseDisplay>,
     mut drag: ResMut<DragState>,
 ) {
@@ -1602,7 +1891,16 @@ fn drag_cards(
     let Some(cursor) = window.cursor_position() else {
         return;
     };
-    let Ok((camera, camera_transform)) = cameras.single() else {
+    let Some((camera, camera_transform)) = cameras
+        .iter()
+        .filter(|(camera, _)| {
+            camera.is_active
+                && camera
+                    .logical_viewport_rect()
+                    .is_some_and(|rect| rect.contains(cursor))
+        })
+        .max_by_key(|(camera, _)| camera.order)
+    else {
         return;
     };
     let own_identity = model.snapshot.identity.as_deref();
@@ -1670,16 +1968,92 @@ fn drag_cards(
         }
     }
     if mouse.just_released(MouseButton::Left) {
-        send_pose(
-            &key,
-            &model.snapshot.card_poses,
-            &mut poses,
-            &bridge,
-            model.snapshot.room_id(),
-        );
+        let dropped_in_play = poses
+            .0
+            .get(&key)
+            .is_some_and(|pose| is_play_drop(&layout.0, pose.current));
+        let may_play = model.snapshot.game.as_ref().is_some_and(|game| {
+            game.phase == "playing" && game.actor_seat == model.snapshot.own_seat()
+        });
+        if dropped_in_play && may_play {
+            send_pose(
+                &key,
+                &model.snapshot.card_poses,
+                &mut poses,
+                &bridge,
+                model.snapshot.room_id(),
+            );
+            if let (Some(room_id), Some(card)) = (
+                model.snapshot.room_id(),
+                model.snapshot.hand.iter().find(|card| card.card_key == key),
+            ) {
+                state.status = format!("Playing {}…", card.face);
+                let _ = bridge.send(BridgeIntent::PlayCard {
+                    room_id: room_id.into(),
+                    card_id: card.card_id.clone(),
+                });
+            }
+        } else if dropped_in_play {
+            restore_card_to_hand(&key, &model, &layout.0, &mut poses);
+            send_pose(
+                &key,
+                &model.snapshot.card_poses,
+                &mut poses,
+                &bridge,
+                model.snapshot.room_id(),
+            );
+            state.status =
+                "That card cannot enter PLAY now; its logical location remains your hand.".into();
+        } else {
+            send_pose(
+                &key,
+                &model.snapshot.card_poses,
+                &mut poses,
+                &bridge,
+                model.snapshot.room_id(),
+            );
+        }
         drag.card_key = None;
         drag.last_sent = None;
         drag.reset_rotation_repeat();
+    }
+}
+
+fn is_play_drop(layout: &SpatialLayout, position_mm: [f32; 3]) -> bool {
+    let center = position_mm.map(|value| value.round() as i32);
+    AabbMm::from_center(
+        Point3Mm::new(center[0], center[1], center[2]),
+        HalfExtentsMm::new(32, 1, 44),
+    )
+    .is_some_and(|bounds| {
+        layout.classify_bounds(bounds) == ZoneClassification::Snapped(ZoneId::Play)
+    })
+}
+
+fn restore_card_to_hand(
+    key: &str,
+    model: &BridgeModel,
+    layout: &SpatialLayout,
+    poses: &mut PoseDisplay,
+) {
+    let Some(seat) = model.snapshot.own_seat() else {
+        return;
+    };
+    let Some(zone) = layout
+        .zones()
+        .iter()
+        .find(|zone| matches!(zone.id, ZoneId::Hand(id) if id.get() == seat))
+    else {
+        return;
+    };
+    let center = [
+        i32::midpoint(zone.inner.min.x.get(), zone.inner.max.x.get()),
+        i32::midpoint(zone.inner.min.y.get(), zone.inner.max.y.get()),
+        i32::midpoint(zone.inner.min.z.get(), zone.inner.max.z.get()),
+    ];
+    if let Some(pose) = poses.0.get_mut(key) {
+        pose.current = center.map(|value| value as f32);
+        pose.target = pose.current;
     }
 }
 
@@ -1727,7 +2101,7 @@ fn animate_and_place_cards(
         }
     }
     for (card, mut transform) in &mut cards {
-        let Some(pose) = poses.0.get(&card.0) else {
+        let Some(pose) = poses.0.get(&card.key) else {
             continue;
         };
         *transform = pose_transform(pose.current, pose.rotation_mdeg);
@@ -1784,6 +2158,16 @@ mod tests {
     }
 
     #[test]
+    fn card_labels_preserve_aspect_inside_the_canonical_face() {
+        for aspect in [0.4, 1.0, 2.5] {
+            let (width, height) = card_label_size(aspect);
+            assert!(width <= CARD_WORLD_WIDTH * 0.82 + f32::EPSILON);
+            assert!(height <= CARD_WORLD_HEIGHT * 0.72 + f32::EPSILON);
+            assert!((width / height - aspect).abs() < 0.000_01);
+        }
+    }
+
+    #[test]
     fn player_cameras_look_from_their_own_side_of_the_table() {
         let seat_zero = player_camera_transform(Some(0));
         let seat_one = player_camera_transform(Some(1));
@@ -1791,6 +2175,17 @@ mod tests {
         assert!(seat_one.translation.z < 0.0);
         assert!((seat_zero.forward().dot(Vec3::NEG_Z)) > 0.5);
         assert!((seat_one.forward().dot(Vec3::Z)) > 0.5);
+        assert_eq!(hand_camera_up(Some(0)), Vec3::NEG_Z);
+        assert_eq!(hand_camera_up(Some(1)), Vec3::Z);
+    }
+
+    #[test]
+    fn only_a_complete_card_inside_the_canonical_play_zone_proposes_play() {
+        let layout = registered_layout(TableId::new(1), LayoutId::new(2, 1).expect("layout id"))
+            .expect("registered layout");
+        assert!(is_play_drop(&layout, [0.0, 40.0, 0.0]));
+        assert!(!is_play_drop(&layout, [0.0, 40.0, 520.0]));
+        assert!(!is_play_drop(&layout, [90.0, 40.0, 0.0]));
     }
 
     #[test]
