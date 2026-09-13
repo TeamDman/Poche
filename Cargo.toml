@@ -61,3 +61,12 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+
+# Keep first-party code quick to rebuild while giving Bevy, wgpu, and the rest
+# of the dependency graph enough optimization for usable development runtime
+# performance. This follows Bevy's recommended development profile.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
