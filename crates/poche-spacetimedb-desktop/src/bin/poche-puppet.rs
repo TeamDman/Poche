@@ -95,13 +95,13 @@ fn run() -> Result<(), String> {
             let x = parse(&mut args, "X_MM")?;
             let y = parse(&mut args, "Y_MM")?;
             let z = parse(&mut args, "Z_MM")?;
-            let rz = parse(&mut args, "RZ_MDEG")?;
+            let ry = parse(&mut args, "RY_MDEG")?;
             print_response(send(
                 &root,
                 FileControlAction::MoveOwnCard {
                     card_index,
                     position_mm: [x, y, z],
-                    rotation_mdeg: [0, 0, rz],
+                    rotation_mdeg: [0, ry, 0],
                 },
             )?)
         }
@@ -120,7 +120,7 @@ fn run() -> Result<(), String> {
                  poche-puppet observe ROOT [--include-join-code]\n\
                  poche-puppet set-name ROOT NAME | create ROOT | join ROOT CODE\n\
                  poche-puppet seat ROOT 0|1 | stand ROOT\n\
-                 poche-puppet move ROOT CARD_INDEX X_MM Y_MM Z_MM RZ_MDEG\n\
+                 poche-puppet move ROOT CARD_INDEX X_MM Y_MM Z_MM RY_MDEG\n\
                  poche-puppet capture ROOT | stop ROOT"
             );
             Ok(())
@@ -262,7 +262,7 @@ fn acceptance_inner(
     let seated_alice = capture(alice_root)?;
     let seated_bob = capture(bob_root)?;
     let moved_position = [650, 160, -250];
-    let moved_rotation = [0, 0, 18_000];
+    let moved_rotation = [0, 45_000, 0];
     let mut owned_keys = alice_ready
         .own_hand
         .iter()

@@ -6,6 +6,12 @@ lobby, occupy distinct seats, receive distinct private five-card hands, and
 move and rotate cards with local prediction and subscription-driven peer
 updates.
 
+The current SpacetimeDB window draws those three-axis poses through a top-down
+Bevy UI projection. It is not yet the repository's existing native 3D spatial
+mirror. Restoring the real table camera plus private-hand camera over one 3D
+world is the next renderer integration step; the 2D projection is retained as
+diagnostic/MVP evidence rather than accepted as the final desktop environment.
+
 This is the physical-table multiplayer slice, not a claim that the complete
 Poche rules have been ported into SpacetimeDB. The existing transport-free
 Rust rules and Alloy/NuSMV/Prolog evidence remain the authority for Poche game
@@ -71,6 +77,29 @@ An explicit HTTP(S) URL is also accepted by `--server`. The existing
 `POCHE_SPACETIMEDB_URI` and `POCHE_SPACETIMEDB_DATABASE` environment variables
 remain supported when no corresponding command-line option is supplied.
 
+## Graphics backend on Windows
+
+Poche defaults to DX12 on Windows. Bevy 0.19.1/wgpu 29 can otherwise select
+Vulkan on NVIDIA and emit swapchain validation failures during startup about a
+presented image remaining in `VK_IMAGE_LAYOUT_UNDEFINED`, followed by already-
+signaled acquire semaphores. This has minimal upstream reproductions in
+[Bevy #22733](https://github.com/bevyengine/bevy/issues/22733) and
+[wgpu #9213](https://github.com/gfx-rs/wgpu/issues/9213); it is not caused by a
+Poche reducer or card pose.
+
+The backend remains explicit and reversible:
+
+```powershell
+target\debug\poche.exe --graphics-backend dx12
+target\debug\poche.exe --graphics-backend vulkan
+target\debug\poche.exe --graphics-backend auto
+```
+
+Use `vulkan` when testing a future upstream fix. `auto` restores Bevy/wgpu
+selection (including `WGPU_BACKEND` handling). Windowless captures do not own a
+presentation swapchain and therefore cannot by themselves prove this startup
+problem fixed.
+
 ## Run a local table
 
 The checked implementation pins its CLI, module bindings, and Rust SDK to
@@ -113,10 +142,20 @@ Start-Process -FilePath .\target\debug\poche.exe
 In the first window, enter a name and choose **Create lobby**, then copy the
 opaque `PCH-…` code. In the second window, enter a different name, paste the
 code, and choose **Join lobby**. Take different seats. Each player sees only
-their own card faces; the peer sees opaque `P` card backs. Drag a card in one
-window and use Q/E while dragging to rotate it. The initiating window predicts
-the pose immediately, while the other window interpolates toward updates from
-the server subscription.
+their own card faces; the peer sees opaque `P` card backs. Dragging changes only
+the physical position. Hold Q or E while dragging to rotate around the table's
+up axis. The **Rotation snap** button at the top cycles through off, 15°, 30°,
+45°, 60°, and 90° increments. The initiating window predicts the pose
+immediately, while the other window interpolates toward updates from the
+server subscription.
+
+The replicated integer angle unit is one millidegree: one full turn is
+`360_000`, so `18_000` is 18° and `180_000` is 180°. Radians are only a Bevy
+trigonometry/quaternion boundary. A binary-turn newtype (for example, 65,536
+ticks per turn) is a promising later schema because quarter/eighth turns are
+exact and wrap naturally, but changing the database before the 3D orientation
+contract is settled would create churn without changing the current renderer's
+precision in a meaningful way.
 
 The local profile token is persisted by the official SDK credential helper.
 Reusing a profile name on the same machine reconnects as the same SpacetimeDB
@@ -162,6 +201,9 @@ target\debug\poche-puppet.exe move target\live\alice 0 650 160 -250 18000
 target\debug\poche-puppet.exe capture target\live\alice
 target\debug\poche-puppet.exe stop target\live\alice
 ```
+
+The final `move` argument is rotation about table-up Y in millidegrees, matching
+the Q/E control and the visible top-down angle.
 
 Requests are atomically claimed from `requests/`, archived to `processed/`,
 and answered in `responses/`. Every response includes a semantic observation

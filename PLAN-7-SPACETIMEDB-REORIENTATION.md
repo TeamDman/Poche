@@ -3,7 +3,7 @@
 **Plan status:** Active; the create/join/seat/private-hand/shared-pose desktop MVP is implemented and accepted, while durable Poche play, recovery, and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-13 (Maincloud deployment, explicit hosted/local profiles, scoped credentials, and dual acceptance evidence recorded)
+**Last updated:** 2026-09-13 (Windows graphics-backend mitigation and honest 2D/3D renderer boundary recorded; rotation input corrected)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
@@ -125,6 +125,35 @@ This proves deployment selection and the current physical-pose slice on both
 authorities. It does not yet prove durable logical card movement, reconnect,
 multiple devices for one identity, full Poche play, or production operations.
 
+## 2026-09-13 renderer/input correction checkpoint
+
+- Confirmed that the SpacetimeDB client currently uses a top-down Bevy UI
+  projection (`Camera2d`, `Node`, and `UiTransform`), not the repository's
+  existing native 3D table and private-hand cameras. This is an MVP regression
+  against U13, not a new architectural decision; T4 remains open until the
+  SpacetimeDB projection drives the existing 3D renderer boundary.
+- Removed horizontal pointer-delta rotation. Drag now changes position only;
+  Q/E changes the visible table-normal angle in bounded steps, with held-key
+  repeat. A top control cycles off/15°/30°/45°/60°/90° rotation snap.
+- Kept the replicated schema in exact millidegrees for now. One full turn is
+  360,000 units. A `Turn16`-style domain newtype is worth evaluating alongside
+  the 3D orientation/Euler contract, but a schema migration is not justified
+  merely to avoid radians because storage and reducers already use integers.
+- The reported Vulkan present/acquire validation sequence matches minimal
+  upstream Bevy/wgpu reports. Windows now defaults to DX12 while
+  `--graphics-backend auto|dx12|vulkan` keeps diagnosis and future retesting
+  explicit. Windowless evidence cannot validate a swapchain-present fix.
+- Package unit tests and strict Clippy pass after the correction. An ordinary
+  visible-window check remains required because only a real Winit swapchain can
+  confirm that the user's startup diagnostics are gone.
+- After rebuilding both sibling binaries, hosted two-device acceptance still
+  passed (one-shot 60.05 ms authority response and 167.33 ms exact peer
+  observation). Its reviewed contact sheet visibly contains the same moved
+  card at 45° for owner and peer. The run also exposed that `cargo run --bin
+  poche-puppet` does not relink the sibling `poche.exe`; acceptance instructions
+  continue to require `cargo build --bins` first so stale renderers cannot be
+  mistaken for current evidence.
+
 ## Authoritative user guidance ledger
 
 | ID | Active guidance | Required plan consequence | Superseded by |
@@ -162,6 +191,10 @@ multiple devices for one identity, full Poche play, or production operations.
 | U31 | Direct browser support is being dropped as a priority, not proven impossible forever. | Mark browser as unsupported for this phase, not architecturally forbidden; keep pure/client boundaries portable where inexpensive. | — |
 | U32 | Device-to-device graphical capture may later use the same player/device agency model. | Keep capture commands above the transport adapter. Do not make capture delivery part of the first SpacetimeDB gameplay slice. | — |
 | U33 | Codex should be able to manipulate live game instances ad hoc through SFM-style files, request screenshots, and combine many views into one image rather than relying only on fixed puppets or repeated image previews. | Provide fresh named file endpoints, typed actions plus semantic observation, GPU capture, a general control CLI, and one two-device contact sheet. Keep the endpoint on the ordinary player-intent path. | — |
+| U34 | Prefer programmer-facing angle units that avoid gratuitous radians/π conversions; turns or half-turns may be clearer and preserve common fractions exactly. | Keep radians at renderer math boundaries. Evaluate an exact bounded turn newtype before the next pose-schema version, together with the 3D orientation representation. | — |
+| U35 | Vulkan startup emits repeated wgpu presentation-layout and acquire-semaphore validation errors on the user's Windows/NVIDIA machine. | Default Windows to DX12, retain explicit auto/Vulkan overrides, link the upstream reproductions, and require visible-window evidence rather than treating an offscreen test as proof. | — |
+| U36 | Pointer position must not implicitly rotate cards; Q/E should rotate, and a prominent control should cycle common rotation-lock increments such as 45° and 90°. | Separate translation from rotation input, make the table-normal axis visible, add a local snap-mode control, and test exact wrap/cycle behavior. | — |
+| U37 | The desktop environment should remain the established 3D table rather than regress to a 2D replacement. | Treat the present top-down UI as temporary diagnostic evidence and reconnect the SpacetimeDB observation/intent edge to the existing 3D table, hand camera, picking, and capture surface in T4. | — |
 
 ## Guidance traceability
 
@@ -181,6 +214,7 @@ multiple devices for one identity, full Poche play, or production operations.
 | U23 | Constraints, T6.3, T7.1 | Ordinary-user run guide and acceptance record |
 | U27 | T3.1–T3.3, T4.1, T7.1 | GUI and CLI invoke the same client adapter |
 | U30 | Scope, T1.3, T7.2 | Default dependency graph excludes Veilid; history retained |
+| U34–U37 | T4.3, T4.4, T6.2–T6.4 | Exact angle tests, visible Q/E/snap behavior, real 3D two-window captures, and a clean Windows DX12 startup log |
 
 ## Purpose
 

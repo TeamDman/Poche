@@ -28,6 +28,7 @@ use bevy::{
     render::{
         RenderPlugin,
         render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
+        settings::{Backends, WgpuSettings},
         view::screenshot::Screenshot,
     },
     text::{EditableText, TextCursorStyle, TextEdit},
@@ -47,6 +48,10 @@ use std::time::{Duration, Instant};
 const CARD_WIDTH: f32 = 76.0;
 const CARD_HEIGHT: f32 = 108.0;
 const POSE_PERIOD: Duration = Duration::from_millis(50);
+const FULL_TURN_MDEG: i32 = 360_000;
+const ROTATION_REPEAT_DELAY: Duration = Duration::from_millis(300);
+const ROTATION_REPEAT_PERIOD: Duration = Duration::from_millis(100);
+const ROTATION_SNAP_MDEG: [i32; 6] = [0, 15_000, 30_000, 45_000, 60_000, 90_000];
 const AUTOMATION_WIDTH: u32 = 1180;
 const AUTOMATION_HEIGHT: u32 = 760;
 const FONT_BYTES: &[u8] = include_bytes!("../../poche-native-ui/assets/CaskaydiaCove-Regular.ttf");
@@ -171,11 +176,85 @@ pub enum RenderMode {
     WindowlessImage,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GraphicsBackend {
+    Auto,
+    Dx12,
+    Vulkan,
+}
+
+impl Default for GraphicsBackend {
+    fn default() -> Self {
+        if cfg!(target_os = "windows") {
+            Self::Dx12
+        } else {
+            Self::Auto
+        }
+    }
+}
+
+impl GraphicsBackend {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "auto" => Ok(Self::Auto),
+            "dx12" => Ok(Self::Dx12),
+            "vulkan" => Ok(Self::Vulkan),
+            _ => Err(format!(
+                "--graphics-backend expects auto, dx12, or vulkan; got {value:?}"
+            )),
+        }
+    }
+
+    const fn backends(self) -> Option<Backends> {
+        match self {
+            Self::Auto => None,
+            Self::Dx12 => Some(Backends::DX12),
+            Self::Vulkan => Some(Backends::VULKAN),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct LaunchOptions {
     pub render_mode: RenderMode,
+    pub graphics_backend: GraphicsBackend,
     pub file_control: Option<file_control::FileControlOptions>,
     pub authority: AuthorityEndpoint,
+}
+
+#[derive(Debug, Resource)]
+struct RotationSnap {
+    index: usize,
+}
+
+impl Default for RotationSnap {
+    fn default() -> Self {
+        Self { index: 3 }
+    }
+}
+
+impl RotationSnap {
+    fn mdeg(&self) -> i32 {
+        ROTATION_SNAP_MDEG[self.index]
+    }
+
+    fn step_mdeg(&self) -> i32 {
+        let snap = self.mdeg();
+        if snap == 0 { 5_000 } else { snap }
+    }
+
+    fn cycle(&mut self) {
+        self.index = (self.index + 1) % ROTATION_SNAP_MDEG.len();
+    }
+
+    fn label(&self) -> String {
+        let snap = self.mdeg();
+        if snap == 0 {
+            "Rotation snap: off".into()
+        } else {
+            format!("Rotation snap: {}°", snap / 1_000)
+        }
+    }
 }
 
 #[derive(Clone, Debug, Resource)]
@@ -250,15 +329,22 @@ pub fn run_from_env() -> Result<(), String> {
             "--database" => {
                 database = Some(args.next().ok_or("--database requires a value")?);
             }
+            "--graphics-backend" => {
+                options.graphics_backend = GraphicsBackend::parse(
+                    &args.next().ok_or("--graphics-backend requires a value")?,
+                )?;
+            }
             "--windowless" => options.render_mode = RenderMode::WindowlessImage,
             "--help" | "-h" => {
                 println!(
                     "poche [--server local|maincloud|URL] [--database NAME]\n\
+                     \x20     [--graphics-backend auto|dx12|vulkan]\n\
                      \x20     [--control-root PATH --instance-id ID] [--windowless]\n\
                      The safe default is local. The maincloud shorthand selects\n\
                      https://maincloud.spacetimedb.com and poche-6quz6. Explicit options override\n\
                      POCHE_SPACETIMEDB_URI and POCHE_SPACETIMEDB_DATABASE. Developer control\n\
-                     publishes a fresh file endpoint; --windowless avoids an OS window."
+                     publishes a fresh file endpoint; --windowless avoids an OS window. On\n\
+                     Windows, DX12 is the default graphics backend; Vulkan remains selectable."
                 );
                 return Ok(());
             }
@@ -285,6 +371,10 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
     let authority = options.authority.clone();
     let windowless = options.render_mode == RenderMode::WindowlessImage;
     let surface = RenderSurface::from_mode(options.render_mode);
+    let mut wgpu_settings = WgpuSettings::default();
+    if let Some(backends) = options.graphics_backend.backends() {
+        wgpu_settings.backends = Some(backends);
+    }
     let window_plugin = if windowless {
         WindowPlugin {
             primary_window: None,
@@ -304,15 +394,14 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
     };
     let mut plugins = DefaultPlugins
         .set(window_plugin)
-        .set(ImagePlugin::default_nearest());
+        .set(ImagePlugin::default_nearest())
+        .set(RenderPlugin {
+            render_creation: wgpu_settings.into(),
+            synchronous_pipeline_compilation: windowless,
+            ..default()
+        });
     if windowless {
-        plugins = plugins
-            .set(RenderPlugin {
-                synchronous_pipeline_compilation: true,
-                ..default()
-            })
-            .disable::<WinitPlugin>()
-            .disable::<LogPlugin>();
+        plugins = plugins.disable::<WinitPlugin>().disable::<LogPlugin>();
     }
 
     let control_root = options
@@ -354,6 +443,7 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
         .init_resource::<PendingClipboard>()
         .init_resource::<PoseDisplay>()
         .init_resource::<DragState>()
+        .init_resource::<RotationSnap>()
         .add_message::<ButtonActivation>()
         .add_observer(activate_button)
         .add_systems(Startup, (setup_render_target, setup_menu).chain())
@@ -369,6 +459,7 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
                 drag_cards,
                 animate_and_place_cards,
                 update_status_labels,
+                update_rotation_snap_labels,
                 apply_poche_font,
             )
                 .chain(),
@@ -448,6 +539,9 @@ struct HandSummary;
 #[derive(Component)]
 struct LatencyLabel;
 
+#[derive(Component)]
+struct RotationSnapLabel;
+
 #[derive(Component, Clone, Copy, Eq, PartialEq)]
 enum Field {
     Name,
@@ -463,6 +557,7 @@ enum UiAction {
     TakeSeat(u8),
     ReleaseSeat,
     Leave,
+    CycleRotationSnap,
 }
 
 #[derive(Message)]
@@ -640,6 +735,7 @@ fn handle_buttons(
     mut clipboard: ResMut<Clipboard>,
     mut pending: ResMut<PendingClipboard>,
     mut state: ResMut<UiState>,
+    mut rotation_snap: ResMut<RotationSnap>,
     authority: Res<AuthorityEndpoint>,
 ) {
     for ButtonActivation(entity) in activations.read() {
@@ -741,6 +837,13 @@ fn handle_buttons(
                     });
                 }
             }
+            UiAction::CycleRotationSnap => {
+                rotation_snap.cycle();
+                state.status = format!(
+                    "{}; hold Q or E while dragging a card.",
+                    rotation_snap.label()
+                );
+            }
         }
     }
 }
@@ -814,6 +917,7 @@ fn handle_bridge_notices(mut notices: MessageReader<BridgeNotice>, mut state: Re
 fn enter_room(
     model: Res<BridgeModel>,
     state: Res<UiState>,
+    rotation_snap: Res<RotationSnap>,
     menu: Query<Entity, With<MainMenuRoot>>,
     room: Query<Entity, With<RoomRoot>>,
     cameras: Query<Entity, With<PocheUiCamera>>,
@@ -864,6 +968,23 @@ fn enter_room(
                     top: px(18.),
                     ..default()
                 },
+            ));
+            root.spawn((
+                Button,
+                UiAction::CycleRotationSnap,
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: px(22.),
+                    top: px(82.),
+                    padding: px(9.).all(),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.13, 0.26, 0.27)),
+                children![(
+                    RotationSnapLabel,
+                    Text::new(rotation_snap.label()),
+                    TextFont::from_font_size(16.),
+                )],
             ));
             root.spawn((
                 RoomCodeLabel,
@@ -925,7 +1046,7 @@ fn enter_room(
                 spawn_button(bar, "Leave lobby", UiAction::Leave, false);
                 bar.spawn((
                     LatencyLabel,
-                    Text::new("Card drag: move · Q/E: rotate"),
+                    Text::new("Drag: move · hold Q/E: rotate"),
                     TextFont::from_font_size(15.),
                     TextColor(Color::srgb(0.72, 0.82, 0.8)),
                 ));
@@ -1056,10 +1177,10 @@ fn sync_room_labels(
     }
     for mut text in &mut latency {
         text.0 = model.last_command_latency.map_or_else(
-            || "Card drag: move · Q/E: rotate".into(),
+            || "Drag: move · hold Q/E: rotate".into(),
             |value| {
                 format!(
-                    "Last authority response {:.1} ms · drag · Q/E rotate",
+                    "Last authority response {:.1} ms · drag · hold Q/E rotate",
                     value.as_secs_f64() * 1000.
                 )
             },
@@ -1086,9 +1207,21 @@ fn sync_room_labels(
                     Display::None
                 }
             }
-            UiAction::Leave | UiAction::CopyCode => Display::Flex,
+            UiAction::Leave | UiAction::CopyCode | UiAction::CycleRotationSnap => Display::Flex,
             UiAction::Create | UiAction::Paste | UiAction::Join => continue,
         };
+    }
+}
+
+fn update_rotation_snap_labels(
+    rotation_snap: Res<RotationSnap>,
+    mut labels: Query<&mut Text, With<RotationSnapLabel>>,
+) {
+    if !rotation_snap.is_changed() {
+        return;
+    }
+    for mut label in &mut labels {
+        label.0 = rotation_snap.label();
     }
 }
 
@@ -1109,8 +1242,34 @@ struct CardVisual(String);
 #[derive(Resource, Default)]
 struct DragState {
     card_key: Option<String>,
-    last_cursor: Option<Vec2>,
     last_sent: Option<Instant>,
+    rotation_direction: i8,
+    next_rotation_step: Option<Instant>,
+}
+
+impl DragState {
+    fn rotation_step_due(&mut self, direction: i8, now: Instant) -> bool {
+        if direction == 0 {
+            self.rotation_direction = 0;
+            self.next_rotation_step = None;
+            return false;
+        }
+        if self.rotation_direction != direction {
+            self.rotation_direction = direction;
+            self.next_rotation_step = Some(now + ROTATION_REPEAT_DELAY);
+            return true;
+        }
+        if self.next_rotation_step.is_some_and(|next| now >= next) {
+            self.next_rotation_step = Some(now + ROTATION_REPEAT_PERIOD);
+            return true;
+        }
+        false
+    }
+
+    fn reset_rotation_repeat(&mut self) {
+        self.rotation_direction = 0;
+        self.next_rotation_step = None;
+    }
 }
 
 fn sync_card_entities(
@@ -1196,6 +1355,7 @@ fn sync_card_entities(
 fn drag_cards(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
+    rotation_snap: Res<RotationSnap>,
     windows: Query<&Window>,
     model: Res<BridgeModel>,
     bridge: Res<BridgeHandle>,
@@ -1229,8 +1389,8 @@ fn drag_cards(
             })
             .min_by(|left, right| left.1.total_cmp(&right.1))
             .map(|(key, _)| key);
-        drag.last_cursor = Some(cursor);
         drag.last_sent = None;
+        drag.reset_rotation_repeat();
     }
 
     let Some(key) = drag.card_key.clone() else {
@@ -1243,18 +1403,18 @@ fn drag_cards(
             pose.current[0] = physical[0];
             pose.current[2] = physical[2];
             pose.current[1] = 160.;
-            let delta = drag.last_cursor.map_or(0., |last| cursor.x - last.x);
-            pose.rotation_mdeg[2] = pose.rotation_mdeg[2]
-                .saturating_add((delta * 700.) as i32)
-                .clamp(-360_000, 360_000);
-            if keys.pressed(KeyCode::KeyQ) {
-                pose.rotation_mdeg[1] = pose.rotation_mdeg[1].saturating_sub(1_500);
-            }
-            if keys.pressed(KeyCode::KeyE) {
-                pose.rotation_mdeg[1] = pose.rotation_mdeg[1].saturating_add(1_500);
-            }
         }
-        drag.last_cursor = Some(cursor);
+        let rotation_direction =
+            i8::from(keys.pressed(KeyCode::KeyE)) - i8::from(keys.pressed(KeyCode::KeyQ));
+        if drag.rotation_step_due(rotation_direction, Instant::now())
+            && let Some(pose) = poses.0.get_mut(&key)
+        {
+            pose.rotation_mdeg[1] = rotate_mdeg(
+                pose.rotation_mdeg[1],
+                rotation_direction,
+                rotation_snap.step_mdeg(),
+            );
+        }
         if drag
             .last_sent
             .is_none_or(|last| last.elapsed() >= POSE_PERIOD)
@@ -1278,9 +1438,13 @@ fn drag_cards(
             model.snapshot.room_id(),
         );
         drag.card_key = None;
-        drag.last_cursor = None;
         drag.last_sent = None;
+        drag.reset_rotation_repeat();
     }
+}
+
+fn rotate_mdeg(current: i32, direction: i8, step: i32) -> i32 {
+    (current + i32::from(direction) * step).rem_euclid(FULL_TURN_MDEG)
 }
 
 fn send_pose(
@@ -1334,7 +1498,14 @@ fn animate_and_place_cards(
         let center = project_pose(pose.current, model.snapshot.own_seat(), window);
         node.left = px(center.x - CARD_WIDTH * 0.5);
         node.top = px(center.y - CARD_HEIGHT * 0.5 - pose.current[1] * 0.025);
-        transform.rotation = Rot2::degrees(pose.rotation_mdeg[2] as f32 / 1_000.);
+        let viewer_rotation = if model.snapshot.own_seat() == Some(1) {
+            180_000
+        } else {
+            0
+        };
+        transform.rotation = Rot2::degrees(
+            (pose.rotation_mdeg[1] + viewer_rotation).rem_euclid(FULL_TURN_MDEG) as f32 / 1_000.,
+        );
     }
 }
 
@@ -1411,5 +1582,32 @@ mod tests {
             .expect("maincloud override");
         assert_eq!(selected.database, "poche-staging-1");
         assert!(AuthorityEndpoint::select(Some("maincloud"), Some("Poche_bad")).is_err());
+    }
+
+    #[test]
+    fn rotation_snap_cycles_and_wraps_in_millidegrees() {
+        let mut snap = RotationSnap::default();
+        assert_eq!(snap.label(), "Rotation snap: 45°");
+        assert_eq!(rotate_mdeg(350_000, 1, snap.step_mdeg()), 35_000);
+        assert_eq!(rotate_mdeg(10_000, -1, snap.step_mdeg()), 325_000);
+
+        snap.cycle();
+        assert_eq!(snap.label(), "Rotation snap: 60°");
+        snap.cycle();
+        assert_eq!(snap.label(), "Rotation snap: 90°");
+        snap.cycle();
+        assert_eq!(snap.label(), "Rotation snap: off");
+        assert_eq!(snap.step_mdeg(), 5_000);
+    }
+
+    #[test]
+    fn graphics_backend_names_are_explicit() {
+        assert_eq!(GraphicsBackend::parse("auto"), Ok(GraphicsBackend::Auto));
+        assert_eq!(GraphicsBackend::parse("dx12"), Ok(GraphicsBackend::Dx12));
+        assert_eq!(
+            GraphicsBackend::parse("vulkan"),
+            Ok(GraphicsBackend::Vulkan)
+        );
+        assert!(GraphicsBackend::parse("metal").is_err());
     }
 }
