@@ -199,7 +199,10 @@ current actor's card from the private-hand inset into the highlighted PLAY
 zone. The server replays the typed action log through the pure Rust oracle
 before revealing or changing the card's logical location. Ordinary hand
 wiggling is locally predicted and published at a bounded rate; peers
-interpolate the face-free pose. Q/E rotates a dragged card.
+interpolate the face-free pose. Q/E rotates a dragged card. RMB orbits the
+table, MMB or WASD pans, the wheel zooms, Space resets the view, and O toggles
+between the perspective orbit and tactical orthographic camera. F3 toggles the
+FPS and frame-time graph.
 
 ## Play in two browser tabs
 
