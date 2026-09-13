@@ -1512,7 +1512,7 @@ fn enter_room(
                 bar.spawn((
                     LatencyLabel,
                     Text::new(
-                        "Drag card · Q/E rotate · RMB orbit · MMB/WASD pan · Wheel zoom · Space reset · Esc menu",
+                        "Drag card · Q turn left · E turn right · RMB orbit · MMB/WASD pan · Wheel zoom · Space reset · Esc menu",
                     ),
                     TextFont::from_font_size(15.),
                     TextColor(Color::srgb(0.72, 0.82, 0.8)),
@@ -1759,10 +1759,10 @@ fn sync_room_labels(
     }
     for mut text in &mut latency {
         text.0 = model.last_command_latency.map_or_else(
-            || "Drag: move · hold Q/E: rotate · wheel: zoom".into(),
+            || "Drag: move · Q: turn left · E: turn right · wheel: zoom".into(),
             |value| {
                 format!(
-                    "Last authority response {:.1} ms · drag · hold Q/E rotate · wheel zoom",
+                    "Last authority response {:.1} ms · drag · Q left · E right · wheel zoom",
                     value.as_secs_f64() * 1000.
                 )
             },
@@ -1880,6 +1880,7 @@ fn update_rotation_snap_labels(
 struct DisplayPose {
     current: [f32; 3],
     target: [f32; 3],
+    current_rotation: Quat,
     rotation_mdeg: [i32; 3],
     sequence: u64,
 }
@@ -1969,6 +1970,7 @@ fn sync_card_entities(
             .or_insert(DisplayPose {
                 current: target,
                 target,
+                current_rotation: rotation_mdeg_quat(network.rotation_mdeg),
                 rotation_mdeg: network.rotation_mdeg,
                 sequence: network.sequence,
             });
@@ -2067,12 +2069,21 @@ fn card_label_texture(
 }
 
 fn pose_transform(position_mm: [f32; 3], rotation_mdeg: [i32; 3]) -> Transform {
-    Transform::from_translation(mm_position(position_mm)).with_rotation(Quat::from_euler(
+    Transform::from_translation(mm_position(position_mm))
+        .with_rotation(rotation_mdeg_quat(rotation_mdeg))
+}
+
+fn rotation_mdeg_quat(rotation_mdeg: [i32; 3]) -> Quat {
+    Quat::from_euler(
         EulerRot::XYZ,
         mdeg_radians(rotation_mdeg[0]),
         mdeg_radians(rotation_mdeg[1]),
         mdeg_radians(rotation_mdeg[2]),
-    ))
+    )
+}
+
+fn smooth_card_rotation(current: Quat, target_mdeg: [i32; 3], alpha: f32) -> Quat {
+    current.slerp(rotation_mdeg_quat(target_mdeg), alpha)
 }
 
 fn mm_position(position_mm: [f32; 3]) -> Vec3 {
@@ -2388,7 +2399,7 @@ fn drag_cards(
             pose.current[2] = physical[2];
         }
         let rotation_direction =
-            i8::from(keys.pressed(KeyCode::KeyE)) - i8::from(keys.pressed(KeyCode::KeyQ));
+            card_rotation_direction(keys.pressed(KeyCode::KeyQ), keys.pressed(KeyCode::KeyE));
         if drag.rotation_step_due(rotation_direction, Instant::now())
             && let Some(pose) = poses.0.get_mut(&key)
         {
@@ -2506,6 +2517,12 @@ fn rotate_mdeg(current: i32, direction: i8, step: i32) -> i32 {
     (current + i32::from(direction) * step).rem_euclid(FULL_TURN_MDEG)
 }
 
+fn card_rotation_direction(q_pressed: bool, e_pressed: bool) -> i8 {
+    // Positive rotation around table-up appears counter-clockwise through the
+    // upright tabletop camera: Q turns left and E turns right.
+    i8::from(q_pressed) - i8::from(e_pressed)
+}
+
 fn send_pose(
     key: &str,
     network: &[CardPoseView],
@@ -2544,12 +2561,15 @@ fn animate_and_place_cards(
                 pose.current[axis] += (pose.target[axis] - pose.current[axis]) * alpha;
             }
         }
+        pose.current_rotation =
+            smooth_card_rotation(pose.current_rotation, pose.rotation_mdeg, alpha);
     }
     for (card, mut transform) in &mut cards {
         let Some(pose) = poses.0.get(&card.key) else {
             continue;
         };
-        *transform = pose_transform(pose.current, pose.rotation_mdeg);
+        *transform = Transform::from_translation(mm_position(pose.current))
+            .with_rotation(pose.current_rotation);
     }
 }
 
@@ -2600,6 +2620,15 @@ mod tests {
             (pose.rotation * Vec3::X).abs_diff_eq(Vec3::NEG_X, 0.000_01),
             "180 degrees around table-up should reverse the card's local x axis"
         );
+    }
+
+    #[test]
+    fn displayed_card_rotation_moves_partway_toward_the_exact_target() {
+        let target = [0, 90_000, 0];
+        let halfway = smooth_card_rotation(Quat::IDENTITY, target, 0.5);
+        let expected_halfway = rotation_mdeg_quat([0, 45_000, 0]);
+        assert!((halfway * Vec3::X).abs_diff_eq(expected_halfway * Vec3::X, 0.000_01));
+        assert!(!(halfway * Vec3::X).abs_diff_eq(rotation_mdeg_quat(target) * Vec3::X, 0.000_01));
     }
 
     #[test]
@@ -2721,6 +2750,17 @@ mod tests {
         snap.cycle();
         assert_eq!(snap.label(), "Rotation snap: off");
         assert_eq!(snap.step_mdeg(), 5_000);
+    }
+
+    #[test]
+    fn q_turns_cards_counter_clockwise_and_e_turns_them_clockwise() {
+        let step = 90_000;
+        let q_angle = rotate_mdeg(0, card_rotation_direction(true, false), step);
+        let e_angle = rotate_mdeg(0, card_rotation_direction(false, true), step);
+        assert_eq!(q_angle, 90_000);
+        assert_eq!(e_angle, 270_000);
+        assert!((rotation_mdeg_quat([0, q_angle, 0]) * Vec3::X).abs_diff_eq(Vec3::NEG_Z, 0.000_01));
+        assert!((rotation_mdeg_quat([0, e_angle, 0]) * Vec3::X).abs_diff_eq(Vec3::Z, 0.000_01));
     }
 
     #[test]
