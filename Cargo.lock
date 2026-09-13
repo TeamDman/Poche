@@ -9268,6 +9268,7 @@ dependencies = [
  "getrandom 0.3.4",
  "image",
  "poche-bevy-spacetimedb",
+ "poche-slug",
  "poche-spacetimedb-client",
  "serde",
  "serde_json",

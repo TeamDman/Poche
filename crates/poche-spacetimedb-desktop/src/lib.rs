@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 //! A deliberately game-shaped desktop surface over the authoritative Poche
-//! `SpacetimeDB` model. The UI is a top-down projection of integer millimetre
-//! poses; it never becomes logical-state authority.
+//! `SpacetimeDB` model. Networked integer-millimetre poses are projected into
+//! a Bevy 3D tabletop; rendering never becomes logical-state authority.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -38,6 +38,7 @@ use bevy::{
 use poche_bevy_spacetimedb::{
     BridgeHandle, BridgeIntent, BridgeModel, BridgeNotice, PocheSpacetimePlugin,
 };
+use poche_slug::{SlugFont, rasterize_text_rgba};
 use poche_spacetimedb_client::{
     CardPoseView, ClientConfig, DEFAULT_DATABASE, DEFAULT_URI, RoomCapability, valid_join_code,
 };
@@ -45,8 +46,13 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-const CARD_WIDTH: f32 = 76.0;
-const CARD_HEIGHT: f32 = 108.0;
+const CARD_PICK_RADIUS_PX: f32 = 68.0;
+// The SpacetimeDB prototype spaces dealt cards 180 mm apart. These deliberately
+// display-sized meshes remain distinct at that spacing while the authoritative
+// database layout converges on the canonical physical 64 x 88 mm dimensions.
+const CARD_WORLD_WIDTH: f32 = 0.16;
+const CARD_WORLD_HEIGHT: f32 = 0.22;
+const CARD_WORLD_THICKNESS: f32 = 0.012;
 const POSE_PERIOD: Duration = Duration::from_millis(50);
 const FULL_TURN_MDEG: i32 = 360_000;
 const ROTATION_REPEAT_DELAY: Duration = Duration::from_millis(300);
@@ -446,7 +452,10 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
         .init_resource::<RotationSnap>()
         .add_message::<ButtonActivation>()
         .add_observer(activate_button)
-        .add_systems(Startup, (setup_render_target, setup_menu).chain())
+        .add_systems(
+            Startup,
+            (setup_render_target, setup_spatial_renderer, setup_menu).chain(),
+        )
         .add_systems(
             Update,
             (
@@ -456,6 +465,8 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
                 enter_room,
                 sync_room_labels,
                 sync_card_entities,
+                sync_player_entities,
+                update_table_camera,
                 drag_cards,
                 animate_and_place_cards,
                 update_status_labels,
@@ -523,6 +534,23 @@ struct RoomRoot;
 
 #[derive(Component)]
 struct PocheUiCamera;
+
+#[derive(Component)]
+struct TabletopCamera;
+
+#[derive(Component)]
+struct SpatialPlayer;
+
+#[derive(Resource)]
+struct SpatialAssets {
+    card_mesh: Handle<Mesh>,
+    card_face_material: Handle<StandardMaterial>,
+    card_back_material: Handle<StandardMaterial>,
+    card_label_mesh: Handle<Mesh>,
+    avatar_mesh: Handle<Mesh>,
+    self_avatar_material: Handle<StandardMaterial>,
+    peer_avatar_material: Handle<StandardMaterial>,
+}
 
 #[derive(Component)]
 struct StatusLabel;
@@ -597,6 +625,123 @@ fn setup_render_target(mut images: ResMut<Assets<Image>>, mut surface: ResMut<Re
     );
     image.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC;
     *target = Some(images.add(image));
+}
+
+fn setup_spatial_renderer(
+    mut commands: Commands,
+    surface: Res<RenderSurface>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let mut camera = commands.spawn((
+        Camera3d::default(),
+        Camera {
+            is_active: false,
+            ..default()
+        },
+        spectator_camera_transform(),
+        TabletopCamera,
+    ));
+    if let Some(target) = surface.render_target() {
+        camera.insert(target);
+    }
+
+    commands.insert_resource(ClearColor(Color::srgb(0.012, 0.022, 0.026)));
+    commands.insert_resource(GlobalAmbientLight {
+        color: Color::srgb(0.78, 0.84, 0.9),
+        brightness: 220.0,
+        affects_lightmapped_meshes: true,
+    });
+    commands.spawn((
+        DirectionalLight {
+            illuminance: 9_000.0,
+            shadow_maps_enabled: true,
+            ..default()
+        },
+        Transform::from_xyz(-2.5, 6.0, 3.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+
+    let floor_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.035, 0.055, 0.06),
+        perceptual_roughness: 0.95,
+        ..default()
+    });
+    let table_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.035, 0.30, 0.19),
+        perceptual_roughness: 0.84,
+        ..default()
+    });
+    let rail_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.25, 0.13, 0.055),
+        perceptual_roughness: 0.72,
+        ..default()
+    });
+    let seat_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.18, 0.10, 0.045),
+        perceptual_roughness: 0.78,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(9.0, 0.12, 9.0))),
+        MeshMaterial3d(floor_material),
+        Transform::from_xyz(0.0, -0.24, 0.0),
+    ));
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(5.5, 0.16, 3.7))),
+        MeshMaterial3d(rail_material),
+        Transform::from_xyz(0.0, -0.01, 0.0),
+    ));
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(5.22, 0.008, 3.42))),
+        MeshMaterial3d(table_material),
+        Transform::from_xyz(0.0, 0.071, 0.0),
+    ));
+    let seat_mesh = meshes.add(Cylinder::new(0.48, 0.18));
+    for z in [-2.15, 2.15] {
+        commands.spawn((
+            Mesh3d(seat_mesh.clone()),
+            MeshMaterial3d(seat_material.clone()),
+            Transform::from_xyz(0.0, -0.02, z),
+        ));
+    }
+
+    commands.insert_resource(SpatialAssets {
+        card_mesh: meshes.add(Cuboid::new(
+            CARD_WORLD_WIDTH,
+            CARD_WORLD_THICKNESS,
+            CARD_WORLD_HEIGHT,
+        )),
+        card_face_material: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.96, 0.94, 0.84),
+            perceptual_roughness: 0.8,
+            ..default()
+        }),
+        card_back_material: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.12, 0.20, 0.48),
+            perceptual_roughness: 0.72,
+            ..default()
+        }),
+        card_label_mesh: meshes.add(Plane3d::default()),
+        avatar_mesh: meshes.add(Sphere::new(0.30)),
+        self_avatar_material: materials.add(Color::srgb(0.92, 0.72, 0.20)),
+        peer_avatar_material: materials.add(Color::srgb(0.22, 0.48, 0.82)),
+    });
+}
+
+fn spectator_camera_transform() -> Transform {
+    Transform::from_xyz(4.8, 5.2, 4.8).looking_at(Vec3::new(0.0, 0.0, 0.0), Vec3::Y)
+}
+
+fn player_camera_transform(seat: Option<u8>) -> Transform {
+    match seat {
+        Some(0) => {
+            Transform::from_xyz(0.0, 4.7, 5.4).looking_at(Vec3::new(0.0, 0.0, -0.2), Vec3::Y)
+        }
+        Some(1) => {
+            Transform::from_xyz(0.0, 4.7, -5.4).looking_at(Vec3::new(0.0, 0.0, 0.2), Vec3::Y)
+        }
+        _ => spectator_camera_transform(),
+    }
 }
 
 fn setup_menu(
@@ -920,7 +1065,8 @@ fn enter_room(
     rotation_snap: Res<RotationSnap>,
     menu: Query<Entity, With<MainMenuRoot>>,
     room: Query<Entity, With<RoomRoot>>,
-    cameras: Query<Entity, With<PocheUiCamera>>,
+    mut ui_cameras: Query<(Entity, &mut Camera), With<PocheUiCamera>>,
+    mut table_cameras: Query<&mut Camera, (With<TabletopCamera>, Without<PocheUiCamera>)>,
     mut commands: Commands,
 ) {
     if model.snapshot.room_id().is_none() || !room.is_empty() {
@@ -929,9 +1075,14 @@ fn enter_room(
     for entity in &menu {
         commands.entity(entity).despawn();
     }
-    let Ok(camera) = cameras.single() else {
+    let Ok((camera, mut ui_camera)) = ui_cameras.single_mut() else {
         return;
     };
+    ui_camera.order = 10;
+    ui_camera.clear_color = bevy::camera::ClearColorConfig::None;
+    for mut table_camera in &mut table_cameras {
+        table_camera.is_active = true;
+    }
     commands
         .spawn((
             RoomRoot,
@@ -942,22 +1093,9 @@ fn enter_room(
                 position_type: PositionType::Absolute,
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.02, 0.045, 0.045)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
         ))
         .with_children(|root| {
-            root.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(18.),
-                    right: px(18.),
-                    top: px(72.),
-                    bottom: px(142.),
-                    border_radius: BorderRadius::all(px(240.)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.035, 0.28, 0.20)),
-                Outline::new(px(3.), px(0.), Color::srgb(0.33, 0.55, 0.4)),
-            ));
             root.spawn((
                 Text::new("POCHE · shared table"),
                 TextFont::from_font_size(28.),
@@ -1276,10 +1414,13 @@ fn sync_card_entities(
     model: Res<BridgeModel>,
     mut poses: ResMut<PoseDisplay>,
     existing: Query<(Entity, &CardVisual)>,
-    root: Query<Entity, With<RoomRoot>>,
+    room: Query<(), With<RoomRoot>>,
+    assets: Res<SpatialAssets>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
 ) {
-    if !model.is_changed() || root.is_empty() {
+    if !model.is_changed() || room.is_empty() {
         return;
     }
     let wanted: HashSet<_> = model
@@ -1295,7 +1436,6 @@ fn sync_card_entities(
         }
     }
     let existing: HashSet<_> = existing.iter().map(|(_, card)| card.0.clone()).collect();
-    let root = root.single().expect("one room root");
     for network in &model.snapshot.card_poses {
         let target = network.position_mm.map(|value| value as f32);
         let display = poses
@@ -1320,35 +1460,128 @@ fn sync_card_entities(
             .find(|card| card.card_key == network.card_key)
             .map(|card| card.face.as_str());
         let label = own_face.unwrap_or("P");
-        let color = if own_face.is_some() {
-            Color::srgb(0.96, 0.94, 0.84)
-        } else {
-            Color::srgb(0.18, 0.24, 0.43)
-        };
-        commands.entity(root).with_child((
-            CardVisual(network.card_key.clone()),
-            Node {
-                position_type: PositionType::Absolute,
-                width: px(CARD_WIDTH),
-                height: px(CARD_HEIGHT),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                border_radius: BorderRadius::all(px(8.)),
-                ..default()
+        let (texture, aspect) = card_label_texture(
+            &mut images,
+            label,
+            if own_face.is_some() {
+                [18, 18, 16]
+            } else {
+                [224, 232, 248]
             },
-            UiTransform::default(),
-            BackgroundColor(color),
-            Outline::new(px(2.), px(0.), Color::srgb(0.04, 0.04, 0.04)),
-            children![(
-                Text::new(label),
-                TextFont::from_font_size(27.),
-                TextColor(if own_face.is_some() {
-                    Color::srgb(0.08, 0.08, 0.07)
+        );
+        let label_material = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(texture),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        });
+        let label_height = 0.070;
+        let label_width = (label_height * aspect).min(0.13);
+        let card = commands
+            .spawn((
+                CardVisual(network.card_key.clone()),
+                Mesh3d(assets.card_mesh.clone()),
+                MeshMaterial3d(if own_face.is_some() {
+                    assets.card_face_material.clone()
                 } else {
-                    Color::srgb(0.82, 0.85, 0.94)
+                    assets.card_back_material.clone()
                 }),
-            )],
+                pose_transform(target, network.rotation_mdeg),
+            ))
+            .id();
+        let label =
+            commands
+                .spawn((
+                    Mesh3d(assets.card_label_mesh.clone()),
+                    MeshMaterial3d(label_material),
+                    Transform::from_xyz(0.0, CARD_WORLD_THICKNESS * 0.55, 0.0)
+                        .with_scale(Vec3::new(label_width, 1.0, label_height)),
+                ))
+                .id();
+        commands.entity(card).add_child(label);
+    }
+}
+
+fn card_label_texture(
+    images: &mut Assets<Image>,
+    label: &str,
+    color: [u8; 3],
+) -> (Handle<Image>, f32) {
+    let font = SlugFont::parse(FONT_BYTES, 0, '?').expect("embedded Poche font is valid");
+    let raster = rasterize_text_rgba(&font, label, color).expect("card label raster is valid");
+    let aspect = raster.design_width / raster.design_height.max(f32::EPSILON);
+    let image = Image::new(
+        Extent3d {
+            width: raster.width,
+            height: raster.height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        raster.bytes,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    (images.add(image), aspect)
+}
+
+fn pose_transform(position_mm: [f32; 3], rotation_mdeg: [i32; 3]) -> Transform {
+    Transform::from_translation(mm_position(position_mm)).with_rotation(Quat::from_euler(
+        EulerRot::XYZ,
+        mdeg_radians(rotation_mdeg[0]),
+        mdeg_radians(rotation_mdeg[1]),
+        mdeg_radians(rotation_mdeg[2]),
+    ))
+}
+
+fn mm_position(position_mm: [f32; 3]) -> Vec3 {
+    Vec3::from_array(position_mm) / 1_000.0
+}
+
+fn mdeg_radians(value: i32) -> f32 {
+    (value as f32 / 1_000.0).to_radians()
+}
+
+fn sync_player_entities(
+    model: Res<BridgeModel>,
+    assets: Res<SpatialAssets>,
+    existing: Query<(Entity, &SpatialPlayer)>,
+    mut commands: Commands,
+) {
+    if !model.is_changed() {
+        return;
+    }
+    for (entity, _) in &existing {
+        commands.entity(entity).despawn();
+    }
+    for (index, member) in model.snapshot.members.iter().enumerate() {
+        let position = member.seat.map_or_else(
+            || Vec3::new(-3.2 + index as f32 * 0.7, 0.28, 0.0),
+            |seat| Vec3::new(0.0, 0.35, if seat == 0 { 2.2 } else { -2.2 }),
+        );
+        commands.spawn((
+            SpatialPlayer,
+            Mesh3d(assets.avatar_mesh.clone()),
+            MeshMaterial3d(if member.is_self {
+                assets.self_avatar_material.clone()
+            } else {
+                assets.peer_avatar_material.clone()
+            }),
+            Transform::from_translation(position),
         ));
+    }
+}
+
+fn update_table_camera(
+    time: Res<Time>,
+    model: Res<BridgeModel>,
+    mut cameras: Query<&mut Transform, With<TabletopCamera>>,
+) {
+    let target = player_camera_transform(model.snapshot.own_seat());
+    let alpha = 1.0 - (-5.0 * time.delta_secs()).exp();
+    for mut camera in &mut cameras {
+        camera.translation = camera.translation.lerp(target.translation, alpha);
+        camera.rotation = camera.rotation.slerp(target.rotation, alpha);
     }
 }
 
@@ -1357,6 +1590,7 @@ fn drag_cards(
     keys: Res<ButtonInput<KeyCode>>,
     rotation_snap: Res<RotationSnap>,
     windows: Query<&Window>,
+    cameras: Query<(&Camera, &GlobalTransform), With<TabletopCamera>>,
     model: Res<BridgeModel>,
     bridge: Res<BridgeHandle>,
     mut poses: ResMut<PoseDisplay>,
@@ -1366,6 +1600,9 @@ fn drag_cards(
         return;
     };
     let Some(cursor) = window.cursor_position() else {
+        return;
+    };
+    let Ok((camera, camera_transform)) = cameras.single() else {
         return;
     };
     let own_identity = model.snapshot.identity.as_deref();
@@ -1383,9 +1620,11 @@ fn drag_cards(
             .iter()
             .filter(|(key, _)| own_keys.contains(key.as_str()))
             .filter_map(|(key, pose)| {
-                let center = project_pose(pose.current, model.snapshot.own_seat(), window);
+                let center = camera
+                    .world_to_viewport(camera_transform, mm_position(pose.current))
+                    .ok()?;
                 let distance = center.distance(cursor);
-                (distance <= CARD_HEIGHT * 0.65).then_some((key.clone(), distance))
+                (distance <= CARD_PICK_RADIUS_PX).then_some((key.clone(), distance))
             })
             .min_by(|left, right| left.1.total_cmp(&right.1))
             .map(|(key, _)| key);
@@ -1397,12 +1636,13 @@ fn drag_cards(
         return;
     };
     if mouse.pressed(MouseButton::Left) {
-        let seat = model.snapshot.own_seat();
-        let physical = unproject_cursor(cursor, seat, window);
-        if let Some(pose) = poses.0.get_mut(&key) {
+        let height_mm = poses.0.get(&key).map(|pose| pose.current[1]);
+        if let Some(physical) = height_mm
+            .and_then(|height| cursor_to_world_mm(camera, camera_transform, cursor, height))
+            && let Some(pose) = poses.0.get_mut(&key)
+        {
             pose.current[0] = physical[0];
             pose.current[2] = physical[2];
-            pose.current[1] = 160.;
         }
         let rotation_direction =
             i8::from(keys.pressed(KeyCode::KeyE)) - i8::from(keys.pressed(KeyCode::KeyQ));
@@ -1474,15 +1714,10 @@ fn send_pose(
 
 fn animate_and_place_cards(
     time: Res<Time>,
-    model: Res<BridgeModel>,
     drag: Res<DragState>,
-    windows: Query<&Window>,
     mut poses: ResMut<PoseDisplay>,
-    mut cards: Query<(&CardVisual, &mut Node, &mut UiTransform)>,
+    mut cards: Query<(&CardVisual, &mut Transform)>,
 ) {
-    let Ok(window) = windows.single() else {
-        return;
-    };
     let alpha = 1. - (-18. * time.delta_secs()).exp();
     for (key, pose) in &mut poses.0 {
         if drag.card_key.as_deref() != Some(key) {
@@ -1491,46 +1726,32 @@ fn animate_and_place_cards(
             }
         }
     }
-    for (card, mut node, mut transform) in &mut cards {
+    for (card, mut transform) in &mut cards {
         let Some(pose) = poses.0.get(&card.0) else {
             continue;
         };
-        let center = project_pose(pose.current, model.snapshot.own_seat(), window);
-        node.left = px(center.x - CARD_WIDTH * 0.5);
-        node.top = px(center.y - CARD_HEIGHT * 0.5 - pose.current[1] * 0.025);
-        let viewer_rotation = if model.snapshot.own_seat() == Some(1) {
-            180_000
-        } else {
-            0
-        };
-        transform.rotation = Rot2::degrees(
-            (pose.rotation_mdeg[1] + viewer_rotation).rem_euclid(FULL_TURN_MDEG) as f32 / 1_000.,
-        );
+        *transform = pose_transform(pose.current, pose.rotation_mdeg);
     }
 }
 
-fn project_pose(position: [f32; 3], own_seat: Option<u8>, window: &Window) -> Vec2 {
-    let (mut x, mut z) = (position[0], position[2]);
-    if own_seat == Some(1) {
-        x = -x;
-        z = -z;
-    }
-    let scale = (window.width().min(window.height()) / 6_500.).clamp(0.075, 0.14);
-    Vec2::new(
-        window.width() * 0.5 + x * scale,
-        window.height() * 0.48 + z * scale,
-    )
-}
-
-fn unproject_cursor(cursor: Vec2, own_seat: Option<u8>, window: &Window) -> [f32; 3] {
-    let scale = (window.width().min(window.height()) / 6_500.).clamp(0.075, 0.14);
-    let mut x = (cursor.x - window.width() * 0.5) / scale;
-    let mut z = (cursor.y - window.height() * 0.48) / scale;
-    if own_seat == Some(1) {
-        x = -x;
-        z = -z;
-    }
-    [x.clamp(-9_000., 9_000.), 160., z.clamp(-9_000., 9_000.)]
+fn cursor_to_world_mm(
+    camera: &Camera,
+    camera_transform: &GlobalTransform,
+    cursor: Vec2,
+    height_mm: f32,
+) -> Option<[f32; 3]> {
+    let ray = camera.viewport_to_world(camera_transform, cursor).ok()?;
+    let plane_height = height_mm / 1_000.0;
+    let distance = ray.intersect_plane(
+        Vec3::new(0.0, plane_height, 0.0),
+        InfinitePlane3d::new(Vec3::Y),
+    )?;
+    let point = ray.get_point(distance) * 1_000.0;
+    Some([
+        point.x.clamp(-9_000.0, 9_000.0),
+        height_mm,
+        point.z.clamp(-9_000.0, 9_000.0),
+    ])
 }
 
 fn update_status_labels(state: Res<UiState>, mut labels: Query<&mut Text, With<StatusLabel>>) {
@@ -1550,18 +1771,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tabletop_projection_round_trips_for_both_viewer_seats() {
-        let window = Window {
-            resolution: WindowResolution::new(1_180, 760),
-            ..default()
-        };
-        for seat in [Some(0), Some(1)] {
-            let source = [1_200., 160., -800.];
-            let screen = project_pose(source, seat, &window);
-            let round_trip = unproject_cursor(screen, seat, &window);
-            assert!((source[0] - round_trip[0]).abs() < 0.01);
-            assert!((source[2] - round_trip[2]).abs() < 0.01);
-        }
+    fn pose_transform_maps_network_units_at_the_rendering_boundary() {
+        let pose = pose_transform([1_200.0, 80.0, -800.0], [0, 180_000, 0]);
+        assert!(
+            pose.translation
+                .abs_diff_eq(Vec3::new(1.2, 0.08, -0.8), 0.000_01)
+        );
+        assert!(
+            (pose.rotation * Vec3::X).abs_diff_eq(Vec3::NEG_X, 0.000_01),
+            "180 degrees around table-up should reverse the card's local x axis"
+        );
+    }
+
+    #[test]
+    fn player_cameras_look_from_their_own_side_of_the_table() {
+        let seat_zero = player_camera_transform(Some(0));
+        let seat_one = player_camera_transform(Some(1));
+        assert!(seat_zero.translation.z > 0.0);
+        assert!(seat_one.translation.z < 0.0);
+        assert!((seat_zero.forward().dot(Vec3::NEG_Z)) > 0.5);
+        assert!((seat_one.forward().dot(Vec3::Z)) > 0.5);
     }
 
     #[test]

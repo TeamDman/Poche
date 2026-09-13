@@ -3,7 +3,7 @@
 **Plan status:** Active; the create/join/seat/private-hand/shared-pose desktop MVP is implemented and accepted, while durable Poche play, recovery, and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-13 (Windows graphics-backend mitigation and honest 2D/3D renderer boundary recorded; rotation input corrected)
+**Last updated:** 2026-09-13 (SpacetimeDB desktop restored to a real Bevy 3D scene; Windows backend and rotation corrections retained)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
@@ -125,13 +125,22 @@ This proves deployment selection and the current physical-pose slice on both
 authorities. It does not yet prove durable logical card movement, reconnect,
 multiple devices for one identity, full Poche play, or production operations.
 
-## 2026-09-13 renderer/input correction checkpoint
+## 2026-09-13 renderer/input correction and 3D restoration checkpoint
 
-- Confirmed that the SpacetimeDB client currently uses a top-down Bevy UI
-  projection (`Camera2d`, `Node`, and `UiTransform`), not the repository's
-  existing native 3D table and private-hand cameras. This is an MVP regression
-  against U13, not a new architectural decision; T4 remains open until the
-  SpacetimeDB projection drives the existing 3D renderer boundary.
+- Confirmed and then removed the SpacetimeDB client's top-down Bevy UI
+  tabletop regression. Subscribed poses now drive `Transform`s on dimensional
+  `Mesh3d` cards in a perspective, lit table scene with rail/floor geometry,
+  shadows, seats, and spatial player avatars. The UI camera is a transparent
+  overlay for status and commands rather than a substitute for the world.
+- Millimetres become metres and millidegrees become Bevy quaternions only at
+  the renderer boundary. Pointer dragging uses a camera ray intersecting the
+  card-height world plane; selection projects actual world positions back to
+  the viewport. The camera interpolates between spectator and seat-relative
+  viewpoints as subscribed membership changes.
+- Extracted the proven filled Slug raster path into renderer-neutral
+  `poche-slug` code. Each client renders authorized card faces on raised card
+  surfaces while peer cards remain opaque backs, without returning to the old
+  malformed outline/stroke text.
 - Removed horizontal pointer-delta rotation. Drag now changes position only;
   Q/E changes the visible table-normal angle in bounded steps, with held-key
   repeat. A top control cycles off/15°/30°/45°/60°/90° rotation snap.
@@ -146,13 +155,19 @@ multiple devices for one identity, full Poche play, or production operations.
 - Package unit tests and strict Clippy pass after the correction. An ordinary
   visible-window check remains required because only a real Winit swapchain can
   confirm that the user's startup diagnostics are gone.
-- After rebuilding both sibling binaries, hosted two-device acceptance still
-  passed (one-shot 60.05 ms authority response and 167.33 ms exact peer
-  observation). Its reviewed contact sheet visibly contains the same moved
-  card at 45° for owner and peer. The run also exposed that `cargo run --bin
+- After rebuilding both sibling binaries, hosted two-device acceptance passed
+  twice. The runs measured 56.74/147.34 ms and 112.17/222.47 ms for authority
+  response/exact peer observation respectively. The final reviewed four-frame
+  contact sheet visibly contains the real perspective scene from opposite
+  seats and the same moved card at 45°, face-up for its owner and face-down for
+  its peer. The run also exposed that `cargo run --bin
   poche-puppet` does not relink the sibling `poche.exe`; acceptance instructions
   continue to require `cargo build --bins` first so stale renderers cannot be
   mistaken for current evidence.
+- T4 remains open for its larger contract: the dedicated private-hand inset
+  camera, diegetic seat/action targets, durable logical drop/play reducers,
+  denial presentation, and recovery semantics are not claimed by this visual
+  restoration.
 
 ## Authoritative user guidance ledger
 
@@ -194,7 +209,7 @@ multiple devices for one identity, full Poche play, or production operations.
 | U34 | Prefer programmer-facing angle units that avoid gratuitous radians/π conversions; turns or half-turns may be clearer and preserve common fractions exactly. | Keep radians at renderer math boundaries. Evaluate an exact bounded turn newtype before the next pose-schema version, together with the 3D orientation representation. | — |
 | U35 | Vulkan startup emits repeated wgpu presentation-layout and acquire-semaphore validation errors on the user's Windows/NVIDIA machine. | Default Windows to DX12, retain explicit auto/Vulkan overrides, link the upstream reproductions, and require visible-window evidence rather than treating an offscreen test as proof. | — |
 | U36 | Pointer position must not implicitly rotate cards; Q/E should rotate, and a prominent control should cycle common rotation-lock increments such as 45° and 90°. | Separate translation from rotation input, make the table-normal axis visible, add a local snap-mode control, and test exact wrap/cycle behavior. | — |
-| U37 | The desktop environment should remain the established 3D table rather than regress to a 2D replacement. | Treat the present top-down UI as temporary diagnostic evidence and reconnect the SpacetimeDB observation/intent edge to the existing 3D table, hand camera, picking, and capture surface in T4. | — |
+| U37 | The desktop environment should remain the established 3D table rather than regress to a 2D replacement. | Keep the restored perspective 3D table as the SpacetimeDB presentation boundary; complete the dedicated hand camera and diegetic picking/capture refinements in T4. | — |
 
 ## Guidance traceability
 

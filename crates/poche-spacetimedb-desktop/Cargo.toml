@@ -22,6 +22,7 @@ bevy = { workspace = true, features = ["system_clipboard", "ui"] }
 getrandom.workspace = true
 image.workspace = true
 poche-bevy-spacetimedb = { path = "../poche-bevy-spacetimedb" }
+poche-slug = { path = "../poche-slug" }
 poche-spacetimedb-client = { path = "../poche-spacetimedb-client" }
 serde.workspace = true
 serde_json.workspace = true

@@ -6,11 +6,14 @@ lobby, occupy distinct seats, receive distinct private five-card hands, and
 move and rotate cards with local prediction and subscription-driven peer
 updates.
 
-The current SpacetimeDB window draws those three-axis poses through a top-down
-Bevy UI projection. It is not yet the repository's existing native 3D spatial
-mirror. Restoring the real table camera plus private-hand camera over one 3D
-world is the next renderer integration step; the 2D projection is retained as
-diagnostic/MVP evidence rather than accepted as the final desktop environment.
+The current SpacetimeDB window draws those three-axis poses into a real Bevy 3D
+scene: a perspective camera, lit table and rail meshes, dimensional cards,
+avatars, shadows, and renderer-neutral filled Slug card labels. Network
+millimetres and millidegrees cross into metres and quaternions only at this
+rendering boundary. A transparent Bevy UI camera remains above the world for
+room codes, status, rotation snap, and actions; it is no longer pretending to
+be the tabletop. A dedicated private-hand inset camera and more diegetic input
+targets remain later renderer refinements over the same world.
 
 This is the physical-table multiplayer slice, not a claim that the complete
 Poche rules have been ported into SpacetimeDB. The existing transport-free
@@ -203,7 +206,7 @@ target\debug\poche-puppet.exe stop target\live\alice
 ```
 
 The final `move` argument is rotation about table-up Y in millidegrees, matching
-the Q/E control and the visible top-down angle.
+the Q/E control and the card's visible orientation in the perspective scene.
 
 Requests are atomically claimed from `requests/`, archived to `processed/`,
 and answered in `responses/`. Every response includes a semantic observation

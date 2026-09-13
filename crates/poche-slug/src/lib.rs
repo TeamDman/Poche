@@ -7,6 +7,8 @@
 //! Font bytes are supplied by callers. GPU allocation and renderer lifecycle
 //! deliberately remain outside this crate.
 
+mod raster;
 mod slug;
 
+pub use raster::*;
 pub use slug::*;
