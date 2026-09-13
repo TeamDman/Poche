@@ -1,0 +1,1200 @@
+# SpacetimeDB desktop reorientation
+
+**Plan status:** Active; worktree and reconnaissance are complete, implementation has not started
+**Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
+**Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
+**Last updated:** 2026-09-12
+**Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
+
+## How to update this plan
+
+- `[ ]` Not started
+- `[~]` In progress
+- `[x]` Complete
+- `[!]` Blocked
+- Update a work item's heading and completion notes together.
+- Record decisions, commands, relevant results, commit IDs, and intentional
+  exceptions below the item they affect.
+- A phase is complete only when every work item in it is `[x]`.
+- Keep at most one current implementation focus unless the plan explicitly
+  names independent tracks.
+- The plan is only ready once we have literally triple checked that no intent
+  from the user has been omitted without explicit direction from the user.
+
+## Intent audit evidence
+
+- **Pass 1 — extraction:** reread the available original messages from the
+  Alloy/NuSMV/Prolog exploration through the current SpacetimeDB pivot. The
+  ledger below separates confirmed product direction, tentative examples,
+  prior directions that were superseded, local paths, testing constraints,
+  and future-facing concerns. It includes the desktop-first correction, Bevy
+  0.19.1 decision, physical/logical card distinction, two-window MVP,
+  reconnect and empty-room lifetime, multiple-device agency, windowless
+  capture, formal boundaries, compile-time concern, and the explicit
+  prohibition on depending on `bevy_spacetimedb`.
+- **Pass 2 — traceability:** checked every active U-row against the gates,
+  phases, acceptance matrix, or explicit non-goal. Checked the inverse as
+  well: the proposed central authority, crate boundaries, generated-code
+  isolation, local prediction, bounded pose publication, token persistence,
+  and licensing gate are either user-directed, verified from source, or
+  labeled reversible working assumptions.
+- **Pass 3 — adversarial omission:** reread the instructions from the plan
+  backwards to the conversation. Preserved “reference material, not a
+  library,” “move cards around” as synchronized position *and rotation* rather
+  than only legal play, name-and-secret as tentative rather than decided,
+  “everyone leaves” as explicit departure rather than transient disconnect,
+  Bevy as presentation rather than rules authority, browser support as
+  currently dropped rather than permanently impossible, and RL as a future
+  shape constraint rather than part of this implementation goal. The review
+  also distinguishes Codex sandbox elevation from Windows UAC and a trusted
+  SpacetimeDB host from the earlier zero-trust aspiration.
+- **Known source limitation:** no user-message limitation for this audit. Some
+  historical command output is compacted, so repository plans and current
+  source were used for implementation evidence; no missing tool output was
+  treated as a successful test.
+
+## Authoritative user guidance ledger
+
+| ID | Active guidance | Required plan consequence | Superseded by |
+| --- | --- | --- | --- |
+| U1 | Create a new `poche-4` worktree for the SpacetimeDB direction. | Use `D:\Repos\Games\poche-4` and a dedicated branch without disturbing `poche-3`. | — |
+| U2 | Reorient multiplayer around SpacetimeDB because the current multi-second experience is unacceptable and the centralized trade can buy a more streamlined game. | Make SpacetimeDB the authoritative multiplayer backend for this branch and require latency evidence before a broader migration. | — |
+| U3 | `G:\Programming\Repos\bevy_spacetimedb` is reference material only; do not add a hard dependency on it. | Maintain a provenance review and implement the required bridge behavior in Poche-owned code. | — |
+| U4 | Any Bevy/SpacetimeDB integration should be a new crate in the Poche workspace that Poche owns. | Add a leaf integration crate with a Poche API and no upstream plugin dependency. | — |
+| U5 | Plan workspace structure deliberately to reduce Rust compile times, using Cloud Terrastodon and Cursor Hero as references. | Measure first, centralize versions, isolate heavy targets, keep fast core commands, and adopt only evidence-backed linker/profile settings. | — |
+| U6 | Desktop development is the priority; dropping active web support is acceptable. | Windows native is the first supported player target. Do not make web a completion gate or pull the old web spike into the new backend. | — |
+| U7 | Bevy stays and should be 0.19.1; it is the renderer/input layer rather than the game authority. | Preserve the existing 0.19.1 pin and keep Bevy/ECS types out of canonical rules and server state. | — |
+| U8 | Rust remains the typed source of truth, informed and checked by Alloy, NuSMV, and Scryer Prolog. | SpacetimeDB reducers must call the pure Poche transition boundary; tables and Bevy systems may not become competing rule engines. | — |
+| U9 | The MVP should run the game twice: one window creates a lobby and another joins it. | Two real processes and two rendered windows are an end-to-end acceptance surface. | — |
+| U10 | Create should produce a copyable, opaque room code; Join should recognize a valid clipboard value without blindly consuming arbitrary clipboard data. | Preserve the main-menu Create/Join flow and valid-shape-gated clipboard convenience; tests must not use the user's clipboard. | — |
+| U11 | The lobby/table should visibly contain seats; players and spectators are grounded around the table and can take seats. | Replicate room membership and seating, and render it in both clients before implementing a full game. | — |
+| U12 | A card's physical location is position plus rotation; its logical location is `hand`, an indexed deck position, `in play`, and so on. | Store and validate these as separate domains. Formal rules consume logical location; rendering consumes both. | — |
+| U13 | Wiggling a card in one hand in one client must be visible in the other client; hand/table camera viewports still map to one 3D world. | Add immediate local prediction, synchronized position and rotation, remote interpolation, and a cross-viewport acceptance test. | — |
+| U14 | Moving into the play area is an attempt to play. An out-of-turn or otherwise illegal attempt must not change logical location; forced physical snap-back was only a tentative option. | Make drop intent authoritative and test rejection without logical mutation. Decide rejection animation separately at G8. | — |
+| U15 | Hidden card faces must be visible only to authorized player devices, although the centralized authority is trusted and can technically see all hands. | Keep deck/hands private in the module and expose recipient-scoped views; test both positive and negative visibility. | — |
+| U16 | A crashed player must be able to rejoin. A name plus secret was suggested as one possible UX, not fixed protocol. | Persist an identity credential per local profile and test process restart. Close the recovery UX at G5 before polishing it. | — |
+| U17 | If everyone explicitly leaves a lobby, the lobby is disbanded. | Distinguish explicit leave from connection loss; delete/close room state only when the final membership leaves. | — |
+| U18 | A player can have several devices; actions on one should be perceivable on another without same-device Vox IPC. | Model player identity separately from connection/device identity and avoid adding a local-instance control protocol to the product foundation. | — |
+| U19 | Automated control should not disturb the OS clipboard. File-driven live control, windowless Bevy targets, captures, and a multi-player puppet are desired. | Reuse the existing Poche control/capture concepts with the new client adapter and require headless two-client evidence. | — |
+| U20 | Instrument actual latency. Prior isolated Veilid latency was reasonable, while the integrated card path remained hundreds of milliseconds or seconds. | Timestamp input, reducer send/commit/callback, subscription application, Bevy ingestion, and render observation. Add a measured go/no-go gate. | — |
+| U21 | Poche prefers MPL-2.0. | Keep new Poche-authored crates MPL-2.0 and document third-party license boundaries. | — |
+| U22 | Do not silently copy or vendor reference code with incompatible or unclear terms. | Record provenance for every borrowed behavior; either reimplement from behavior or preserve Apache attribution if code is adapted. | — |
+| U23 | Poche should not require Windows Administrator/UAC. Codex sandbox elevation is a development execution detail, not an application feature. | Bind local services and run both clients as ordinary users; document firewall/network prompts separately from UAC. | — |
+| U24 | Reinforcement learning is not part of this goal, but future `State -> Observation -> Action -> Reward` use should not require an architectural rewrite; round score is the meaningful intermediate reward. | Keep pure state/action/observation boundaries and do not couple rollouts to SpacetimeDB, Bevy, sockets, or rendering. | — |
+| U25 | The prior formal and oracle work has merit and should inform the rewrite rather than be discarded. | Base from the current branch and preserve formal fixtures, pure reducers, exact projections, diagnostics, and headless evidence where they remain valid. | — |
+| U26 | The earlier preferred zero-trust/decentralized design may be conceded for a trusted-host hybrid/centralized MVP. | State explicitly that the SpacetimeDB host is trusted and can see/alter hidden state; do not claim consensus, anonymity, or mental-poker guarantees. | — |
+| U27 | The same `poche.exe` should remain a useful graphical application and CLI/automation entry point. | Keep the executable-level UX, but route ordinary player commands through the same SpacetimeDB client contract as the GUI. | — |
+| U28 | Player actions should be discoverable in an action surface and, where useful, diegetically grounded in the table. | Preserve one typed action vocabulary with multiple input projections; MVP table manipulation and action buttons invoke the same intent. | — |
+| U29 | Build output should stay out of OneDrive and generated artifacts should not inflate Git history. | Keep `target/` ignored and local; commit source/schema/bindings only when reproducibility policy says to, not binaries or runtime databases. | — |
+| U30 | The Veilid work remains valuable evidence even if it is no longer the default transport. | Do not delete its branch/history. Keep it out of the default SpacetimeDB dependency graph and document comparative results. | — |
+| U31 | Direct browser support is being dropped as a priority, not proven impossible forever. | Mark browser as unsupported for this phase, not architecturally forbidden; keep pure/client boundaries portable where inexpensive. | — |
+| U32 | Device-to-device graphical capture may later use the same player/device agency model. | Keep capture commands above the transport adapter. Do not make capture delivery part of the first SpacetimeDB gameplay slice. | — |
+
+## Guidance traceability
+
+| Guidance | Plan coverage | Evidence when complete |
+| --- | --- | --- |
+| U1 | T0.1, T0.2 | Worktree/branch listing and plan commit |
+| U2, U20, U26 | G2, G7, T1.1, T2.5, T3.3, T6.4 | Latency report and documented trust boundary |
+| U3, U4, U21, U22 | G3, G9, T1.3, T3.4, T7.1 | Dependency audit, provenance note, license review |
+| U5, U29 | G6, T1.1–T1.4, T7.3 | Compile matrix, timings, ignored artifact audit |
+| U6, U7, U31 | Scope, T1.3, T3.4, T4, acceptance matrix | Windows native build and explicit unsupported web row |
+| U8, U24, U25 | G4, T2.1–T2.4, T5 | Pure tests plus formal/conformance receipts |
+| U9, U10, U11 | T2.2, T4.1, T4.2, T6.2, T6.3 | Headless and two-window create/join/seat evidence |
+| U12–U14, U28 | G8, T2.5, T4.4, T5.1, T6.4 | Pose/logical tests, rendered manipulation, rejection proof |
+| U15 | G10, T2.3, T4.3, T5.3, T6.2 | Sender-scoped subscription and negative privacy tests |
+| U16–U18 | G5, G11, T2.2, T3.1, T4.5, T6.5 | Restart, multi-device, explicit-leave, disband receipts |
+| U19, U32 | T6.1–T6.3 | Windowless captures and live-control transcript |
+| U23 | Constraints, T6.3, T7.1 | Ordinary-user run guide and acceptance record |
+| U27 | T3.1–T3.3, T4.1, T7.1 | GUI and CLI invoke the same client adapter |
+| U30 | Scope, T1.3, T7.2 | Default dependency graph excludes Veilid; history retained |
+
+## Purpose
+
+Produce a desktop-first Poche vertical slice in which a local SpacetimeDB
+instance is the trusted multiplayer authority and two ordinary `poche.exe`
+processes can create/join a room, take seats, receive private hands, and move a
+card smoothly in a shared physical world. The server validates durable room and
+logical game transitions through the existing pure Rust rules. The client
+predicts high-frequency physical manipulation locally and reconciles it from
+subscribed server state.
+
+This phase is successful only if it is easier to understand, test, and run than
+the current transport path and if measured same-host latency supports visible
+card wiggling. “Uses SpacetimeDB” alone is not success.
+
+## Scope
+
+### In scope
+
+- A `poche-4` worktree and `spacetimedb` branch based on the current completed
+  formal/model-checking work.
+- A pinned local SpacetimeDB development toolchain and repeatable doctor/start/
+  publish/generate workflow.
+- Poche-owned workspace crates that separate the server WASM module, native
+  client adapter, generated bindings, and Bevy integration.
+- Trusted-server room, identity, membership, presence, seats, private hands,
+  logical transitions, command receipts, and latest physical pose state.
+- Two native Windows clients using the official Rust SDK directly.
+- Local prediction, bounded pose publication, remote interpolation, and
+  authoritative drop intent.
+- Crash/reconnect, multiple devices per identity, explicit leave, and final
+  member room disbanding.
+- Pure-core, adapter, module, privacy, headless puppet, real-process, formal
+  conformance, and latency evidence.
+- Documentation of licensing, trust, deployment, compile-time, and migration
+  boundaries.
+
+### Out of scope
+
+- Browser or WASM player support, Datastar/Axum gateway work, mobile packaging,
+  Makepad, Vulkan/ash replacement, or polished production art.
+- Peer-to-peer consensus, anonymity, untrusted-host card secrecy, mental poker,
+  threshold shuffle, or Byzantine recovery.
+- Hosted matchmaking, accounts, payments, anti-abuse, production operations,
+  or a public SpacetimeDB deployment.
+- Full tabletop-simulator freedom, physics, collision-based rule inference,
+  voice chat/TTS, shared cursors, arbitrary object spawning, or 3D score-sheet
+  skeuomorphism. The data boundaries must permit later expansion.
+- RL training. Direct pure rollouts remain supported and transport-free.
+- Deleting the Veilid, web, formal, governance, capture, or RL research.
+- Depending on or publishing a fork of `bevy_spacetimedb`.
+- Sending a durable transaction for every rendered mouse frame.
+
+## Established foundation
+
+| Foundation | Verified evidence on 2026-09-12 | Consequence |
+| --- | --- | --- |
+| New worktree | `git worktree add -b spacetimedb D:\Repos\Games\poche-4 model-checking` created `poche-4` at `f0b3717`. | Implementation happens only in `poche-4`. |
+| Existing workspace | Root `Cargo.toml` uses resolver 3, Rust 1.96, MPL-2.0, 26 packages, and centrally pinned dependencies. | Improve rather than replace the workspace. |
+| Bevy | Workspace pins Bevy `=0.19.1` with a reduced feature set. | No Bevy upgrade is part of this phase. |
+| Pure session rule boundary | `poche-session/src/machine.rs` exposes authorization, event decision, and pure apply behavior around `SessionState`. | SpacetimeDB reducers adapt to this boundary. |
+| Logical game authority | README and current source identify `GameEnvironment`/session reducers as rules authority. | Neither tables nor ECS systems decide legal play independently. |
+| Physical/logical separation | `poche-player-client/src/physical.rs` and `poche-runtime/src/device_client.rs` carry signed pose state without incrementing logical game state. | Reuse the concept, not the current request/response carrier. |
+| Formal evidence | Alloy, NuSMV, Prolog, finite Rust, conformance, and spatial tracks are present and documented. | Update affected lifecycle scopes; do not restart formal modeling from zero. |
+| Bevy evidence | Native UI, hand/table cameras, windowless capture, rendered input probes, and live-control files exist. | Adapt the connection edge while preserving renderer/input tests where possible. |
+| Current transport evidence | `PLAN-6-DESKTOP-VEILID.md` records integrated latency and idle-write findings. | Use as comparative baseline, not as proof for SpacetimeDB. |
+| SpacetimeDB source | `G:\Programming\Repos\SpacetimeDB` is at product version 2.10.1 and uses Rust 1.93 in the inspected checkout. | Pin the app-facing CLI/SDK/module versions together. |
+| SpacetimeDB client model | Current docs state that `DbConnection` is a persistent WebSocket, subscriptions maintain a local cache, and updates are ordered atomically per committed transaction. | Use subscriptions rather than follow-up snapshots/polling. |
+| Recipient views | Current views support caller-aware `ViewContext` keyed by sender identity. | Spike private hand delivery through a sender-scoped view. |
+| Identity/reconnect | Current docs return identity/token on connect, recommend saving the token, distinguish `Identity` from `ConnectionId`, and require application reconnection. | Persist a profile token; model multiple connections separately. |
+| Reference Bevy adapter | `G:\Programming\Repos\bevy_spacetimedb` is Apache-2.0, targets older Bevy/SDK versions, and bridges SDK callbacks to Bevy messages through channels. It also leaks a connection and contains unsafe delayed-connect casts. | Reimplement only the small callback/channel pattern with owned lifetimes and no unsafe code. |
+| Compile references | Cloud Terrastodon uses workspace crates, optional heavy entrypoint features, and stable `rust-lld`. Cursor Hero uses workspace dependencies, many leaf crates, dev opt-level 1/dependency opt-level 3, and historical nightly rustflags. | Prefer Cloud's stable pattern; benchmark before copying profiles and do not adopt Cursor Hero's nightly flags. |
+| Local tool availability | `spacetime` was not present on either the sandbox or host-user PATH. | T1.2 must establish and document the tool before module work. |
+
+## Confirmed constraints
+
+1. New Poche-authored code remains MPL-2.0 and inherits `unsafe_code =
+   "forbid"` unless a separately reviewed platform boundary proves unavoidable.
+2. `poche-domain`, `poche-model`, `poche-environment`, `poche-session`, and
+   their fast tests must not depend on Bevy, the SpacetimeDB SDK, generated
+   client bindings, sockets, or a running database.
+3. The server module may depend on the official SpacetimeDB module bindings;
+   the native client adapter may depend on the official Rust client SDK. The
+   Bevy bridge depends on the client adapter, not vice versa.
+4. `G:\Programming\Repos\bevy_spacetimedb` must never appear in `Cargo.lock`,
+   `cargo metadata`, a path dependency, a git dependency, or vendored source.
+5. The SpacetimeDB host is trusted for this phase. It owns authoritative
+   ordering and can inspect hidden rows. User-facing documentation must say so.
+6. Physical pose does not confer logical ownership and does not play a card by
+   itself. A durable typed drop/action is required for logical transition.
+7. The initiating client renders its predicted pose immediately. Server
+   rejection cannot retroactively make the local interaction feel blocked.
+8. Explicit leave is distinct from disconnect. A room survives temporary loss
+   while memberships remain and disbands when the final membership explicitly
+   leaves.
+9. Tests do not read or write the human's OS clipboard. Production copy/paste
+   remains a UI convenience.
+10. Running the game, local database, tests, and puppets must not require
+    Windows Administrator/UAC.
+11. Build artifacts, database directories, captures, timing HTML, and generated
+    runtime logs remain ignored. Source schema and any deliberately committed
+    generated bindings are reviewed text.
+
+## Architecture contract
+
+```text
+                         pure / fast / transport-free
+  poche-domain -> poche-model -> poche-environment -> poche-session/runtime
+                                        |
+                                        | DTO conversion + pure transition
+                                        v
+                  poche-spacetimedb-module  (wasm target)
+                            |
+                   generated client API
+                            v
+                  poche-spacetimedb-client  (native, no Bevy)
+                            |
+                    typed channel/events
+                            v
+                  poche-bevy-spacetimedb    (Bevy 0.19.1 leaf)
+                            |
+                            v
+                     poche-native-ui / poche.exe
+```
+
+The target split is structural, not aesthetic:
+
+- server module and native SDK require different target/runtime dependencies;
+- generated bindings change with schema and should not recompile pure rules;
+- Bevy is heavy and should remain at a dependency leaf;
+- headless client/module tests should not link a renderer;
+- another renderer can later consume `poche-spacetimedb-client`.
+
+Initial owned crate names:
+
+| Crate | Owns | Must not own |
+| --- | --- | --- |
+| `poche-spacetimedb-module` | Tables, views, reducers, lifecycle hooks, server DTO conversion | Bevy UI, client token storage, duplicated game legality |
+| `poche-spacetimedb-bindings` or an isolated generated module | Reproducible generated Rust client API and schema fingerprint | Handwritten business logic |
+| `poche-spacetimedb-client` | Connection lifecycle, profile token, subscriptions/cache, reducer calls, typed client events, latency stamps | Bevy ECS/rendering |
+| `poche-bevy-spacetimedb` | Bevy Plugin, Resources, Messages/Events, frame-safe ingestion and command egress | Database schema, pure rules, unsafe global connection lifetime |
+
+G4 decides whether generated bindings justify their own crate after the first
+codegen measurement. The other three boundaries are required.
+
+### State durability classes
+
+| Class | Examples | SpacetimeDB representation | Client behavior |
+| --- | --- | --- | --- |
+| Durable logical | room, membership, seats, round/game state, command receipt, explicit leave | Private canonical rows plus public/recipient projection rows, atomically changed by reducers | Subscribe, never speculate durable completion |
+| Durable secret | deck order, card identity, hand ownership | Private tables inaccessible to ordinary subscriptions | Receive only through sender-scoped view |
+| Latest physical | card position/rotation, owner, generation, sequence | One latest-value row per card; bounded reducer rate; exact design closed by G7 | Predict locally; interpolate remote; discard stale sequences |
+| Presence | active `ConnectionId` values, last activity, device labels | Lifecycle-maintained or replaceable rows, not player identity | May flicker/recover without deleting membership |
+| Local-only presentation | camera, hover, drag affordance, speculative samples, animation progress | Not stored | Render every frame |
+
+## Design gates
+
+| Gate | Status | Required decision | Acceptance consequence |
+| --- | --- | --- | --- |
+| G1 Base strategy | Closed | Base `poche-4` on `model-checking` at `f0b3717` so formal/core work is retained. | Worktree and branch point are recorded. |
+| G2 Authority | Closed | SpacetimeDB is a trusted centralized authority for this branch; no consensus claim. | Threat model and docs name host visibility/control. |
+| G3 Bevy integration ownership | Closed | Build `poche-bevy-spacetimedb` in-tree; no `bevy_spacetimedb` dependency. | Metadata/license audit fails if the reference package enters the graph. |
+| G4 Generated bindings | Open in T1.4 | Decide dedicated crate vs isolated module based on codegen workflow and rebuild fan-out. Generated code must be reproducible and schema-fingerprinted. | A clean generation check produces no diff and pure crates do not rebuild. |
+| G5 Identity/recovery UX | Open in T2.2/T3.1 | Working assumption: protected persistent Spacetime token per named local profile; display name is mutable metadata, not authority. Decide whether a user-entered recovery secret is needed later. | Same profile reconnects after process restart; a new profile cannot impersonate it by reusing the name. |
+| G6 Compile strategy | Open in T1.1/T1.2 | Measure current warm/clean package builds, then choose `default-members`, stable `rust-lld`, profile overrides, and CI cache keys. | Fast-core commands avoid Bevy/SDK; changes improve measured iteration or are not adopted. |
+| G7 Physical update carrier/rate | Open in T2.5/T6.4 | Compare bounded latest-row reducer updates (starting at 15 Hz) with any supported transient/event mechanism. Do not add a second networking stack before measuring. | Same-host remote pose p95 target is below 100 ms; otherwise stop broader migration and diagnose. |
+| G8 Rejected drop presentation | Open in T4.4 | Preserve physical/logical separation. Choose retain, snap, or tween-back UX without treating it as rule state. | Illegal attempt leaves logical location unchanged and gives visible feedback. |
+| G9 Licensing/distribution | Open in T1.2/T7.1 | Confirm the exact CLI/server, client SDK, and module-binding licenses for the pinned version and acceptable deployment. Current 2.10.1 root/client is BSL 1.1 with a one-production-instance additional grant and 2031-09-08 change date; module bindings are Apache-2.0. | No release claim or distribution step proceeds with an inaccurate license statement. |
+| G10 Private hand delivery | Open in T2.3 | Prove sender-scoped views do not leak private rows through generated bindings, broad subscriptions, callbacks, logs, diagnostics, or captures. | Two identities see their own faces and never the other's; server trust remains disclosed. |
+| G11 Room lifetime | Closed at product level; implementation proof pending | Explicit final-member leave disbands. Disconnect only removes presence and permits reconnect. | Restart and final-leave tests cover both sides. |
+| G12 Canonical storage mapping | Open in T2.1 | Prefer a private canonical room snapshot/event boundary plus normalized public/recipient rows, with lossless DTO conversions. Avoid making normalized projections the only rule state until atomic reconstruction is proven. | Round-trip and reducer conformance tests show one logical result. |
+| G13 Local orchestration | Open in T1.2/T6.1 | Add `poche-xtask spacetimedb` commands after inspecting the pinned CLI help; do not rely on undocumented shell state. | Doctor/start/publish/generate/test work from a fresh checkout with explicit prerequisites. |
+
+## Source and implementation references
+
+### Poche
+
+- `D:\Repos\Games\poche-4\Cargo.toml` — current workspace/version/feature root.
+- `D:\Repos\Games\poche-4\crates\poche-session\src\machine.rs` — pure
+  authorization/decide/apply boundary.
+- `D:\Repos\Games\poche-4\crates\poche-runtime\src\device_client.rs` —
+  projection/action and current physical-pose authority behavior.
+- `D:\Repos\Games\poche-4\crates\poche-player-client\src\physical.rs` —
+  position/rotation, device generation, and sequence concepts.
+- `D:\Repos\Games\poche-4\crates\poche-native-ui\src\native_live.rs` and
+  `desktop_menu.rs` — rendered table and menu connection edge.
+- `D:\Repos\Games\poche-4\crates\poche-native-ui\src\desktop_menu\live_control.rs`
+  — bounded file control and observations.
+- `D:\Repos\Games\poche-4\PLAN-6-DESKTOP-VEILID.md` — completed baseline,
+  recovery, latency, and acceptance evidence.
+- `D:\Repos\Games\poche-4\PLAN-5-LIVE-CONTROL-PUPPETS.md` — capture/device/
+  automation boundaries.
+
+### SpacetimeDB
+
+- `G:\Programming\Repos\SpacetimeDB\LICENSE.txt` — inspected 2.10.1 BSL
+  parameters and subdirectory-specific-license rule.
+- `G:\Programming\Repos\SpacetimeDB\crates\bindings\LICENSE` — Apache-2.0
+  module binding license pointer.
+- `G:\Programming\Repos\SpacetimeDB\sdks\rust\LICENSE` — root BSL license
+  pointer for the client SDK.
+- `G:\Programming\Repos\SpacetimeDB\docs\docs\00200-core-concepts\00600-clients\00300-connection.md`
+  — persistent WebSocket, token saving, identity/connection distinction, and
+  application-managed reconnect.
+- `G:\Programming\Repos\SpacetimeDB\docs\docs\00200-core-concepts\00400-subscriptions.md`
+  and `00200-subscription-semantics.md` — local cache and atomic ordered update
+  semantics.
+- `G:\Programming\Repos\SpacetimeDB\docs\docs\00200-core-concepts\00200-functions\00500-views.md`
+  — sender-scoped and anonymous views.
+- `G:\Programming\Repos\SpacetimeDB\docs\docs\00200-core-concepts\00200-functions\00300-reducers\00400-reducer-context.md`
+  — sender identity, connection ID, deterministic RNG, and reducer context.
+
+### Reference-only integration and workspace examples
+
+- `G:\Programming\Repos\bevy_spacetimedb` — Apache-2.0 behavioral reference,
+  not a dependency. Useful concepts: background `run_threaded` connection,
+  callback-to-channel bridge, lifecycle messages, table insert/update/delete
+  messages. Do not inherit its leaked connection, unsafe delayed connect, API
+  shape, or version pins automatically.
+- `D:\Repos\Azure\Cloud-Terrastodon\Cargo.toml` and `.cargo\config.toml` —
+  workspace-wide dependencies, optional heavy entrypoint, stable `rust-lld`.
+- `D:\Repos\Games\Cursor-Hero\Cargo.toml` and `.cargo\config.toml` — historic
+  leaf/plugin separation and dev dependency optimization. Its Bevy 0.12 fork,
+  extreme microcrate count, and nightly `-Z` flags are not suitable defaults.
+
+## Execution order
+
+```text
+T0 branch/plan
+  -> T1 toolchain + compile boundaries + codegen
+      -> T2 module schema/reducers/privacy/pose
+          -> T3 native client + Bevy bridge
+              -> T4 rendered two-window gameplay
+                  -> T5 formal and adapter conformance
+                      -> T6 headless/real-process/recovery/latency acceptance
+                          -> T7 docs, dependency retirement, CI, release receipt
+```
+
+T5 pure/model work may begin beside late T4 rendering only after T2's canonical
+mapping is closed. T6 latency is measured narrowly during T2/T3 as well as at
+end to prevent a visually complete but unresponsive architecture.
+
+## Phase 0 — Reorient safely
+
+### [x] T0.1 Create the isolated worktree and branch
+
+**Completion notes:**
+
+- Verified `D:\Repos\Games\poche-4` did not exist and branch `spacetimedb` was
+  free.
+- Created it from clean `model-checking` revision
+  `f0b371727301730f9db88ad53defa9d66c684269`.
+- Existing `Poche`, `poche-2`, and `poche-3` worktrees were unchanged.
+
+**Validation:**
+
+```pwsh
+git -C D:\Repos\Games\poche-3 worktree list --porcelain
+git -C D:\Repos\Games\poche-4 status --short --branch
+git -C D:\Repos\Games\poche-4 log -1 --format="%H %s"
+```
+
+**Completion criteria:** `poche-4` is an independent clean worktree on the
+named branch at the recorded base.
+
+### [x] T0.2 Record the reorientation contract and three-pass intent audit
+
+**Completion notes:**
+
+- Inspected the current Poche workspace, completed plans, relevant rules,
+  physical-pose and native UI boundaries.
+- Inspected current SpacetimeDB docs/licenses, the reference Bevy adapter, and
+  both compile-time workspace examples.
+- Recorded active, tentative, superseded, and deferred guidance in this file.
+
+**Validation:**
+
+```pwsh
+git -C D:\Repos\Games\poche-4 diff --check
+rg -n "^\| U[0-9]+" D:\Repos\Games\poche-4\PLAN-7-SPACETIMEDB-REORIENTATION.md
+rg -n "bevy_spacetimedb|Cloud-Terrastodon|Cursor-Hero|SpacetimeDB|Intent audit" D:\Repos\Games\poche-4\PLAN-7-SPACETIMEDB-REORIENTATION.md
+```
+
+**Completion criteria:** A fresh agent can identify the next task, design
+boundaries, unresolved gates, exact references, and acceptance evidence
+without the conversation.
+
+## Phase 1 — Establish a reproducible, fast workspace boundary
+
+### [ ] T1.1 Measure current and proposed compile surfaces
+
+**Work:**
+
+- Record package/dependency graphs and warm build times for pure session,
+  native UI, and full workspace without deleting the shared `target` tree.
+- Use an isolated ignored target directory for a clean-build comparison instead
+  of `cargo clean`.
+- Identify which current dependencies make pure edits compile Bevy, Burn,
+  Veilid, or the future SpacetimeDB SDK.
+- Define an intentional `default-members` set or explicit fast aliases only if
+  it measurably improves the common command without hiding release coverage.
+
+**Validation:**
+
+```pwsh
+cargo metadata --no-deps --format-version 1
+cargo build --locked -p poche-session --timings
+cargo build --locked -p poche-native-ui --timings
+$env:CARGO_TARGET_DIR = "target\compile-baseline"
+cargo build --locked -p poche-session --timings
+Remove-Item Env:CARGO_TARGET_DIR
+```
+
+**Completion criteria:** A checked-in compile matrix identifies fast and heavy
+surfaces, includes measured evidence, and chooses `default-members`/aliases
+without weakening `--workspace` validation.
+
+### [ ] T1.2 Pin and document the SpacetimeDB toolchain and licenses
+
+**Work:**
+
+- Install or build one reviewed SpacetimeDB CLI version as an explicit developer
+  prerequisite; current PATH has none.
+- Pin matching module and Rust SDK versions in the lockfile.
+- Inspect `spacetime help` for exact local start, publish, generate, logs, and
+  database-reset commands before wrapping them.
+- Add `poche-xtask spacetimedb doctor` and local orchestration that stores
+  runtime data under ignored `target/spacetimedb/`.
+- Close G9 for development and document what remains before production.
+- Test stable `rust-lld` on Windows. Do not adopt nightly `-Z` flags.
+
+**Validation:**
+
+```pwsh
+spacetime --version
+cargo run -p poche-xtask -- spacetimedb doctor
+cargo metadata --format-version 1 --locked
+cargo test -p poche-session --locked
+```
+
+**Completion criteria:** A fresh ordinary-user shell can diagnose exact
+versions/licenses and start the local prerequisite without global hidden state;
+fast pure tests remain independent.
+
+### [ ] T1.3 Add the three required Poche-owned integration crates
+
+**Work:**
+
+- Add `poche-spacetimedb-module`, `poche-spacetimedb-client`, and
+  `poche-bevy-spacetimedb` with minimal compiling APIs.
+- Keep module WASM dependencies, native SDK dependencies, and Bevy dependencies
+  in their respective leaves.
+- Make `poche-native-ui` opt into the new bridge; do not make the workspace's
+  pure default surface compile it.
+- Remove Veilid from the new desktop default feature only after the new empty
+  connector compiles; retain its crate and explicit research features.
+- Add an automated dependency/provenance assertion excluding the reference
+  `bevy_spacetimedb` package/path.
+
+**Validation:**
+
+```pwsh
+cargo check -p poche-spacetimedb-module --locked
+cargo check -p poche-spacetimedb-client --locked
+cargo check -p poche-bevy-spacetimedb --locked
+cargo test -p poche-session --locked
+cargo metadata --format-version 1 --locked | rg "bevy_spacetimedb"
+```
+
+**Completion criteria:** Each layer compiles independently, the pure core has no
+new heavy dependency, and metadata contains no reference-plugin dependency.
+
+### [ ] T1.4 Make schema generation reproducible and isolated
+
+**Work:**
+
+- Create the smallest schema and run pinned Rust client codegen.
+- Measure whether a dedicated `poche-spacetimedb-bindings` crate reduces rebuild
+  fan-out versus a private module in `poche-spacetimedb-client`.
+- Close G4 and commit either the generated Rust or an exact generation rule
+  with schema fingerprint; CI must detect drift.
+- Never hand-edit generated files.
+
+**Validation:**
+
+```pwsh
+cargo run -p poche-xtask -- spacetimedb generate --check
+git diff --exit-code -- crates/poche-spacetimedb-client crates/poche-spacetimedb-bindings
+cargo check -p poche-spacetimedb-client --locked
+```
+
+**Completion criteria:** Running generation twice is idempotent, schema/client
+drift fails clearly, and editing pure rules does not regenerate bindings.
+
+## Phase 2 — Put Poche rules behind a SpacetimeDB module
+
+### [ ] T2.1 Define canonical server DTOs and lossless pure-core conversion
+
+**Work:**
+
+- Close G12 with explicit DTOs for room IDs, player principals, devices,
+  membership, seats, game/logical state, command IDs, receipts, cards, and
+  projections.
+- Keep SpacetimeDB derives/macros out of pure crates.
+- Convert at the module boundary and test round trips, bounds, stable ordering,
+  stale revision behavior, and error mapping.
+- Reuse stable Poche identifiers where valid instead of inventing database IDs
+  as a second identity system.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-spacetimedb-module dto --locked
+cargo test -p poche-session --locked
+cargo test -p poche-environment --locked
+```
+
+**Completion criteria:** Every module DTO used by a reducer has a tested mapping
+to/from the pure contract, and no database row bypasses rule validation.
+
+### [ ] T2.2 Implement room, membership, identity, seating, and lifetime
+
+**Work:**
+
+- Add opaque room creation/join lookup, profile registration, membership,
+  multiple connections/devices, take/release seat, ready/countdown minimum,
+  reconnect, explicit leave, and final-member disband reducers.
+- Authorize from reducer sender identity, not display name or caller-provided
+  principal.
+- Distinguish connection lifecycle from durable membership.
+- Close the working identity/recovery assumptions in G5 and G11.
+- Return correlated typed receipts for accepted, denied, duplicate, stale, and
+  missing-room calls.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-spacetimedb-module room --locked
+cargo test -p poche-spacetimedb-client reconnect --locked
+cargo run -p poche-xtask -- spacetimedb scenario room-lifecycle --clients 2
+```
+
+**Completion criteria:** Two identities create/join/seat; restart preserves the
+same member; a same-name new identity cannot impersonate; disconnect preserves
+membership; final explicit leave removes the room and rejects stale join codes.
+
+### [ ] T2.3 Prove private hands and recipient-scoped projections
+
+**Work:**
+
+- Keep deck order, card face, and hand ownership in private tables.
+- Expose common public room/table data through anonymous/shared subscriptions
+  where possible and own-hand data through a sender-scoped view.
+- Avoid `subscribe_to_all_tables` and broad diagnostic serialization.
+- Deal deterministically from reducer RNG with a recorded seed/receipt for
+  reproducible tests, while documenting that the trusted host controls it.
+- Verify multiple devices with one identity receive the same authorized hand.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-spacetimedb-module privacy --locked
+cargo test -p poche-spacetimedb-client privacy --locked
+cargo run -p poche-xtask -- spacetimedb scenario private-deal --clients 2 --seed 1
+```
+
+**Completion criteria:** Alice sees Alice's faces, Bob sees Bob's, neither
+receives the other's in cache/events/logs/captures, and the module alone sees
+the complete deck.
+
+### [ ] T2.4 Route durable game actions through the pure transition engine
+
+**Work:**
+
+- Adapt bid/play and the minimum room commands from authenticated reducer input
+  to the existing typed action, `SessionState`, and `GameEnvironment`.
+- Apply resulting rows and receipt atomically; no follow-up full snapshot is
+  required after a successful reducer callback/subscription delta.
+- Make idempotency keys and expected logical revisions explicit.
+- Compare reducer outcomes with direct pure execution for accepted and denied
+  actions.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-spacetimedb-module reducer_conformance --locked
+cargo test -p poche-conformance --locked
+cargo run -p poche-xtask -- spacetimedb scenario one-trick --clients 2 --seed 1
+```
+
+**Completion criteria:** The database adapter and direct pure reducer produce
+the same logical state/events/denial for the scoped lifecycle and one trick.
+
+### [ ] T2.5 Add bounded latest-value physical pose updates
+
+**Work:**
+
+- Add card pose rows containing room/card, controlling identity/device,
+  generation, monotonic sequence, position, rotation, logical anchor, and
+  server commit time.
+- Validate bounds and current control authority without changing logical game
+  revision.
+- Coalesce client samples and begin at 15 Hz while rendering locally every
+  frame. Treat remote samples as a piecewise curve for interpolation.
+- Ignore stale/reordered samples and keep a reliable final pose/drop boundary.
+- Instrument every latency stage and close G7 with a narrow two-client spike
+  before continuing UI work.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-spacetimedb-module pose --locked
+cargo test -p poche-spacetimedb-client pose --locked
+cargo run -p poche-xtask -- spacetimedb latency --clients 2 --samples 500 --json target/spacetimedb/pose-latency.json
+```
+
+**Completion criteria:** The initiating model updates immediately, the peer
+receives monotonic latest poses with same-host p95 below 100 ms after warm-up,
+idle clients write nothing, and pose traffic does not mutate logical state.
+
+## Phase 3 — Build the native client and Bevy bridge
+
+### [ ] T3.1 Own connection, token persistence, reconnect, and shutdown
+
+**Work:**
+
+- Implement `poche-spacetimedb-client` around generated `DbConnection` with
+  explicit owned lifetime and background execution.
+- Persist tokens through the existing protected-profile abstraction where
+  possible; never print them in ordinary logs or room codes.
+- Recreate `DbConnection` with bounded backoff after interruption.
+- Expose identity, connection ID, module/schema version, connection state, and
+  actionable error diagnostics.
+- Support two local profiles and multiple connections for one profile without
+  conflating display names.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-spacetimedb-client connection --locked
+cargo test -p poche-spacetimedb-client reconnect --locked
+cargo run -p poche-xtask -- spacetimedb scenario reconnect --clients 2
+```
+
+**Completion criteria:** Start/stop/restart is leak-free, the credential is
+protected and redacted, reconnection restores the correct identity, and clean
+shutdown joins its worker.
+
+### [ ] T3.2 Convert SDK subscriptions into a typed local client model
+
+**Work:**
+
+- Register only required tables/views.
+- Translate insert/update/delete, reducer outcome, subscription-applied/error,
+  connect, and disconnect callbacks into bounded typed events.
+- Maintain one exact local model with atomic transaction application; Bevy must
+  not query the SDK from arbitrary systems.
+- Apply backpressure/coalescing for pose rows without dropping durable room or
+  game changes.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-spacetimedb-client subscription --locked
+cargo test -p poche-spacetimedb-client backpressure --locked
+```
+
+**Completion criteria:** A deterministic callback transcript reconstructs the
+same local model, pose bursts remain bounded, and durable changes are ordered
+and lossless.
+
+### [ ] T3.3 Expose one command/observation contract to GUI, CLI, and puppets
+
+**Work:**
+
+- Map the existing typed action catalogue to reducer calls without NDJSON or
+  forced snapshot round trips in the hot path.
+- Return correlated outcomes and timestamps suitable for UI, CLI JSON/NDJSON,
+  diagnostics, and latency reports.
+- Preserve local action derivation from the viewer-safe projection.
+- Keep file live-control above this adapter so it exercises ordinary UI input
+  or ordinary client commands rather than mutating database state.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-spacetimedb-client action_contract --locked
+cargo run -p poche-cli -- --output json room status
+cargo run -p poche-xtask -- spacetimedb scenario cli-gui-parity --clients 2
+```
+
+**Completion criteria:** GUI, CLI, and automation see the same available
+actions and receipts for the same projection; no privileged testing ingress
+changes state.
+
+### [ ] T3.4 Implement the Poche-owned Bevy 0.19.1 bridge
+
+**Work:**
+
+- Create a small `Plugin` with Resources and typed Messages/Events for client
+  state, lifecycle, transactions, action results, and outgoing intents.
+- Drain a bounded channel on the Bevy schedule and publish immutable frame
+  snapshots; send commands through a narrow handle.
+- Own and shut down the worker without `Box::leak`, global statics, unsafe
+  `World`/`App` casts, or reflection over generated types.
+- Record a behavioral comparison to `bevy_spacetimedb` and provenance.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-bevy-spacetimedb --locked
+cargo test -p poche-bevy-spacetimedb --no-default-features --locked
+cargo tree -p poche-bevy-spacetimedb | rg "bevy_spacetimedb"
+```
+
+**Completion criteria:** A minimal headless Bevy App connects, receives a
+transaction, emits a reducer intent, and disconnects cleanly with no unsafe
+code or reference dependency.
+
+## Phase 4 — Deliver the two-window card-table MVP
+
+### [ ] T4.1 Reconnect the main menu to create/join flows
+
+**Work:**
+
+- Keep the game-like full-window main menu with editable player/profile name,
+  Create lobby, Join lobby, valid-shape-gated paste, and explicit status/errors.
+- Generate an opaque code that identifies the authoritative module/room without
+  embedding player secrets.
+- Make Copy a human convenience; use direct observed text in automated tests.
+- Run both windows as ordinary users with no UAC requirement.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-native-ui desktop_menu --locked
+cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario create-join
+```
+
+**Completion criteria:** One window creates and displays/copies a code; another
+profile joins it; invalid/unknown/stale codes give useful errors without
+changing identity.
+
+### [ ] T4.2 Render shared lobby membership, spectators, and seats
+
+**Work:**
+
+- Drive table avatars/capsules, spectators, seats, ready state, and room status
+  from subscribed client state.
+- Allow both clients to take/release distinct seats through diegetic table
+  targets and the complete action surface.
+- Show connection state separately from durable membership.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-native-ui lobby_scene --locked
+cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario seats
+```
+
+**Completion criteria:** Both clients converge on membership and seats without
+manual refresh, and denied seat races appear as explicit receipts.
+
+### [ ] T4.3 Deal and render recipient-private hands
+
+**Work:**
+
+- Start the smallest playable two-player deal using the authoritative reducer.
+- Render each own hand through its dedicated viewport/camera while keeping the
+  shared card object grounded in one world.
+- Render peer card backs/counts but never peer faces.
+- Preserve existing card glyph/Slug improvements and windowless capture.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-native-ui private_hand --locked
+cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario private-deal --captures
+```
+
+**Completion criteria:** Captures and semantic observations prove distinct own
+hands and negative peer-face visibility for both clients.
+
+### [ ] T4.4 Make card manipulation immediate, shared, and rule-aware
+
+**Work:**
+
+- Reuse the current physical/logical and hand/table viewport mapping.
+- Update the grabbed card locally each frame, publish coalesced position and
+  rotation, and interpolate the peer representation.
+- On release into a logical zone, send one typed drop/play intent. Reconcile
+  accepted logical movement; visibly explain rejected movement and close G8.
+- Expose the equivalent card command in the action surface.
+- Keep planned deal/snap animations as explicit curves; do not pretend a future
+  arbitrary mouse path is known.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-native-ui card_drag --locked
+cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario shared-card-wiggle --captures
+cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario legal-and-denied-drop --captures
+```
+
+**Completion criteria:** Local drag never waits for the network, the second
+window sees smooth position/rotation changes, cross-viewport dragging
+preserves one object, legal drop changes logical state, and denied drop does
+not.
+
+### [ ] T4.5 Make restart and room departure understandable
+
+**Work:**
+
+- Show reconnecting/rejoined/disbanded states without silently jumping views.
+- Restart either client with its existing profile and restore membership/seat/
+  private view as allowed by room phase.
+- Permit explicit leave; final leave disbands and presents a terminal screen.
+- Exercise a second device for one identity and prove it does not create
+  another player or vote.
+
+**Validation:**
+
+```pwsh
+cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario restart
+cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario multi-device
+cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario final-leave
+```
+
+**Completion criteria:** Crash/restart recovers while membership exists;
+explicit final leave disbands; multiple device connections retain one player
+identity.
+
+## Phase 5 — Reconnect the formal evidence to the new authority edge
+
+### [ ] T5.1 Prove physical and logical refinement boundaries
+
+**Work:**
+
+- Extend pure/Rust properties for latest pose sequence, control authority,
+  bounded coordinates/rotation, and pose independence from logical location.
+- Check that a release into a zone maps to at most one typed logical intent.
+- Reuse the existing bounded spatial Alloy/NuSMV/Prolog scopes where applicable;
+  add only state variables that carry logical meaning.
+- Do not ask SAT/SMV to prove smooth floating-point rendering.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-spatial --locked
+cargo run -p poche-xtask -- spatial compare all --scope micro
+cargo run -p poche-xtask -- spatial coverage audit --all
+```
+
+**Completion criteria:** Formal and pure checks cover logical refinement and
+bounded spatial invariants without conflating frames/poses with game truth.
+
+### [ ] T5.2 Update lifecycle oracles for centralized membership semantics
+
+**Work:**
+
+- Model identity vs connection, multiple devices per player, disconnect/
+  reconnect, explicit leave, final-member disband, create/join/seat/ready, and
+  the scoped game lifecycle.
+- Update Alloy, NuSMV, Prolog, and Rust oracle fixtures consistently.
+- Check invariants: one seat per player, one player per seat, disconnected is
+  not departed, no join after disband, no device multiplicity voting weight,
+  and eventual room deletion after final explicit leave.
+
+**Validation:**
+
+```pwsh
+cargo run -p poche-xtask -- session compare all --scope lobby-micro
+cargo run -p poche-xtask -- protocol replay --all
+cargo test -p poche-formal --locked
+```
+
+**Completion criteria:** All four models agree in their named bounded/symbolic/
+query scopes and publish counterexamples for deliberately broken properties.
+
+### [ ] T5.3 Prove adapter authorization and projection privacy
+
+**Work:**
+
+- Property-test caller identity mapping, stale/idempotent reducer calls,
+  per-recipient DTO conversion, and diagnostics redaction.
+- Run two real SDK identities against the local module for positive and
+  negative hand subscriptions.
+- Keep claims precise: server privacy enforcement against clients, not secrecy
+  from the server operator.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-spacetimedb-module authorization --locked
+cargo test -p poche-spacetimedb-client projection --locked
+cargo run -p poche-xtask -- spacetimedb scenario privacy-adversarial --clients 2
+```
+
+**Completion criteria:** Forged IDs/names, stale calls, unauthorized card
+motion, and broad subscription attempts fail without leaking secret rows.
+
+## Phase 6 — Automate and measure the real system
+
+### [ ] T6.1 Build a disposable local SpacetimeDB test harness
+
+**Work:**
+
+- Start a pinned local server on an isolated port/data directory, publish a
+  unique module/database name, wait for readiness, and always collect logs.
+- Tear down only processes and directories created by the harness.
+- Support fault points for client loss, server restart, delayed messages, and
+  reducer denial without requiring Windows firewall or UAC changes.
+- Make failure preserve artifacts under ignored `target/spacetimedb/runs/...`.
+
+**Validation:**
+
+```pwsh
+cargo test -p poche-xtask spacetimedb_harness --locked
+cargo run -p poche-xtask -- spacetimedb smoke --keep-artifacts
+```
+
+**Completion criteria:** Repeated runs allocate no shared state, leave no
+process behind, and produce correlated server/client logs on failure.
+
+### [ ] T6.2 Port the windowless two-player puppet to the new client
+
+**Work:**
+
+- Fan out one harness into creator and joiner devices using file/live-control
+  observations rather than the OS clipboard.
+- Exercise Create, Join, seats, ready/deal, private hands, card wiggle, legal
+  drop, denied drop, and explicit leave through ordinary surfaces.
+- Capture each viewer with Bevy's windowless image target and record semantic
+  state beside pixels.
+
+**Validation:**
+
+```pwsh
+cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario mvp --captures --seed 1
+```
+
+**Completion criteria:** One command produces two private captures, a
+correlated action/state transcript, server log, latency trace, and an HTML
+contact sheet with no visible windows or clipboard changes.
+
+### [ ] T6.3 Perform real two-window ordinary-user acceptance
+
+**Work:**
+
+- Build once and launch two `poche.exe` processes with separate profiles.
+- Manually verify main-menu flow, code copy/paste, seats, private deal, card
+  movement, legal/denied drop, and restart.
+- Record screenshots/captures and machine-readable observations without
+  claiming a headless test proves OS integration.
+- Confirm neither process nor the local server requests UAC.
+
+**Validation:**
+
+```pwsh
+cargo build --locked -p poche-cli
+target\debug\poche.exe --profile alice
+target\debug\poche.exe --profile bob
+```
+
+**Completion criteria:** A human can follow the documented guide and complete
+the slice in two visible windows; the evidence records application, server,
+ports, versions, and any firewall prompt separately from UAC.
+
+### [ ] T6.4 Publish a latency and load report with a go/no-go decision
+
+**Work:**
+
+- Measure input-to-local-frame, reducer enqueue, server commit, caller outcome,
+  peer subscription callback, Bevy ingestion, and peer rendered-frame latency.
+- Measure idle traffic, 15 Hz drag traffic, concurrent durable action traffic,
+  reconnect, and server resource use.
+- Compare with the retained Veilid isolated/integrated evidence using payload
+  sizes and topology, not just headline averages.
+- Tune coalescing/interpolation and confirmed-read settings only with evidence.
+- Stop and revisit G7 if same-host remote pose p95 remains at or above 100 ms or
+  visible movement stalls/teleports.
+
+**Validation:**
+
+```pwsh
+cargo run -p poche-xtask -- spacetimedb latency --clients 2 --samples 1000 --json target/spacetimedb/final-latency.json
+cargo run -p poche-xtask -- spacetimedb report --input target/spacetimedb/final-latency.json
+```
+
+**Completion criteria:** The report gives distributions and correlated traces,
+local response is within one rendered frame at 60 Hz p95, same-host peer pose
+is below 100 ms p95, durable action peer visibility is below 150 ms p95, and
+idle state generates no writes.
+
+### [ ] T6.5 Prove recovery and failure boundaries
+
+**Work:**
+
+- Test player process crash/restart, second device, server process restart,
+  stale token, network interruption, simultaneous seat attempt, duplicate
+  reducer call, explicit one-of-two leave, and final leave.
+- State which guarantees come from durable local SpacetimeDB storage versus
+  client token persistence.
+- Do not claim high availability, failover, consensus, or hosted durability.
+
+**Validation:**
+
+```pwsh
+cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario recovery-matrix
+```
+
+**Completion criteria:** Every named fault has an expected visible/client/
+server outcome, deterministic test evidence, and an honest unsupported-case
+entry.
+
+## Phase 7 — Document, integrate, and release the branch
+
+### [ ] T7.1 Write the player, contributor, trust, and license guides
+
+**Work:**
+
+- Add an exact “play twice locally” guide covering prerequisite, server start,
+  build, two profiles, create/copy/join, seat/deal/move, restart, and shutdown.
+- Explain server trust, private-view scope, identity token handling, room-code
+  non-authority, centralization, licenses, no-UAC expectation, and firewall
+  behavior.
+- Add an architecture page showing pure rules, module, SDK client, Bevy bridge,
+  rendering, and formal evidence.
+- Document the behavioral inspiration/provenance from `bevy_spacetimedb`
+  without implying a dependency.
+
+**Validation:**
+
+```pwsh
+cargo run -p poche-xtask -- spacetimedb doctor
+cargo run -p poche-xtask -- pages build
+git diff --check
+```
+
+**Completion criteria:** A fresh user can execute the visible MVP and a fresh
+developer can explain security/license/authority boundaries from repository
+docs alone.
+
+### [ ] T7.2 Make SpacetimeDB the desktop default without erasing prior work
+
+**Work:**
+
+- Point no-argument `poche.exe` and ordinary desktop commands at the new
+  connector.
+- Keep Veilid, web, replication, hidden-card, and old gateway experiments
+  behind explicit non-default packages/features or historical branches.
+- Update README status/matrix and plan links; label superseded instructions
+  rather than deleting evidence.
+- Ensure a normal desktop dependency graph excludes Veilid and the reference
+  Bevy adapter.
+
+**Validation:**
+
+```pwsh
+cargo tree -p poche-cli --edges normal
+cargo build --locked -p poche-cli
+cargo test -p poche-cli --locked
+```
+
+**Completion criteria:** The ordinary binary runs the SpacetimeDB flow, legacy
+research remains available and accurately labeled, and no old transport is
+silently linked into the default path.
+
+### [ ] T7.3 Enforce fast and complete CI surfaces
+
+**Work:**
+
+- Add separate jobs/cache keys for pure core, server WASM, native SDK/bridge,
+  formal tools, and full workspace.
+- Keep the fast core job independent of Bevy and SpacetimeDB service startup.
+- Run generated-binding drift, dependency/provenance, formatting, lint, and
+  ignored-artifact checks.
+- Record measured compile impact of linker/profile/default-member changes.
+
+**Validation:**
+
+```pwsh
+cargo fmt --all -- --check
+cargo clippy -p poche-session -p poche-environment --all-targets -- -D warnings
+cargo test --workspace --all-targets --locked
+cargo run -p poche-xtask -- spacetimedb generate --check
+git status --short
+```
+
+**Completion criteria:** Fast failures stay fast, all supported surfaces run
+elsewhere in CI, and no cache or default-member choice conceals full coverage.
+
+### [ ] T7.4 Produce the completion receipt and publish the branch
+
+**Work:**
+
+- Re-run the full support matrix from a clean-enough isolated target and fresh
+  local database.
+- Record exact versions, commands, pass/fail/skip results, latency report,
+  capture manifest, formal scopes, trust limits, license decision, and commits.
+- Re-run all three intent-audit passes and repair the plan if any active
+  guidance lacks evidence or an explicit non-goal.
+- Commit and push `spacetimedb` only after `git diff --check` and targeted
+  validation pass.
+
+**Validation:**
+
+```pwsh
+cargo test --workspace --all-targets --locked
+cargo run -p poche-xtask -- protocol replay --all
+cargo run -p poche-xtask -- session compare all --scope lobby-micro
+cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario mvp --captures --seed 1
+git diff --check
+git status --short --branch
+```
+
+**Completion criteria:** Every task is `[x]` with local evidence, the two-window
+MVP and latency gates pass, docs and code agree, limits are accurate, and the
+remote branch contains all intended commits.
+
+## Support and acceptance matrix
+
+| Surface | Status for this plan | Required validation | Evidence |
+| --- | --- | --- | --- |
+| Pure Rust domain/session/environment | Supported, transport-free | Focused unit/property tests and full workspace | Pending |
+| Alloy oracle | Supported in existing named scopes | Session/spatial comparison and counterexample witness | Pending |
+| NuSMV oracle | Supported in existing named scopes | Session/spatial comparison and temporal witness | Pending |
+| Scryer Prolog oracle | Supported for relational queries | Session/spatial comparison and query witness | Pending |
+| SpacetimeDB module | Supported, pinned local 2.x | WASM build, publish, reducer/privacy integration | Pending |
+| Native Rust SDK client | Supported on Windows first | Connect/subscribe/reducer/reconnect tests | Pending |
+| Poche-owned Bevy bridge | Supported with Bevy 0.19.1 | Headless App and real rendered clients | Pending |
+| Two visible `poche.exe` processes | Primary player acceptance | Create/join/seat/deal/wiggle/drop/restart | Pending |
+| Windowless two-player puppet | Primary repeatable acceptance | Two private captures plus semantic/latency transcript | Pending |
+| Web/browser client | Explicitly unsupported this phase | Build graph/doc audit; no accidental promise | Pending |
+| Veilid transport | Retained research, non-default | Historical tests/docs remain; default tree excludes it | Pending |
+| Untrusted-host/zero-trust play | Not supported | Threat-model statement | Pending |
+| Hosted production database | Not supported | License/deployment note; no hosted success claim | Pending |
+
+## Overall completion criteria
+
+- [ ] `poche-4` remains isolated, committed, pushed, and based on the recorded
+  formal/core foundation.
+- [ ] The pinned SpacetimeDB development stack is reproducible and its BSL/
+  Apache boundaries are accurately documented.
+- [ ] Pure Poche rule tests do not compile Bevy or SpacetimeDB.
+- [ ] Poche owns its module/client/Bevy bridge and has no dependency on
+  `bevy_spacetimedb`.
+- [ ] Two real desktop processes create/join one opaque-code room, take seats,
+  deal recipient-private hands, and recover after a client restart.
+- [ ] A local grabbed card moves immediately and the peer sees smooth,
+  monotonic position and rotation within the latency gate.
+- [ ] Physical movement and logical location remain separate; legal drop
+  advances the pure game and denied drop does not.
+- [ ] Explicit final-member leave disbands; mere disconnect does not.
+- [ ] Multiple connections for one identity remain one player and receive only
+  that player's authorized projection.
+- [ ] Headless/windowless puppets prove the same slice without touching the OS
+  clipboard or opening windows.
+- [ ] Alloy, NuSMV, Prolog, Rust, and the SpacetimeDB adapter agree for the
+  declared lifecycle and game scopes.
+- [ ] Latency, privacy, recovery, compile-time, trust, license, and unsupported
+  target reports are committed and linked from README.
+- [ ] Full workspace validation and the final three-pass intent audit have
+  recorded evidence.
+
+## Risk register
+
+| Risk | Weight | Guardrail / controlling work |
+| --- | --- | --- |
+| SpacetimeDB does not improve integrated latency or pose updates still teleport. | Critical | G7, early T2.5 spike, local prediction, bounded samples, T6.4 stop condition |
+| BSL terms conflict with intended distribution/hosting. | Critical | G9 before broad implementation; T7.1 exact disclosure; no production claim |
+| Private tables/views leak another player's cards through cache, bindings, logs, or diagnostics. | Critical | G10, T2.3 negative tests, T5.3 adversarial SDK identities |
+| Database schema becomes a second rules engine and diverges from formal Rust. | Critical | G12, pure reducer call, DTO round trips, T2.4/T5 conformance |
+| High-frequency pose transactions inflate commit logs or starve logical actions. | High | Latest-value schema, 15 Hz starting cap, coalescing, priority/backpressure tests, load report |
+| Multiple `ConnectionId` values accidentally create players or voting weight. | High | Identity/device separation, T2.2 and T4.5 multi-device tests |
+| Disconnect is mistaken for leave and destroys a recoverable room. | High | Separate presence/membership tables, G11, T6.5 lifecycle matrix |
+| Generated bindings churn rebuilds and create merge noise. | Medium | G4 measured isolation, schema fingerprint, idempotent `generate --check` |
+| Excessive crate splitting repeats Cursor Hero's compile/maintenance overhead. | Medium | Only target/codegen/heavy-leaf splits; T1.1 compile evidence before further crates |
+| Copying the reference plugin imports stale assumptions or attribution debt. | Medium | No dependency, provenance ledger, owned small API, no unsafe/leaks, metadata audit |
+| Optimized dependency profiles reduce runtime iteration but worsen clean builds or disk use. | Medium | Benchmark stable settings individually; do not adopt without measured benefit |
+| Test harness gives false confidence by mutating state directly or using one in-process client. | High | Ordinary SDK/reducer paths, two processes/identities, visible acceptance distinct from headless |
+| Centralization is later mistaken for anonymity, consensus, or secrecy from host. | High | Confirmed trust boundary, README/deployment matrix, explicit unsupported rows |
+| Existing valuable formal/UI work is broken during transport replacement. | Medium | Branch isolation, focused existing tests after every phase, legacy code retained until replacement passes |
+| Local services trigger firewall confusion or are assumed to need Administrator. | Medium | Loopback-first ordinary-user acceptance, explicit logs/docs, no UAC in harness |
+
+## Immediate next slice
+
+Begin T1.1. Do not add SpacetimeDB or Bevy integration code until the current
+package graph and build timings are recorded. Then complete T1.2's CLI/license
+gate and create only the three required crate shells in T1.3.
