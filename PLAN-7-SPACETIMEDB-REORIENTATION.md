@@ -3,7 +3,7 @@
 **Plan status:** Active; the create/join/seat/private-hand/shared-pose MVP and first oracle-backed trick are accepted, while multi-round play, recovery, and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-13 (active-room projection, Escape/leave lifecycle, roster, and smoothed focal camera accepted through two Maincloud clients)
+**Last updated:** 2026-09-13 (task-status reconciliation plus the accepted active-room, 3D camera/control, FPS-diagnostic, and first-trick checkpoints through commit `8e40ca9`)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
@@ -248,6 +248,34 @@ or the latency distributions required by T6.4.
   published additive migration pass. This does not yet prove visible physical
   mouse feel, restart/multiple-device identity behavior, the final-member room
   deletion path, or a complete multi-round Poche game.
+
+## 2026-09-13 task-status and camera-control reconciliation
+
+- Reconciled every task heading below against its full completion criteria.
+  Tasks with an implemented positive slice but an untested negative, recovery,
+  formal, load, or reproducibility criterion are `[~]`, not prematurely `[x]`.
+- T1.3, T3.4, T4.1, T4.3, and T7.2 are complete at their named scope: the
+  Poche-owned crate boundary, owned Bevy bridge, create/join menu, private-hand
+  rendering, and default SpacetimeDB desktop selection all have checked
+  implementation evidence. T0 remains complete. T2.3 stays partial until the
+  same authorized hand is proved across multiple connections for one identity.
+- Compile profiling, pinned-tool orchestration, generated-binding drift checks,
+  full DTO/action conformance, multi-connection presence, callback
+  backpressure, GUI/CLI parity, denied-drop automation, formal adapter parity,
+  disposable service startup, visible restart acceptance, latency
+  distributions, recovery faults, documentation, and CI/release receipts stay
+  partial or open exactly where their task criteria say so.
+- Development dependency optimization now makes ordinary debug rendering
+  usable without changing the workspace release profile. Q/E direction and
+  visual rotation are corrected and smoothed; mouse-wheel zoom and the focal
+  camera are smoothed; F3 toggles Bevy's FPS/frame-time overlay; and O toggles
+  a remembered orthographic tactical view. The desktop package has 19 passing
+  tests and strict package-local Clippy through `8e40ca9`.
+- The immediate implementation focus remains T3.1/T4.5. The server already
+  retains membership and seat state across a disconnect, and final explicit
+  leave already deletes an empty room. The missing proof is end-to-end resume,
+  connection-counted presence for multiple devices, and clear visible states
+  around reconnect, missing authority, and disbandment.
 
 ## Authoritative user guidance ledger
 
@@ -599,7 +627,7 @@ without the conversation.
 
 ## Phase 1 — Establish a reproducible, fast workspace boundary
 
-### [ ] T1.1 Measure current and proposed compile surfaces
+### [~] T1.1 Measure current and proposed compile surfaces
 
 **Work:**
 
@@ -627,7 +655,7 @@ Remove-Item Env:CARGO_TARGET_DIR
 surfaces, includes measured evidence, and chooses `default-members`/aliases
 without weakening `--workspace` validation.
 
-### [ ] T1.2 Pin and document the SpacetimeDB toolchain and licenses
+### [~] T1.2 Pin and document the SpacetimeDB toolchain and licenses
 
 **Work:**
 
@@ -660,7 +688,7 @@ cargo test -p poche-session --locked
 versions/licenses and start the local prerequisite without global hidden state;
 fast pure tests remain independent.
 
-### [ ] T1.3 Add the three required Poche-owned integration crates
+### [x] T1.3 Add the three required Poche-owned integration crates
 
 **Work:**
 
@@ -688,7 +716,7 @@ cargo metadata --format-version 1 --locked | rg "bevy_spacetimedb"
 **Completion criteria:** Each layer compiles independently, the pure core has no
 new heavy dependency, and metadata contains no reference-plugin dependency.
 
-### [ ] T1.4 Make schema generation reproducible and isolated
+### [~] T1.4 Make schema generation reproducible and isolated
 
 **Work:**
 
@@ -712,7 +740,7 @@ drift fails clearly, and editing pure rules does not regenerate bindings.
 
 ## Phase 2 — Put Poche rules behind a SpacetimeDB module
 
-### [ ] T2.1 Define canonical server DTOs and lossless pure-core conversion
+### [~] T2.1 Define canonical server DTOs and lossless pure-core conversion
 
 **Work:**
 
@@ -736,7 +764,7 @@ cargo test -p poche-environment --locked
 **Completion criteria:** Every module DTO used by a reducer has a tested mapping
 to/from the pure contract, and no database row bypasses rule validation.
 
-### [ ] T2.2 Implement room, membership, identity, seating, and lifetime
+### [~] T2.2 Implement room, membership, identity, seating, and lifetime
 
 **Work:**
 
@@ -762,7 +790,7 @@ cargo run -p poche-xtask -- spacetimedb scenario room-lifecycle --clients 2
 same member; a same-name new identity cannot impersonate; disconnect preserves
 membership; final explicit leave removes the room and rejects stale join codes.
 
-### [ ] T2.3 Prove private hands and recipient-scoped projections
+### [~] T2.3 Prove private hands and recipient-scoped projections
 
 **Work:**
 
@@ -786,7 +814,7 @@ cargo run -p poche-xtask -- spacetimedb scenario private-deal --clients 2 --seed
 receives the other's in cache/events/logs/captures, and the module alone sees
 the complete deck.
 
-### [ ] T2.4 Route durable game actions through the pure transition engine
+### [~] T2.4 Route durable game actions through the pure transition engine
 
 **Work:**
 
@@ -809,7 +837,7 @@ cargo run -p poche-xtask -- spacetimedb scenario one-trick --clients 2 --seed 1
 **Completion criteria:** The database adapter and direct pure reducer produce
 the same logical state/events/denial for the scoped lifecycle and one trick.
 
-### [ ] T2.5 Add bounded latest-value physical pose updates
+### [~] T2.5 Add bounded latest-value physical pose updates
 
 **Work:**
 
@@ -838,7 +866,7 @@ idle clients write nothing, and pose traffic does not mutate logical state.
 
 ## Phase 3 — Build the native client and Bevy bridge
 
-### [ ] T3.1 Own connection, token persistence, reconnect, and shutdown
+### [~] T3.1 Own connection, token persistence, reconnect, and shutdown
 
 **Work:**
 
@@ -851,6 +879,16 @@ idle clients write nothing, and pose traffic does not mutate logical state.
   actionable error diagnostics.
 - Support two local profiles and multiple connections for one profile without
   conflating display names.
+- Persist a non-secret last-used profile selector separately from the protected
+  SpacetimeDB credential. On launch, connect with that credential before asking
+  the player to create or join another room.
+- Treat each SDK connection as presence for one device, keyed by connection ID.
+  The member is connected while at least one such row is live; disconnecting
+  one of two devices must not mark their shared player offline.
+- Limit the current multi-device acceptance claim to two processes that can
+  access the same protected local profile. Enrolling another physical machine
+  requires an explicit credential-transfer or device-enrollment design and is
+  not silently included in this milestone.
 
 **Validation:**
 
@@ -864,7 +902,7 @@ cargo run -p poche-xtask -- spacetimedb scenario reconnect --clients 2
 protected and redacted, reconnection restores the correct identity, and clean
 shutdown joins its worker.
 
-### [ ] T3.2 Convert SDK subscriptions into a typed local client model
+### [~] T3.2 Convert SDK subscriptions into a typed local client model
 
 **Work:**
 
@@ -887,7 +925,7 @@ cargo test -p poche-spacetimedb-client backpressure --locked
 same local model, pose bursts remain bounded, and durable changes are ordered
 and lossless.
 
-### [ ] T3.3 Expose one command/observation contract to GUI, CLI, and puppets
+### [~] T3.3 Expose one command/observation contract to GUI, CLI, and puppets
 
 **Work:**
 
@@ -911,7 +949,7 @@ cargo run -p poche-xtask -- spacetimedb scenario cli-gui-parity --clients 2
 actions and receipts for the same projection; no privileged testing ingress
 changes state.
 
-### [ ] T3.4 Implement the Poche-owned Bevy 0.19.1 bridge
+### [x] T3.4 Implement the Poche-owned Bevy 0.19.1 bridge
 
 **Work:**
 
@@ -937,7 +975,7 @@ code or reference dependency.
 
 ## Phase 4 — Deliver the two-window card-table MVP
 
-### [ ] T4.1 Reconnect the main menu to create/join flows
+### [x] T4.1 Reconnect the main menu to create/join flows
 
 **Work:**
 
@@ -959,7 +997,7 @@ cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario
 profile joins it; invalid/unknown/stale codes give useful errors without
 changing identity.
 
-### [ ] T4.2 Render shared lobby membership, spectators, and seats
+### [~] T4.2 Render shared lobby membership, spectators, and seats
 
 **Work:**
 
@@ -979,7 +1017,7 @@ cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario
 **Completion criteria:** Both clients converge on membership and seats without
 manual refresh, and denied seat races appear as explicit receipts.
 
-### [~] T4.3 Deal and render recipient-private hands
+### [x] T4.3 Deal and render recipient-private hands
 
 **Work:**
 
@@ -1025,16 +1063,30 @@ window sees smooth position/rotation changes, cross-viewport dragging
 preserves one object, legal drop changes logical state, and denied drop does
 not.
 
-### [ ] T4.5 Make restart and room departure understandable
+### [~] T4.5 Make restart and room departure understandable
 
 **Work:**
 
 - Show reconnecting/rejoined/disbanded states without silently jumping views.
-- Restart either client with its existing profile and restore membership/seat/
-  private view as allowed by room phase.
+- Closing a window, Alt-F4, a process crash, or a temporary network loss is a
+  disconnect, never an implicit leave. Preserve durable membership, seat,
+  active-room focus, private-hand authorization, and game state.
+- On reopen, load the last-used non-secret profile selector, recover its
+  protected SpacetimeDB token, connect, and wait for the initial sender-scoped
+  subscription. If that identity still has an active-room membership, rebuild
+  the table directly with the same seat and authorized private view; do not ask
+  for the join code again and do not create a replacement player.
+- If the authority is unavailable, remain in an explicit reconnecting screen
+  with retry/backoff and a deliberate return-to-profile-selection action. If
+  the authority exists but the room was disbanded, clear the stale resume hint
+  and show “This lobby has ended” before returning to the main menu.
 - Permit explicit leave; final leave disbands and presents a terminal screen.
 - Exercise a second device for one identity and prove it does not create
   another player or vote.
+- Replace the membership `connected: bool` write-on-every-connect/disconnect
+  behavior with connection-counted presence. Two live connections for one
+  identity share membership, seat, hand, and actions; closing either leaves the
+  other online and fully authoritative for that same player.
 
 **Validation:**
 
@@ -1050,7 +1102,7 @@ identity.
 
 ## Phase 5 — Reconnect the formal evidence to the new authority edge
 
-### [ ] T5.1 Prove physical and logical refinement boundaries
+### [~] T5.1 Prove physical and logical refinement boundaries
 
 **Work:**
 
@@ -1095,7 +1147,7 @@ cargo test -p poche-formal --locked
 **Completion criteria:** All four models agree in their named bounded/symbolic/
 query scopes and publish counterexamples for deliberately broken properties.
 
-### [ ] T5.3 Prove adapter authorization and projection privacy
+### [~] T5.3 Prove adapter authorization and projection privacy
 
 **Work:**
 
@@ -1119,7 +1171,7 @@ motion, and broad subscription attempts fail without leaking secret rows.
 
 ## Phase 6 — Automate and measure the real system
 
-### [ ] T6.1 Build a disposable local SpacetimeDB test harness
+### [~] T6.1 Build a disposable local SpacetimeDB test harness
 
 **Work:**
 
@@ -1161,7 +1213,7 @@ cargo run -p poche-xtask -- spacetimedb acceptance --surface headless --scenario
 correlated action/state transcript, server log, latency trace, and an HTML
 contact sheet with no visible windows or clipboard changes.
 
-### [ ] T6.3 Perform real two-window ordinary-user acceptance
+### [~] T6.3 Perform real two-window ordinary-user acceptance
 
 **Work:**
 
@@ -1184,7 +1236,7 @@ target\debug\poche.exe --profile bob
 the slice in two visible windows; the evidence records application, server,
 ports, versions, and any firewall prompt separately from UAC.
 
-### [ ] T6.4 Publish a latency and load report with a go/no-go decision
+### [~] T6.4 Publish a latency and load report with a go/no-go decision
 
 **Work:**
 
@@ -1210,7 +1262,7 @@ local response is within one rendered frame at 60 Hz p95, same-host peer pose
 is below 100 ms p95, durable action peer visibility is below 150 ms p95, and
 idle state generates no writes.
 
-### [ ] T6.5 Prove recovery and failure boundaries
+### [~] T6.5 Prove recovery and failure boundaries
 
 **Work:**
 
@@ -1233,7 +1285,7 @@ entry.
 
 ## Phase 7 — Document, integrate, and release the branch
 
-### [ ] T7.1 Write the player, contributor, trust, and license guides
+### [~] T7.1 Write the player, contributor, trust, and license guides
 
 **Work:**
 
@@ -1259,7 +1311,7 @@ git diff --check
 developer can explain security/license/authority boundaries from repository
 docs alone.
 
-### [ ] T7.2 Make SpacetimeDB the desktop default without erasing prior work
+### [x] T7.2 Make SpacetimeDB the desktop default without erasing prior work
 
 **Work:**
 
@@ -1284,7 +1336,7 @@ cargo test -p poche-cli --locked
 research remains available and accurately labeled, and no old transport is
 silently linked into the default path.
 
-### [ ] T7.3 Enforce fast and complete CI surfaces
+### [~] T7.3 Enforce fast and complete CI surfaces
 
 **Work:**
 
@@ -1410,3 +1462,19 @@ then expand the one-trick oracle adapter into multi-round Poche play. Keep
 diegetic seat/bid/play affordances synchronized with the exhaustive action bar,
 and collect a real visible-window camera/mouse feel check before treating the
 new focal rig as polished.
+
+Implement that lifecycle slice in this order:
+
+1. Replace the lossy member-level connection Boolean mutation with ephemeral
+   connection rows keyed by identity and SDK connection ID; derive public
+   presence from “at least one connection exists.”
+2. Persist only the last local profile selector and authority choice in Poche;
+   continue letting the SDK credential store protect the actual identity token.
+3. Add startup `Connecting -> Resuming -> Table | MainMenu | LobbyEnded`
+   states. Enter the table only after the initial scoped subscription proves
+   membership; never infer resume from a local hint alone.
+4. Extend the windowless harness to close/relaunch Alice, attach a simultaneous
+   second Alice connection, close each connection independently, explicitly
+   leave both durable members, and prove the stale room code no longer joins.
+5. Repeat the lifecycle once in two visible ordinary-user windows, then begin
+   the complete multi-round rules adapter.
