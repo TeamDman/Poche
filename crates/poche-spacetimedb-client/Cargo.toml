@@ -1,0 +1,16 @@
+[package]
+name = "poche-spacetimedb-client"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Renderer-neutral native SpacetimeDB client for Poche"
+
+[dependencies]
+getrandom.workspace = true
+spacetimedb-sdk.workspace = true
+
+[lints]
+workspace = true

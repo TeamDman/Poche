@@ -1,0 +1,18 @@
+[package]
+name = "poche-spacetimedb-module"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Authoritative SpacetimeDB module for the Poche desktop table"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+spacetimedb.workspace = true
+
+[lints]
+workspace = true

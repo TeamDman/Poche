@@ -1,9 +1,9 @@
 # SpacetimeDB desktop reorientation
 
-**Plan status:** Active; worktree and reconnaissance are complete, implementation has not started
+**Plan status:** Active; the create/join/seat/private-hand/shared-pose desktop MVP is implemented and accepted, while durable Poche play, recovery, and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-12 (installed CLI evidence amended after initial plan commit)
+**Last updated:** 2026-09-12 (desktop MVP, SFM-style live control, and rendered two-device evidence recorded)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
@@ -53,6 +53,48 @@
   source were used for implementation evidence; no missing tool output was
   treated as a successful test.
 
+## 2026-09-12 implementation checkpoint
+
+The transport rewrite's first player-observable milestone is complete:
+
+- Poche-owned `poche-spacetimedb-module`, `poche-spacetimedb-client`,
+  `poche-bevy-spacetimedb`, and `poche-spacetimedb-desktop` crates compile
+  against the pinned 2.10.0 SDK/CLI and Bevy 0.19.1.
+- Sender-scoped public views expose room/member state, each caller's own private
+  hand, and face-free shared card poses. The trusted server owns the private
+  rows and validates room membership, seat exclusivity, card ownership, pose
+  sequence, and coordinate bounds.
+- The workspace default binary is the SpacetimeDB `poche.exe`; its dependency
+  path does not include Veilid. The previous transport remains in explicit
+  packages and history.
+- Two ordinary game-binary processes are controllable through fresh,
+  per-instance file queues. Requests use typed player intents, correlated JSON
+  responses contain semantic observation, join codes require an explicit
+  private observation, and screenshot requests target the real GPU surface.
+- `poche-puppet acceptance` launches two windowless copies, creates and joins
+  one room, takes distinct seats, verifies two private five-card hands and ten
+  face-free poses, moves Alice's owned card, waits for Bob's exact peer
+  observation, and composes all four captures into one PNG. The latest run
+  measured 18.09 ms to Alice's observed authority result and 101.96 ms until
+  the puppet observed the exact pose from Bob.
+- Visual review of the contact sheet confirmed own-seat-at-bottom projection,
+  correct suit glyphs, opaque peer backs, immediate moved owner pose, matching
+  moved peer pose, and context-sensitive seat controls.
+- Final validation also passed the SpacetimeDB WASM module build, all targeted
+  Rust tests for the preserved pure/session layers and new integration crates,
+  protocol replay, the Rust/Alloy/NuSMV/Prolog lobby-micro comparison, strict
+  Clippy with warnings denied for handwritten integration code, package-scoped
+  formatting, and a default-desktop dependency audit excluding both Veilid and
+  `bevy_spacetimedb`.
+
+This checkpoint does **not** close the comprehensive plan. Physical movement
+still leaves logical location as `hand`; no SpacetimeDB reducer yet calls the
+pure `GameEnvironment` for bid/play/drop; restart/multiple-device presence
+semantics and formal lifecycle adapters remain open. The existing Rust,
+Alloy, NuSMV, and Prolog rule sources were retained rather than replaced by
+the database schema. See `docs/spacetimedb-desktop.md` for the exact run,
+acceptance, trust, privacy, and license boundaries.
+
 ## Authoritative user guidance ledger
 
 | ID | Active guidance | Required plan consequence | Superseded by |
@@ -89,6 +131,7 @@
 | U30 | The Veilid work remains valuable evidence even if it is no longer the default transport. | Do not delete its branch/history. Keep it out of the default SpacetimeDB dependency graph and document comparative results. | — |
 | U31 | Direct browser support is being dropped as a priority, not proven impossible forever. | Mark browser as unsupported for this phase, not architecturally forbidden; keep pure/client boundaries portable where inexpensive. | — |
 | U32 | Device-to-device graphical capture may later use the same player/device agency model. | Keep capture commands above the transport adapter. Do not make capture delivery part of the first SpacetimeDB gameplay slice. | — |
+| U33 | Codex should be able to manipulate live game instances ad hoc through SFM-style files, request screenshots, and combine many views into one image rather than relying only on fixed puppets or repeated image previews. | Provide fresh named file endpoints, typed actions plus semantic observation, GPU capture, a general control CLI, and one two-device contact sheet. Keep the endpoint on the ordinary player-intent path. | — |
 
 ## Guidance traceability
 
@@ -104,7 +147,7 @@
 | U12–U14, U28 | G8, T2.5, T4.4, T5.1, T6.4 | Pose/logical tests, rendered manipulation, rejection proof |
 | U15 | G10, T2.3, T4.3, T5.3, T6.2 | Sender-scoped subscription and negative privacy tests |
 | U16–U18 | G5, G11, T2.2, T3.1, T4.5, T6.5 | Restart, multi-device, explicit-leave, disband receipts |
-| U19, U32 | T6.1–T6.3 | Windowless captures and live-control transcript |
+| U19, U32, U33 | T3.3, T6.1–T6.3 | Ad-hoc file-control transcript, windowless captures, and one composed contact sheet |
 | U23 | Constraints, T6.3, T7.1 | Ordinary-user run guide and acceptance record |
 | U27 | T3.1–T3.3, T4.1, T7.1 | GUI and CLI invoke the same client adapter |
 | U30 | Scope, T1.3, T7.2 | Default dependency graph excludes Veilid; history retained |
@@ -1142,15 +1185,15 @@ remote branch contains all intended commits.
 | Alloy oracle | Supported in existing named scopes | Session/spatial comparison and counterexample witness | Pending |
 | NuSMV oracle | Supported in existing named scopes | Session/spatial comparison and temporal witness | Pending |
 | Scryer Prolog oracle | Supported for relational queries | Session/spatial comparison and query witness | Pending |
-| SpacetimeDB module | Supported, pinned local 2.x | WASM build, publish, reducer/privacy integration | Pending |
-| Native Rust SDK client | Supported on Windows first | Connect/subscribe/reducer/reconnect tests | Pending |
-| Poche-owned Bevy bridge | Supported with Bevy 0.19.1 | Headless App and real rendered clients | Pending |
-| Two visible `poche.exe` processes | Primary player acceptance | Create/join/seat/deal/wiggle/drop/restart | Pending |
-| Windowless two-player puppet | Primary repeatable acceptance | Two private captures plus semantic/latency transcript | Pending |
+| SpacetimeDB module | Supported, pinned local 2.10.0 | WASM build, publish, reducer/privacy integration | Module build/publish and create/join/seat/private-view/pose flow pass; pure durable play and adversarial suite remain |
+| Native Rust SDK client | Supported on Windows first | Connect/subscribe/reducer/reconnect tests | Generated bindings, subscription cache, reducers, credential persistence, and live two-client flow pass; forced reconnect remains |
+| Poche-owned Bevy bridge | Supported with Bevy 0.19.1 | Headless App and real rendered clients | Owned channel bridge and rendered windowless clients pass; no `bevy_spacetimedb` dependency |
+| Two visible `poche.exe` processes | Primary player acceptance | Create/join/seat/deal/wiggle/drop/restart | The identical ordinary binary passes create/join/seat/deal/wiggle through its windowless target; final human visible-window check and restart remain |
+| Windowless two-player puppet | Primary repeatable acceptance | Two private captures plus semantic/latency transcript | Passed: 5+5 private cards, 10 face-free poses, 18.09 ms authority, 101.96 ms peer, four-view contact sheet |
 | Web/browser client | Explicitly unsupported this phase | Build graph/doc audit; no accidental promise | Pending |
-| Veilid transport | Retained research, non-default | Historical tests/docs remain; default tree excludes it | Pending |
-| Untrusted-host/zero-trust play | Not supported | Threat-model statement | Pending |
-| Hosted production database | Not supported | License/deployment note; no hosted success claim | Pending |
+| Veilid transport | Retained research, non-default | Historical tests/docs remain; default tree excludes it | Default member/package is SpacetimeDB; dependency audit required at release |
+| Untrusted-host/zero-trust play | Not supported | Threat-model statement | Trusted-server boundary documented in `docs/spacetimedb-desktop.md` |
+| Hosted production database | Not supported | License/deployment note; no hosted success claim | Local-only acceptance; BSL additional grant and hosted non-claim documented |
 
 ## Overall completion criteria
 
@@ -1202,6 +1245,8 @@ remote branch contains all intended commits.
 
 ## Immediate next slice
 
-Begin T1.1. Do not add SpacetimeDB or Bevy integration code until the current
-package graph and build timings are recorded. Then complete T1.2's CLI/license
-gate and create only the three required crate shells in T1.3.
+Start T2.1/T2.4 from the accepted physical-table checkpoint: define lossless
+module DTO conversion and route a durable Poche action/drop through the pure
+transition engine without changing the accepted pose carrier. In parallel only
+where independent, close T3.1/T4.5's connection-count, restart, and
+multiple-device identity semantics.

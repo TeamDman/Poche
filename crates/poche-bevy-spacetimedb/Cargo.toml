@@ -1,0 +1,16 @@
+[package]
+name = "poche-bevy-spacetimedb"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Owned Bevy bridge for Poche's SpacetimeDB client"
+
+[dependencies]
+bevy.workspace = true
+poche-spacetimedb-client = { path = "../poche-spacetimedb-client" }
+
+[lints]
+workspace = true

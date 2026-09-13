@@ -8,13 +8,18 @@ replicated log, a bounded hidden-card research prototype, and a network-free
 Burn PPO learning path. Each result records what was exhaustive, bounded,
 symbolic, queried, sampled, experimental, or merely empirical.
 
+The current product path is desktop-first Bevy plus SpacetimeDB. Veilid and web
+implementations remain explicit research/legacy packages, not default runtime
+dependencies.
+
 - [Completed formal-modeling plan](PLAN.md)
 - [Completed multiplayer, rendering, and RL plan](PLAN-2-MULTIPLAYER-RL-RENDERING.md)
 - [Completed spatial tabletop and distributed-agency plan](PLAN-3-DISTRIBUTED-TABLETOP-SPATIAL.md)
 - [Completed player-facing web plan](PLAN-4-PLAYER-WEB-EXPERIENCE.md)
 - [Completed desktop Veilid, shared card movement, recovery, and live-control plan](PLAN-6-DESKTOP-VEILID.md)
 - [Active SpacetimeDB desktop reorientation plan](PLAN-7-SPACETIMEDB-REORIENTATION.md)
-- [Play the native Veilid desktop client](docs/desktop-veilid.md)
+- [Play and inspect the SpacetimeDB desktop table](docs/spacetimedb-desktop.md)
+- [Previous native Veilid desktop client](docs/desktop-veilid.md)
 - [Previous unified executable, device-orchestration, capture, and puppet plan](PLAN-5-LIVE-CONTROL-PUPPETS.md)
 - [Unified executable, device, capture, agent, and puppet guide](docs/live-control-puppets.md)
 - [Contributor and evidence guide](CONTRIBUTING.md)
@@ -142,56 +147,49 @@ cargo run -p poche-xtask -- multiplayer smoke --transport in-process
 cargo run -p poche-cli -- --output text transcript replay tests/fixtures/protocol/session-micro-v1.script.ndjson
 ```
 
-## One executable, several certified devices
+## Current desktop executable and control surface
 
-`poche.exe` now opens the native graphical client with no arguments and also
-provides the command-line, persistent-agent, cross-device capture, transcript,
-and puppet workflows. A CLI or policy is its own root-certified device; it does
-not find and remote-control a resident window or borrow that window's key.
+The workspace default is the MPL-2.0 `poche-spacetimedb-desktop` package.
+`cargo run` or `target\debug\poche.exe` opens the Bevy 0.19.1 client; the
+default dependency path contains no Veilid crate. A sibling
+`poche-puppet.exe` drives fresh local file endpoints for semantic observation,
+ordinary player actions, card motion, and GPU capture. It never mutates the
+database directly and does not use the human clipboard.
 
 ```powershell
-cargo build --locked --offline -p poche-cli
+cargo build --locked -p poche-spacetimedb-desktop --bins
 target\debug\poche.exe
-target\debug\poche.exe identity create alice
-target\debug\poche.exe device create alice alice-desktop
-target\debug\poche.exe device create alice alice-agent
-target\debug\poche.exe --output json puppet list
-target\debug\poche.exe --output json puppet run two-player-full-round --surface headless --transport loopback-ndjson --seed 1
-target\debug\poche.exe puppet artifacts open
+target\debug\poche-puppet.exe acceptance
 ```
 
-Native and browser puppets are windowless by default. Native capture uses a
-Bevy image target without a primary window; browser capture uses headless
-browser mode. Pass `--show-window` only for interactive native debugging.
-Successful runs publish a verified HTML contact sheet, manifest, exact semantic
-steps, lifecycle evidence, and any surface captures under ignored `target/`
-storage. See the [phase-five workflow guide](docs/live-control-puppets.md) for
-protected profiles, live GUI/CLI/agent participation, sibling-device capture,
-artifact inspection, puppet authoring, and the precise transport/privacy
-qualifications.
+The acceptance command is windowless. It launches two copies of the ordinary
+game binary, creates and joins a room, seats both identities, proves private
+hands and face-free peer poses, moves one card, measures peer observation, and
+writes one four-view contact sheet plus a machine-readable report under
+ignored `target/poche-puppet/` storage. See the
+[SpacetimeDB desktop guide](docs/spacetimedb-desktop.md) for local server setup,
+ad-hoc control commands, trust, privacy, and license boundaries. The earlier
+Veilid/certified-device puppet remains documented as retained research in the
+[phase-five guide](docs/live-control-puppets.md).
 
 ## Play in two native windows
 
-Build once, then launch the same executable twice:
+Start and publish the pinned local SpacetimeDB module as described in the
+[desktop guide](docs/spacetimedb-desktop.md), build once, then launch the same
+executable twice:
 
 ```powershell
-cargo build --locked --offline -p poche-cli
-target\debug\poche.exe
+cargo build --locked -p poche-spacetimedb-desktop --bins
+Start-Process -FilePath .\target\debug\poche.exe
+Start-Process -FilePath .\target\debug\poche.exe
 ```
 
 The first player enters a name and chooses **Create lobby**, then copies the
-lobby invitation. The second player enters a different name, chooses **Paste
-invitation from clipboard**, reviews the valid prefilled invitation, and clicks
-**Join**. Take different seats, ready both players and arm the countdown. The
-action bar exposes bids and plays; cards can also be dragged between the lower
-hand camera and the shared table, with Shift/Control/Alt changing their three
-rotation axes.
-
-This path uses protected identities and native Veilid, not the development web
-server. Participant and creator restart, private-route rotation and empty-room
-disbanding have separate real-process acceptance. See the
-[desktop play and recovery guide](docs/desktop-veilid.md) for the exact recovery,
-privacy, firewall and evidence boundaries.
+opaque `PCH-…` code. The second enters a different name, pastes the code, and
+chooses **Join lobby**. Take different seats. Dragging an owned card is locally
+predicted immediately and published at a bounded rate; the peer interpolates
+the same face-free physical pose. Q/E rotates a dragged card. Physical motion
+does not yet change the card's logical `hand` location or execute Poche rules.
 
 ## Play in two browser tabs
 
@@ -280,7 +278,7 @@ is a packaged live client or a production security claim.
 | Direct browser Veilid | Not supported with Veilid 0.5.7 from a Pages HTTPS origin | Public WSS bootstrap still resets before TLS; upstream deprecated WSS and the replacement WebTransport checklist remains open; no companion app is implied |
 | Self-hosted Datastar demo | Host-colocated Axum authority and accessible semantic HTML work on loopback | Development invite/viewer routes are not production authentication; the operator sees connection metadata and, as host, all state |
 | Signed browser-device gateway lab | Browser-local WebCrypto key, signed bounded typed HTTP, idempotent receipts, reconnectable exact-recipient SSE, and independent device revocation work on loopback | Still host-authoritative and plaintext to the gateway; lab enrollment is not the replicated root-certificate path |
-| Native spatial mirror | Bevy 0.19.1 renders checked and live exact-recipient scenes, filled antialiased Slug card/score surfaces, typed/drag parity, cross-viewport shared movement, and real windowless capture targets | The default desktop carrier is native Veilid; Bevy remains a renderer/input adapter, not rules or physics authority; small labels and production art remain polish work |
+| Native spatial mirror | Bevy 0.19.1 renders checked and live exact-recipient scenes, filled antialiased Slug card/score surfaces, typed/drag parity, cross-viewport shared movement, and real windowless capture targets | The current desktop carrier is SpacetimeDB; retained Veilid packages are comparative evidence. Bevy remains a renderer/input adapter, not rules or physics authority. |
 | Unified device and puppet workflows | One `poche.exe`, protected sibling profiles, GUI/CLI/policy parity, same-player capture, and full headless/browser/native multi-device runs | Captures are presentation evidence, not state authority or formal proof; public Veilid capture transfer is unsupported |
 | Semantic HTML tabletop | Ordinary landmarks, tables, lists, POST forms, keyboard controls, optional drag/drop, exact-recipient privacy, audit, governance, and reconnect run over the same spatial semantics | Loopback development identities are not production authentication; live authority remains host-colocated and trusted |
 | Published spatial evidence | One checked 185-record NDJSON stream, native/HTML scene fingerprint, Rust-rendered endpoint, and retained bounded Alloy overlap witness | Static composition of registered fixtures and reducers; not one atomic network execution, a live authority, or an unbounded spatial theorem |
