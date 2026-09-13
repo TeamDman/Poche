@@ -61,6 +61,19 @@ pub struct Member {
     pub connected: bool,
 }
 
+/// The one room projected to a device identity at a time.
+///
+/// Membership remains durable so reconnecting can resume a player, but the
+/// public views must never union every historical room attached to that
+/// identity. Creating or joining a room moves this focus atomically.
+#[spacetimedb::table(accessor = active_room)]
+pub struct ActiveRoom {
+    #[primary_key]
+    pub identity: Identity,
+    #[index(btree)]
+    pub room_id: String,
+}
+
 /// Card ownership and face are never exposed as a public table.
 #[spacetimedb::table(accessor = private_hand_card)]
 pub struct PrivateHandCard {
@@ -142,64 +155,48 @@ pub struct RevealedCard {
 /// Rooms are visible only after the caller has joined them.
 #[spacetimedb::view(accessor = my_rooms, public, primary_key = room_id)]
 pub fn my_rooms(ctx: &ViewContext) -> Vec<Room> {
-    ctx.db
-        .member()
-        .identity()
-        .filter(&ctx.sender())
-        .filter_map(|membership| ctx.db.room().room_id().find(&membership.room_id))
+    active_room_id(ctx)
+        .and_then(|room_id| ctx.db.room().room_id().find(&room_id))
+        .into_iter()
         .collect()
 }
 
 /// A member can see the membership roster for each room they have joined.
 #[spacetimedb::view(accessor = room_members, public, primary_key = member_key)]
 pub fn room_members(ctx: &ViewContext) -> Vec<Member> {
-    let memberships: Vec<_> = ctx.db.member().identity().filter(&ctx.sender()).collect();
-    memberships
-        .into_iter()
-        .flat_map(|membership| {
-            ctx.db
-                .member()
-                .room_id()
-                .filter(&membership.room_id)
-                .collect::<Vec<_>>()
-        })
-        .collect()
+    active_room_id(ctx).map_or_else(Vec::new, |room_id| {
+        ctx.db.member().room_id().filter(&room_id).collect()
+    })
 }
 
 /// Each caller sees only its own card faces.
 #[spacetimedb::view(accessor = my_hand, public, primary_key = card_key)]
 pub fn my_hand(ctx: &ViewContext) -> Vec<PrivateHandCard> {
-    ctx.db
-        .private_hand_card()
-        .owner()
-        .filter(&ctx.sender())
-        .collect()
+    active_room_id(ctx).map_or_else(Vec::new, |room_id| {
+        ctx.db
+            .private_hand_card()
+            .owner()
+            .filter(&ctx.sender())
+            .filter(|card| card.room_id == room_id)
+            .collect()
+    })
 }
 
 /// Members receive the latest public game projection for their rooms.
 #[spacetimedb::view(accessor = visible_room_games, public, primary_key = room_id)]
 pub fn visible_room_games(ctx: &ViewContext) -> Vec<RoomGame> {
-    let memberships: Vec<_> = ctx.db.member().identity().filter(&ctx.sender()).collect();
-    memberships
+    active_room_id(ctx)
+        .and_then(|room_id| ctx.db.room_game().room_id().find(&room_id))
         .into_iter()
-        .filter_map(|membership| ctx.db.room_game().room_id().find(&membership.room_id))
         .collect()
 }
 
 /// Members receive only card faces already revealed by accepted play.
 #[spacetimedb::view(accessor = visible_revealed_cards, public, primary_key = card_key)]
 pub fn visible_revealed_cards(ctx: &ViewContext) -> Vec<RevealedCard> {
-    let memberships: Vec<_> = ctx.db.member().identity().filter(&ctx.sender()).collect();
-    memberships
-        .into_iter()
-        .flat_map(|membership| {
-            ctx.db
-                .revealed_card()
-                .room_id()
-                .filter(&membership.room_id)
-                .collect::<Vec<_>>()
-        })
-        .collect()
+    active_room_id(ctx).map_or_else(Vec::new, |room_id| {
+        ctx.db.revealed_card().room_id().filter(&room_id).collect()
+    })
 }
 
 /// A public, face-free physical realization of a private card.
@@ -226,17 +223,9 @@ pub struct CardPose {
 /// Face-free poses are shared with members of the same room, not globally.
 #[spacetimedb::view(accessor = visible_card_poses, public, primary_key = card_key)]
 pub fn visible_card_poses(ctx: &ViewContext) -> Vec<CardPose> {
-    let memberships: Vec<_> = ctx.db.member().identity().filter(&ctx.sender()).collect();
-    memberships
-        .into_iter()
-        .flat_map(|membership| {
-            ctx.db
-                .card_pose()
-                .room_id()
-                .filter(&membership.room_id)
-                .collect::<Vec<_>>()
-        })
-        .collect()
+    active_room_id(ctx).map_or_else(Vec::new, |room_id| {
+        ctx.db.card_pose().room_id().filter(&room_id).collect()
+    })
 }
 
 #[spacetimedb::reducer(init)]
@@ -268,7 +257,8 @@ pub fn create_room(
         room_id: room_id.clone(),
         join_code,
     });
-    insert_member(ctx, room_id, display_name);
+    insert_member(ctx, room_id.clone(), display_name);
+    activate_room(ctx, room_id);
     Ok(())
 }
 
@@ -290,9 +280,11 @@ pub fn join_room(
         member.display_name = display_name;
         member.connected = true;
         ctx.db.member().member_key().update(member);
+        activate_room(ctx, secret.room_id);
         return Ok(());
     }
-    insert_member(ctx, secret.room_id, display_name);
+    insert_member(ctx, secret.room_id.clone(), display_name);
+    activate_room(ctx, secret.room_id);
     Ok(())
 }
 
@@ -496,6 +488,15 @@ pub fn leave_room(ctx: &ReducerContext, room_id: String) -> Result<(), String> {
         return Err("not a room member".into());
     }
     delete_identity_cards(ctx, &room_id, ctx.sender());
+    if ctx
+        .db
+        .active_room()
+        .identity()
+        .find(&ctx.sender())
+        .is_some_and(|active| active.room_id == room_id)
+    {
+        ctx.db.active_room().identity().delete(&ctx.sender());
+    }
     if ctx.db.member().room_id().filter(&room_id).next().is_none() {
         ctx.db.room().room_id().delete(&room_id);
         ctx.db.room_secret().room_id().delete(&room_id);
@@ -636,10 +637,47 @@ fn delete_identity_cards(ctx: &ReducerContext, room_id: &str, identity: Identity
 }
 
 fn set_connected(ctx: &ReducerContext, connected: bool) {
-    let members: Vec<_> = ctx.db.member().identity().filter(&ctx.sender()).collect();
-    for mut member in members {
+    let Some(room_id) = ctx
+        .db
+        .active_room()
+        .identity()
+        .find(&ctx.sender())
+        .map(|active| active.room_id)
+    else {
+        return;
+    };
+    let key = member_key(&room_id, ctx.sender());
+    if let Some(mut member) = ctx.db.member().member_key().find(&key) {
         member.connected = connected;
         ctx.db.member().member_key().update(member);
+    }
+}
+
+fn active_room_id(ctx: &ViewContext) -> Option<String> {
+    let active = ctx.db.active_room().identity().find(&ctx.sender())?;
+    ctx.db
+        .member()
+        .member_key()
+        .find(&member_key(&active.room_id, ctx.sender()))
+        .map(|_| active.room_id)
+}
+
+fn activate_room(ctx: &ReducerContext, room_id: String) {
+    if let Some(mut previous) = ctx.db.active_room().identity().find(&ctx.sender()) {
+        if previous.room_id != room_id {
+            let old_key = member_key(&previous.room_id, ctx.sender());
+            if let Some(mut member) = ctx.db.member().member_key().find(&old_key) {
+                member.connected = false;
+                ctx.db.member().member_key().update(member);
+            }
+        }
+        previous.room_id = room_id;
+        ctx.db.active_room().identity().update(previous);
+    } else {
+        ctx.db.active_room().insert(ActiveRoom {
+            identity: ctx.sender(),
+            room_id,
+        });
     }
 }
 

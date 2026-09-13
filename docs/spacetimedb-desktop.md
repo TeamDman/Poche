@@ -155,7 +155,19 @@ An accepted play reveals the face to both clients; after the second play both
 cards move to the winner's logical won zone. Wiggling within the hand remains
 only physical state. Hold Q or E while dragging to rotate around table-up Y.
 The **Rotation snap** button cycles through off, 15°, 30°, 45°, 60°, and 90°.
-Local motion is immediate while the peer interpolates subscribed updates.
+Right-drag orbits around the camera's focal point; middle-drag and WASD pan that
+point across a region twice the table-top extents. Space smoothly returns both
+camera and focus to the viewer's seat-relative home. All camera changes
+interpolate instead of teleporting. Local card motion is immediate while the
+peer interpolates subscribed updates.
+
+The player roster beneath rotation snap is the authoritative membership view
+for this lobby. Only seated members have world avatars; unseated members remain
+visible in the roster without appearing in the middle of the table. Escape
+opens the table menu. **Leave lobby** lives there and changes to **Confirm leave
+lobby** after the first click. Successful leave clears the active-room
+projection and returns that device to the main menu while remaining peers see
+the roster update.
 
 The replicated integer angle unit is one millidegree: one full turn is
 `360_000`, so `18_000` is 18° and `180_000` is 180°. Radians are only a Bevy
@@ -167,8 +179,11 @@ precision in a meaningful way.
 
 The local profile token is persisted by the official SDK credential helper.
 Reusing a profile name on the same machine reconnects as the same SpacetimeDB
-identity. Display names are not authentication secrets. Explicit **Leave
-lobby** removes membership; a process crash or disconnect does not.
+identity. Display names are not authentication secrets. A private
+identity-to-active-room row prevents durable memberships in older rooms from
+being unioned into the current client projection. Explicit **Leave lobby**
+removes membership and active-room focus; a process crash or disconnect does
+not.
 
 ## Reproducible windowless acceptance
 
@@ -184,8 +199,10 @@ target\debug\poche-puppet.exe acceptance
 The command creates a room, joins Bob, seats both devices, verifies one
 rule-generated private card per player and two face-free shared poses, moves
 Alice's card, waits until Bob observes its exact position/rotation, submits two
-legal bids and two legal plays, and verifies both devices converge on two
-revealed cards in one winner's logical won zone. It writes:
+legal bids and two legal plays, verifies both devices converge on two revealed
+cards in one winner's logical won zone, captures the Escape table menu and its
+armed leave confirmation, leaves from one device, verifies that device returns
+to the main menu, and verifies the peer roster falls to one member. It writes:
 
 - `target/poche-puppet/acceptance-contact-sheet.png` — seated and moved views
   for Alice and Bob in one image;
@@ -210,12 +227,17 @@ target\debug\poche-puppet.exe seat target\live\alice 0
 target\debug\poche-puppet.exe move target\live\alice 0 60 40 500 18000
 target\debug\poche-puppet.exe bid target\live\alice 0
 target\debug\poche-puppet.exe play target\live\alice 0
+target\debug\poche-puppet.exe menu target\live\alice
+target\debug\poche-puppet.exe leave target\live\alice
+target\debug\poche-puppet.exe leave target\live\alice
 target\debug\poche-puppet.exe capture target\live\alice
 target\debug\poche-puppet.exe stop target\live\alice
 ```
 
-The final `move` argument is rotation about table-up Y in millidegrees, matching
-the Q/E control and the card's visible orientation in the perspective scene.
+The final `move` argument is rotation about table-up Y in millidegrees,
+matching the Q/E control and the card's visible orientation in the perspective
+scene. The two `leave` invocations exercise the same arm-then-confirm path as
+clicking the human-facing button twice.
 
 Requests are atomically claimed from `requests/`, archived to `processed/`,
 and answered in `responses/`. Every response includes a semantic observation

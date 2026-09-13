@@ -23,6 +23,7 @@ use bevy::{
     camera::{RenderTarget, Viewport, visibility::RenderLayers},
     clipboard::{Clipboard, ClipboardRead},
     image::Image,
+    input::mouse::AccumulatedMouseMotion,
     log::LogPlugin,
     prelude::*,
     render::{
@@ -61,6 +62,12 @@ const ROTATION_REPEAT_PERIOD: Duration = Duration::from_millis(100);
 const ROTATION_SNAP_MDEG: [i32; 6] = [0, 15_000, 30_000, 45_000, 60_000, 90_000];
 const AUTOMATION_WIDTH: u32 = 1180;
 const AUTOMATION_HEIGHT: u32 = 760;
+const CAMERA_ORBIT_SENSITIVITY: f32 = 0.0045;
+const CAMERA_PAN_SENSITIVITY: f32 = 0.0014;
+const CAMERA_KEYBOARD_SPEED: f32 = 0.72;
+const CAMERA_SMOOTHING: f32 = 10.0;
+const CAMERA_MIN_PITCH: f32 = 18.0_f32.to_radians();
+const CAMERA_MAX_PITCH: f32 = 78.0_f32.to_radians();
 const FONT_BYTES: &[u8] = include_bytes!("../../poche-native-ui/assets/CaskaydiaCove-Regular.ttf");
 const MAINCLOUD_URI: &str = "https://maincloud.spacetimedb.com";
 const MAINCLOUD_DATABASE: &str = "poche-6quz6";
@@ -451,6 +458,7 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
         .init_resource::<PoseDisplay>()
         .init_resource::<DragState>()
         .init_resource::<RotationSnap>()
+        .init_resource::<TableCameraController>()
         .add_message::<ButtonActivation>()
         .add_observer(activate_button)
         .add_systems(
@@ -461,9 +469,11 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
             Update,
             (
                 handle_buttons,
+                handle_escape_key,
                 poll_clipboard,
                 handle_bridge_notices,
                 enter_room,
+                sync_escape_menu,
                 sync_room_labels,
                 sync_card_entities,
                 sync_player_entities,
@@ -493,8 +503,8 @@ struct UiState {
     status: String,
     display_name: String,
     capability: Option<RoomCapability>,
-    joined_once: bool,
     confirm_leave: bool,
+    escape_menu_open: bool,
 }
 
 #[derive(Resource)]
@@ -519,8 +529,8 @@ impl UiState {
             status: format!("Using {}. Create or join a lobby.", authority.summary()),
             display_name: String::new(),
             capability: None,
-            joined_once: false,
             confirm_leave: false,
+            escape_menu_open: false,
         }
     }
 }
@@ -581,6 +591,15 @@ struct LatencyLabel;
 #[derive(Component)]
 struct RotationSnapLabel;
 
+#[derive(Component)]
+struct PlayerListLabel;
+
+#[derive(Component)]
+struct EscapeMenuRoot;
+
+#[derive(Component)]
+struct LeaveButtonLabel;
+
 #[derive(Component, Clone, Copy, Eq, PartialEq)]
 enum Field {
     Name,
@@ -599,6 +618,7 @@ enum UiAction {
     PlayFirstCard,
     Leave,
     CycleRotationSnap,
+    ResumeMenu,
 }
 
 #[derive(Message)]
@@ -807,20 +827,97 @@ fn cuboid_from_half_extents(half: HalfExtentsMm) -> Cuboid {
     )
 }
 
-fn spectator_camera_transform() -> Transform {
-    Transform::from_xyz(1.25, 1.45, 1.25).looking_at(Vec3::new(0.0, 0.04, 0.0), Vec3::Y)
+#[derive(Clone, Copy, Debug)]
+struct CameraPose {
+    focus: Vec3,
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
 }
 
-fn player_camera_transform(seat: Option<u8>) -> Transform {
-    match seat {
-        Some(0) => {
-            Transform::from_xyz(0.0, 1.3, 1.35).looking_at(Vec3::new(0.0, 0.04, -0.08), Vec3::Y)
-        }
-        Some(1) => {
-            Transform::from_xyz(0.0, 1.3, -1.35).looking_at(Vec3::new(0.0, 0.04, 0.08), Vec3::Y)
-        }
-        _ => spectator_camera_transform(),
+impl CameraPose {
+    fn transform(self) -> Transform {
+        let horizontal = self.distance * self.pitch.cos();
+        let offset = Vec3::new(
+            self.yaw.sin() * horizontal,
+            self.distance * self.pitch.sin(),
+            self.yaw.cos() * horizontal,
+        );
+        Transform::from_translation(self.focus + offset).looking_at(self.focus, Vec3::Y)
     }
+}
+
+#[derive(Resource, Debug)]
+struct TableCameraController {
+    current: CameraPose,
+    target: CameraPose,
+    last_seat: CameraSeat,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CameraSeat {
+    Uninitialized,
+    Spectator,
+    Seated(u8),
+}
+
+impl From<Option<u8>> for CameraSeat {
+    fn from(seat: Option<u8>) -> Self {
+        seat.map_or(Self::Spectator, Self::Seated)
+    }
+}
+
+impl Default for TableCameraController {
+    fn default() -> Self {
+        let pose = camera_home(None);
+        Self {
+            current: pose,
+            target: pose,
+            last_seat: CameraSeat::Uninitialized,
+        }
+    }
+}
+
+impl TableCameraController {
+    fn reset_for_seat(&mut self, seat: Option<u8>, immediate: bool) {
+        self.target = camera_home(seat);
+        if immediate {
+            self.current = self.target;
+        }
+        self.last_seat = seat.into();
+    }
+}
+
+fn camera_home(seat: Option<u8>) -> CameraPose {
+    match seat {
+        Some(0) => CameraPose {
+            focus: Vec3::new(0.0, 0.02, -0.08),
+            yaw: 0.0,
+            pitch: 43.0_f32.to_radians(),
+            distance: 1.88,
+        },
+        Some(1) => CameraPose {
+            focus: Vec3::new(0.0, 0.02, 0.08),
+            yaw: std::f32::consts::PI,
+            pitch: 43.0_f32.to_radians(),
+            distance: 1.88,
+        },
+        _ => CameraPose {
+            focus: Vec3::new(0.0, 0.02, 0.0),
+            yaw: std::f32::consts::FRAC_PI_4,
+            pitch: 46.0_f32.to_radians(),
+            distance: 1.94,
+        },
+    }
+}
+
+fn spectator_camera_transform() -> Transform {
+    camera_home(None).transform()
+}
+
+#[cfg(test)]
+fn player_camera_transform(seat: Option<u8>) -> Transform {
+    camera_home(seat).transform()
 }
 
 fn setup_menu(
@@ -834,6 +931,15 @@ fn setup_menu(
         camera.insert(target);
     }
     let camera = camera.id();
+    spawn_main_menu(&mut commands, camera, &authority, &state);
+}
+
+fn spawn_main_menu(
+    commands: &mut Commands,
+    camera: Entity,
+    authority: &AuthorityEndpoint,
+    state: &UiState,
+) {
     commands
         .spawn((
             MainMenuRoot,
@@ -1075,14 +1181,8 @@ fn handle_buttons(
                 }
             }
             UiAction::Leave => {
-                if !state.confirm_leave {
-                    state.confirm_leave = true;
-                    state.status = "Choose Leave lobby again to confirm.".into();
-                } else if let Some(room_id) = model.snapshot.room_id() {
-                    state.confirm_leave = false;
-                    let _ = bridge.send(BridgeIntent::Leave {
-                        room_id: room_id.into(),
-                    });
+                if let Err(error) = activate_leave(&mut state, model.snapshot.room_id(), &bridge) {
+                    state.status = error;
                 }
             }
             UiAction::CycleRotationSnap => {
@@ -1092,7 +1192,57 @@ fn handle_buttons(
                     rotation_snap.label()
                 );
             }
+            UiAction::ResumeMenu => {
+                state.escape_menu_open = false;
+                state.confirm_leave = false;
+                state.status = "Returned to the table.".into();
+            }
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LeaveActivation {
+    ConfirmationArmed,
+    Submitted,
+}
+
+fn activate_leave(
+    state: &mut UiState,
+    room_id: Option<&str>,
+    bridge: &BridgeHandle,
+) -> Result<LeaveActivation, String> {
+    let room_id = room_id.ok_or_else(|| "Join a lobby before leaving it.".to_string())?;
+    if !state.confirm_leave {
+        state.confirm_leave = true;
+        state.status = "Leaving releases your seat. Choose Confirm leave lobby to continue.".into();
+        return Ok(LeaveActivation::ConfirmationArmed);
+    }
+    bridge.send(BridgeIntent::Leave {
+        room_id: room_id.into(),
+    })?;
+    state.confirm_leave = false;
+    state.status = "Leaving lobby…".into();
+    Ok(LeaveActivation::Submitted)
+}
+
+fn toggle_escape_menu(state: &mut UiState) {
+    state.escape_menu_open = !state.escape_menu_open;
+    state.confirm_leave = false;
+    state.status = if state.escape_menu_open {
+        "Table menu opened. The shared table remains live.".into()
+    } else {
+        "Returned to the table.".into()
+    };
+}
+
+fn handle_escape_key(
+    keys: Res<ButtonInput<KeyCode>>,
+    room: Query<(), With<RoomRoot>>,
+    mut state: ResMut<UiState>,
+) {
+    if !room.is_empty() && keys.just_pressed(KeyCode::Escape) {
+        toggle_escape_menu(&mut state);
     }
 }
 
@@ -1129,7 +1279,6 @@ fn handle_bridge_notices(mut notices: MessageReader<BridgeNotice>, mut state: Re
             }
             BridgeNotice::Snapshot(snapshot) if snapshot.room_id().is_some() => {
                 state.busy = false;
-                state.joined_once = true;
             }
             BridgeNotice::Command {
                 operation,
@@ -1164,15 +1313,55 @@ fn handle_bridge_notices(mut notices: MessageReader<BridgeNotice>, mut state: Re
 
 fn enter_room(
     model: Res<BridgeModel>,
-    state: Res<UiState>,
+    mut state: ResMut<UiState>,
+    authority: Res<AuthorityEndpoint>,
     rotation_snap: Res<RotationSnap>,
     menu: Query<Entity, With<MainMenuRoot>>,
     room: Query<Entity, With<RoomRoot>>,
+    cards: Query<Entity, With<CardVisual>>,
+    players: Query<Entity, With<SpatialPlayer>>,
     mut ui_cameras: Query<(Entity, &mut Camera), With<PocheUiCamera>>,
     mut table_cameras: Query<&mut Camera, (With<TabletopCamera>, Without<PocheUiCamera>)>,
+    mut poses: ResMut<PoseDisplay>,
+    mut drag: ResMut<DragState>,
+    mut camera_controller: ResMut<TableCameraController>,
     mut commands: Commands,
 ) {
-    if model.snapshot.room_id().is_none() || !room.is_empty() {
+    if model.snapshot.room_id().is_none() {
+        if room.is_empty() {
+            return;
+        }
+        for entity in &room {
+            commands.entity(entity).despawn();
+        }
+        for entity in &cards {
+            commands.entity(entity).despawn();
+        }
+        for entity in &players {
+            commands.entity(entity).despawn();
+        }
+        poses.0.clear();
+        drag.card_key = None;
+        drag.reset_rotation_repeat();
+        camera_controller.last_seat = CameraSeat::Uninitialized;
+        for mut table_camera in &mut table_cameras {
+            table_camera.is_active = false;
+        }
+        state.busy = false;
+        state.capability = None;
+        state.confirm_leave = false;
+        state.escape_menu_open = false;
+        if menu.is_empty() {
+            let Ok((camera, mut ui_camera)) = ui_cameras.single_mut() else {
+                return;
+            };
+            ui_camera.order = 10;
+            ui_camera.clear_color = bevy::camera::ClearColorConfig::None;
+            spawn_main_menu(&mut commands, camera, &authority, &state);
+        }
+        return;
+    }
+    if !room.is_empty() {
         return;
     }
     for entity in &menu {
@@ -1186,6 +1375,8 @@ fn enter_room(
     for mut table_camera in &mut table_cameras {
         table_camera.is_active = true;
     }
+    state.confirm_leave = false;
+    state.escape_menu_open = false;
     commands
         .spawn((
             RoomRoot,
@@ -1226,6 +1417,22 @@ fn enter_room(
                     Text::new(rotation_snap.label()),
                     TextFont::from_font_size(16.),
                 )],
+            ));
+            root.spawn((
+                PlayerListLabel,
+                Text::new("PLAYERS\nLoading roster…"),
+                TextFont::from_font_size(16.),
+                TextColor(Color::srgb(0.88, 0.92, 0.88)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: px(22.),
+                    top: px(136.),
+                    min_width: px(225.),
+                    max_width: px(320.),
+                    padding: px(12.).all(),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.035, 0.08, 0.085, 0.88)),
             ));
             root.spawn((
                 RoomCodeLabel,
@@ -1299,10 +1506,11 @@ fn enter_room(
                 spawn_button(bar, "Bid 0 tricks", UiAction::Bid(0), true);
                 spawn_button(bar, "Bid 1 trick", UiAction::Bid(1), true);
                 spawn_button(bar, "Play your card", UiAction::PlayFirstCard, true);
-                spawn_button(bar, "Leave lobby", UiAction::Leave, false);
                 bar.spawn((
                     LatencyLabel,
-                    Text::new("Drag: move · hold Q/E: rotate"),
+                    Text::new(
+                        "Drag card · Q/E rotate · RMB orbit · MMB/WASD pan · Space reset · Esc menu",
+                    ),
                     TextFont::from_font_size(15.),
                     TextColor(Color::srgb(0.72, 0.82, 0.8)),
                 ));
@@ -1319,7 +1527,94 @@ fn enter_room(
                     ..default()
                 },
             ));
+            root.spawn((
+                EscapeMenuRoot,
+                GlobalZIndex(100),
+                Node {
+                    display: Display::None,
+                    position_type: PositionType::Absolute,
+                    width: percent(100.),
+                    height: percent(100.),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.76)),
+            ))
+            .with_children(|overlay| {
+                overlay
+                    .spawn((
+                        Node {
+                            width: px(440.),
+                            padding: px(26.).all(),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(14.),
+                            align_items: AlignItems::Stretch,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.035, 0.075, 0.08)),
+                    ))
+                    .with_children(|panel| {
+                        panel.spawn((
+                            Text::new("TABLE MENU"),
+                            TextFont::from_font_size(30.),
+                            TextColor(Color::srgb(0.96, 0.88, 0.58)),
+                        ));
+                        panel.spawn((
+                            Text::new("The shared table remains live while this menu is open."),
+                            TextFont::from_font_size(15.),
+                            TextColor(Color::srgb(0.72, 0.82, 0.8)),
+                        ));
+                        spawn_button(panel, "Resume table", UiAction::ResumeMenu, true);
+                        panel
+                            .spawn((
+                                Button,
+                                UiAction::Leave,
+                                Node {
+                                    min_width: px(150.),
+                                    padding: px(13.).all(),
+                                    justify_content: JustifyContent::Center,
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgb(0.40, 0.13, 0.12)),
+                            ))
+                            .with_child((
+                                LeaveButtonLabel,
+                                Text::new("Leave lobby"),
+                                TextFont::from_font_size(20.),
+                            ));
+                        panel.spawn((
+                            Text::new("Press Esc to resume."),
+                            TextFont::from_font_size(14.),
+                            TextColor(Color::srgb(0.62, 0.72, 0.7)),
+                        ));
+                    });
+            });
         });
+}
+
+fn sync_escape_menu(
+    state: Res<UiState>,
+    mut menus: Query<&mut Node, With<EscapeMenuRoot>>,
+    mut leave_labels: Query<&mut Text, With<LeaveButtonLabel>>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+    for mut node in &mut menus {
+        node.display = if state.escape_menu_open {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    for mut label in &mut leave_labels {
+        label.0 = if state.confirm_leave {
+            "Confirm leave lobby".into()
+        } else {
+            "Leave lobby".into()
+        };
+    }
 }
 
 fn spawn_absolute_button(
@@ -1360,6 +1655,7 @@ fn sync_room_labels(
             Without<SeatLabel>,
             Without<HandSummary>,
             Without<LatencyLabel>,
+            Without<PlayerListLabel>,
         ),
     >,
     mut seats: Query<
@@ -1369,6 +1665,7 @@ fn sync_room_labels(
             Without<HandSummary>,
             Without<LatencyLabel>,
             Without<UiAction>,
+            Without<PlayerListLabel>,
         ),
     >,
     mut hands: Query<
@@ -1378,6 +1675,7 @@ fn sync_room_labels(
             Without<RoomCodeLabel>,
             Without<SeatLabel>,
             Without<LatencyLabel>,
+            Without<PlayerListLabel>,
         ),
     >,
     mut latency: Query<
@@ -1387,6 +1685,7 @@ fn sync_room_labels(
             Without<RoomCodeLabel>,
             Without<HandSummary>,
             Without<SeatLabel>,
+            Without<PlayerListLabel>,
         ),
     >,
     mut game_status: Query<
@@ -1397,6 +1696,18 @@ fn sync_room_labels(
             Without<HandSummary>,
             Without<SeatLabel>,
             Without<LatencyLabel>,
+            Without<PlayerListLabel>,
+        ),
+    >,
+    mut player_list: Query<
+        &mut Text,
+        (
+            With<PlayerListLabel>,
+            Without<RoomCodeLabel>,
+            Without<SeatLabel>,
+            Without<HandSummary>,
+            Without<LatencyLabel>,
+            Without<GameStatusLabel>,
         ),
     >,
     mut actions: Query<(&UiAction, &mut Node), Without<SeatLabel>>,
@@ -1472,6 +1783,30 @@ fn sync_room_labels(
             },
         );
     }
+    for mut text in &mut player_list {
+        let mut members = model.snapshot.members.iter().collect::<Vec<_>>();
+        members.sort_by_key(|member| (member.seat.is_none(), member.seat, &member.display_name));
+        let rows = members
+            .into_iter()
+            .map(|member| {
+                let presence = if member.connected { "●" } else { "○" };
+                let place = member.seat.map_or_else(
+                    || "standing".to_string(),
+                    |seat| format!("seat {}", seat + 1),
+                );
+                format!(
+                    "{presence} {} · {place}{}",
+                    member.display_name,
+                    if member.is_self { " · you" } else { "" }
+                )
+            })
+            .collect::<Vec<_>>();
+        text.0 = if rows.is_empty() {
+            "PLAYERS\nNo one is in this lobby.".into()
+        } else {
+            format!("PLAYERS\n{}", rows.join("\n"))
+        };
+    }
     for (action, mut node) in &mut actions {
         node.display =
             match action {
@@ -1517,7 +1852,10 @@ fn sync_room_labels(
                         Display::None
                     }
                 }
-                UiAction::Leave | UiAction::CopyCode | UiAction::CycleRotationSnap => Display::Flex,
+                UiAction::Leave
+                | UiAction::CopyCode
+                | UiAction::CycleRotationSnap
+                | UiAction::ResumeMenu => Display::Flex,
                 UiAction::Create | UiAction::Paste | UiAction::Join => continue,
             };
     }
@@ -1755,20 +2093,21 @@ fn sync_player_entities(
     for (entity, _) in &existing {
         commands.entity(entity).despawn();
     }
-    for (index, member) in model.snapshot.members.iter().enumerate() {
-        let position = member.seat.map_or_else(
-            || Vec3::new(-1.1 + index as f32 * 0.28, 0.18, 0.0),
-            |seat| {
-                layout
-                    .0
-                    .seats()
-                    .iter()
-                    .find(|placement| placement.seat.get() == seat)
-                    .map_or(Vec3::ZERO, |placement| {
-                        point_to_world(placement.player_pose.translation)
-                    })
-            },
-        );
+    for member in model
+        .snapshot
+        .members
+        .iter()
+        .filter(|member| member.seat.is_some())
+    {
+        let seat = member.seat.expect("filtered to seated players");
+        let position = layout
+            .0
+            .seats()
+            .iter()
+            .find(|placement| placement.seat.get() == seat)
+            .map_or(Vec3::ZERO, |placement| {
+                point_to_world(placement.player_pose.translation)
+            });
         commands.spawn((
             SpatialPlayer,
             Mesh3d(assets.avatar_mesh.clone()),
@@ -1784,15 +2123,105 @@ fn sync_player_entities(
 
 fn update_table_camera(
     time: Res<Time>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
     model: Res<BridgeModel>,
+    layout: Res<CanonicalLayout>,
+    state: Res<UiState>,
+    mut controller: ResMut<TableCameraController>,
     mut cameras: Query<&mut Transform, With<TabletopCamera>>,
 ) {
-    let target = player_camera_transform(model.snapshot.own_seat());
-    let alpha = 1.0 - (-5.0 * time.delta_secs()).exp();
-    for mut camera in &mut cameras {
-        camera.translation = camera.translation.lerp(target.translation, alpha);
-        camera.rotation = camera.rotation.slerp(target.rotation, alpha);
+    let seat = model.snapshot.own_seat();
+    if controller.last_seat != CameraSeat::from(seat) {
+        let immediate = controller.last_seat == CameraSeat::Uninitialized;
+        controller.reset_for_seat(seat, immediate);
     }
+    if !state.escape_menu_open {
+        if keys.just_pressed(KeyCode::Space) {
+            controller.reset_for_seat(seat, false);
+        }
+        let delta = mouse_motion.delta;
+        if mouse_buttons.pressed(MouseButton::Right) {
+            controller.target.yaw = (controller.target.yaw - delta.x * CAMERA_ORBIT_SENSITIVITY)
+                .rem_euclid(std::f32::consts::TAU);
+            controller.target.pitch = (controller.target.pitch
+                - delta.y * CAMERA_ORBIT_SENSITIVITY)
+                .clamp(CAMERA_MIN_PITCH, CAMERA_MAX_PITCH);
+        }
+
+        let forward = Vec3::new(
+            -controller.target.yaw.sin(),
+            0.0,
+            -controller.target.yaw.cos(),
+        );
+        let right = Vec3::new(
+            controller.target.yaw.cos(),
+            0.0,
+            -controller.target.yaw.sin(),
+        );
+        if mouse_buttons.pressed(MouseButton::Middle) {
+            let scale = controller.target.distance * CAMERA_PAN_SENSITIVITY;
+            controller.target.focus += (-right * delta.x + forward * delta.y) * scale;
+        }
+        let mut keyboard = Vec3::ZERO;
+        if keys.pressed(KeyCode::KeyW) {
+            keyboard += forward;
+        }
+        if keys.pressed(KeyCode::KeyS) {
+            keyboard -= forward;
+        }
+        if keys.pressed(KeyCode::KeyD) {
+            keyboard += right;
+        }
+        if keys.pressed(KeyCode::KeyA) {
+            keyboard -= right;
+        }
+        if keyboard.length_squared() > 0.0 {
+            controller.target.focus +=
+                keyboard.normalize() * CAMERA_KEYBOARD_SPEED * time.delta_secs();
+        }
+        controller.target.focus = clamp_table_focus(&layout.0, controller.target.focus);
+    }
+
+    let alpha = 1.0 - (-CAMERA_SMOOTHING * time.delta_secs()).exp();
+    controller.current.focus = controller
+        .current
+        .focus
+        .lerp(controller.target.focus, alpha);
+    controller.current.yaw = lerp_angle(controller.current.yaw, controller.target.yaw, alpha);
+    controller.current.pitch += (controller.target.pitch - controller.current.pitch) * alpha;
+    controller.current.distance +=
+        (controller.target.distance - controller.current.distance) * alpha;
+    let transform = controller.current.transform();
+    for mut camera in &mut cameras {
+        *camera = transform;
+    }
+}
+
+fn clamp_table_focus(layout: &SpatialLayout, focus: Vec3) -> Vec3 {
+    let Some(table) = layout
+        .scene_objects()
+        .into_iter()
+        .find(|object| object.kind == SceneObjectKind::Table)
+    else {
+        return focus;
+    };
+    let center = point_to_world(table.pose.translation);
+    let extent_x = table.half_extents.x as f32 / 500.0;
+    let extent_z = table.half_extents.z as f32 / 500.0;
+    let top = center.y + table.half_extents.y as f32 / 1_000.0;
+    Vec3::new(
+        focus.x.clamp(center.x - extent_x, center.x + extent_x),
+        top,
+        focus.z.clamp(center.z - extent_z, center.z + extent_z),
+    )
+}
+
+fn lerp_angle(from: f32, to: f32, alpha: f32) -> f32 {
+    let delta =
+        (to - from + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+    from + delta * alpha
 }
 
 fn fifths(value: u32, numerator: u32) -> u32 {
@@ -2177,6 +2606,48 @@ mod tests {
         assert!((seat_one.forward().dot(Vec3::Z)) > 0.5);
         assert_eq!(hand_camera_up(Some(0)), Vec3::NEG_Z);
         assert_eq!(hand_camera_up(Some(1)), Vec3::Z);
+    }
+
+    #[test]
+    fn camera_focus_is_clamped_to_twice_the_table_top() {
+        let layout = registered_layout(TableId::new(1), LayoutId::new(2, 1).expect("layout id"))
+            .expect("registered layout");
+        let clamped = clamp_table_focus(&layout, Vec3::new(99.0, -20.0, -99.0));
+        let table = layout
+            .scene_objects()
+            .into_iter()
+            .find(|object| object.kind == SceneObjectKind::Table)
+            .expect("table object");
+        let center = point_to_world(table.pose.translation);
+        let expected = Vec3::new(
+            center.x + table.half_extents.x as f32 / 500.0,
+            center.y + table.half_extents.y as f32 / 1_000.0,
+            center.z - table.half_extents.z as f32 / 500.0,
+        );
+        assert!(clamped.abs_diff_eq(expected, f32::EPSILON));
+    }
+
+    #[test]
+    fn camera_reset_changes_the_target_without_teleporting_the_view() {
+        let mut controller = TableCameraController::default();
+        controller.current.focus = Vec3::new(0.4, 0.02, 0.3);
+        let before = controller.current;
+        controller.reset_for_seat(Some(1), false);
+        assert_eq!(controller.current.focus, before.focus);
+        assert_eq!(controller.target.focus, camera_home(Some(1)).focus);
+        assert_ne!(controller.current.focus, controller.target.focus);
+    }
+
+    #[test]
+    fn escape_menu_cancels_a_pending_leave_confirmation() {
+        let mut state = UiState {
+            escape_menu_open: true,
+            confirm_leave: true,
+            ..UiState::default()
+        };
+        toggle_escape_menu(&mut state);
+        assert!(!state.escape_menu_open);
+        assert!(!state.confirm_leave);
     }
 
     #[test]

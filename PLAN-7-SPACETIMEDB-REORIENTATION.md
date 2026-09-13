@@ -1,9 +1,9 @@
 # SpacetimeDB desktop reorientation
 
-**Plan status:** Active; the create/join/seat/private-hand/shared-pose desktop MVP is implemented and accepted, while durable Poche play, recovery, and complete formal conformance remain
+**Plan status:** Active; the create/join/seat/private-hand/shared-pose MVP and first oracle-backed trick are accepted, while multi-round play, recovery, and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-13 (first oracle-backed bid/play trick accepted through two Maincloud clients and canonical 3D/private-hand projection)
+**Last updated:** 2026-09-13 (active-room projection, Escape/leave lifecycle, roster, and smoothed focal camera accepted through two Maincloud clients)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
@@ -210,6 +210,44 @@ This checkpoint advances T4.3 substantially and T4.4/T6.2 partially. It does
 not claim the complete multi-round game, denied-drop puppet coverage, restart,
 multiple devices per player, explicit final-leave UX, formal adapter parity,
 or the latency distributions required by T6.4.
+
+## 2026-09-13 active-room and table-control checkpoint
+
+- Diagnosed the apparent player in the middle of the table and failed
+  leave-to-menu transition as one authority projection bug. A persisted
+  SpacetimeDB identity could retain durable memberships in older rooms, while
+  all sender-scoped views unioned every such room and `room_id()` selected an
+  arbitrary first row.
+- Added a private identity-keyed `active_room` table. Create and join move that
+  focus atomically; room, roster, hand, game, reveal, and pose views expose only
+  the focused room. Disconnect preserves focus for reconnect, explicit leave
+  removes it, and switching focus marks the older membership disconnected.
+  The additive migration was published to Maincloud `poche-6quz6` without
+  deleting data.
+- Unseated members no longer become tabletop avatars. A compact authoritative
+  roster below rotation snap still shows seated and standing members,
+  connection state, seat, and which identity is the viewer.
+- Moved destructive leave into an Escape table menu. Its first activation
+  changes the button from **Leave lobby** to **Confirm leave lobby** and
+  explains the effect; Resume or Escape cancels pending confirmation. A
+  successful leave now tears down cards/avatars/camera state, deactivates the
+  world camera, and reconstructs the actual main menu with explicit status.
+- Replaced the hard seat-camera lerp with a smoothed focal-point rig. RMB
+  orbits, MMB pans, WASD moves the focus camera-relatively, and Space targets a
+  smooth seat-relative reset. The focus is clamped to the canonical table-top
+  rectangle expanded to twice its extents.
+- Extended the file-control protocol with table-menu and leave-button actions.
+  The v4 windowless acceptance captures the Escape menu, verifies that the
+  first leave-button activation changes it to **Confirm leave lobby**, then
+  verifies the second activation leaves Alice, her semantic surface and GPU
+  capture become the main menu, and Bob's roster falls to one current-room
+  member. The final Maincloud run measured 79.98 ms for authority response and
+  199.60 ms for exact peer pose observation.
+- Thirteen desktop tests pass, including camera bounds, non-teleporting reset,
+  and leave-confirmation cancellation. The SpacetimeDB WASM build and the
+  published additive migration pass. This does not yet prove visible physical
+  mouse feel, restart/multiple-device identity behavior, the final-member room
+  deletion path, or a complete multi-round Poche game.
 
 ## Authoritative user guidance ledger
 
@@ -1366,8 +1404,9 @@ remote branch contains all intended commits.
 
 ## Immediate next slice
 
-Start T2.1/T2.4 from the accepted physical-table checkpoint: define lossless
-module DTO conversion and route a durable Poche action/drop through the pure
-transition engine without changing the accepted pose carrier. In parallel only
-where independent, close T3.1/T4.5's connection-count, restart, and
-multiple-device identity semantics.
+Continue from the accepted active-room/oracle checkpoint by closing
+T3.1/T4.5's connection-count, restart, and multiple-device identity semantics,
+then expand the one-trick oracle adapter into multi-round Poche play. Keep
+diegetic seat/bid/play affordances synchronized with the exhaustive action bar,
+and collect a real visible-window camera/mouse feel check before treating the
+new focal rig as polished.

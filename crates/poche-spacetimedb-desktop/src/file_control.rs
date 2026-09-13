@@ -8,7 +8,10 @@
     clippy::single_match_else
 )]
 
-use super::{AuthorityEndpoint, PoseDisplay, RenderMode, RenderSurface, UiState};
+use super::{
+    AuthorityEndpoint, LeaveActivation, PoseDisplay, RenderMode, RenderSurface, UiState,
+    activate_leave, toggle_escape_menu,
+};
 use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 use poche_bevy_spacetimedb::{BridgeHandle, BridgeIntent, BridgeModel};
 use poche_spacetimedb_client::{RoomCapability, valid_join_code};
@@ -74,6 +77,8 @@ pub enum FileControlAction {
         seat: u8,
     },
     ReleaseSeat,
+    ToggleTableMenu,
+    ActivateLeave,
     Bid {
         tricks: u8,
     },
@@ -241,6 +246,8 @@ impl FileControlPlugin {
                 "observe_private_local".into(),
                 "create_or_join_as_device".into(),
                 "take_or_release_seat".into(),
+                "toggle_table_menu".into(),
+                "activate_leave_button".into(),
                 "bid_or_play_owned_card".into(),
                 "move_owned_card".into(),
                 "capture_gpu".into(),
@@ -288,6 +295,7 @@ struct PendingRequest {
 enum Completion {
     Immediate,
     RoomJoined,
+    RoomLeft,
     Seat(Option<u8>),
     Pose {
         card_key: String,
@@ -445,6 +453,24 @@ fn drive_file_control(
                 })
             },
         ),
+        FileControlAction::ToggleTableMenu => {
+            if model.snapshot.room_id().is_none() {
+                Err("join a room before opening its table menu".into())
+            } else {
+                toggle_escape_menu(&mut state);
+                Ok(())
+            }
+        }
+        FileControlAction::ActivateLeave => {
+            match activate_leave(&mut state, model.snapshot.room_id(), &bridge) {
+                Ok(LeaveActivation::ConfirmationArmed) => Ok(()),
+                Ok(LeaveActivation::Submitted) => {
+                    pending.completion = Completion::RoomLeft;
+                    Ok(())
+                }
+                Err(error) => Err(error),
+            }
+        }
         FileControlAction::Bid { tricks } => submit_game_action(
             &model,
             &mut pending,
@@ -549,6 +575,7 @@ fn pending_result(
     match &mut pending.completion {
         Completion::Immediate => Some(Ok(())),
         Completion::RoomJoined => model.snapshot.room_id().map(|_| Ok(())),
+        Completion::RoomLeft => model.snapshot.room_id().is_none().then_some(Ok(())),
         Completion::Seat(expected) => (model.snapshot.own_seat() == *expected).then_some(Ok(())),
         Completion::Pose {
             card_key,

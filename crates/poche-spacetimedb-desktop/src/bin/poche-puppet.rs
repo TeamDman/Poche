@@ -89,6 +89,14 @@ fn run() -> Result<(), String> {
             let root = PathBuf::from(args.next().ok_or("stand requires CONTROL_ROOT")?);
             print_response(send(&root, FileControlAction::ReleaseSeat)?)
         }
+        Some("menu") => {
+            let root = PathBuf::from(args.next().ok_or("menu requires CONTROL_ROOT")?);
+            print_response(send(&root, FileControlAction::ToggleTableMenu)?)
+        }
+        Some("leave") => {
+            let root = PathBuf::from(args.next().ok_or("leave requires CONTROL_ROOT")?);
+            print_response(send(&root, FileControlAction::ActivateLeave)?)
+        }
         Some("bid") => {
             let root = PathBuf::from(args.next().ok_or("bid requires CONTROL_ROOT")?);
             let tricks = parse(&mut args, "TRICKS")?;
@@ -129,7 +137,7 @@ fn run() -> Result<(), String> {
                  \x20                       [--output PATH]\n\
                  poche-puppet observe ROOT [--include-join-code]\n\
                  poche-puppet set-name ROOT NAME | create ROOT | join ROOT CODE\n\
-                 poche-puppet seat ROOT 0|1 | stand ROOT | bid ROOT TRICKS\n\
+                 poche-puppet seat ROOT 0|1 | stand ROOT | menu ROOT | leave ROOT | bid ROOT TRICKS\n\
                  poche-puppet play ROOT CARD_INDEX\n\
                  poche-puppet move ROOT CARD_INDEX X_MM Y_MM Z_MM RY_MDEG\n\
                  poche-puppet capture ROOT | stop ROOT"
@@ -196,6 +204,10 @@ struct AcceptanceReport {
     final_phase: String,
     revealed_cards: usize,
     winning_logical_location: String,
+    leave_returned_to_menu: bool,
+    peer_members_after_leave: usize,
+    table_menu_capture: String,
+    leave_confirmation_capture: String,
     screenshots: Vec<String>,
     contact_sheet: String,
 }
@@ -374,9 +386,26 @@ fn acceptance_inner(
     let resolved_bob = capture(bob_root)?;
     let captures = [seated_alice, seated_bob, resolved_alice, resolved_bob];
     compose_contact_sheet(&captures, output)?;
+    send(alice_root, FileControlAction::ToggleTableMenu)?;
+    let table_menu_capture = capture(alice_root)?;
+    send(alice_root, FileControlAction::ActivateLeave)?;
+    let leave_confirmation_capture = capture(alice_root)?;
+    let left = send(alice_root, FileControlAction::ActivateLeave)?.observation;
+    let leave_returned_to_menu = left.surface == "main_menu" && left.room_id.is_none();
+    if !leave_returned_to_menu {
+        return Err("leaving did not return the controlling device to its main menu".into());
+    }
+    let bob_after_leave = wait_until(bob_root, |observation| {
+        observation.members.len() == 1
+            && observation
+                .members
+                .first()
+                .is_some_and(|member| member.is_self)
+    })?;
+    let menu_after_leave = capture(alice_root)?;
 
     let report = AcceptanceReport {
-        schema: "poche-spacetimedb-two-device-acceptance-v3",
+        schema: "poche-spacetimedb-two-device-acceptance-v4",
         completed_unix_ms: unix_millis()?,
         authority_profile: authority.profile.clone(),
         authority_uri: authority.uri.clone(),
@@ -412,8 +441,15 @@ fn acceptance_inner(
             .card_poses
             .first()
             .map_or_else(|| "missing".into(), |pose| pose.logical_location.clone()),
+        leave_returned_to_menu,
+        peer_members_after_leave: bob_after_leave.members.len(),
+        table_menu_capture: table_menu_capture.to_string_lossy().into_owned(),
+        leave_confirmation_capture: leave_confirmation_capture.to_string_lossy().into_owned(),
         screenshots: captures
             .iter()
+            .chain(std::iter::once(&table_menu_capture))
+            .chain(std::iter::once(&leave_confirmation_capture))
+            .chain(std::iter::once(&menu_after_leave))
             .map(|path| path.to_string_lossy().into_owned())
             .collect(),
         contact_sheet: output.to_string_lossy().into_owned(),
