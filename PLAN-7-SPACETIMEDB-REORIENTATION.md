@@ -348,9 +348,12 @@ or the latency distributions required by T6.4.
 - Reviewed `identity-flow.png`: the identity gate, account-labelled title, and
   resume offer are legible at the real windowless Bevy target. Reviewed the
   final capture independently to confirm the lobby-ended interstitial.
-- Hosted Maincloud publication of the additive presence schema is deliberately
-  still pending an explicit hosted-write approval. No deletion flag or hosted
-  data mutation was used for this checkpoint.
+- After explicit approval, published this additive module to Maincloud database
+  `poche-6quz6` using the owning authenticated identity. The migration created
+  only the private `connection_presence` table, its connection-ID uniqueness
+  constraint, and connection/identity indexes; no deletion flag was used. An
+  initial anonymous attempt was correctly rejected as a non-collaborator before
+  the authenticated publication succeeded.
 
 This advances T2.2, T2.3, T3.1, T4.1, and T4.5 but does not close their broader
 criteria. Automatic retry/backoff, actual process crash/relaunch, unavailable-
