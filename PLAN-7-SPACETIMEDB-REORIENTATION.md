@@ -354,6 +354,16 @@ or the latency distributions required by T6.4.
   constraint, and connection/identity indexes; no deletion flag was used. An
   initial anonymous attempt was correctly rejected as a non-collaborator before
   the authenticated publication succeeded.
+- The first real Maincloud launch exposed a latency-sensitive capability race:
+  the render lifecycle cleared a newly generated code while waiting for the
+  room projection. Capability removal is now tied to identity/leave/failure
+  boundaries instead of table visibility. Added sender-scoped public view
+  `my_room_capability`, backed by the still-private room-secret table, so any
+  authenticated active member—including a restarted sibling device—recovers
+  only that room's exact bearer code. Published the view to `poche-6quz6` and
+  passed Maincloud acceptance with the second Alice process explicitly proving
+  exact code recovery; the run measured 70.90 ms to authority acknowledgement
+  and 137.85 ms to Bob's exact pose observation.
 
 This advances T2.2, T2.3, T3.1, T4.1, and T4.5 but does not close their broader
 criteria. Automatic retry/backoff, actual process crash/relaunch, unavailable-

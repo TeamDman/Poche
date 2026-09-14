@@ -100,6 +100,7 @@ pub enum ClientEvent {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ClientSnapshot {
     pub identity: Option<String>,
+    pub room_capability: Option<RoomCapability>,
     pub rooms: Vec<RoomView>,
     pub members: Vec<MemberView>,
     pub hand: Vec<HandCardView>,
@@ -532,6 +533,21 @@ impl PocheClient {
 
 fn register_change_callbacks(connection: &DbConnection, event_tx: mpsc::Sender<ClientEvent>) {
     let tx = event_tx.clone();
+    connection.db.my_room_capability().on_insert(move |_, _| {
+        let _ = tx.send(ClientEvent::ModelChanged);
+    });
+    let tx = event_tx.clone();
+    connection
+        .db
+        .my_room_capability()
+        .on_update(move |_, _, _| {
+            let _ = tx.send(ClientEvent::ModelChanged);
+        });
+    let tx = event_tx.clone();
+    connection.db.my_room_capability().on_delete(move |_, _| {
+        let _ = tx.send(ClientEvent::ModelChanged);
+    });
+    let tx = event_tx.clone();
     connection.db.my_rooms().on_insert(move |_, _| {
         let _ = tx.send(ClientEvent::ModelChanged);
     });
@@ -628,6 +644,7 @@ fn subscribe(
         .on_error(move |_ctx, error| {
             let _ = event_tx.send(ClientEvent::Error(format!("subscription failed: {error}")));
         })
+        .add_query(|query| query.from.my_room_capability())
         .add_query(|query| query.from.my_rooms())
         .add_query(|query| query.from.room_members())
         .add_query(|query| query.from.my_hand())
@@ -641,6 +658,7 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
     let identity = context
         .try_identity()
         .map(|identity| identity.to_hex().to_string());
+    let room_capability = room_capability_from(context);
     let rooms = context
         .db
         .my_rooms()
@@ -722,6 +740,7 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
         .collect();
     ClientSnapshot {
         identity,
+        room_capability,
         rooms,
         members,
         hand,
@@ -729,6 +748,18 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
         game,
         revealed_cards,
     }
+}
+
+fn room_capability_from(context: &DbConnection) -> Option<RoomCapability> {
+    context
+        .db
+        .my_room_capability()
+        .iter()
+        .next()
+        .map(|capability| RoomCapability {
+            room_id: capability.room_id,
+            join_code: capability.join_code,
+        })
 }
 
 fn finish_command<RemoteError: fmt::Display>(

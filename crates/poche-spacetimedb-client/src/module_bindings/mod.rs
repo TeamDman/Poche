@@ -16,6 +16,7 @@ pub mod join_room_reducer;
 pub mod leave_room_reducer;
 pub mod member_type;
 pub mod my_hand_table;
+pub mod my_room_capability_table;
 pub mod my_rooms_table;
 pub mod play_card_reducer;
 pub mod private_card_identity_type;
@@ -42,6 +43,7 @@ pub use join_room_reducer::join_room;
 pub use leave_room_reducer::leave_room;
 pub use member_type::Member;
 pub use my_hand_table::*;
+pub use my_room_capability_table::*;
 pub use my_rooms_table::*;
 pub use play_card_reducer::play_card;
 pub use private_card_identity_type::PrivateCardIdentity;
@@ -200,6 +202,7 @@ impl __sdk::Reducer for Reducer {
 #[doc(hidden)]
 pub struct DbUpdate {
     my_hand: __sdk::TableUpdate<PrivateHandCard>,
+    my_room_capability: __sdk::TableUpdate<RoomSecret>,
     my_rooms: __sdk::TableUpdate<Room>,
     room_members: __sdk::TableUpdate<Member>,
     visible_card_poses: __sdk::TableUpdate<CardPose>,
@@ -216,6 +219,9 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
                 "my_hand" => db_update
                     .my_hand
                     .append(my_hand_table::parse_table_update(table_update)?),
+                "my_room_capability" => db_update
+                    .my_room_capability
+                    .append(my_room_capability_table::parse_table_update(table_update)?),
                 "my_rooms" => db_update
                     .my_rooms
                     .append(my_rooms_table::parse_table_update(table_update)?),
@@ -260,6 +266,9 @@ impl __sdk::DbUpdate for DbUpdate {
         diff.my_hand = cache
             .apply_diff_to_table::<PrivateHandCard>("my_hand", &self.my_hand)
             .with_updates_by_pk(|row| &row.card_key);
+        diff.my_room_capability = cache
+            .apply_diff_to_table::<RoomSecret>("my_room_capability", &self.my_room_capability)
+            .with_updates_by_pk(|row| &row.room_id);
         diff.my_rooms = cache
             .apply_diff_to_table::<Room>("my_rooms", &self.my_rooms)
             .with_updates_by_pk(|row| &row.room_id);
@@ -287,6 +296,9 @@ impl __sdk::DbUpdate for DbUpdate {
             match &table_rows.table[..] {
                 "my_hand" => db_update
                     .my_hand
+                    .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "my_room_capability" => db_update
+                    .my_room_capability
                     .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "my_rooms" => db_update
                     .my_rooms
@@ -319,6 +331,9 @@ impl __sdk::DbUpdate for DbUpdate {
                 "my_hand" => db_update
                     .my_hand
                     .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "my_room_capability" => db_update
+                    .my_room_capability
+                    .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "my_rooms" => db_update
                     .my_rooms
                     .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
@@ -350,6 +365,7 @@ impl __sdk::DbUpdate for DbUpdate {
 #[doc(hidden)]
 pub struct AppliedDiff<'r> {
     my_hand: __sdk::TableAppliedDiff<'r, PrivateHandCard>,
+    my_room_capability: __sdk::TableAppliedDiff<'r, RoomSecret>,
     my_rooms: __sdk::TableAppliedDiff<'r, Room>,
     room_members: __sdk::TableAppliedDiff<'r, Member>,
     visible_card_poses: __sdk::TableAppliedDiff<'r, CardPose>,
@@ -369,6 +385,11 @@ impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
         callbacks: &mut __sdk::DbCallbacks<RemoteModule>,
     ) {
         callbacks.invoke_table_row_callbacks::<PrivateHandCard>("my_hand", &self.my_hand, event);
+        callbacks.invoke_table_row_callbacks::<RoomSecret>(
+            "my_room_capability",
+            &self.my_room_capability,
+            event,
+        );
         callbacks.invoke_table_row_callbacks::<Room>("my_rooms", &self.my_rooms, event);
         callbacks.invoke_table_row_callbacks::<Member>("room_members", &self.room_members, event);
         callbacks.invoke_table_row_callbacks::<CardPose>(
@@ -1047,6 +1068,7 @@ impl __sdk::SpacetimeModule for RemoteModule {
 
     fn register_tables(client_cache: &mut __sdk::ClientCache<Self>) {
         my_hand_table::register_table(client_cache);
+        my_room_capability_table::register_table(client_cache);
         my_rooms_table::register_table(client_cache);
         room_members_table::register_table(client_cache);
         visible_card_poses_table::register_table(client_cache);
@@ -1055,6 +1077,7 @@ impl __sdk::SpacetimeModule for RemoteModule {
     }
     const ALL_TABLE_NAMES: &'static [&'static str] = &[
         "my_hand",
+        "my_room_capability",
         "my_rooms",
         "room_members",
         "visible_card_poses",

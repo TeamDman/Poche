@@ -60,7 +60,7 @@ pub enum BridgeNotice {
         identity: String,
     },
     RoomCreated(RoomCapability),
-    Snapshot(ClientSnapshot),
+    Snapshot(Box<ClientSnapshot>),
     Command {
         operation: &'static str,
         elapsed: Duration,
@@ -195,13 +195,13 @@ fn worker_loop(requests: mpsc::Receiver<BridgeIntent>, events: mpsc::Sender<Work
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Ok(BridgeIntent::Connect { config }) => {
                 client = None;
-                send(&events, BridgeNotice::Snapshot(ClientSnapshot::default()));
+                send(&events, BridgeNotice::Snapshot(Box::default()));
                 match PocheClient::connect(config, Duration::from_secs(8)) {
                     Ok(connected) => {
                         let snapshot = connected.snapshot();
                         let identity = snapshot.identity.clone().unwrap_or_default();
                         send(&events, BridgeNotice::Connected { identity });
-                        send(&events, BridgeNotice::Snapshot(snapshot));
+                        send(&events, BridgeNotice::Snapshot(Box::new(snapshot)));
                         client = Some(connected);
                     }
                     Err(error) => send(&events, BridgeNotice::Error(error.to_string())),
@@ -209,7 +209,7 @@ fn worker_loop(requests: mpsc::Receiver<BridgeIntent>, events: mpsc::Sender<Work
             }
             Ok(BridgeIntent::Disconnect) => {
                 client = None;
-                send(&events, BridgeNotice::Snapshot(ClientSnapshot::default()));
+                send(&events, BridgeNotice::Snapshot(Box::default()));
                 send(&events, BridgeNotice::Disconnected(None));
             }
             Ok(intent) => {
@@ -290,7 +290,10 @@ fn worker_loop(requests: mpsc::Receiver<BridgeIntent>, events: mpsc::Sender<Work
                 }
             }
             if changed {
-                send(&events, BridgeNotice::Snapshot(connected.snapshot()));
+                send(
+                    &events,
+                    BridgeNotice::Snapshot(Box::new(connected.snapshot())),
+                );
             }
         }
     }

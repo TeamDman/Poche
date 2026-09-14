@@ -337,7 +337,12 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
         .join_code
         .clone()
         .ok_or("creator observation omitted the requested join code")?;
-    send(bob_root, FileControlAction::JoinLobby { join_code })?;
+    send(
+        bob_root,
+        FileControlAction::JoinLobby {
+            join_code: join_code.clone(),
+        },
+    )?;
     send(alice_root, FileControlAction::TakeSeat { seat: 0 })?;
     send(bob_root, FileControlAction::TakeSeat { seat: 1 })?;
     let alice_ready = wait_until(alice_root, |observation| {
@@ -472,6 +477,19 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
         {
             return Err(
                 "the resumed Alice device did not recover the same identity, seat, and hand".into(),
+            );
+        }
+        let recovered_capability = send(
+            &mirror_root,
+            FileControlAction::Observe {
+                include_join_code: true,
+            },
+        )?
+        .observation
+        .join_code;
+        if recovered_capability.as_deref() != Some(join_code.as_str()) {
+            return Err(
+                "the resumed Alice device did not recover its sender-scoped lobby code".into(),
             );
         }
         resume_offer_capture = Some(capture(&mirror_root)?);

@@ -194,6 +194,10 @@ same SpacetimeDB identity, seat, and private hand.
 After account selection, the initial sender-scoped subscription is recovery
 authority. If it contains an active room, Poche shows **Unfinished lobby
 found** and waits for **Rejoin lobby** rather than silently opening the table.
+The private room-secret table is never subscribed directly; a sender-scoped
+`my_room_capability` view returns only the active room's join code to an
+authenticated member. A resumed device can therefore display and copy the
+code again without exposing other rooms' bearer capabilities.
 Switching accounts disconnects that process but does not leave. Explicit
 **Leave lobby** removes membership and active-room focus; a process crash or
 disconnect does not. Server presence is keyed by SDK connection ID, so a
@@ -218,7 +222,8 @@ Alice's card, waits until Bob observes its exact position/rotation, submits two
 legal bids and two legal plays, verifies both devices converge on two revealed
 cards in one winner's logical won zone, then starts a simultaneous second
 Alice process from Alice's same vault. That process must receive the resume
-offer and recover the same principal, seat, and private hand. After it
+offer and recover the same principal, seat, private hand, and exact lobby code.
+After it
 disconnects, Bob must still observe Alice online through her original
 connection. The puppet then captures the Escape table menu and armed leave
 confirmation, explicitly leaves Alice, verifies the terminal screen, and

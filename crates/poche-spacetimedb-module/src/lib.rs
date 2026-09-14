@@ -175,6 +175,19 @@ pub fn my_rooms(ctx: &ViewContext) -> Vec<Room> {
         .collect()
 }
 
+/// A member can recover the bearer capability for only its active room.
+///
+/// The underlying secret table remains private. This sender-scoped view lets
+/// another authenticated device for the same member resume and invite peers
+/// without making capabilities visible to non-members.
+#[spacetimedb::view(accessor = my_room_capability, public, primary_key = room_id)]
+pub fn my_room_capability(ctx: &ViewContext) -> Vec<RoomSecret> {
+    active_room_id(ctx)
+        .and_then(|room_id| ctx.db.room_secret().room_id().find(&room_id))
+        .into_iter()
+        .collect()
+}
+
 /// A member can see the membership roster for each room they have joined.
 #[spacetimedb::view(accessor = room_members, public, primary_key = member_key)]
 pub fn room_members(ctx: &ViewContext) -> Vec<Member> {

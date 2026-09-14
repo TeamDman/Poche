@@ -1747,35 +1747,40 @@ fn handle_bridge_notices(
                 state.capability = Some(capability.clone());
                 state.status = "Lobby created.".into();
             }
-            BridgeNotice::Snapshot(snapshot) => match state.pending_flow {
-                Some(PendingFlow::SelectIdentity) if snapshot.identity.is_some() => {
-                    state.busy = false;
-                    state.pending_flow = None;
-                    state.screen = if snapshot.room_id().is_some() {
-                        state.status = "This identity has an unfinished lobby.".into();
-                        UiScreen::ResumeOffer
-                    } else {
-                        state.status = "Signed in. Ready to create or join a lobby.".into();
-                        UiScreen::MainMenu
-                    };
+            BridgeNotice::Snapshot(snapshot) => {
+                if let Some(capability) = &snapshot.room_capability {
+                    state.capability = Some(capability.clone());
                 }
-                Some(PendingFlow::CreateRoom | PendingFlow::JoinRoom)
-                    if snapshot.room_id().is_some() =>
-                {
-                    state.busy = false;
-                    state.pending_flow = None;
-                    state.screen = UiScreen::Table;
+                match state.pending_flow {
+                    Some(PendingFlow::SelectIdentity) if snapshot.identity.is_some() => {
+                        state.busy = false;
+                        state.pending_flow = None;
+                        state.screen = if snapshot.room_id().is_some() {
+                            state.status = "This identity has an unfinished lobby.".into();
+                            UiScreen::ResumeOffer
+                        } else {
+                            state.status = "Signed in. Ready to create or join a lobby.".into();
+                            UiScreen::MainMenu
+                        };
+                    }
+                    Some(PendingFlow::CreateRoom | PendingFlow::JoinRoom)
+                        if snapshot.room_id().is_some() =>
+                    {
+                        state.busy = false;
+                        state.pending_flow = None;
+                        state.screen = UiScreen::Table;
+                    }
+                    Some(PendingFlow::LeaveRoom) if snapshot.room_id().is_none() => {
+                        state.busy = false;
+                        state.pending_flow = None;
+                        state.capability = None;
+                        state.escape_menu_open = false;
+                        state.screen = UiScreen::LobbyEnded;
+                        state.status = "You have left this lobby.".into();
+                    }
+                    _ => {}
                 }
-                Some(PendingFlow::LeaveRoom) if snapshot.room_id().is_none() => {
-                    state.busy = false;
-                    state.pending_flow = None;
-                    state.capability = None;
-                    state.escape_menu_open = false;
-                    state.screen = UiScreen::LobbyEnded;
-                    state.status = "You have left this lobby.".into();
-                }
-                _ => {}
-            },
+            }
             BridgeNotice::Command {
                 operation,
                 elapsed,
@@ -1793,6 +1798,9 @@ fn handle_bridge_notices(
                     state.status = "You have left this lobby.".into();
                 }
                 if result.is_err() {
+                    if matches!(*operation, "create_room" | "join_room") {
+                        state.capability = None;
+                    }
                     state.busy = false;
                     state.pending_flow = None;
                 }
@@ -1807,6 +1815,12 @@ fn handle_bridge_notices(
                 }
             }
             BridgeNotice::Error(error) => {
+                if matches!(
+                    state.pending_flow,
+                    Some(PendingFlow::CreateRoom | PendingFlow::JoinRoom)
+                ) {
+                    state.capability = None;
+                }
                 state.busy = false;
                 state.screen = match state.pending_flow {
                     Some(PendingFlow::SelectIdentity) => UiScreen::IdentityGate,
@@ -1891,7 +1905,6 @@ fn enter_room(
             table_camera.is_active = false;
         }
         state.busy = false;
-        state.capability = None;
         state.confirm_leave = false;
         state.escape_menu_open = false;
         return;
