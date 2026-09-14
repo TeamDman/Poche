@@ -16,6 +16,7 @@
 )]
 
 pub mod file_control;
+pub mod identity_vault;
 
 use bevy::{
     app::ScheduleRunnerPlugin,
@@ -39,6 +40,7 @@ use bevy::{
     window::{ExitCondition, PresentMode, PrimaryWindow, WindowResolution},
     winit::WinitPlugin,
 };
+use identity_vault::{IdentityAccount, IdentityVault};
 use poche_bevy_spacetimedb::{
     BridgeHandle, BridgeIntent, BridgeModel, BridgeNotice, PocheSpacetimePlugin,
 };
@@ -171,11 +173,11 @@ impl AuthorityEndpoint {
         Ok(selected)
     }
 
-    fn client_config(&self, profile_name: impl Into<String>) -> ClientConfig {
+    fn client_config(&self, account_id: impl Into<String>) -> ClientConfig {
         ClientConfig {
             uri: self.uri.clone(),
             database: self.database.clone(),
-            profile_name: profile_name.into(),
+            account_id: account_id.into(),
         }
     }
 
@@ -267,6 +269,7 @@ pub struct LaunchOptions {
     pub render_mode: RenderMode,
     pub graphics_backend: GraphicsBackend,
     pub file_control: Option<file_control::FileControlOptions>,
+    pub identity_vault_path: Option<PathBuf>,
     pub authority: AuthorityEndpoint,
 }
 
@@ -377,6 +380,11 @@ pub fn run_from_env() -> Result<(), String> {
             "--database" => {
                 database = Some(args.next().ok_or("--database requires a value")?);
             }
+            "--identity-vault" => {
+                options.identity_vault_path = Some(PathBuf::from(
+                    args.next().ok_or("--identity-vault requires a path")?,
+                ));
+            }
             "--graphics-backend" => {
                 options.graphics_backend = GraphicsBackend::parse(
                     &args.next().ok_or("--graphics-backend requires a value")?,
@@ -386,6 +394,7 @@ pub fn run_from_env() -> Result<(), String> {
             "--help" | "-h" => {
                 println!(
                     "poche [--server local|maincloud|URL] [--database NAME]\n\
+                     \x20     [--identity-vault PATH]\n\
                      \x20     [--graphics-backend auto|dx12|vulkan]\n\
                      \x20     [--control-root PATH --instance-id ID] [--windowless]\n\
                      The safe default is local. The maincloud shorthand selects\n\
@@ -456,6 +465,16 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
         .file_control
         .as_ref()
         .map(|control| control.root.clone());
+    let identity_vault_path = options
+        .identity_vault_path
+        .clone()
+        .or_else(|| {
+            control_root
+                .as_ref()
+                .map(|root| root.join("identity-vault-v1.json"))
+        })
+        .map_or_else(IdentityVault::default_path, Ok)?;
+    let identity_vault = IdentityVault::load(identity_vault_path)?;
     let control = options
         .file_control
         .map(|control| file_control::FileControlPlugin::prepare(control, options.render_mode))
@@ -490,6 +509,7 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
     }
     app.insert_resource(surface)
         .insert_resource(authority.clone())
+        .insert_resource(identity_vault)
         .add_plugins(PocheSpacetimePlugin)
         .init_resource::<Clipboard>()
         .insert_resource(UiState::for_authority(&authority))
@@ -515,6 +535,7 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
                 handle_escape_key,
                 poll_clipboard,
                 handle_bridge_notices,
+                sync_frontend_screen,
                 enter_room,
                 sync_escape_menu,
                 sync_room_labels,
@@ -544,10 +565,32 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
 struct UiState {
     busy: bool,
     status: String,
+    screen: UiScreen,
+    pending_flow: Option<PendingFlow>,
+    active_account_id: Option<String>,
+    account_label: String,
     display_name: String,
     capability: Option<RoomCapability>,
     confirm_leave: bool,
     escape_menu_open: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UiScreen {
+    IdentityGate,
+    Connecting,
+    ResumeOffer,
+    MainMenu,
+    Table,
+    LobbyEnded,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingFlow {
+    SelectIdentity,
+    CreateRoom,
+    JoinRoom,
+    LeaveRoom,
 }
 
 #[derive(Resource)]
@@ -569,7 +612,11 @@ impl UiState {
     fn for_authority(authority: &AuthorityEndpoint) -> Self {
         Self {
             busy: false,
-            status: format!("Using {}. Create or join a lobby.", authority.summary()),
+            status: format!("Using {}. Choose an identity.", authority.summary()),
+            screen: UiScreen::IdentityGate,
+            pending_flow: None,
+            active_account_id: None,
+            account_label: String::new(),
             display_name: String::new(),
             capability: None,
             confirm_leave: false,
@@ -583,6 +630,9 @@ struct PendingClipboard(Option<ClipboardRead>);
 
 #[derive(Component)]
 struct MainMenuRoot;
+
+#[derive(Component)]
+struct FrontendRoot(UiScreen);
 
 #[derive(Component)]
 struct RoomRoot;
@@ -645,12 +695,22 @@ struct LeaveButtonLabel;
 
 #[derive(Component, Clone, Copy, Eq, PartialEq)]
 enum Field {
-    Name,
+    IdentityLabel,
     Invitation,
 }
 
 #[derive(Component, Clone)]
 enum UiAction {
+    CreateIdentity,
+    SelectIdentity(String),
+    RefreshIdentities,
+    PreviousIdentity,
+    NextIdentity,
+    OpenIdentities,
+    CancelConnecting,
+    ResumeLobby,
+    SkipResume,
+    ReturnToTitle,
     Create,
     Paste,
     Join,
@@ -1016,37 +1076,136 @@ fn setup_menu(
     surface: Res<RenderSurface>,
     authority: Res<AuthorityEndpoint>,
     state: Res<UiState>,
+    vault: Res<IdentityVault>,
+    model: Res<BridgeModel>,
 ) {
     let mut camera = commands.spawn((Camera2d, IsDefaultUiCamera, PocheUiCamera));
     if let Some(target) = surface.render_target() {
         camera.insert(target);
     }
     let camera = camera.id();
-    spawn_main_menu(&mut commands, camera, &authority, &state);
+    spawn_frontend(
+        &mut commands,
+        camera,
+        &authority,
+        &state,
+        &vault,
+        model.snapshot.room_id().is_some(),
+    );
 }
 
-fn spawn_main_menu(
+fn spawn_frontend(
     commands: &mut Commands,
     camera: Entity,
     authority: &AuthorityEndpoint,
     state: &UiState,
+    vault: &IdentityVault,
+    has_resumable_room: bool,
 ) {
-    commands
-        .spawn((
-            MainMenuRoot,
-            UiTargetCamera(camera),
-            Node {
-                width: percent(100.),
-                height: percent(100.),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                row_gap: px(14.),
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.025, 0.055, 0.06)),
-        ))
-        .with_children(|parent| {
+    let accounts = vault
+        .accounts_for(&authority.uri, &authority.database)
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut root = commands.spawn((
+        FrontendRoot(state.screen),
+        UiTargetCamera(camera),
+        Node {
+            width: percent(100.),
+            height: percent(100.),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            row_gap: px(14.),
+            padding: px(28.).all(),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.025, 0.055, 0.06)),
+    ));
+    if state.screen == UiScreen::MainMenu {
+        root.insert(MainMenuRoot);
+    }
+    root.with_children(|parent| match state.screen {
+        UiScreen::IdentityGate => {
+            spawn_brand(parent, authority);
+            parent.spawn((
+                Text::new("WHO IS PLAYING?"),
+                TextFont::from_font_size(28.),
+                TextColor(Color::srgb(0.96, 0.88, 0.58)),
+            ));
+            if accounts.is_empty() {
+                parent.spawn((
+                    Text::new("Create the first identity on this installation."),
+                    TextFont::from_font_size(17.),
+                    TextColor(Color::srgb(0.72, 0.82, 0.8)),
+                ));
+            } else {
+                parent
+                    .spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(8.),
+                        min_width: px(360.),
+                        ..default()
+                    })
+                    .with_children(|list| {
+                        for account in &accounts {
+                            spawn_button(
+                                list,
+                                &account.label,
+                                UiAction::SelectIdentity(account.account_id.clone()),
+                                true,
+                            );
+                        }
+                    });
+            }
+            parent.spawn((
+                Text::new("Create another identity"),
+                TextFont::from_font_size(17.),
+                TextColor(Color::srgb(0.78, 0.86, 0.82)),
+            ));
+            spawn_field(parent, Field::IdentityLabel, 380., 32, false);
+            spawn_button(parent, "Create identity", UiAction::CreateIdentity, false);
+            spawn_button(parent, "Refresh identities", UiAction::RefreshIdentities, false);
+            spawn_frontend_status(parent, state);
+        }
+        UiScreen::Connecting => {
+            spawn_brand(parent, authority);
+            parent.spawn((
+                Text::new(format!("SIGNING IN AS {}", state.account_label)),
+                TextFont::from_font_size(28.),
+                TextColor(Color::srgb(0.96, 0.88, 0.58)),
+            ));
+            parent.spawn((
+                Text::new("Recovering the protected credential and asking the authority for this account's active room…"),
+                TextFont::from_font_size(17.),
+                TextColor(Color::srgb(0.72, 0.82, 0.8)),
+                Node { max_width: px(680.), ..default() },
+            ));
+            spawn_button(parent, "Cancel", UiAction::CancelConnecting, false);
+            spawn_frontend_status(parent, state);
+        }
+        UiScreen::ResumeOffer => {
+            spawn_identity_selector(parent, state);
+            parent.spawn((
+                Text::new("UNFINISHED LOBBY FOUND"),
+                TextFont::from_font_size(32.),
+                TextColor(Color::srgb(0.96, 0.88, 0.58)),
+            ));
+            parent.spawn((
+                Text::new(format!(
+                    "{} still belongs to a shared table. Rejoin with the same authenticated identity and resume its seat and private hand.",
+                    state.account_label
+                )),
+                TextFont::from_font_size(18.),
+                TextColor(Color::srgb(0.82, 0.88, 0.84)),
+                Node { max_width: px(700.), ..default() },
+            ));
+            spawn_button(parent, "Rejoin lobby", UiAction::ResumeLobby, true);
+            spawn_button(parent, "Not now", UiAction::SkipResume, false);
+            spawn_frontend_status(parent, state);
+        }
+        UiScreen::MainMenu => {
+            spawn_identity_selector(parent, state);
             parent.spawn((
                 Text::new("POCHE"),
                 TextFont::from_font_size(58.),
@@ -1062,8 +1221,9 @@ fn spawn_main_menu(
                 TextFont::from_font_size(16.),
                 TextColor(Color::srgb(0.58, 0.72, 0.7)),
             ));
-            parent.spawn(Text::new("Player profile name"));
-            spawn_field(parent, Field::Name, 380., 32, false);
+            if has_resumable_room {
+                spawn_button(parent, "Resume existing lobby", UiAction::ResumeLobby, true);
+            }
             spawn_button(parent, "Create lobby", UiAction::Create, true);
             parent.spawn((
                 Node {
@@ -1085,23 +1245,83 @@ fn spawn_main_menu(
                     spawn_button(row, "Paste valid code", UiAction::Paste, false);
                     spawn_button(row, "Join lobby", UiAction::Join, true);
                 });
-            parent.spawn((
-                StatusLabel,
-                Text::new(&state.status),
-                TextFont::from_font_size(17.),
-                TextColor(Color::srgb(0.88, 0.9, 0.86)),
-                Node {
-                    max_width: px(760.),
-                    margin: px(12.).top(),
-                    ..default()
-                },
-            ));
+            spawn_frontend_status(parent, state);
             parent.spawn((
                 Text::new("F3 · performance overlay"),
                 TextFont::from_font_size(14.),
                 TextColor(Color::srgb(0.52, 0.65, 0.64)),
             ));
+        }
+        UiScreen::LobbyEnded => {
+            spawn_identity_selector(parent, state);
+            parent.spawn((
+                Text::new("YOU HAVE LEFT THE LOBBY"),
+                TextFont::from_font_size(34.),
+                TextColor(Color::srgb(0.96, 0.88, 0.58)),
+            ));
+            parent.spawn((
+                Text::new("Your authenticated identity remains available. A valid lobby code can be used to join that room again."),
+                TextFont::from_font_size(18.),
+                TextColor(Color::srgb(0.78, 0.86, 0.82)),
+                Node { max_width: px(680.), ..default() },
+            ));
+            spawn_button(parent, "Return to title", UiAction::ReturnToTitle, true);
+            spawn_frontend_status(parent, state);
+        }
+        UiScreen::Table => {}
+    });
+}
+
+fn spawn_brand(parent: &mut ChildSpawnerCommands, authority: &AuthorityEndpoint) {
+    parent.spawn((
+        Text::new("POCHE"),
+        TextFont::from_font_size(50.),
+        TextColor(Color::srgb(0.96, 0.88, 0.58)),
+    ));
+    parent.spawn((
+        Text::new(format!("Authority: {}", authority.summary())),
+        TextFont::from_font_size(15.),
+        TextColor(Color::srgb(0.58, 0.72, 0.7)),
+    ));
+}
+
+fn spawn_identity_selector(parent: &mut ChildSpawnerCommands, state: &UiState) {
+    parent
+        .spawn(Node {
+            position_type: PositionType::Absolute,
+            top: px(22.),
+            align_items: AlignItems::Center,
+            column_gap: px(8.),
+            ..default()
+        })
+        .with_children(|row| {
+            spawn_button(row, "‹", UiAction::PreviousIdentity, false);
+            spawn_button(
+                row,
+                if state.account_label.is_empty() {
+                    "Choose identity"
+                } else {
+                    &state.account_label
+                },
+                UiAction::OpenIdentities,
+                false,
+            );
+            spawn_button(row, "›", UiAction::NextIdentity, false);
         });
+}
+
+fn spawn_frontend_status(parent: &mut ChildSpawnerCommands, state: &UiState) {
+    parent.spawn((
+        StatusLabel,
+        Text::new(&state.status),
+        TextFont::from_font_size(17.),
+        TextColor(Color::srgb(0.88, 0.9, 0.86)),
+        Node {
+            max_width: px(760.),
+            margin: px(12.).top(),
+            ..default()
+        },
+    ));
 }
 
 fn spawn_field(
@@ -1163,6 +1383,7 @@ fn handle_buttons(
     mut state: ResMut<UiState>,
     mut rotation_snap: ResMut<RotationSnap>,
     authority: Res<AuthorityEndpoint>,
+    mut vault: ResMut<IdentityVault>,
 ) {
     for ButtonActivation(entity) in activations.read() {
         let Ok(action) = actions.get(*entity) else {
@@ -1176,51 +1397,131 @@ fn handle_buttons(
                 .unwrap_or_default()
         };
         match action {
+            UiAction::CreateIdentity => {
+                let label = field_value(Field::IdentityLabel).trim().to_owned();
+                match vault
+                    .create(&label, &authority.uri, &authority.database)
+                    .and_then(|account| {
+                        begin_identity_selection(&mut state, &account, &bridge, &authority)
+                    }) {
+                    Ok(()) => {}
+                    Err(error) => state.status = error,
+                }
+            }
+            UiAction::SelectIdentity(account_id) => {
+                let result = vault
+                    .reload()
+                    .and_then(|()| {
+                        vault.account(account_id).cloned().ok_or_else(|| {
+                            "that identity is no longer in the local catalogue".into()
+                        })
+                    })
+                    .and_then(|account| {
+                        if !account.belongs_to(&authority.uri, &authority.database) {
+                            return Err("that identity belongs to a different authority".into());
+                        }
+                        begin_identity_selection(&mut state, &account, &bridge, &authority)
+                    });
+                if let Err(error) = result {
+                    state.status = error;
+                }
+            }
+            UiAction::RefreshIdentities => {
+                state.status = match vault.reload() {
+                    Ok(()) => "Identity catalogue refreshed.".into(),
+                    Err(error) => error,
+                };
+            }
+            UiAction::PreviousIdentity | UiAction::NextIdentity => {
+                let step = if matches!(action, UiAction::PreviousIdentity) {
+                    -1
+                } else {
+                    1
+                };
+                match adjacent_account(&mut vault, &authority, &state, step).and_then(|account| {
+                    begin_identity_selection(&mut state, &account, &bridge, &authority)
+                }) {
+                    Ok(()) => {}
+                    Err(error) => state.status = error,
+                }
+            }
+            UiAction::OpenIdentities => {
+                let _ = bridge.send(BridgeIntent::Disconnect);
+                state.screen = UiScreen::IdentityGate;
+                state.pending_flow = None;
+                state.busy = false;
+                state.status = match vault.reload() {
+                    Ok(()) => "Choose an identity for this game window.".into(),
+                    Err(error) => error,
+                };
+            }
+            UiAction::CancelConnecting => {
+                let _ = bridge.send(BridgeIntent::Disconnect);
+                state.screen = UiScreen::IdentityGate;
+                state.pending_flow = None;
+                state.busy = false;
+                state.status = "Sign-in cancelled. Choose an identity.".into();
+            }
+            UiAction::ResumeLobby => {
+                if model.snapshot.room_id().is_some() {
+                    state.screen = UiScreen::Table;
+                    state.status = "Resumed this identity's active lobby.".into();
+                } else {
+                    state.status = "This identity no longer has an active lobby.".into();
+                }
+            }
+            UiAction::SkipResume => {
+                state.screen = UiScreen::MainMenu;
+                state.status =
+                    "Lobby left waiting; you can resume it from this title screen.".into();
+            }
+            UiAction::ReturnToTitle => {
+                state.screen = UiScreen::MainMenu;
+                state.status = "Ready to create or join a lobby.".into();
+            }
             UiAction::Paste => {
                 pending.0 = Some(clipboard.fetch_text());
             }
             UiAction::Create | UiAction::Join if state.busy => {}
             UiAction::Create => {
-                let name = field_value(Field::Name).trim().to_string();
-                if !valid_name(&name) {
-                    state.status = "Enter a visible player name (1–32 characters).".into();
+                if state.active_account_id.is_none() || !model.connected {
+                    state.status = "Choose and connect an identity before creating a lobby.".into();
                     continue;
                 }
-                state.display_name.clone_from(&name);
                 state.busy = true;
-                state.status = "Connecting to the table authority…".into();
+                state.pending_flow = Some(PendingFlow::CreateRoom);
+                state.status = "Creating a shared table…".into();
                 if let Err(error) = bridge.send(BridgeIntent::Create {
-                    config: authority.client_config(&name),
-                    display_name: name,
+                    display_name: state.display_name.clone(),
                 }) {
                     state.busy = false;
+                    state.pending_flow = None;
                     state.status = error;
                 }
             }
             UiAction::Join => {
-                let name = field_value(Field::Name).trim().to_string();
                 let code = field_value(Field::Invitation).trim().to_ascii_uppercase();
-                if !valid_name(&name) {
-                    state.status = "Enter a visible player name (1–32 characters).".into();
+                if state.active_account_id.is_none() || !model.connected {
+                    state.status = "Choose and connect an identity before joining a lobby.".into();
                     continue;
                 }
                 if !valid_join_code(&code) {
                     state.status = "Enter a code shaped like PCH-0000-0000-0000-0000.".into();
                     continue;
                 }
-                state.display_name.clone_from(&name);
                 state.capability = Some(RoomCapability {
                     room_id: String::new(),
                     join_code: code.clone(),
                 });
                 state.busy = true;
+                state.pending_flow = Some(PendingFlow::JoinRoom);
                 state.status = "Joining the shared table…".into();
                 if let Err(error) = bridge.send(BridgeIntent::Join {
-                    config: authority.client_config(&name),
-                    display_name: name,
+                    display_name: state.display_name.clone(),
                     join_code: code,
                 }) {
                     state.busy = false;
+                    state.pending_flow = None;
                     state.status = error;
                 }
             }
@@ -1297,6 +1598,52 @@ fn handle_buttons(
     }
 }
 
+fn begin_identity_selection(
+    state: &mut UiState,
+    account: &IdentityAccount,
+    bridge: &BridgeHandle,
+    authority: &AuthorityEndpoint,
+) -> Result<(), String> {
+    bridge.send(BridgeIntent::Connect {
+        config: authority.client_config(&account.account_id),
+    })?;
+    state.active_account_id = Some(account.account_id.clone());
+    state.account_label.clone_from(&account.label);
+    state.display_name.clone_from(&account.display_name);
+    state.screen = UiScreen::Connecting;
+    state.pending_flow = Some(PendingFlow::SelectIdentity);
+    state.busy = true;
+    state.capability = None;
+    state.status = format!("Signing in as {}…", account.label);
+    Ok(())
+}
+
+fn adjacent_account(
+    vault: &mut IdentityVault,
+    authority: &AuthorityEndpoint,
+    state: &UiState,
+    step: isize,
+) -> Result<IdentityAccount, String> {
+    vault.reload()?;
+    let accounts = vault
+        .accounts_for(&authority.uri, &authority.database)
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    if accounts.is_empty() {
+        return Err("Create an identity before cycling accounts.".into());
+    }
+    let current = state
+        .active_account_id
+        .as_deref()
+        .and_then(|id| accounts.iter().position(|account| account.account_id == id))
+        .unwrap_or(0);
+    let len = isize::try_from(accounts.len()).expect("account count fits isize");
+    let next = (isize::try_from(current).expect("account index fits isize") + step).rem_euclid(len)
+        as usize;
+    Ok(accounts[next].clone())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LeaveActivation {
     ConfirmationArmed,
@@ -1318,6 +1665,8 @@ fn activate_leave(
         room_id: room_id.into(),
     })?;
     state.confirm_leave = false;
+    state.pending_flow = Some(PendingFlow::LeaveRoom);
+    state.busy = true;
     state.status = "Leaving lobby…".into();
     Ok(LeaveActivation::Submitted)
 }
@@ -1375,17 +1724,58 @@ fn poll_clipboard(
     }
 }
 
-fn handle_bridge_notices(mut notices: MessageReader<BridgeNotice>, mut state: ResMut<UiState>) {
+fn handle_bridge_notices(
+    mut notices: MessageReader<BridgeNotice>,
+    mut state: ResMut<UiState>,
+    mut vault: ResMut<IdentityVault>,
+) {
     for notice in notices.read() {
         match notice {
-            BridgeNotice::Connected => state.status = "Connected; waiting for room state…".into(),
+            BridgeNotice::Connected { identity } => {
+                if let Some(account_id) = state.active_account_id.as_deref()
+                    && let Err(error) = vault.record_principal(account_id, identity)
+                {
+                    state.busy = false;
+                    state.pending_flow = None;
+                    state.screen = UiScreen::IdentityGate;
+                    state.status = error;
+                    continue;
+                }
+                state.status = "Authenticated; recovering this identity's room state…".into();
+            }
             BridgeNotice::RoomCreated(capability) => {
                 state.capability = Some(capability.clone());
                 state.status = "Lobby created.".into();
             }
-            BridgeNotice::Snapshot(snapshot) if snapshot.room_id().is_some() => {
-                state.busy = false;
-            }
+            BridgeNotice::Snapshot(snapshot) => match state.pending_flow {
+                Some(PendingFlow::SelectIdentity) if snapshot.identity.is_some() => {
+                    state.busy = false;
+                    state.pending_flow = None;
+                    state.screen = if snapshot.room_id().is_some() {
+                        state.status = "This identity has an unfinished lobby.".into();
+                        UiScreen::ResumeOffer
+                    } else {
+                        state.status = "Signed in. Ready to create or join a lobby.".into();
+                        UiScreen::MainMenu
+                    };
+                }
+                Some(PendingFlow::CreateRoom | PendingFlow::JoinRoom)
+                    if snapshot.room_id().is_some() =>
+                {
+                    state.busy = false;
+                    state.pending_flow = None;
+                    state.screen = UiScreen::Table;
+                }
+                Some(PendingFlow::LeaveRoom) if snapshot.room_id().is_none() => {
+                    state.busy = false;
+                    state.pending_flow = None;
+                    state.capability = None;
+                    state.escape_menu_open = false;
+                    state.screen = UiScreen::LobbyEnded;
+                    state.status = "You have left this lobby.".into();
+                }
+                _ => {}
+            },
             BridgeNotice::Command {
                 operation,
                 elapsed,
@@ -1399,30 +1789,79 @@ fn handle_bridge_notices(mut notices: MessageReader<BridgeNotice>, mut state: Re
                     Err(error) => format!("{operation} denied: {error}"),
                 };
                 if operation == &"leave_room" && result.is_ok() {
+                    state.screen = UiScreen::LobbyEnded;
                     state.status = "You have left this lobby.".into();
+                }
+                if result.is_err() {
+                    state.busy = false;
+                    state.pending_flow = None;
                 }
             }
             BridgeNotice::Disconnected(reason) => {
-                state.busy = false;
-                state.status = reason
-                    .clone()
-                    .unwrap_or_else(|| "Disconnected from SpacetimeDB.".into());
+                if state.pending_flow != Some(PendingFlow::SelectIdentity) {
+                    state.busy = false;
+                    state.screen = UiScreen::IdentityGate;
+                    state.status = reason
+                        .clone()
+                        .unwrap_or_else(|| "Disconnected. Choose an identity to reconnect.".into());
+                }
             }
             BridgeNotice::Error(error) => {
                 state.busy = false;
+                state.screen = match state.pending_flow {
+                    Some(PendingFlow::SelectIdentity) => UiScreen::IdentityGate,
+                    Some(PendingFlow::CreateRoom | PendingFlow::JoinRoom) => UiScreen::MainMenu,
+                    Some(PendingFlow::LeaveRoom) | None => state.screen,
+                };
+                state.pending_flow = None;
                 state.status.clone_from(error);
             }
-            BridgeNotice::Snapshot(_) => {}
         }
     }
+}
+
+fn sync_frontend_screen(
+    state: Res<UiState>,
+    authority: Res<AuthorityEndpoint>,
+    vault: Res<IdentityVault>,
+    model: Res<BridgeModel>,
+    roots: Query<(Entity, &FrontendRoot)>,
+    mut ui_cameras: Query<(Entity, &mut Camera), With<PocheUiCamera>>,
+    mut commands: Commands,
+) {
+    let wants_frontend = state.screen != UiScreen::Table;
+    let already_correct = roots
+        .iter()
+        .any(|(_, root)| wants_frontend && root.0 == state.screen);
+    if already_correct && roots.iter().count() == 1 && !vault.is_changed() {
+        return;
+    }
+    for (entity, _) in &roots {
+        commands.entity(entity).despawn();
+    }
+    if !wants_frontend {
+        return;
+    }
+    let Ok((camera, mut ui_camera)) = ui_cameras.single_mut() else {
+        return;
+    };
+    ui_camera.order = 10;
+    ui_camera.clear_color = bevy::camera::ClearColorConfig::None;
+    spawn_frontend(
+        &mut commands,
+        camera,
+        &authority,
+        &state,
+        &vault,
+        model.snapshot.room_id().is_some(),
+    );
 }
 
 fn enter_room(
     model: Res<BridgeModel>,
     mut state: ResMut<UiState>,
-    authority: Res<AuthorityEndpoint>,
     rotation_snap: Res<RotationSnap>,
-    menu: Query<Entity, With<MainMenuRoot>>,
+    frontend: Query<Entity, With<FrontendRoot>>,
     room: Query<Entity, With<RoomRoot>>,
     cards: Query<Entity, With<CardVisual>>,
     players: Query<Entity, With<SpatialPlayer>>,
@@ -1433,10 +1872,8 @@ fn enter_room(
     mut camera_controller: ResMut<TableCameraController>,
     mut commands: Commands,
 ) {
-    if model.snapshot.room_id().is_none() {
-        if room.is_empty() {
-            return;
-        }
+    let should_show_table = state.screen == UiScreen::Table && model.snapshot.room_id().is_some();
+    if !should_show_table {
         for entity in &room {
             commands.entity(entity).despawn();
         }
@@ -1457,20 +1894,12 @@ fn enter_room(
         state.capability = None;
         state.confirm_leave = false;
         state.escape_menu_open = false;
-        if menu.is_empty() {
-            let Ok((camera, mut ui_camera)) = ui_cameras.single_mut() else {
-                return;
-            };
-            ui_camera.order = 10;
-            ui_camera.clear_color = bevy::camera::ClearColorConfig::None;
-            spawn_main_menu(&mut commands, camera, &authority, &state);
-        }
         return;
     }
     if !room.is_empty() {
         return;
     }
-    for entity in &menu {
+    for entity in &frontend {
         commands.entity(entity).despawn();
     }
     let Ok((camera, mut ui_camera)) = ui_cameras.single_mut() else {
@@ -1964,7 +2393,19 @@ fn sync_room_labels(
                 | UiAction::CopyCode
                 | UiAction::CycleRotationSnap
                 | UiAction::ResumeMenu => Display::Flex,
-                UiAction::Create | UiAction::Paste | UiAction::Join => continue,
+                UiAction::CreateIdentity
+                | UiAction::SelectIdentity(_)
+                | UiAction::RefreshIdentities
+                | UiAction::PreviousIdentity
+                | UiAction::NextIdentity
+                | UiAction::OpenIdentities
+                | UiAction::CancelConnecting
+                | UiAction::ResumeLobby
+                | UiAction::SkipResume
+                | UiAction::ReturnToTitle
+                | UiAction::Create
+                | UiAction::Paste
+                | UiAction::Join => continue,
             };
     }
 }
@@ -2750,10 +3191,6 @@ fn update_status_labels(state: Res<UiState>, mut labels: Query<&mut Text, With<S
             label.0.clone_from(&state.status);
         }
     }
-}
-
-fn valid_name(name: &str) -> bool {
-    !name.is_empty() && name.chars().count() <= 32 && !name.chars().any(char::is_control)
 }
 
 #[cfg(test)]

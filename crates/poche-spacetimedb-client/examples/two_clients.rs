@@ -76,11 +76,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn config(database: &str, profile_name: &str) -> ClientConfig {
+fn config(database: &str, account_id: &str) -> ClientConfig {
     ClientConfig {
         uri: "http://127.0.0.1:3000".into(),
         database: database.into(),
-        profile_name: profile_name.into(),
+        account_id: account_id.into(),
     }
 }
 

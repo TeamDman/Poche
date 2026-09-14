@@ -6,8 +6,10 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
+pub mod active_room_type;
 pub mod bid_reducer;
 pub mod card_pose_type;
+pub mod connection_presence_type;
 pub mod create_room_reducer;
 pub mod game_action_type;
 pub mod join_room_reducer;
@@ -30,8 +32,10 @@ pub mod visible_card_poses_table;
 pub mod visible_revealed_cards_table;
 pub mod visible_room_games_table;
 
+pub use active_room_type::ActiveRoom;
 pub use bid_reducer::bid;
 pub use card_pose_type::CardPose;
+pub use connection_presence_type::ConnectionPresence;
 pub use create_room_reducer::create_room;
 pub use game_action_type::GameAction;
 pub use join_room_reducer::join_room;

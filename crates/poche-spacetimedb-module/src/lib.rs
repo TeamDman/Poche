@@ -21,7 +21,7 @@ use poche_environment::{
     EnvironmentAction, GameEnvironment, OracleChanceAction, OracleEnvironment, OraclePlayerAction,
 };
 use poche_oracle_rust::{Card, Game, PhaseTag, Seat, Turn};
-use spacetimedb::{Identity, ReducerContext, Table, Timestamp, ViewContext};
+use spacetimedb::{ConnectionId, Identity, ReducerContext, Table, Timestamp, ViewContext};
 
 const MAX_NAME_LEN: usize = 32;
 const MAX_POSE_MM: i32 = 10_000;
@@ -72,6 +72,20 @@ pub struct ActiveRoom {
     pub identity: Identity,
     #[index(btree)]
     pub room_id: String,
+}
+
+/// One ephemeral row per live SDK connection.
+///
+/// Several rows may belong to one application identity. Durable membership is
+/// online while any such row remains; disconnecting one window must not mark a
+/// second window using the same protected identity offline.
+#[spacetimedb::table(accessor = connection_presence)]
+pub struct ConnectionPresence {
+    #[primary_key]
+    pub connection_id: ConnectionId,
+    #[index(btree)]
+    pub identity: Identity,
+    pub connected_at: Timestamp,
 }
 
 /// Card ownership and face are never exposed as a public table.
@@ -278,7 +292,7 @@ pub fn join_room(
     let member_key = member_key(&secret.room_id, ctx.sender());
     if let Some(mut member) = ctx.db.member().member_key().find(&member_key) {
         member.display_name = display_name;
-        member.connected = true;
+        member.connected = identity_has_connections(ctx, ctx.sender());
         ctx.db.member().member_key().update(member);
         activate_room(ctx, secret.room_id);
         return Ok(());
@@ -310,7 +324,7 @@ pub fn take_seat(ctx: &ReducerContext, room_id: String, seat: u8) -> Result<(), 
         return Err(format!("seat {seat} is already occupied"));
     }
     caller.seat = Some(seat);
-    caller.connected = true;
+    caller.connected = identity_has_connections(ctx, ctx.sender());
     ctx.db.member().member_key().update(caller);
     ensure_deal(ctx, &room_id)?;
     Ok(())
@@ -326,7 +340,7 @@ pub fn release_seat(ctx: &ReducerContext, room_id: String) -> Result<(), String>
         .find(&key)
         .ok_or_else(|| "not a room member".to_string())?;
     caller.seat = None;
-    caller.connected = true;
+    caller.connected = identity_has_connections(ctx, ctx.sender());
     ctx.db.member().member_key().update(caller);
     Ok(())
 }
@@ -525,6 +539,22 @@ pub fn leave_room(ctx: &ReducerContext, room_id: String) -> Result<(), String> {
 
 #[spacetimedb::reducer(client_connected)]
 pub fn identity_connected(ctx: &ReducerContext) {
+    let Some(connection_id) = ctx.connection_id() else {
+        return;
+    };
+    if ctx
+        .db
+        .connection_presence()
+        .connection_id()
+        .find(connection_id)
+        .is_none()
+    {
+        ctx.db.connection_presence().insert(ConnectionPresence {
+            connection_id,
+            identity: ctx.sender(),
+            connected_at: ctx.timestamp,
+        });
+    }
     set_connected(ctx, true);
 }
 
@@ -532,7 +562,13 @@ pub fn identity_connected(ctx: &ReducerContext) {
 pub fn identity_disconnected(ctx: &ReducerContext) {
     // Connection state is advisory. Durable membership and seats survive so a
     // token-preserving reconnect can resume without impersonation.
-    set_connected(ctx, false);
+    if let Some(connection_id) = ctx.connection_id() {
+        ctx.db
+            .connection_presence()
+            .connection_id()
+            .delete(connection_id);
+    }
+    set_connected(ctx, identity_has_connections(ctx, ctx.sender()));
 }
 
 fn insert_member(ctx: &ReducerContext, room_id: String, display_name: String) {
@@ -542,7 +578,7 @@ fn insert_member(ctx: &ReducerContext, room_id: String, display_name: String) {
         identity: ctx.sender(),
         display_name,
         seat: None,
-        connected: true,
+        connected: identity_has_connections(ctx, ctx.sender()),
     });
 }
 
@@ -651,6 +687,15 @@ fn set_connected(ctx: &ReducerContext, connected: bool) {
         member.connected = connected;
         ctx.db.member().member_key().update(member);
     }
+}
+
+fn identity_has_connections(ctx: &ReducerContext, identity: Identity) -> bool {
+    ctx.db
+        .connection_presence()
+        .identity()
+        .filter(identity)
+        .next()
+        .is_some()
 }
 
 fn active_room_id(ctx: &ViewContext) -> Option<String> {

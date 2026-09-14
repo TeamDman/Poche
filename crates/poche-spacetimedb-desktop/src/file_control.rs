@@ -9,8 +9,8 @@
 )]
 
 use super::{
-    AuthorityEndpoint, LeaveActivation, PoseDisplay, RenderMode, RenderSurface, UiState,
-    activate_leave, toggle_escape_menu,
+    AuthorityEndpoint, IdentityVault, LeaveActivation, PendingFlow, PoseDisplay, RenderMode,
+    RenderSurface, UiScreen, UiState, activate_leave, begin_identity_selection, toggle_escape_menu,
 };
 use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 use poche_bevy_spacetimedb::{BridgeHandle, BridgeIntent, BridgeModel};
@@ -24,7 +24,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u16 = 1;
+pub const SCHEMA_VERSION: u16 = 2;
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 const APP_REQUEST_TIMEOUT: Duration = Duration::from_secs(18);
@@ -69,6 +69,10 @@ pub enum FileControlAction {
     SetName {
         name: String,
     },
+    SelectIdentity {
+        label: String,
+    },
+    ResumeLobby,
     CreateLobby,
     JoinLobby {
         join_code: String,
@@ -244,7 +248,8 @@ impl FileControlPlugin {
                 .into(),
             capabilities: vec![
                 "observe_private_local".into(),
-                "create_or_join_as_device".into(),
+                "create_select_or_resume_identity".into(),
+                "create_or_join_as_selected_identity".into(),
                 "take_or_release_seat".into(),
                 "toggle_table_menu".into(),
                 "activate_leave_button".into(),
@@ -294,6 +299,8 @@ struct PendingRequest {
 #[derive(Clone)]
 enum Completion {
     Immediate,
+    IdentitySelected,
+    RoomCreated,
     RoomJoined,
     RoomLeft,
     Seat(Option<u8>),
@@ -322,10 +329,11 @@ fn drive_file_control(
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
     authority: Res<AuthorityEndpoint>,
+    mut vault: ResMut<IdentityVault>,
 ) {
     endpoint.frame = endpoint.frame.saturating_add(1);
     if let Some(mut pending) = endpoint.pending.take() {
-        match pending_result(&mut pending, &model, endpoint.frame) {
+        match pending_result(&mut pending, &state, &model, endpoint.frame) {
             Some(result) => {
                 let capture = match &pending.completion {
                     Completion::Capture { path, .. } => Some(path.to_string_lossy().into_owned()),
@@ -404,35 +412,76 @@ fn drive_file_control(
     let submission = match action {
         FileControlAction::Observe { .. } => Ok(()),
         FileControlAction::SetName { name } => {
-            state.display_name = name;
-            state.status = "Developer control set this device's profile name.".into();
-            Ok(())
+            let account = vault.reload().and_then(|()| {
+                let existing = vault
+                    .accounts_for(&authority.uri, &authority.database)
+                    .into_iter()
+                    .find(|account| account.label.eq_ignore_ascii_case(&name))
+                    .cloned();
+                existing.map_or_else(
+                    || vault.create(&name, &authority.uri, &authority.database),
+                    Ok,
+                )
+            });
+            account.and_then(|account| {
+                pending.completion = Completion::IdentitySelected;
+                begin_identity_selection(&mut state, &account, &bridge, &authority)
+            })
+        }
+        FileControlAction::SelectIdentity { label } => vault
+            .reload()
+            .and_then(|()| {
+                vault
+                    .accounts_for(&authority.uri, &authority.database)
+                    .into_iter()
+                    .find(|account| account.label.eq_ignore_ascii_case(&label))
+                    .cloned()
+                    .ok_or_else(|| "the requested identity is absent from this vault".into())
+            })
+            .and_then(|account| {
+                pending.completion = Completion::IdentitySelected;
+                begin_identity_selection(&mut state, &account, &bridge, &authority)
+            }),
+        FileControlAction::ResumeLobby => {
+            if model.snapshot.room_id().is_some() {
+                state.screen = UiScreen::Table;
+                state.status = "Developer control resumed this identity's active lobby.".into();
+                Ok(())
+            } else {
+                Err("the selected identity has no active lobby to resume".into())
+            }
         }
         FileControlAction::CreateLobby => {
-            let name = state.display_name.trim().to_owned();
-            state.busy = true;
-            state.status = "Connecting to the table authority…".into();
-            pending.completion = Completion::RoomJoined;
-            bridge.send(BridgeIntent::Create {
-                config: authority.client_config(&name),
-                display_name: name,
-            })
+            if !model.connected || state.active_account_id.is_none() {
+                Err("select an identity before creating a lobby".into())
+            } else {
+                state.busy = true;
+                state.pending_flow = Some(PendingFlow::CreateRoom);
+                state.status = "Creating a shared table…".into();
+                pending.completion = Completion::RoomCreated;
+                bridge.send(BridgeIntent::Create {
+                    display_name: state.display_name.clone(),
+                })
+            }
         }
         FileControlAction::JoinLobby { join_code } => {
-            let name = state.display_name.trim().to_owned();
-            let code = join_code.trim().to_ascii_uppercase();
-            state.capability = Some(RoomCapability {
-                room_id: String::new(),
-                join_code: code.clone(),
-            });
-            state.busy = true;
-            state.status = "Joining the shared table…".into();
-            pending.completion = Completion::RoomJoined;
-            bridge.send(BridgeIntent::Join {
-                config: authority.client_config(&name),
-                display_name: name,
-                join_code: code,
-            })
+            if !model.connected || state.active_account_id.is_none() {
+                Err("select an identity before joining a lobby".into())
+            } else {
+                let code = join_code.trim().to_ascii_uppercase();
+                state.capability = Some(RoomCapability {
+                    room_id: String::new(),
+                    join_code: code.clone(),
+                });
+                state.busy = true;
+                state.pending_flow = Some(PendingFlow::JoinRoom);
+                state.status = "Joining the shared table…".into();
+                pending.completion = Completion::RoomJoined;
+                bridge.send(BridgeIntent::Join {
+                    display_name: state.display_name.clone(),
+                    join_code: code,
+                })
+            }
         }
         FileControlAction::TakeSeat { seat } => model.snapshot.room_id().map_or_else(
             || Err("join a room before taking a seat".into()),
@@ -564,6 +613,7 @@ fn drive_file_control(
 
 fn pending_result(
     pending: &mut PendingRequest,
+    state: &UiState,
     model: &BridgeModel,
     frame: u64,
 ) -> Option<Result<(), String>> {
@@ -574,8 +624,55 @@ fn pending_result(
     }
     match &mut pending.completion {
         Completion::Immediate => Some(Ok(())),
-        Completion::RoomJoined => model.snapshot.room_id().map(|_| Ok(())),
-        Completion::RoomLeft => model.snapshot.room_id().is_none().then_some(Ok(())),
+        Completion::IdentitySelected => {
+            if model.connected && matches!(state.screen, UiScreen::MainMenu | UiScreen::ResumeOffer)
+            {
+                Some(Ok(()))
+            } else if !state.busy && state.pending_flow != Some(PendingFlow::SelectIdentity) {
+                Some(Err(state.status.clone()))
+            } else {
+                None
+            }
+        }
+        Completion::RoomCreated => {
+            if state.screen == UiScreen::Table
+                && model.snapshot.room_id().is_some()
+                && state.capability.is_some()
+            {
+                Some(Ok(()))
+            } else if state.screen == UiScreen::Table && model.snapshot.room_id().is_some() {
+                // The room row and creator capability are delivered by independent bridge
+                // notices. A creator request is not complete until both have arrived.
+                None
+            } else if !state.busy && !matches!(state.pending_flow, Some(PendingFlow::CreateRoom)) {
+                Some(Err(state.status.clone()))
+            } else {
+                None
+            }
+        }
+        Completion::RoomJoined => {
+            if state.screen == UiScreen::Table && model.snapshot.room_id().is_some() {
+                Some(Ok(()))
+            } else if !state.busy
+                && !matches!(
+                    state.pending_flow,
+                    Some(PendingFlow::CreateRoom | PendingFlow::JoinRoom)
+                )
+            {
+                Some(Err(state.status.clone()))
+            } else {
+                None
+            }
+        }
+        Completion::RoomLeft => {
+            if state.screen == UiScreen::LobbyEnded && model.snapshot.room_id().is_none() {
+                Some(Ok(()))
+            } else if !state.busy && state.pending_flow != Some(PendingFlow::LeaveRoom) {
+                Some(Err(state.status.clone()))
+            } else {
+                None
+            }
+        }
         Completion::Seat(expected) => (model.snapshot.own_seat() == *expected).then_some(Ok(())),
         Completion::Pose {
             card_key,
@@ -723,7 +820,7 @@ fn validate_request(
         return Err("request sequence is stale".into());
     }
     match &request.action {
-        FileControlAction::SetName { name } => {
+        FileControlAction::SetName { name } | FileControlAction::SelectIdentity { label: name } => {
             if name.is_empty() || name.chars().count() > 32 || name.chars().any(char::is_control) {
                 return Err("profile name must contain 1–32 visible characters".into());
             }
@@ -852,10 +949,13 @@ fn observation(
         }
         .into(),
         instance_id: endpoint.instance_id.clone(),
-        surface: if model.snapshot.room_id().is_some() {
-            "table"
-        } else {
-            "main_menu"
+        surface: match state.screen {
+            UiScreen::IdentityGate => "identity_gate",
+            UiScreen::Connecting => "connecting",
+            UiScreen::ResumeOffer => "resume_offer",
+            UiScreen::MainMenu => "main_menu",
+            UiScreen::Table => "table",
+            UiScreen::LobbyEnded => "lobby_ended",
         }
         .into(),
         connected: model.connected,

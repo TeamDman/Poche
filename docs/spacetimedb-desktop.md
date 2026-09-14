@@ -145,9 +145,14 @@ Start-Process -FilePath .\target\debug\poche.exe
 Start-Process -FilePath .\target\debug\poche.exe
 ```
 
-In the first window, enter a name and choose **Create lobby**, then copy the
-opaque `PCH-…` code. In the second window, enter a different name, paste the
-code, and choose **Join lobby**. Take different seats. The round-one oracle
+Each window begins at **Who is playing?** before it opens a network
+connection. Create or select Alice in the first window and Bob in the second.
+If another window just created an account, use **Refresh identities**. The
+title shows the selected account; its arrows switch accounts, and clicking
+the account name opens the identity screen.
+
+As Alice, choose **Create lobby** and copy the opaque `PCH-…` code. As Bob,
+paste the code and choose **Join lobby**. Take different seats. The round-one oracle
 deal gives each player one private card while the peer sees an opaque `P` back.
 Use **Bid 0 tricks** or **Bid 1 trick** when it is your turn. During play, drag
 your card from the private-hand inset into the highlighted central PLAY zone.
@@ -166,8 +171,8 @@ for this lobby. Only seated members have world avatars; unseated members remain
 visible in the roster without appearing in the middle of the table. Escape
 opens the table menu. **Leave lobby** lives there and changes to **Confirm leave
 lobby** after the first click. Successful leave clears the active-room
-projection and returns that device to the main menu while remaining peers see
-the roster update.
+projection and shows **You have left the lobby** with an explicit **Return to
+title** action while remaining peers see the roster update.
 
 The replicated integer angle unit is one millidegree: one full turn is
 `360_000`, so `18_000` is 18° and `180_000` is 180°. Radians are only a Bevy
@@ -177,17 +182,26 @@ exact and wrap naturally, but changing the database before the 3D orientation
 contract is settled would create churn without changing the current renderer's
 precision in a meaningful way.
 
-The local profile token is persisted by the official SDK credential helper.
-Reusing a profile name on the same machine reconnects as the same SpacetimeDB
-identity. Display names are not authentication secrets. A private
-identity-to-active-room row prevents durable memberships in older rooms from
-being unioned into the current client projection. Explicit **Leave lobby**
-removes membership and active-room focus; a process crash or disconnect does
-not.
+The official SDK credential helper persists the actual SpacetimeDB token. A
+separate non-secret catalogue defaults to
+`%LOCALAPPDATA%\Poche\identity-vault-v1.json`; it contains immutable random
+account IDs, labels, authority/database scope, and the observed public
+principal, but never tokens. `--identity-vault PATH` selects an explicit
+catalogue for testing. Display names are presentation, not credential keys.
+Selecting the same account in another process therefore reconnects as the
+same SpacetimeDB identity, seat, and private hand.
+
+After account selection, the initial sender-scoped subscription is recovery
+authority. If it contains an active room, Poche shows **Unfinished lobby
+found** and waits for **Rejoin lobby** rather than silently opening the table.
+Switching accounts disconnects that process but does not leave. Explicit
+**Leave lobby** removes membership and active-room focus; a process crash or
+disconnect does not. Server presence is keyed by SDK connection ID, so a
+member remains online while any process using that identity is connected.
 
 ## Reproducible windowless acceptance
 
-The acceptance puppet launches two copies of the ordinary game binary with
+The acceptance puppet launches copies of the ordinary game binary with
 Winit disabled and a GPU image target. It drives player actions through fresh,
 per-instance file endpoints, never the OS clipboard or a privileged state
 mutation API:
@@ -196,18 +210,27 @@ mutation API:
 target\debug\poche-puppet.exe acceptance
 ```
 
-The command creates a room, joins Bob, seats both devices, verifies one
-rule-generated private card per player and two face-free shared poses, moves
+The command captures the initial identity gate, creates independent Alice and
+Bob accounts, captures Alice's account-labelled title, creates a room, joins
+Bob, and seats both devices. It verifies one rule-generated private card per
+player and two face-free shared poses, moves
 Alice's card, waits until Bob observes its exact position/rotation, submits two
 legal bids and two legal plays, verifies both devices converge on two revealed
-cards in one winner's logical won zone, captures the Escape table menu and its
-armed leave confirmation, leaves from one device, verifies that device returns
-to the main menu, and verifies the peer roster falls to one member. It writes:
+cards in one winner's logical won zone, then starts a simultaneous second
+Alice process from Alice's same vault. That process must receive the resume
+offer and recover the same principal, seat, and private hand. After it
+disconnects, Bob must still observe Alice online through her original
+connection. The puppet then captures the Escape table menu and armed leave
+confirmation, explicitly leaves Alice, verifies the terminal screen, and
+verifies Bob's roster falls to one member. It writes:
 
 - `target/poche-puppet/acceptance-contact-sheet.png` — seated and moved views
   for Alice and Bob in one image;
 - `target/poche-puppet/acceptance-contact-sheet.json` — identities, counts,
-  exact moved pose, authority time, peer-observation time, and capture paths;
+  exact moved pose, authority time, peer-observation time, multi-device
+  presence/resume assertions, and capture paths;
+- `target/poche-puppet/identity-flow.png` — identity gate, selected-account
+  title, and authoritative resume offer;
 - a fresh ignored run directory with request/response transcripts and device
   logs.
 
@@ -233,6 +256,12 @@ target\debug\poche-puppet.exe leave target\live\alice
 target\debug\poche-puppet.exe capture target\live\alice
 target\debug\poche-puppet.exe stop target\live\alice
 ```
+
+`set-name` is retained as an automation-compatible spelling for “create this
+identity if absent, then select it”; it no longer makes the name a credential
+key. A second process pointed at the same `--identity-vault` can instead use
+`select-identity ROOT Alice`, followed by `resume ROOT` when its observation
+reports the `resume_offer` surface.
 
 The final `move` argument is rotation about table-up Y in millidegrees,
 matching the Q/E control and the card's visible orientation in the perspective

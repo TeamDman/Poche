@@ -30,17 +30,18 @@ pub const DEFAULT_DATABASE: &str = "poche-desktop-v1";
 pub struct ClientConfig {
     pub uri: String,
     pub database: String,
-    pub profile_name: String,
+    /// Immutable local account identifier used only to locate a protected token.
+    pub account_id: String,
 }
 
 impl ClientConfig {
     #[must_use]
-    pub fn local(profile_name: impl Into<String>) -> Self {
+    pub fn local(account_id: impl Into<String>) -> Self {
         Self {
             uri: std::env::var("POCHE_SPACETIMEDB_URI").unwrap_or_else(|_| DEFAULT_URI.into()),
             database: std::env::var("POCHE_SPACETIMEDB_DATABASE")
                 .unwrap_or_else(|_| DEFAULT_DATABASE.into()),
-            profile_name: profile_name.into(),
+            account_id: account_id.into(),
         }
     }
 }
@@ -750,26 +751,19 @@ fn finish_command<RemoteError: fmt::Display>(
 }
 
 fn credential_key(config: &ClientConfig) -> String {
-    let normalized: String = config
-        .profile_name
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .flat_map(char::to_lowercase)
-        .take(32)
-        .collect();
-    let player = if normalized.is_empty() {
-        "player"
-    } else {
-        &normalized
-    };
+    let account = blake3::hash(config.account_id.as_bytes()).to_hex();
     if config.uri.trim_end_matches('/') == DEFAULT_URI && config.database == DEFAULT_DATABASE {
-        return format!("poche-spacetimedb-{player}");
+        return format!("poche-spacetimedb-{}", &account.as_str()[..32]);
     }
     let scope = blake3::hash(
         format!("{}\0{}", config.uri.trim_end_matches('/'), config.database).as_bytes(),
     )
     .to_hex();
-    format!("poche-spacetimedb-{}-{player}", &scope.as_str()[..16])
+    format!(
+        "poche-spacetimedb-{}-{}",
+        &scope.as_str()[..16],
+        &account.as_str()[..32]
+    )
 }
 
 fn encode_hex(bytes: &[u8], uppercase: bool) -> String {
@@ -814,22 +808,30 @@ mod tests {
     }
 
     #[test]
-    fn credentials_are_scoped_without_changing_the_legacy_local_profile() {
+    fn immutable_account_credentials_are_scoped_by_authority() {
         let local = ClientConfig {
             uri: DEFAULT_URI.into(),
             database: DEFAULT_DATABASE.into(),
-            profile_name: "Alice".into(),
+            account_id: "account-alice".into(),
         };
         let hosted = ClientConfig {
             uri: "https://maincloud.spacetimedb.com".into(),
             database: "poche-6quz6".into(),
-            profile_name: "Alice".into(),
+            account_id: "account-alice".into(),
         };
         let staging = ClientConfig {
             database: "poche-staging".into(),
             ..hosted.clone()
         };
-        assert_eq!(credential_key(&local), "poche-spacetimedb-alice");
+        let punctuation_variant = ClientConfig {
+            account_id: "accountalice".into(),
+            ..local.clone()
+        };
+        assert_eq!(
+            credential_key(&local).len(),
+            "poche-spacetimedb-".len() + 32
+        );
+        assert_ne!(credential_key(&local), credential_key(&punctuation_variant));
         assert_ne!(credential_key(&hosted), credential_key(&local));
         assert_ne!(credential_key(&hosted), credential_key(&staging));
     }

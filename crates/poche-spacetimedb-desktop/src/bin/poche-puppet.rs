@@ -67,6 +67,15 @@ fn run() -> Result<(), String> {
             let name = args.next().ok_or("set-name requires NAME")?;
             print_response(send(&root, FileControlAction::SetName { name })?)
         }
+        Some("select-identity") => {
+            let root = PathBuf::from(args.next().ok_or("select-identity requires CONTROL_ROOT")?);
+            let label = args.next().ok_or("select-identity requires LABEL")?;
+            print_response(send(&root, FileControlAction::SelectIdentity { label })?)
+        }
+        Some("resume") => {
+            let root = PathBuf::from(args.next().ok_or("resume requires CONTROL_ROOT")?);
+            print_response(send(&root, FileControlAction::ResumeLobby)?)
+        }
         Some("create") => {
             let root = PathBuf::from(args.next().ok_or("create requires CONTROL_ROOT")?);
             print_response(send(&root, FileControlAction::CreateLobby)?)
@@ -136,7 +145,8 @@ fn run() -> Result<(), String> {
                 "poche-puppet acceptance [--server local|maincloud|URL] [--database NAME]\n\
                  \x20                       [--output PATH]\n\
                  poche-puppet observe ROOT [--include-join-code]\n\
-                 poche-puppet set-name ROOT NAME | create ROOT | join ROOT CODE\n\
+                 poche-puppet set-name ROOT NAME | select-identity ROOT LABEL | resume ROOT\n\
+                 poche-puppet create ROOT | join ROOT CODE\n\
                  poche-puppet seat ROOT 0|1 | stand ROOT | menu ROOT | leave ROOT | bid ROOT TRICKS\n\
                  poche-puppet play ROOT CARD_INDEX\n\
                  poche-puppet move ROOT CARD_INDEX X_MM Y_MM Z_MM RY_MDEG\n\
@@ -204,12 +214,31 @@ struct AcceptanceReport {
     final_phase: String,
     revealed_cards: usize,
     winning_logical_location: String,
-    leave_returned_to_menu: bool,
+    checks: AcceptanceChecks,
     peer_members_after_leave: usize,
     table_menu_capture: String,
     leave_confirmation_capture: String,
+    identity_contact_sheet: String,
     screenshots: Vec<String>,
     contact_sheet: String,
+}
+
+#[derive(Serialize)]
+struct AcceptanceChecks {
+    leave_showed_terminal: bool,
+    same_identity_resume: bool,
+    presence_survived_sibling_disconnect: bool,
+}
+
+struct AcceptanceContext<'a> {
+    output: &'a Path,
+    run_id: &'a str,
+    executable: &'a Path,
+    run_root: &'a Path,
+    alice_root: &'a Path,
+    alice_vault: &'a Path,
+    bob_root: &'a Path,
+    authority: &'a AuthorityEndpoint,
 }
 
 fn acceptance(output: &Path, authority: &AuthorityEndpoint) -> Result<(), String> {
@@ -233,37 +262,63 @@ fn acceptance(output: &Path, authority: &AuthorityEndpoint) -> Result<(), String
         .map_err(|error| format!("could not create puppet run root: {error}"))?;
     let alice_root = run_root.join("alice");
     let bob_root = run_root.join("bob");
+    let alice_vault = run_root.join("alice-identities.json");
+    let bob_vault = run_root.join("bob-identities.json");
     let mut alice = spawn_device(
         &executable,
         &alice_root,
         "alice-window",
         &run_root,
         authority,
+        &alice_vault,
     )?;
-    let mut bob = spawn_device(&executable, &bob_root, "bob-window", &run_root, authority)?;
+    let mut bob = spawn_device(
+        &executable,
+        &bob_root,
+        "bob-window",
+        &run_root,
+        authority,
+        &bob_vault,
+    )?;
 
-    let result = acceptance_inner(output, &run_id, &alice_root, &bob_root, authority);
+    let result = acceptance_inner(AcceptanceContext {
+        output,
+        run_id: &run_id,
+        executable: &executable,
+        run_root: &run_root,
+        alice_root: &alice_root,
+        alice_vault: &alice_vault,
+        bob_root: &bob_root,
+        authority,
+    });
     stop_and_wait(&alice_root, &mut alice);
     stop_and_wait(&bob_root, &mut bob);
     result
 }
 
-fn acceptance_inner(
-    output: &Path,
-    run_id: &str,
-    alice_root: &Path,
-    bob_root: &Path,
-    authority: &AuthorityEndpoint,
-) -> Result<(), String> {
+fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
+    let AcceptanceContext {
+        output,
+        run_id,
+        executable,
+        run_root,
+        alice_root,
+        alice_vault,
+        bob_root,
+        authority,
+    } = context;
     wait_for_descriptor(alice_root)?;
     wait_for_descriptor(bob_root)?;
+    let identity_gate_capture = capture(alice_root)?;
     let short_run = &run_id[..run_id.len().min(12)];
+    let alice_label = format!("Alice {short_run}");
     send(
         alice_root,
         FileControlAction::SetName {
-            name: format!("Alice {short_run}"),
+            name: alice_label.clone(),
         },
     )?;
+    let title_capture = capture(alice_root)?;
     send(
         bob_root,
         FileControlAction::SetName {
@@ -386,14 +441,79 @@ fn acceptance_inner(
     let resolved_bob = capture(bob_root)?;
     let captures = [seated_alice, seated_bob, resolved_alice, resolved_bob];
     compose_contact_sheet(&captures, output)?;
+
+    let mirror_root = run_root.join("alice-mirror");
+    let mut mirror = spawn_device(
+        executable,
+        &mirror_root,
+        "alice-mirror-window",
+        run_root,
+        authority,
+        alice_vault,
+    )?;
+    let mut resume_offer_capture = None;
+    let mirror_result: Result<(), String> = (|| {
+        wait_for_descriptor(&mirror_root)?;
+        let selected = send(
+            &mirror_root,
+            FileControlAction::SelectIdentity {
+                label: alice_label.clone(),
+            },
+        )?
+        .observation;
+        if selected.surface != "resume_offer" {
+            return Err(
+                "a second device for Alice did not receive the explicit resume offer".into(),
+            );
+        }
+        if selected.viewer_identity != alice_resolved.viewer_identity
+            || selected.own_seat != alice_resolved.own_seat
+            || selected.own_hand != alice_resolved.own_hand
+        {
+            return Err(
+                "the resumed Alice device did not recover the same identity, seat, and hand".into(),
+            );
+        }
+        resume_offer_capture = Some(capture(&mirror_root)?);
+        let resumed = send(&mirror_root, FileControlAction::ResumeLobby)?.observation;
+        if resumed.surface != "table" {
+            return Err("accepting the resume offer did not open the table".into());
+        }
+        Ok(())
+    })();
+    stop_and_wait(&mirror_root, &mut mirror);
+    mirror_result?;
+    let resume_offer_capture =
+        resume_offer_capture.ok_or("resume offer capture was not produced")?;
+    let identity_contact_sheet = output.with_file_name("identity-flow.png");
+    compose_contact_sheet(
+        &[
+            identity_gate_capture.clone(),
+            title_capture.clone(),
+            resume_offer_capture.clone(),
+        ],
+        &identity_contact_sheet,
+    )?;
+    let bob_after_mirror_disconnect = wait_until(bob_root, |observation| {
+        observation.members.iter().any(|member| {
+            member.identity == alice_resolved.viewer_identity.clone().unwrap_or_default()
+                && member.connected
+        })
+    })?;
+    let presence_survived_sibling_disconnect =
+        bob_after_mirror_disconnect.members.iter().any(|member| {
+            member.identity == alice_resolved.viewer_identity.clone().unwrap_or_default()
+                && member.connected
+        });
+
     send(alice_root, FileControlAction::ToggleTableMenu)?;
     let table_menu_capture = capture(alice_root)?;
     send(alice_root, FileControlAction::ActivateLeave)?;
     let leave_confirmation_capture = capture(alice_root)?;
     let left = send(alice_root, FileControlAction::ActivateLeave)?.observation;
-    let leave_returned_to_menu = left.surface == "main_menu" && left.room_id.is_none();
-    if !leave_returned_to_menu {
-        return Err("leaving did not return the controlling device to its main menu".into());
+    let leave_showed_terminal = left.surface == "lobby_ended" && left.room_id.is_none();
+    if !leave_showed_terminal {
+        return Err("leaving did not show the controlling device its lobby-ended screen".into());
     }
     let bob_after_leave = wait_until(bob_root, |observation| {
         observation.members.len() == 1
@@ -405,7 +525,7 @@ fn acceptance_inner(
     let menu_after_leave = capture(alice_root)?;
 
     let report = AcceptanceReport {
-        schema: "poche-spacetimedb-two-device-acceptance-v4",
+        schema: "poche-spacetimedb-multi-device-acceptance-v6",
         completed_unix_ms: unix_millis()?,
         authority_profile: authority.profile.clone(),
         authority_uri: authority.uri.clone(),
@@ -441,12 +561,22 @@ fn acceptance_inner(
             .card_poses
             .first()
             .map_or_else(|| "missing".into(), |pose| pose.logical_location.clone()),
-        leave_returned_to_menu,
+        checks: AcceptanceChecks {
+            leave_showed_terminal,
+            same_identity_resume: true,
+            presence_survived_sibling_disconnect,
+        },
         peer_members_after_leave: bob_after_leave.members.len(),
         table_menu_capture: table_menu_capture.to_string_lossy().into_owned(),
         leave_confirmation_capture: leave_confirmation_capture.to_string_lossy().into_owned(),
+        identity_contact_sheet: identity_contact_sheet.to_string_lossy().into_owned(),
         screenshots: captures
             .iter()
+            .chain([
+                &identity_gate_capture,
+                &title_capture,
+                &resume_offer_capture,
+            ])
             .chain(std::iter::once(&table_menu_capture))
             .chain(std::iter::once(&leave_confirmation_capture))
             .chain(std::iter::once(&menu_after_leave))
@@ -535,6 +665,7 @@ fn spawn_device(
     instance_id: &str,
     log_root: &Path,
     authority: &AuthorityEndpoint,
+    identity_vault: &Path,
 ) -> Result<Child, String> {
     let stdout = File::create(log_root.join(format!("{instance_id}.stdout.log")))
         .map_err(|error| format!("could not create device stdout log: {error}"))?;
@@ -547,6 +678,8 @@ fn spawn_device(
         "--instance-id",
         instance_id,
         "--windowless",
+        "--identity-vault",
+        &identity_vault.to_string_lossy(),
     ]);
     command.args(["--server", &authority.uri]);
     command.args(["--database", &authority.database]);
@@ -569,7 +702,10 @@ fn stop_and_wait(root: &Path, child: &mut Child) {
     let _ = child.wait();
 }
 
-fn compose_contact_sheet(captures: &[PathBuf; 4], output: &Path) -> Result<(), String> {
+fn compose_contact_sheet(captures: &[PathBuf], output: &Path) -> Result<(), String> {
+    if captures.is_empty() {
+        return Err("a contact sheet requires at least one capture".into());
+    }
     let images = captures
         .iter()
         .map(|path| {
@@ -581,9 +717,10 @@ fn compose_contact_sheet(captures: &[PathBuf; 4], output: &Path) -> Result<(), S
     let width = images.iter().map(RgbaImage::width).max().unwrap_or(1);
     let height = images.iter().map(RgbaImage::height).max().unwrap_or(1);
     let gutter = 12_u32;
+    let rows = u32::try_from(captures.len().div_ceil(2)).unwrap_or(1);
     let mut sheet = RgbaImage::from_pixel(
         width * 2 + gutter * 3,
-        height * 2 + gutter * 3,
+        height * rows + gutter * (rows + 1),
         Rgba([18, 24, 25, 255]),
     );
     for (index, image) in images.iter().enumerate() {

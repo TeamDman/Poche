@@ -3,7 +3,7 @@
 **Plan status:** Active; the create/join/seat/private-hand/shared-pose MVP and first oracle-backed trick are accepted, while multi-round play, recovery, and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-13 (task-status reconciliation plus the accepted active-room, 3D camera/control, FPS-diagnostic, and first-trick checkpoints through commit `8e40ca9`)
+**Last updated:** 2026-09-13 (implemented and locally accepted the multi-account identity gate, explicit resume flow, and connection-counted presence)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
@@ -304,6 +304,58 @@ or the latency distributions required by T6.4.
   `[~]` until the identity gate/title selector replaces the current conflated
   player-name/profile-name field. No implementation is claimed by this design
   correction.
+
+## 2026-09-13 multi-account identity implementation checkpoint
+
+- Added a versioned, installation-local identity catalogue. Each record binds
+  an opaque immutable account ID to a user-facing label, display name, authority,
+  database, and non-secret observed principal. SpacetimeDB tokens remain in
+  the SDK credential store under authority plus immutable account ID and are
+  absent from the JSON catalogue. Atomic writes, a bounded cross-process lock,
+  and merge-on-write allow ordinary sibling windows to create different
+  accounts without clobbering one another.
+- The desktop now starts at `IdentityGate`, connects only after an account is
+  created or selected, and waits for its initial sender-scoped subscription.
+  An active room produces `ResumeOffer`; the table is reconstructed only after
+  **Rejoin lobby**. The title shows `‹ account ›`, account arrows perform the
+  same authenticated switch, activating the account opens the identity screen,
+  and **Refresh identities** discovers accounts created by another live
+  process. Switching accounts disconnects but never invokes leave.
+- Create/join no longer accepts a display-name-derived credential profile.
+  The Poche-owned Bevy bridge owns explicit Connect/Disconnect separately from
+  room reducers, and principal binding fails closed if a protected credential
+  unexpectedly resolves to a different SpacetimeDB identity.
+- Added private `connection_presence` rows keyed by SDK `ConnectionId`.
+  Lifecycle reducers derive member presence from whether any connection row
+  remains for that identity. A second process can therefore authenticate as
+  Alice without creating another member/player, and closing it cannot mark the
+  original Alice window offline.
+- Leave now yields a deliberate `LobbyEnded` screen with **Return to title**
+  instead of jumping directly to the menu. The file-control protocol v2 names
+  identity selection and resume explicitly and reports all six front-end
+  surfaces.
+- Generated 2.10.0 bindings, passed 25 focused client/bridge/desktop tests and
+  the server-module WASM build, and cleared strict Clippy. A fresh isolated
+  local database passed the v6 windowless acceptance:
+  Alice/Bob created, joined, seated, dealt, wiggled, bid, and played; a second
+  Alice process selected the same account, received the explicit resume offer,
+  recovered the same principal/seat/private hand, entered the table, and
+  disconnected while Alice remained connected. Explicit leave produced the
+  terminal screen. The final evidence run measured 56.08 ms to the authority
+  and 148.06 ms until Bob's exact pose observation. That run also caught and
+  fixed a creator-capability readiness race: file control now completes room
+  creation only after both the room projection and bearer join code arrive.
+- Reviewed `identity-flow.png`: the identity gate, account-labelled title, and
+  resume offer are legible at the real windowless Bevy target. Reviewed the
+  final capture independently to confirm the lobby-ended interstitial.
+- Hosted Maincloud publication of the additive presence schema is deliberately
+  still pending an explicit hosted-write approval. No deletion flag or hosted
+  data mutation was used for this checkpoint.
+
+This advances T2.2, T2.3, T3.1, T4.1, and T4.5 but does not close their broader
+criteria. Automatic retry/backoff, actual process crash/relaunch, unavailable-
+authority UX, final-member stale-code rejection, visible two-window identity
+switching, cross-machine enrollment, and formal lifecycle parity remain open.
 
 ## Authoritative user guidance ledger
 
@@ -1506,30 +1558,28 @@ remote branch contains all intended commits.
 
 ## Immediate next slice
 
-Continue from the accepted active-room/oracle checkpoint by closing
-T3.1/T4.5's connection-count, restart, and multiple-device identity semantics,
-then expand the one-trick oracle adapter into multi-round Poche play. Keep
+Continue from the accepted multi-account lifecycle checkpoint by testing real
+process restart, unavailable-authority recovery, final-member disband/stale
+code rejection, and visible two-window account switching, then expand the
+one-trick oracle adapter into multi-round Poche play. Keep
 diegetic seat/bid/play affordances synchronized with the exhaustive action bar,
 and collect a real visible-window camera/mouse feel check before treating the
 new focal rig as polished.
 
 Implement that lifecycle slice in this order:
 
-1. Replace the lossy member-level connection Boolean mutation with ephemeral
-   connection rows keyed by identity and SDK connection ID; derive public
-   presence from “at least one connection exists.”
-2. Add the installation identity vault and per-process selector. Start at
-   `IdentityGate`, create/select an immutable account, and keep the protected
-   token outside the non-secret account index.
-3. Add `IdentityGate -> Connecting -> ResumeOffer | Title | LobbyEnded` states.
-   Show `ResumeOffer` only after the selected identity's initial scoped
-   subscription proves membership; enter the table only when the player accepts
-   it and never infer resume from a local hint alone.
-4. Add the title-bar identity name, left/right cycling, and identity management
-   screen. Prove two windows can select Alice/Bob independently and that
-   switching an account disconnects without leaving.
-5. Extend the windowless harness to close/relaunch Alice, attach a simultaneous
-   second Alice connection, close each connection independently, explicitly
-   leave both durable members, and prove the stale room code no longer joins.
-6. Repeat the lifecycle once in two visible ordinary-user windows, then begin
-   the complete multi-round rules adapter.
+1. Extend the windowless harness to stop and relaunch Alice from the same vault,
+   not only attach a simultaneous sibling, and prove the resume interstitial
+   remains authoritative after a real process boundary.
+2. Add bounded reconnect/retry and an unavailable-authority screen; exercise a
+   temporary local authority loss without converting disconnect into leave.
+3. Explicitly leave both durable members and prove the final leave disbands the
+   room and its stale join code is rejected without changing the joiner's
+   identity.
+4. Prove title-arrow switching Alice -> Bob -> Alice changes authenticated
+   projections without invoking room leave, including a same-name distinct-
+   account negative case.
+5. Repeat the lifecycle once in two visible ordinary-user windows and record
+   the account/title/resume screenshots plus DX12 startup evidence.
+6. Begin the complete multi-round rules adapter and reconnect the bounded
+   lifecycle behavior to the Alloy/NuSMV/Prolog models.

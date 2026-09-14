@@ -15,12 +15,14 @@ use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub enum BridgeIntent {
-    Create {
+    Connect {
         config: ClientConfig,
+    },
+    Disconnect,
+    Create {
         display_name: String,
     },
     Join {
-        config: ClientConfig,
         display_name: String,
         join_code: String,
     },
@@ -54,7 +56,9 @@ pub enum BridgeIntent {
 
 #[derive(Message, Clone, Debug)]
 pub enum BridgeNotice {
-    Connected,
+    Connected {
+        identity: String,
+    },
     RoomCreated(RoomCapability),
     Snapshot(ClientSnapshot),
     Command {
@@ -157,7 +161,7 @@ fn pump_bridge(
     for event in receiver.try_iter() {
         let WorkerEvent::Notice(notice) = event;
         match &notice {
-            BridgeNotice::Connected => model.connected = true,
+            BridgeNotice::Connected { .. } => model.connected = true,
             BridgeNotice::Snapshot(snapshot) => model.snapshot.clone_from(snapshot),
             BridgeNotice::Command {
                 elapsed, result, ..
@@ -189,36 +193,25 @@ fn worker_loop(requests: mpsc::Receiver<BridgeIntent>, events: mpsc::Sender<Work
         match requests.recv_timeout(Duration::from_millis(4)) {
             Ok(BridgeIntent::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Ok(BridgeIntent::Create {
-                config,
-                display_name,
-            }) => match PocheClient::connect(config, Duration::from_secs(8)) {
-                Ok(connected) => {
-                    send(&events, BridgeNotice::Connected);
-                    match connected.create_room(display_name) {
-                        Ok(capability) => {
-                            send(&events, BridgeNotice::RoomCreated(capability));
-                            client = Some(connected);
-                        }
-                        Err(error) => send(&events, BridgeNotice::Error(error.to_string())),
+            Ok(BridgeIntent::Connect { config }) => {
+                client = None;
+                send(&events, BridgeNotice::Snapshot(ClientSnapshot::default()));
+                match PocheClient::connect(config, Duration::from_secs(8)) {
+                    Ok(connected) => {
+                        let snapshot = connected.snapshot();
+                        let identity = snapshot.identity.clone().unwrap_or_default();
+                        send(&events, BridgeNotice::Connected { identity });
+                        send(&events, BridgeNotice::Snapshot(snapshot));
+                        client = Some(connected);
                     }
+                    Err(error) => send(&events, BridgeNotice::Error(error.to_string())),
                 }
-                Err(error) => send(&events, BridgeNotice::Error(error.to_string())),
-            },
-            Ok(BridgeIntent::Join {
-                config,
-                display_name,
-                join_code,
-            }) => match PocheClient::connect(config, Duration::from_secs(8)) {
-                Ok(connected) => {
-                    send(&events, BridgeNotice::Connected);
-                    match connected.join_room(join_code, display_name) {
-                        Ok(_) => client = Some(connected),
-                        Err(error) => send(&events, BridgeNotice::Error(error.to_string())),
-                    }
-                }
-                Err(error) => send(&events, BridgeNotice::Error(error.to_string())),
-            },
+            }
+            Ok(BridgeIntent::Disconnect) => {
+                client = None;
+                send(&events, BridgeNotice::Snapshot(ClientSnapshot::default()));
+                send(&events, BridgeNotice::Disconnected(None));
+            }
             Ok(intent) => {
                 let Some(connected) = client.as_ref() else {
                     send(
@@ -228,6 +221,19 @@ fn worker_loop(requests: mpsc::Receiver<BridgeIntent>, events: mpsc::Sender<Work
                     continue;
                 };
                 let result = match intent {
+                    BridgeIntent::Create { display_name } => {
+                        match connected.create_room(display_name) {
+                            Ok(capability) => {
+                                send(&events, BridgeNotice::RoomCreated(capability));
+                                Ok(0)
+                            }
+                            Err(error) => Err(error),
+                        }
+                    }
+                    BridgeIntent::Join {
+                        display_name,
+                        join_code,
+                    } => connected.join_room(join_code, display_name),
                     BridgeIntent::TakeSeat { room_id, seat } => connected.take_seat(room_id, seat),
                     BridgeIntent::ReleaseSeat { room_id } => connected.release_seat(room_id),
                     BridgeIntent::SetCardPose {
@@ -248,8 +254,8 @@ fn worker_loop(requests: mpsc::Receiver<BridgeIntent>, events: mpsc::Sender<Work
                         connected.play_card(room_id, card_id)
                     }
                     BridgeIntent::Leave { room_id } => connected.leave_room(room_id),
-                    BridgeIntent::Create { .. }
-                    | BridgeIntent::Join { .. }
+                    BridgeIntent::Connect { .. }
+                    | BridgeIntent::Disconnect
                     | BridgeIntent::Stop => unreachable!(),
                 };
                 if let Err(error) = result {
