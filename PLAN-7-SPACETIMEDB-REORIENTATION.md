@@ -370,6 +370,22 @@ criteria. Automatic retry/backoff, actual process crash/relaunch, unavailable-
 authority UX, final-member stale-code rejection, visible two-window identity
 switching, cross-machine enrollment, and formal lifecycle parity remain open.
 
+## 2026-09-14 nested camera-options checkpoint
+
+- Added **Options** to the in-table Escape menu as a distinct nested page.
+  **Back** or Escape returns to the table menu; Escape from the parent resumes
+  play. Opening either menu continues to pause only local camera input while
+  the shared table remains live.
+- Added **Invert camera Y: On/Off** for RMB vertical orbit. `On` is the new
+  default and produces the exact opposite vertical response from the previous
+  implementation; `Off` restores the previous sign. This presentation option
+  remains local to the running device and does not enter authoritative state.
+- Extended file control with `options`, `invert-camera-y`, and `back`, and the
+  v7 acceptance receipt with default/toggled Options captures. Maincloud
+  acceptance passed at 48.44 ms authority response and 157.72 ms peer pose
+  observation. Visual review confirmed the nested page and both On/Off labels.
+  The desktop package has 23 passing tests and strict Clippy is clean.
+
 ## Authoritative user guidance ledger
 
 | ID | Active guidance | Required plan consequence | Superseded by |
@@ -412,6 +428,7 @@ switching, cross-machine enrollment, and formal lifecycle parity remain open.
 | U36 | Pointer position must not implicitly rotate cards; Q/E should rotate, and a prominent control should cycle common rotation-lock increments such as 45° and 90°. | Separate translation from rotation input, make the table-normal axis visible, add a local snap-mode control, and test exact wrap/cycle behavior. | — |
 | U37 | The desktop environment should remain the established 3D table rather than regress to a 2D replacement. | Keep the restored perspective 3D table as the SpacetimeDB presentation boundary; complete the dedicated hand camera and diegetic picking/capture refinements in T4. | — |
 | U38 | One installation should retain multiple authenticated identities. Each launched window chooses its identity before any resume prompt; the title shows an identity carousel and its name opens an identity selection/creation screen. | Separate immutable local account ID, mutable display name, protected token, and per-process active selection. Add an identity gate and title selector; scope resume discovery to the chosen identity. | Supersedes T3.1's 2026-09-13 automatic-last-profile assumption. |
+| U39 | The Escape menu should contain a nested Options menu with a camera-Y inversion toggle, and the default vertical response should be the opposite of the current behavior. | Model parent/options navigation explicitly, apply the toggle only to local RMB vertical orbit, default it to inverted, and verify navigation plus both response signs. | — |
 
 ## Guidance traceability
 

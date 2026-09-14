@@ -166,11 +166,18 @@ camera and focus to the viewer's seat-relative home. All camera changes
 interpolate instead of teleporting. Local card motion is immediate while the
 peer interpolates subscribed updates.
 
+RMB vertical orbit is inverted by default, the opposite of the original
+prototype response. Open **Escape → Options** and activate **Invert camera Y:
+On/Off** to switch between the two signs. The setting is local to that running
+game window and does not alter shared table state. Escape from Options returns
+to the table menu; a second Escape resumes the table.
+
 The player roster beneath rotation snap is the authoritative membership view
 for this lobby. Only seated members have world avatars; unseated members remain
 visible in the roster without appearing in the middle of the table. Escape
-opens the table menu. **Leave lobby** lives there and changes to **Confirm leave
-lobby** after the first click. Successful leave clears the active-room
+opens the table menu. **Options** opens its own nested menu, while **Leave
+lobby** changes to **Confirm leave lobby** after the first click. Successful
+leave clears the active-room
 projection and shows **You have left the lobby** with an explicit **Return to
 title** action while remaining peers see the roster update.
 
@@ -223,10 +230,11 @@ legal bids and two legal plays, verifies both devices converge on two revealed
 cards in one winner's logical won zone, then starts a simultaneous second
 Alice process from Alice's same vault. That process must receive the resume
 offer and recover the same principal, seat, private hand, and exact lobby code.
-After it
-disconnects, Bob must still observe Alice online through her original
+After it disconnects, Bob must still observe Alice online through her original
 connection. The puppet then captures the Escape table menu and armed leave
-confirmation, explicitly leaves Alice, verifies the terminal screen, and
+confirmation. It also opens the nested Options menu, captures inverted-Y On,
+toggles and captures Off, and returns to the parent menu before explicitly
+leaving Alice, verifying the terminal screen, and
 verifies Bob's roster falls to one member. It writes:
 
 - `target/poche-puppet/acceptance-contact-sheet.png` — seated and moved views
@@ -267,6 +275,9 @@ identity if absent, then select it”; it no longer makes the name a credential
 key. A second process pointed at the same `--identity-vault` can instead use
 `select-identity ROOT Alice`, followed by `resume ROOT` when its observation
 reports the `resume_offer` surface.
+
+`menu ROOT`, `options ROOT`, `invert-camera-y ROOT`, and `back ROOT` expose the
+same nested menu path to ad-hoc windowless control and screenshot capture.
 
 The final `move` argument is rotation about table-up Y in millidegrees,
 matching the Q/E control and the card's visible orientation in the perspective

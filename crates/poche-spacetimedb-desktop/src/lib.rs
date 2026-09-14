@@ -517,6 +517,7 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
         .init_resource::<PoseDisplay>()
         .init_resource::<DragState>()
         .init_resource::<RotationSnap>()
+        .init_resource::<CameraOptions>()
         .init_resource::<TableCameraController>()
         .add_message::<ButtonActivation>()
         .add_observer(activate_button)
@@ -573,6 +574,7 @@ struct UiState {
     capability: Option<RoomCapability>,
     confirm_leave: bool,
     escape_menu_open: bool,
+    escape_menu_page: EscapeMenuPage,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -583,6 +585,13 @@ enum UiScreen {
     MainMenu,
     Table,
     LobbyEnded,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum EscapeMenuPage {
+    #[default]
+    Main,
+    Options,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -621,6 +630,7 @@ impl UiState {
             capability: None,
             confirm_leave: false,
             escape_menu_open: false,
+            escape_menu_page: EscapeMenuPage::Main,
         }
     }
 }
@@ -691,6 +701,15 @@ struct PlayerListLabel;
 struct EscapeMenuRoot;
 
 #[derive(Component)]
+struct EscapeMainPanel;
+
+#[derive(Component)]
+struct EscapeOptionsPanel;
+
+#[derive(Component)]
+struct InvertCameraYLabel;
+
+#[derive(Component)]
 struct LeaveButtonLabel;
 
 #[derive(Component, Clone, Copy, Eq, PartialEq)]
@@ -722,6 +741,9 @@ enum UiAction {
     Leave,
     CycleRotationSnap,
     ResumeMenu,
+    OpenOptions,
+    CloseOptions,
+    ToggleCameraYInversion,
 }
 
 #[derive(Message)]
@@ -960,6 +982,26 @@ struct TableCameraController {
     target_orthographic_scale: f32,
     mode: TableCameraMode,
     last_seat: CameraSeat,
+}
+
+#[derive(Resource, Debug)]
+struct CameraOptions {
+    invert_y: bool,
+}
+
+impl Default for CameraOptions {
+    fn default() -> Self {
+        Self { invert_y: true }
+    }
+}
+
+impl CameraOptions {
+    fn invert_y_label(&self) -> String {
+        format!(
+            "Invert camera Y: {}",
+            if self.invert_y { "On" } else { "Off" }
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1382,6 +1424,7 @@ fn handle_buttons(
     mut pending: ResMut<PendingClipboard>,
     mut state: ResMut<UiState>,
     mut rotation_snap: ResMut<RotationSnap>,
+    mut camera_options: ResMut<CameraOptions>,
     authority: Res<AuthorityEndpoint>,
     mut vault: ResMut<IdentityVault>,
 ) {
@@ -1591,8 +1634,25 @@ fn handle_buttons(
             }
             UiAction::ResumeMenu => {
                 state.escape_menu_open = false;
+                state.escape_menu_page = EscapeMenuPage::Main;
                 state.confirm_leave = false;
                 state.status = "Returned to the table.".into();
+            }
+            UiAction::OpenOptions => {
+                state.escape_menu_page = EscapeMenuPage::Options;
+                state.confirm_leave = false;
+                state.status = "Camera options opened.".into();
+            }
+            UiAction::CloseOptions => {
+                state.escape_menu_page = EscapeMenuPage::Main;
+                state.status = "Returned to the table menu.".into();
+            }
+            UiAction::ToggleCameraYInversion => {
+                camera_options.invert_y = !camera_options.invert_y;
+                state.status = format!(
+                    "{}. This affects RMB vertical orbit.",
+                    camera_options.invert_y_label()
+                );
             }
         }
     }
@@ -1672,13 +1732,18 @@ fn activate_leave(
 }
 
 fn toggle_escape_menu(state: &mut UiState) {
-    state.escape_menu_open = !state.escape_menu_open;
     state.confirm_leave = false;
-    state.status = if state.escape_menu_open {
-        "Table menu opened. The shared table remains live.".into()
+    if !state.escape_menu_open {
+        state.escape_menu_open = true;
+        state.escape_menu_page = EscapeMenuPage::Main;
+        state.status = "Table menu opened. The shared table remains live.".into();
+    } else if state.escape_menu_page == EscapeMenuPage::Options {
+        state.escape_menu_page = EscapeMenuPage::Main;
+        state.status = "Returned to the table menu.".into();
     } else {
-        "Returned to the table.".into()
-    };
+        state.escape_menu_open = false;
+        state.status = "Returned to the table.".into();
+    }
 }
 
 fn handle_escape_key(
@@ -1775,6 +1840,7 @@ fn handle_bridge_notices(
                         state.pending_flow = None;
                         state.capability = None;
                         state.escape_menu_open = false;
+                        state.escape_menu_page = EscapeMenuPage::Main;
                         state.screen = UiScreen::LobbyEnded;
                         state.status = "You have left this lobby.".into();
                     }
@@ -1875,6 +1941,7 @@ fn enter_room(
     model: Res<BridgeModel>,
     mut state: ResMut<UiState>,
     rotation_snap: Res<RotationSnap>,
+    camera_options: Res<CameraOptions>,
     frontend: Query<Entity, With<FrontendRoot>>,
     room: Query<Entity, With<RoomRoot>>,
     cards: Query<Entity, With<CardVisual>>,
@@ -1907,6 +1974,7 @@ fn enter_room(
         state.busy = false;
         state.confirm_leave = false;
         state.escape_menu_open = false;
+        state.escape_menu_page = EscapeMenuPage::Main;
         return;
     }
     if !room.is_empty() {
@@ -1925,6 +1993,7 @@ fn enter_room(
     }
     state.confirm_leave = false;
     state.escape_menu_open = false;
+    state.escape_menu_page = EscapeMenuPage::Main;
     commands
         .spawn((
             RoomRoot,
@@ -2092,6 +2161,7 @@ fn enter_room(
             .with_children(|overlay| {
                 overlay
                     .spawn((
+                        EscapeMainPanel,
                         Node {
                             width: px(440.),
                             padding: px(26.).all(),
@@ -2114,6 +2184,7 @@ fn enter_room(
                             TextColor(Color::srgb(0.72, 0.82, 0.8)),
                         ));
                         spawn_button(panel, "Resume table", UiAction::ResumeMenu, true);
+                        spawn_button(panel, "Options", UiAction::OpenOptions, false);
                         panel
                             .spawn((
                                 Button,
@@ -2137,20 +2208,105 @@ fn enter_room(
                             TextColor(Color::srgb(0.62, 0.72, 0.7)),
                         ));
                     });
+                overlay
+                    .spawn((
+                        EscapeOptionsPanel,
+                        Node {
+                            display: Display::None,
+                            width: px(440.),
+                            padding: px(26.).all(),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(14.),
+                            align_items: AlignItems::Stretch,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.035, 0.075, 0.08)),
+                    ))
+                    .with_children(|panel| {
+                        panel.spawn((
+                            Text::new("OPTIONS"),
+                            TextFont::from_font_size(30.),
+                            TextColor(Color::srgb(0.96, 0.88, 0.58)),
+                        ));
+                        panel.spawn((
+                            Text::new(
+                                "Camera controls are local to this game window and do not affect the shared table.",
+                            ),
+                            TextFont::from_font_size(15.),
+                            TextColor(Color::srgb(0.72, 0.82, 0.8)),
+                        ));
+                        panel
+                            .spawn((
+                                Button,
+                                UiAction::ToggleCameraYInversion,
+                                Node {
+                                    min_width: px(150.),
+                                    padding: px(13.).all(),
+                                    justify_content: JustifyContent::Center,
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgb(0.13, 0.26, 0.27)),
+                            ))
+                            .with_child((
+                                InvertCameraYLabel,
+                                Text::new(camera_options.invert_y_label()),
+                                TextFont::from_font_size(20.),
+                            ));
+                        panel.spawn((
+                            Text::new("This reverses RMB vertical orbit. The default is On."),
+                            TextFont::from_font_size(14.),
+                            TextColor(Color::srgb(0.62, 0.72, 0.7)),
+                        ));
+                        spawn_button(panel, "Back", UiAction::CloseOptions, true);
+                        panel.spawn((
+                            Text::new("Press Esc to return to the table menu."),
+                            TextFont::from_font_size(14.),
+                            TextColor(Color::srgb(0.62, 0.72, 0.7)),
+                        ));
+                    });
             });
         });
 }
 
 fn sync_escape_menu(
     state: Res<UiState>,
-    mut menus: Query<&mut Node, With<EscapeMenuRoot>>,
+    camera_options: Res<CameraOptions>,
+    mut menus: Query<
+        &mut Node,
+        (
+            With<EscapeMenuRoot>,
+            Without<EscapeMainPanel>,
+            Without<EscapeOptionsPanel>,
+        ),
+    >,
+    mut panels: Query<
+        (
+            &mut Node,
+            Option<&EscapeMainPanel>,
+            Option<&EscapeOptionsPanel>,
+        ),
+        (
+            Or<(With<EscapeMainPanel>, With<EscapeOptionsPanel>)>,
+            Without<EscapeMenuRoot>,
+        ),
+    >,
     mut leave_labels: Query<&mut Text, With<LeaveButtonLabel>>,
+    mut invert_y_labels: Query<&mut Text, (With<InvertCameraYLabel>, Without<LeaveButtonLabel>)>,
 ) {
-    if !state.is_changed() {
+    if !(state.is_changed() || camera_options.is_changed()) {
         return;
     }
     for mut node in &mut menus {
         node.display = if state.escape_menu_open {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    for (mut node, main, options) in &mut panels {
+        let visible = (main.is_some() && state.escape_menu_page == EscapeMenuPage::Main)
+            || (options.is_some() && state.escape_menu_page == EscapeMenuPage::Options);
+        node.display = if visible {
             Display::Flex
         } else {
             Display::None
@@ -2162,6 +2318,9 @@ fn sync_escape_menu(
         } else {
             "Leave lobby".into()
         };
+    }
+    for mut label in &mut invert_y_labels {
+        label.0 = camera_options.invert_y_label();
     }
 }
 
@@ -2405,7 +2564,10 @@ fn sync_room_labels(
                 UiAction::Leave
                 | UiAction::CopyCode
                 | UiAction::CycleRotationSnap
-                | UiAction::ResumeMenu => Display::Flex,
+                | UiAction::ResumeMenu
+                | UiAction::OpenOptions
+                | UiAction::CloseOptions
+                | UiAction::ToggleCameraYInversion => Display::Flex,
                 UiAction::CreateIdentity
                 | UiAction::SelectIdentity(_)
                 | UiAction::RefreshIdentities
@@ -2703,6 +2865,7 @@ fn update_table_camera(
     model: Res<BridgeModel>,
     layout: Res<CanonicalLayout>,
     state: Res<UiState>,
+    camera_options: Res<CameraOptions>,
     room: Query<(), With<RoomRoot>>,
     mut controller: ResMut<TableCameraController>,
     mut cameras: Query<(&mut Transform, &mut Projection), With<TabletopCamera>>,
@@ -2740,8 +2903,8 @@ fn update_table_camera(
             controller.target.yaw = (controller.target.yaw - delta.x * CAMERA_ORBIT_SENSITIVITY)
                 .rem_euclid(std::f32::consts::TAU);
             controller.target.pitch = (controller.target.pitch
-                - delta.y * CAMERA_ORBIT_SENSITIVITY)
-                .clamp(CAMERA_MIN_PITCH, CAMERA_MAX_PITCH);
+                + camera_pitch_delta(delta.y, camera_options.invert_y))
+            .clamp(CAMERA_MIN_PITCH, CAMERA_MAX_PITCH);
         }
 
         let forward = Vec3::new(
@@ -2798,6 +2961,10 @@ fn update_table_camera(
             controller.current_orthographic_scale,
         );
     }
+}
+
+fn camera_pitch_delta(mouse_delta_y: f32, invert_y: bool) -> f32 {
+    mouse_delta_y * CAMERA_ORBIT_SENSITIVITY * if invert_y { 1.0 } else { -1.0 }
 }
 
 fn clamp_table_focus(layout: &SpatialLayout, focus: Vec3) -> Vec3 {
@@ -3363,6 +3530,33 @@ mod tests {
         toggle_escape_menu(&mut state);
         assert!(!state.escape_menu_open);
         assert!(!state.confirm_leave);
+    }
+
+    #[test]
+    fn escape_from_options_returns_to_the_table_menu_before_resuming() {
+        let mut state = UiState {
+            escape_menu_open: true,
+            escape_menu_page: EscapeMenuPage::Options,
+            ..UiState::default()
+        };
+        toggle_escape_menu(&mut state);
+        assert!(state.escape_menu_open);
+        assert_eq!(state.escape_menu_page, EscapeMenuPage::Main);
+
+        toggle_escape_menu(&mut state);
+        assert!(!state.escape_menu_open);
+    }
+
+    #[test]
+    fn camera_y_inversion_is_on_by_default_and_reverses_the_old_response() {
+        let options = CameraOptions::default();
+        assert!(options.invert_y);
+        assert!(camera_pitch_delta(2.0, options.invert_y) > 0.0);
+        assert!(camera_pitch_delta(2.0, false) < 0.0);
+        assert!(
+            (camera_pitch_delta(2.0, options.invert_y) + camera_pitch_delta(2.0, false)).abs()
+                < f32::EPSILON
+        );
     }
 
     #[test]

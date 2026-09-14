@@ -9,8 +9,9 @@
 )]
 
 use super::{
-    AuthorityEndpoint, IdentityVault, LeaveActivation, PendingFlow, PoseDisplay, RenderMode,
-    RenderSurface, UiScreen, UiState, activate_leave, begin_identity_selection, toggle_escape_menu,
+    AuthorityEndpoint, CameraOptions, EscapeMenuPage, IdentityVault, LeaveActivation, PendingFlow,
+    PoseDisplay, RenderMode, RenderSurface, UiScreen, UiState, activate_leave,
+    begin_identity_selection, toggle_escape_menu,
 };
 use bevy::{prelude::*, render::view::screenshot::save_to_disk};
 use poche_bevy_spacetimedb::{BridgeHandle, BridgeIntent, BridgeModel};
@@ -82,6 +83,9 @@ pub enum FileControlAction {
     },
     ReleaseSeat,
     ToggleTableMenu,
+    OpenOptions,
+    ToggleCameraYInversion,
+    CloseOptions,
     ActivateLeave,
     Bid {
         tricks: u8,
@@ -330,6 +334,7 @@ fn drive_file_control(
     mut exit: MessageWriter<AppExit>,
     authority: Res<AuthorityEndpoint>,
     mut vault: ResMut<IdentityVault>,
+    mut camera_options: ResMut<CameraOptions>,
 ) {
     endpoint.frame = endpoint.frame.saturating_add(1);
     if let Some(mut pending) = endpoint.pending.take() {
@@ -507,6 +512,37 @@ fn drive_file_control(
                 Err("join a room before opening its table menu".into())
             } else {
                 toggle_escape_menu(&mut state);
+                Ok(())
+            }
+        }
+        FileControlAction::OpenOptions => {
+            if state.escape_menu_open {
+                state.escape_menu_page = EscapeMenuPage::Options;
+                state.confirm_leave = false;
+                state.status = "Developer control opened camera options.".into();
+                Ok(())
+            } else {
+                Err("open the table menu before opening options".into())
+            }
+        }
+        FileControlAction::ToggleCameraYInversion => {
+            if !state.escape_menu_open || state.escape_menu_page != EscapeMenuPage::Options {
+                Err("open camera options before toggling Y inversion".into())
+            } else {
+                camera_options.invert_y = !camera_options.invert_y;
+                state.status = format!(
+                    "{}. This affects RMB vertical orbit.",
+                    camera_options.invert_y_label()
+                );
+                Ok(())
+            }
+        }
+        FileControlAction::CloseOptions => {
+            if !state.escape_menu_open || state.escape_menu_page != EscapeMenuPage::Options {
+                Err("camera options are not open".into())
+            } else {
+                state.escape_menu_page = EscapeMenuPage::Main;
+                state.status = "Developer control returned to the table menu.".into();
                 Ok(())
             }
         }

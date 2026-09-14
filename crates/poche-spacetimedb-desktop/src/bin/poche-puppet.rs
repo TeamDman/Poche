@@ -102,6 +102,18 @@ fn run() -> Result<(), String> {
             let root = PathBuf::from(args.next().ok_or("menu requires CONTROL_ROOT")?);
             print_response(send(&root, FileControlAction::ToggleTableMenu)?)
         }
+        Some("options") => {
+            let root = PathBuf::from(args.next().ok_or("options requires CONTROL_ROOT")?);
+            print_response(send(&root, FileControlAction::OpenOptions)?)
+        }
+        Some("invert-camera-y") => {
+            let root = PathBuf::from(args.next().ok_or("invert-camera-y requires CONTROL_ROOT")?);
+            print_response(send(&root, FileControlAction::ToggleCameraYInversion)?)
+        }
+        Some("back") => {
+            let root = PathBuf::from(args.next().ok_or("back requires CONTROL_ROOT")?);
+            print_response(send(&root, FileControlAction::CloseOptions)?)
+        }
         Some("leave") => {
             let root = PathBuf::from(args.next().ok_or("leave requires CONTROL_ROOT")?);
             print_response(send(&root, FileControlAction::ActivateLeave)?)
@@ -147,7 +159,8 @@ fn run() -> Result<(), String> {
                  poche-puppet observe ROOT [--include-join-code]\n\
                  poche-puppet set-name ROOT NAME | select-identity ROOT LABEL | resume ROOT\n\
                  poche-puppet create ROOT | join ROOT CODE\n\
-                 poche-puppet seat ROOT 0|1 | stand ROOT | menu ROOT | leave ROOT | bid ROOT TRICKS\n\
+                 poche-puppet seat ROOT 0|1 | stand ROOT | menu ROOT | options ROOT | back ROOT\n\
+                 poche-puppet invert-camera-y ROOT | leave ROOT | bid ROOT TRICKS\n\
                  poche-puppet play ROOT CARD_INDEX\n\
                  poche-puppet move ROOT CARD_INDEX X_MM Y_MM Z_MM RY_MDEG\n\
                  poche-puppet capture ROOT | stop ROOT"
@@ -217,6 +230,8 @@ struct AcceptanceReport {
     checks: AcceptanceChecks,
     peer_members_after_leave: usize,
     table_menu_capture: String,
+    options_default_capture: String,
+    options_toggled_capture: String,
     leave_confirmation_capture: String,
     identity_contact_sheet: String,
     screenshots: Vec<String>,
@@ -526,6 +541,14 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
 
     send(alice_root, FileControlAction::ToggleTableMenu)?;
     let table_menu_capture = capture(alice_root)?;
+    send(alice_root, FileControlAction::OpenOptions)?;
+    let options_default_capture = capture(alice_root)?;
+    let toggled_options = send(alice_root, FileControlAction::ToggleCameraYInversion)?.observation;
+    if !toggled_options.status.contains("Invert camera Y: Off") {
+        return Err("camera Y inversion did not toggle away from its inverted default".into());
+    }
+    let options_toggled_capture = capture(alice_root)?;
+    send(alice_root, FileControlAction::CloseOptions)?;
     send(alice_root, FileControlAction::ActivateLeave)?;
     let leave_confirmation_capture = capture(alice_root)?;
     let left = send(alice_root, FileControlAction::ActivateLeave)?.observation;
@@ -543,7 +566,7 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     let menu_after_leave = capture(alice_root)?;
 
     let report = AcceptanceReport {
-        schema: "poche-spacetimedb-multi-device-acceptance-v6",
+        schema: "poche-spacetimedb-multi-device-acceptance-v7",
         completed_unix_ms: unix_millis()?,
         authority_profile: authority.profile.clone(),
         authority_uri: authority.uri.clone(),
@@ -586,6 +609,8 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
         },
         peer_members_after_leave: bob_after_leave.members.len(),
         table_menu_capture: table_menu_capture.to_string_lossy().into_owned(),
+        options_default_capture: options_default_capture.to_string_lossy().into_owned(),
+        options_toggled_capture: options_toggled_capture.to_string_lossy().into_owned(),
         leave_confirmation_capture: leave_confirmation_capture.to_string_lossy().into_owned(),
         identity_contact_sheet: identity_contact_sheet.to_string_lossy().into_owned(),
         screenshots: captures
@@ -596,6 +621,8 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
                 &resume_offer_capture,
             ])
             .chain(std::iter::once(&table_menu_capture))
+            .chain(std::iter::once(&options_default_capture))
+            .chain(std::iter::once(&options_toggled_capture))
             .chain(std::iter::once(&leave_confirmation_capture))
             .chain(std::iter::once(&menu_after_leave))
             .map(|path| path.to_string_lossy().into_owned())
