@@ -156,6 +156,23 @@ pub struct GameAction {
     pub value: u8,
 }
 
+/// An append-only, viewer-safe account of accepted room activity.
+///
+/// Summaries are constructed by reducers exclusively from information which is
+/// already public at that point in the game. In particular, an unplayed card
+/// face is never written here.
+#[spacetimedb::table(accessor = activity_event)]
+pub struct ActivityEvent {
+    #[primary_key]
+    pub event_key: String,
+    #[index(btree)]
+    pub room_id: String,
+    pub sequence: u64,
+    pub kind: String,
+    pub summary: String,
+    pub occurred_at: Timestamp,
+}
+
 /// A face becomes public only after the pure rules engine accepts its play.
 #[spacetimedb::table(accessor = revealed_card)]
 pub struct RevealedCard {
@@ -255,6 +272,14 @@ pub fn visible_card_poses(ctx: &ViewContext) -> Vec<CardPose> {
     })
 }
 
+/// Members receive an ordered history containing public facts only.
+#[spacetimedb::view(accessor = visible_activity, public, primary_key = event_key)]
+pub fn visible_activity(ctx: &ViewContext) -> Vec<ActivityEvent> {
+    active_room_id(ctx).map_or_else(Vec::new, |room_id| {
+        ctx.db.activity_event().room_id().filter(&room_id).collect()
+    })
+}
+
 #[spacetimedb::reducer(init)]
 pub fn init(_ctx: &ReducerContext) {}
 
@@ -284,8 +309,14 @@ pub fn create_room(
         room_id: room_id.clone(),
         join_code,
     });
-    insert_member(ctx, room_id.clone(), display_name);
-    activate_room(ctx, room_id);
+    insert_member(ctx, room_id.clone(), display_name.clone());
+    activate_room(ctx, room_id.clone());
+    append_activity(
+        ctx,
+        &room_id,
+        "room-created",
+        format!("{display_name} created the lobby"),
+    );
     Ok(())
 }
 
@@ -304,14 +335,29 @@ pub fn join_room(
         .ok_or_else(|| "unknown or expired room code".to_string())?;
     let member_key = member_key(&secret.room_id, ctx.sender());
     if let Some(mut member) = ctx.db.member().member_key().find(&member_key) {
-        member.display_name = display_name;
+        let prior_name = member.display_name.clone();
+        member.display_name.clone_from(&display_name);
         member.connected = identity_has_connections(ctx, ctx.sender());
         ctx.db.member().member_key().update(member);
-        activate_room(ctx, secret.room_id);
+        activate_room(ctx, secret.room_id.clone());
+        append_activity(
+            ctx,
+            &secret.room_id,
+            "room-rejoined",
+            format!("{prior_name} rejoined the lobby as {display_name}"),
+        );
+        repair_deal_if_incoherent(ctx, &secret.room_id);
         return Ok(());
     }
-    insert_member(ctx, secret.room_id.clone(), display_name);
-    activate_room(ctx, secret.room_id);
+    insert_member(ctx, secret.room_id.clone(), display_name.clone());
+    activate_room(ctx, secret.room_id.clone());
+    append_activity(
+        ctx,
+        &secret.room_id,
+        "room-joined",
+        format!("{display_name} joined the lobby"),
+    );
+    repair_deal_if_incoherent(ctx, &secret.room_id);
     Ok(())
 }
 
@@ -336,9 +382,17 @@ pub fn take_seat(ctx: &ReducerContext, room_id: String, seat: u8) -> Result<(), 
     if occupied {
         return Err(format!("seat {seat} is already occupied"));
     }
+    let display_name = caller.display_name.clone();
     caller.seat = Some(seat);
     caller.connected = identity_has_connections(ctx, ctx.sender());
     ctx.db.member().member_key().update(caller);
+    append_activity(
+        ctx,
+        &room_id,
+        "seat-taken",
+        format!("{display_name} took seat {}", seat + 1),
+    );
+    repair_deal_if_incoherent(ctx, &room_id);
     ensure_deal(ctx, &room_id)?;
     Ok(())
 }
@@ -352,9 +406,26 @@ pub fn release_seat(ctx: &ReducerContext, room_id: String) -> Result<(), String>
         .member_key()
         .find(&key)
         .ok_or_else(|| "not a room member".to_string())?;
-    caller.seat = None;
+    let display_name = caller.display_name.clone();
+    let left_seat = caller.seat.take();
     caller.connected = identity_has_connections(ctx, ctx.sender());
     ctx.db.member().member_key().update(caller);
+    if let Some(seat) = left_seat {
+        append_activity(
+            ctx,
+            &room_id,
+            "seat-released",
+            format!("{display_name} left seat {}", seat + 1),
+        );
+        if abandon_deal(ctx, &room_id) {
+            append_activity(
+                ctx,
+                &room_id,
+                "deal-abandoned",
+                "The active deal was abandoned because a seat became empty".into(),
+            );
+        }
+    }
     Ok(())
 }
 
@@ -424,6 +495,16 @@ pub fn bid(ctx: &ReducerContext, room_id: String, tricks: u8) -> Result<(), Stri
         EnvironmentAction::Player(OraclePlayerAction::Bid { player, tricks }),
     )?;
     append_action(ctx, &record, seat, "bid", tricks);
+    append_activity(
+        ctx,
+        &room_id,
+        "bid",
+        format!(
+            "{} bid {tricks} {}",
+            caller_name(ctx, &room_id)?,
+            if tricks == 1 { "trick" } else { "tricks" }
+        ),
+    );
     record.action_count = record.action_count.saturating_add(1);
     write_room_game(ctx, record, &next)?;
     Ok(())
@@ -470,6 +551,16 @@ pub fn play_card(ctx: &ReducerContext, room_id: String, card_id: String) -> Resu
     )?;
 
     append_action(ctx, &record, seat, "play", private.face_code);
+    append_activity(
+        ctx,
+        &room_id,
+        "card-played",
+        format!(
+            "{} played {}",
+            caller_name(ctx, &room_id)?,
+            card_label(private.face_code)?
+        ),
+    );
     record.action_count = record.action_count.saturating_add(1);
     write_room_game(ctx, record, &next)?;
 
@@ -511,6 +602,26 @@ pub fn play_card(ctx: &ReducerContext, room_id: String, card_id: String) -> Resu
 #[spacetimedb::reducer]
 pub fn leave_room(ctx: &ReducerContext, room_id: String) -> Result<(), String> {
     let key = member_key(&room_id, ctx.sender());
+    let member = ctx
+        .db
+        .member()
+        .member_key()
+        .find(&key)
+        .ok_or_else(|| "not a room member".to_string())?;
+    if member.seat.is_some() && abandon_deal(ctx, &room_id) {
+        append_activity(
+            ctx,
+            &room_id,
+            "deal-abandoned",
+            "The active deal was abandoned because a seat became empty".into(),
+        );
+    }
+    append_activity(
+        ctx,
+        &room_id,
+        "room-left",
+        format!("{} left the lobby", member.display_name),
+    );
     if !ctx.db.member().member_key().delete(&key) {
         return Err("not a room member".into());
     }
@@ -546,6 +657,15 @@ pub fn leave_room(ctx: &ReducerContext, room_id: String) -> Result<(), String> {
         {
             ctx.db.revealed_card().card_key().delete(&card.card_key);
         }
+        for event in ctx
+            .db
+            .activity_event()
+            .room_id()
+            .filter(&room_id)
+            .collect::<Vec<_>>()
+        {
+            ctx.db.activity_event().event_key().delete(&event.event_key);
+        }
     }
     Ok(())
 }
@@ -569,6 +689,9 @@ pub fn identity_connected(ctx: &ReducerContext) {
         });
     }
     set_connected(ctx, true);
+    if let Some(active) = ctx.db.active_room().identity().find(&ctx.sender()) {
+        repair_deal_if_incoherent(ctx, &active.room_id);
+    }
 }
 
 #[spacetimedb::reducer(client_disconnected)]
@@ -618,6 +741,7 @@ fn ensure_deal(ctx: &ReducerContext, room_id: &str) -> Result<(), String> {
     ctx.db
         .room_game()
         .insert(project_room_game(room_id, seed, 0, &game)?);
+    append_activity(ctx, room_id, "deal-started", "The first deal began".into());
 
     for member in seated {
         let seat = member.seat.expect("filtered to seated members");
@@ -666,6 +790,104 @@ fn ensure_deal(ctx: &ReducerContext, room_id: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn abandon_deal(ctx: &ReducerContext, room_id: &str) -> bool {
+    let had_deal = ctx.db.room_game().room_id().delete(&room_id.to_string());
+    for action in ctx
+        .db
+        .game_action()
+        .room_id()
+        .filter(room_id)
+        .collect::<Vec<_>>()
+    {
+        ctx.db.game_action().action_key().delete(&action.action_key);
+    }
+    for card in ctx
+        .db
+        .card_pose()
+        .room_id()
+        .filter(room_id)
+        .collect::<Vec<_>>()
+    {
+        ctx.db.private_hand_card().card_key().delete(&card.card_key);
+        ctx.db
+            .private_card_identity()
+            .card_key()
+            .delete(&card.card_key);
+        ctx.db.revealed_card().card_key().delete(&card.card_key);
+        ctx.db.card_pose().card_key().delete(&card.card_key);
+    }
+    had_deal
+}
+
+fn repair_deal_if_incoherent(ctx: &ReducerContext, room_id: &str) {
+    let Some(game) = ctx.db.room_game().room_id().find(&room_id.to_string()) else {
+        return;
+    };
+    let seated = ctx
+        .db
+        .member()
+        .room_id()
+        .filter(room_id)
+        .filter_map(|member| member.seat.map(|seat| (seat, member.identity)))
+        .collect::<Vec<_>>();
+    let coherent = seated.len() == PLAYERS
+        && [game.hand_count_0, game.hand_count_1]
+            .into_iter()
+            .enumerate()
+            .all(|(seat, expected)| {
+                let Some((_, owner)) = seated
+                    .iter()
+                    .find(|(candidate, _)| usize::from(*candidate) == seat)
+                else {
+                    return false;
+                };
+                let actual = ctx
+                    .db
+                    .private_hand_card()
+                    .owner()
+                    .filter(owner)
+                    .filter(|card| card.room_id == room_id)
+                    .count();
+                usize::from(expected) == actual
+            });
+    if !coherent && abandon_deal(ctx, room_id) {
+        append_activity(
+            ctx,
+            room_id,
+            "deal-repaired",
+            "The authority returned an incomplete deal to the lobby".into(),
+        );
+    }
+}
+
+fn append_activity(ctx: &ReducerContext, room_id: &str, kind: &str, summary: String) {
+    let sequence = ctx
+        .db
+        .activity_event()
+        .room_id()
+        .filter(room_id)
+        .map(|event| event.sequence)
+        .max()
+        .map_or(0, |value| value.saturating_add(1));
+    ctx.db.activity_event().insert(ActivityEvent {
+        event_key: format!("{room_id}:{sequence}"),
+        room_id: room_id.to_string(),
+        sequence,
+        kind: kind.to_string(),
+        summary,
+        occurred_at: ctx.timestamp,
+    });
+}
+
+fn caller_name(ctx: &ReducerContext, room_id: &str) -> Result<String, String> {
+    ctx.db
+        .member()
+        .member_key()
+        .find(&member_key(room_id, ctx.sender()))
+        .map(|member| member.display_name)
+        .ok_or_else(|| "join the room before acting".to_string())
 }
 
 fn delete_identity_cards(ctx: &ReducerContext, room_id: &str, identity: Identity) {

@@ -3,7 +3,7 @@
 **Plan status:** Active; the create/join/seat/private-hand/shared-pose MVP and first oracle-backed trick are accepted, while multi-round play, recovery, and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-13 (implemented and locally accepted the multi-account identity gate, explicit resume flow, and connection-counted presence)
+**Last updated:** 2026-09-14 (published and accepted public activity, immediate resume-scene hydration, and coherent active-deal leave recovery)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
@@ -386,6 +386,45 @@ switching, cross-machine enrollment, and formal lifecycle parity remain open.
   observation. Visual review confirmed the nested page and both On/Off labels.
   The desktop package has 23 passing tests and strict Clippy is clean.
 
+## 2026-09-14 activity and rejoin-coherence checkpoint
+
+- Added a private append-only `activity_event` authority table and a
+  sender-scoped `visible_activity` view. Reducers write only facts which are
+  public when accepted: lobby create/join/leave, seat changes, deal start,
+  bids, and revealed played cards. Physical wiggles and every unplayed card
+  face remain absent. The desktop renders the newest entries immediately below
+  the authoritative player list.
+- Fixed the blank-table resume defect at its presentation boundary. A model
+  snapshot can arrive while the identity is still on `ResumeOffer`; entering
+  the table now invalidates card/avatar reconciliation even if no later network
+  row changes. Client rows are canonically sorted so two devices compare and
+  render the same projection independent of cache iteration order.
+- Added render-grounded acceptance evidence. File-control schema v3 reports
+  actual Bevy `CardVisual` and `SpatialPlayer` counts, and the puppet refuses a
+  resumed table until those counts equal the subscribed card poses and seated
+  roster. This closes the exact blind spot where semantic observations passed
+  while the 3D scene remained empty until the next bid.
+- Fixed the contradictory active-game leave state. Transient disconnect still
+  preserves membership, seat, and hand. Explicitly vacating a seat now
+  abandons the incomplete deal, clears its private/public cards and typed game
+  action log, and keeps the room in a coherent unseated lobby. A later room-code
+  join is a spectator until seats are selected again. Connection, join, and
+  seat reducers also repair legacy incomplete deals left by the previous code.
+- Added a client-side consistency guard: if the public projection reports a
+  positive hand count while this sender's private view is empty, the HUD says
+  the hand is synchronizing and offers no bid rather than claiming the round
+  finished. The focused desktop test count is now 24.
+- Published the additive table/view and reducer changes to Maincloud
+  `poche-6quz6`. Windowless v8 acceptance passed with nine converged public
+  events, immediate resumed-scene counts, coherent post-leave cleanup, 53.69 ms
+  authority response, and 153.42 ms peer pose observation. The reviewed contact
+  sheet shows the activity log in both seat-relative 3D projections without
+  exposing the peer's unplayed card.
+
+This advances T2.2, T2.3, T4.5, and T6.2/T6.5. A true process stop/relaunch,
+final-member stale-code rejection, unavailable-authority recovery, multi-round
+play, and formal lifecycle parity remain open.
+
 ## Authoritative user guidance ledger
 
 | ID | Active guidance | Required plan consequence | Superseded by |
@@ -429,6 +468,7 @@ switching, cross-machine enrollment, and formal lifecycle parity remain open.
 | U37 | The desktop environment should remain the established 3D table rather than regress to a 2D replacement. | Keep the restored perspective 3D table as the SpacetimeDB presentation boundary; complete the dedicated hand camera and diegetic picking/capture refinements in T4. | — |
 | U38 | One installation should retain multiple authenticated identities. Each launched window chooses its identity before any resume prompt; the title shows an identity carousel and its name opens an identity selection/creation screen. | Separate immutable local account ID, mutable display name, protected token, and per-process active selection. Add an identity gate and title selector; scope resume discovery to the chosen identity. | Supersedes T3.1's 2026-09-13 automatic-last-profile assumption. |
 | U39 | The Escape menu should contain a nested Options menu with a camera-Y inversion toggle, and the default vertical response should be the opposite of the current behavior. | Model parent/options navigation explicitly, apply the toggle only to local RMB vertical orbit, default it to inverted, and verify navigation plus both response signs. | — |
+| U40 | The table needs a public activity history below its player list, and a resumed client must render subscribed players/cards immediately without waiting for another action. Leaving/rejoining may not strand bidding controls against an absent private hand. | Store and subscribe only hidden-information-safe activity; invalidate Bevy reconciliation on table entry; expose rendered counts to the puppet; distinguish disconnect from explicit seat-vacating leave; suppress actions during private-view synchronization. | — |
 
 ## Guidance traceability
 
@@ -450,6 +490,7 @@ switching, cross-machine enrollment, and formal lifecycle parity remain open.
 | U30 | Scope, T1.3, T7.2 | Default dependency graph excludes Veilid; history retained |
 | U34–U37 | T4.3, T4.4, T6.2–T6.4 | Exact angle tests, visible Q/E/snap behavior, real 3D two-window captures, and a clean Windows DX12 startup log |
 | U38 | G5, T3.1, T4.1, T4.5, T6.2, T6.3 | Multi-account identity-gate captures plus Alice/Bob and same-Alice two-process receipts |
+| U39, U40 | T2.2, T2.3, T4.5, T6.2, T6.5 | Nested-options captures, converged public activity, pre-action resume-scene counts, and coherent post-leave projection |
 
 ## Purpose
 
@@ -1529,10 +1570,10 @@ remote branch contains all intended commits.
 | NuSMV oracle | Supported in existing named scopes | Session/spatial comparison and temporal witness | Pending |
 | Scryer Prolog oracle | Supported for relational queries | Session/spatial comparison and query witness | Pending |
 | SpacetimeDB module | Supported, pinned local 2.10.0 | WASM build, publish, reducer/privacy integration | Module build/publish and create/join/seat/private-view/pose flow pass; pure durable play and adversarial suite remain |
-| Native Rust SDK client | Supported on Windows first | Connect/subscribe/reducer/reconnect tests | Generated bindings, subscription cache, reducers, credential persistence, and live two-client flow pass; forced reconnect remains |
-| Poche-owned Bevy bridge | Supported with Bevy 0.19.1 | Headless App and real rendered clients | Owned channel bridge and rendered windowless clients pass; no `bevy_spacetimedb` dependency |
-| Two visible `poche.exe` processes | Primary player acceptance | Create/join/seat/deal/wiggle/drop/restart | The identical ordinary binary passes create/join/seat/deal/wiggle through its windowless target; final human visible-window check and restart remain |
-| Windowless two-player puppet | Primary repeatable acceptance | Two private captures plus semantic/latency transcript | Passed on Maincloud (54.25 ms authority, 108.34 ms peer) and fresh local (18.51 ms authority, 68.43 ms peer); both receipts identify the exact authority |
+| Native Rust SDK client | Supported on Windows first | Connect/subscribe/reducer/reconnect tests | Generated bindings, canonically ordered subscription cache, sender-scoped activity, reducers, credential persistence, and live two-client flow pass; forced reconnect remains |
+| Poche-owned Bevy bridge | Supported with Bevy 0.19.1 | Headless App and real rendered clients | Owned channel bridge and rendered windowless clients pass; resume acceptance compares actual card/avatar entity counts to the preloaded model; no `bevy_spacetimedb` dependency |
+| Two visible `poche.exe` processes | Primary player acceptance | Create/join/seat/deal/wiggle/drop/restart | The identical ordinary binary passes create/join/seat/deal/wiggle through its windowless target; explicit leave returns peers to a coherent lobby; final human visible-window check and true restart remain |
+| Windowless two-player puppet | Primary repeatable acceptance | Two private captures plus semantic/latency transcript | Latest Maincloud v8 passed with nine public events, immediate resumed-scene hydration, coherent post-leave cleanup, 53.69 ms authority, and 153.42 ms peer; fresh-local rerun remains for this schema |
 | Web/browser client | Explicitly unsupported this phase | Build graph/doc audit; no accidental promise | Pending |
 | Veilid transport | Retained research, non-default | Historical tests/docs remain; default tree excludes it | Default member/package is SpacetimeDB; dependency audit required at release |
 | Untrusted-host/zero-trust play | Not supported | Threat-model statement | Trusted-server boundary documented in `docs/spacetimedb-desktop.md` |
@@ -1588,10 +1629,10 @@ remote branch contains all intended commits.
 
 ## Immediate next slice
 
-Continue from the accepted multi-account lifecycle checkpoint by testing real
-process restart, unavailable-authority recovery, final-member disband/stale
-code rejection, and visible two-window account switching, then expand the
-one-trick oracle adapter into multi-round Poche play. Keep
+Continue from the accepted multi-account/activity lifecycle checkpoint by
+testing real process restart, unavailable-authority recovery, final-member
+disband/stale-code rejection, and visible two-window account switching, then
+expand the one-trick oracle adapter into multi-round Poche play. Keep
 diegetic seat/bid/play affordances synchronized with the exhaustive action bar,
 and collect a real visible-window camera/mouse feel check before treating the
 new focal rig as polished.

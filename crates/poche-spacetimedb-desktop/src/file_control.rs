@@ -25,7 +25,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u16 = 2;
+pub const SCHEMA_VERSION: u16 = 3;
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 const APP_REQUEST_TIMEOUT: Duration = Duration::from_secs(18);
@@ -144,9 +144,12 @@ pub struct FileControlObservation {
     pub own_hand: Vec<FileControlHandCard>,
     pub members: Vec<FileControlMember>,
     pub card_poses: Vec<FileControlCardPose>,
+    pub rendered_card_count: usize,
+    pub rendered_player_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game: Option<FileControlGame>,
     pub revealed_cards: Vec<FileControlRevealedCard>,
+    pub activity: Vec<FileControlActivity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_authority_latency_ms: Option<f64>,
 }
@@ -208,6 +211,14 @@ pub struct FileControlGame {
 pub struct FileControlRevealedCard {
     pub card_key: String,
     pub face: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FileControlActivity {
+    pub sequence: u64,
+    pub kind: String,
+    pub summary: String,
 }
 
 pub struct FileControlPlugin {
@@ -1046,6 +1057,8 @@ fn observation(
                 is_own: Some(pose.owner.as_str()) == identity,
             })
             .collect(),
+        rendered_card_count: state.rendered_card_count,
+        rendered_player_count: state.rendered_player_count,
         game: model.snapshot.game.as_ref().map(|game| FileControlGame {
             phase: game.phase.clone(),
             actor_seat: game.actor_seat,
@@ -1069,6 +1082,16 @@ fn observation(
             .map(|card| FileControlRevealedCard {
                 card_key: card.card_key.clone(),
                 face: card.face.clone(),
+            })
+            .collect(),
+        activity: model
+            .snapshot
+            .activity
+            .iter()
+            .map(|event| FileControlActivity {
+                sequence: event.sequence,
+                kind: event.kind.clone(),
+                summary: event.summary.clone(),
             })
             .collect(),
         last_authority_latency_ms: model

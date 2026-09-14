@@ -107,6 +107,7 @@ pub struct ClientSnapshot {
     pub card_poses: Vec<CardPoseView>,
     pub game: Option<GameView>,
     pub revealed_cards: Vec<RevealedCardView>,
+    pub activity: Vec<ActivityView>,
 }
 
 impl ClientSnapshot {
@@ -177,6 +178,13 @@ pub struct CardPoseView {
 pub struct RevealedCardView {
     pub card_key: String,
     pub face: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActivityView {
+    pub sequence: u64,
+    pub kind: String,
+    pub summary: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -619,12 +627,28 @@ fn register_change_callbacks(connection: &DbConnection, event_tx: mpsc::Sender<C
         .on_delete(move |_, _| {
             let _ = tx.send(ClientEvent::ModelChanged);
         });
+    let tx = event_tx.clone();
     connection
         .db
         .visible_revealed_cards()
         .on_update(move |_, _, _| {
-            let _ = event_tx.send(ClientEvent::ModelChanged);
+            let _ = tx.send(ClientEvent::ModelChanged);
         });
+    register_activity_callbacks(connection, event_tx);
+}
+
+fn register_activity_callbacks(connection: &DbConnection, event_tx: mpsc::Sender<ClientEvent>) {
+    let tx = event_tx.clone();
+    connection.db.visible_activity().on_insert(move |_, _| {
+        let _ = tx.send(ClientEvent::ModelChanged);
+    });
+    let tx = event_tx.clone();
+    connection.db.visible_activity().on_update(move |_, _, _| {
+        let _ = tx.send(ClientEvent::ModelChanged);
+    });
+    connection.db.visible_activity().on_delete(move |_, _| {
+        let _ = event_tx.send(ClientEvent::ModelChanged);
+    });
 }
 
 fn subscribe(
@@ -651,6 +675,7 @@ fn subscribe(
         .add_query(|query| query.from.visible_card_poses())
         .add_query(|query| query.from.visible_room_games())
         .add_query(|query| query.from.visible_revealed_cards())
+        .add_query(|query| query.from.visible_activity())
         .subscribe();
 }
 
@@ -667,7 +692,7 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
             room_id: room.room_id,
         })
         .collect();
-    let members = context
+    let mut members = context
         .db
         .room_members()
         .iter()
@@ -681,8 +706,9 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
                 connected: member.connected,
             }
         })
-        .collect();
-    let hand = context
+        .collect::<Vec<_>>();
+    members.sort_by(|left, right| left.identity.cmp(&right.identity));
+    let mut hand = context
         .db
         .my_hand()
         .iter()
@@ -691,8 +717,9 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
             card_id: card.card_id,
             face: card.face,
         })
-        .collect();
-    let card_poses = context
+        .collect::<Vec<_>>();
+    hand.sort_by(|left, right| left.card_key.cmp(&right.card_key));
+    let mut card_poses = context
         .db
         .visible_card_poses()
         .iter()
@@ -706,7 +733,8 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
             rotation_mdeg: [pose.rx_mdeg, pose.ry_mdeg, pose.rz_mdeg],
             sequence: pose.sequence,
         })
-        .collect();
+        .collect::<Vec<_>>();
+    card_poses.sort_by(|left, right| left.card_key.cmp(&right.card_key));
     let game = context
         .db
         .visible_room_games()
@@ -729,7 +757,7 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
             trump: game.trump,
             action_count: game.action_count,
         });
-    let revealed_cards = context
+    let mut revealed_cards = context
         .db
         .visible_revealed_cards()
         .iter()
@@ -737,7 +765,9 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
             card_key: card.card_key,
             face: card.face,
         })
-        .collect();
+        .collect::<Vec<_>>();
+    revealed_cards.sort_by(|left, right| left.card_key.cmp(&right.card_key));
+    let activity = activity_from(context);
     ClientSnapshot {
         identity,
         room_capability,
@@ -747,7 +777,23 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
         card_poses,
         game,
         revealed_cards,
+        activity,
     }
+}
+
+fn activity_from(context: &DbConnection) -> Vec<ActivityView> {
+    let mut activity = context
+        .db
+        .visible_activity()
+        .iter()
+        .map(|event| ActivityView {
+            sequence: event.sequence,
+            kind: event.kind,
+            summary: event.summary,
+        })
+        .collect::<Vec<_>>();
+    activity.sort_by_key(|event| event.sequence);
+    activity
 }
 
 fn room_capability_from(context: &DbConnection) -> Option<RoomCapability> {

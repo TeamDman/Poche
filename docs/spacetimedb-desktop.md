@@ -173,8 +173,11 @@ game window and does not alter shared table state. Escape from Options returns
 to the table menu; a second Escape resumes the table.
 
 The player roster beneath rotation snap is the authoritative membership view
-for this lobby. Only seated members have world avatars; unseated members remain
-visible in the roster without appearing in the middle of the table. Escape
+for this lobby. Directly below it, **Activity** shows the newest accepted public
+room actions: create/join/leave, seat changes, deal start, bids, and played
+cards. It never records an unplayed card face or a private-hand snapshot.
+Only seated members have world avatars; unseated members remain visible in the
+roster without appearing in the middle of the table. Escape
 opens the table menu. **Options** opens its own nested menu, while **Leave
 lobby** changes to **Confirm leave lobby** after the first click. Successful
 leave clears the active-room
@@ -207,8 +210,20 @@ authenticated member. A resumed device can therefore display and copy the
 code again without exposing other rooms' bearer capabilities.
 Switching accounts disconnects that process but does not leave. Explicit
 **Leave lobby** removes membership and active-room focus; a process crash or
-disconnect does not. Server presence is keyed by SDK connection ID, so a
-member remains online while any process using that identity is connected.
+disconnect does not. If a seated member explicitly leaves or stands during an
+active deal, the authority abandons that incomplete deal and clears its cards
+and action log. A later code-based join returns unseated to a coherent lobby;
+occupying both seats starts a fresh deal. This avoids inheriting a departed
+player's private hand or leaving the actor pointed at an empty seat. Server
+presence is keyed by SDK connection ID, so a member remains online while any
+process using that identity is connected.
+
+When a resumed identity accepts **Rejoin lobby**, roster avatars and cards are
+reconciled from the already-loaded subscription snapshot immediately; no bid or
+other mutation is needed to make the scene appear. If a public game projection
+says this player still owns cards but its sender-scoped hand rows have not yet
+arrived, the HUD says that the private hand is synchronizing and suppresses bid
+actions instead of claiming the round is complete.
 
 ## Reproducible windowless acceptance
 
@@ -229,13 +244,17 @@ Alice's card, waits until Bob observes its exact position/rotation, submits two
 legal bids and two legal plays, verifies both devices converge on two revealed
 cards in one winner's logical won zone, then starts a simultaneous second
 Alice process from Alice's same vault. That process must receive the resume
-offer and recover the same principal, seat, private hand, and exact lobby code.
+offer and recover the same principal, seat, private hand, roster, public card
+poses, activity history, and exact lobby code. After **Rejoin lobby**, the
+acceptance contract also requires rendered avatar/card counts to match that
+preloaded model before continuing.
 After it disconnects, Bob must still observe Alice online through her original
 connection. The puppet then captures the Escape table menu and armed leave
 confirmation. It also opens the nested Options menu, captures inverted-Y On,
 toggles and captures Off, and returns to the parent menu before explicitly
-leaving Alice, verifying the terminal screen, and
-verifies Bob's roster falls to one member. It writes:
+leaving Alice. It verifies the terminal screen and requires Bob to observe the
+public leave event, one remaining member, no stranded game projection, and no
+orphaned card poses. It writes:
 
 - `target/poche-puppet/acceptance-contact-sheet.png` — seated and moved views
   for Alice and Bob in one image;
@@ -286,8 +305,9 @@ clicking the human-facing button twice.
 
 Requests are atomically claimed from `requests/`, archived to `processed/`,
 and answered in `responses/`. Every response includes a semantic observation
-of the exact device. Join codes are omitted unless explicitly requested, and
-the endpoint exposes only the controlling player's private hand.
+of the exact device, the public activity stream, and diagnostic counts for
+rendered card/avatar entities. Join codes are omitted unless explicitly
+requested, and the endpoint exposes only the controlling player's private hand.
 
 ## Trust, privacy, and licensing
 

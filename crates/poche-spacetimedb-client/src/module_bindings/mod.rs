@@ -7,6 +7,7 @@
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
 pub mod active_room_type;
+pub mod activity_event_type;
 pub mod bid_reducer;
 pub mod card_pose_type;
 pub mod connection_presence_type;
@@ -29,11 +30,13 @@ pub mod room_secret_type;
 pub mod room_type;
 pub mod set_card_pose_reducer;
 pub mod take_seat_reducer;
+pub mod visible_activity_table;
 pub mod visible_card_poses_table;
 pub mod visible_revealed_cards_table;
 pub mod visible_room_games_table;
 
 pub use active_room_type::ActiveRoom;
+pub use activity_event_type::ActivityEvent;
 pub use bid_reducer::bid;
 pub use card_pose_type::CardPose;
 pub use connection_presence_type::ConnectionPresence;
@@ -56,6 +59,7 @@ pub use room_secret_type::RoomSecret;
 pub use room_type::Room;
 pub use set_card_pose_reducer::set_card_pose;
 pub use take_seat_reducer::take_seat;
+pub use visible_activity_table::*;
 pub use visible_card_poses_table::*;
 pub use visible_revealed_cards_table::*;
 pub use visible_room_games_table::*;
@@ -205,6 +209,7 @@ pub struct DbUpdate {
     my_room_capability: __sdk::TableUpdate<RoomSecret>,
     my_rooms: __sdk::TableUpdate<Room>,
     room_members: __sdk::TableUpdate<Member>,
+    visible_activity: __sdk::TableUpdate<ActivityEvent>,
     visible_card_poses: __sdk::TableUpdate<CardPose>,
     visible_revealed_cards: __sdk::TableUpdate<RevealedCard>,
     visible_room_games: __sdk::TableUpdate<RoomGame>,
@@ -228,6 +233,9 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
                 "room_members" => db_update
                     .room_members
                     .append(room_members_table::parse_table_update(table_update)?),
+                "visible_activity" => db_update
+                    .visible_activity
+                    .append(visible_activity_table::parse_table_update(table_update)?),
                 "visible_card_poses" => db_update
                     .visible_card_poses
                     .append(visible_card_poses_table::parse_table_update(table_update)?),
@@ -275,6 +283,9 @@ impl __sdk::DbUpdate for DbUpdate {
         diff.room_members = cache
             .apply_diff_to_table::<Member>("room_members", &self.room_members)
             .with_updates_by_pk(|row| &row.member_key);
+        diff.visible_activity = cache
+            .apply_diff_to_table::<ActivityEvent>("visible_activity", &self.visible_activity)
+            .with_updates_by_pk(|row| &row.event_key);
         diff.visible_card_poses = cache
             .apply_diff_to_table::<CardPose>("visible_card_poses", &self.visible_card_poses)
             .with_updates_by_pk(|row| &row.card_key);
@@ -305,6 +316,9 @@ impl __sdk::DbUpdate for DbUpdate {
                     .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "room_members" => db_update
                     .room_members
+                    .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "visible_activity" => db_update
+                    .visible_activity
                     .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "visible_card_poses" => db_update
                     .visible_card_poses
@@ -340,6 +354,9 @@ impl __sdk::DbUpdate for DbUpdate {
                 "room_members" => db_update
                     .room_members
                     .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "visible_activity" => db_update
+                    .visible_activity
+                    .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "visible_card_poses" => db_update
                     .visible_card_poses
                     .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
@@ -368,6 +385,7 @@ pub struct AppliedDiff<'r> {
     my_room_capability: __sdk::TableAppliedDiff<'r, RoomSecret>,
     my_rooms: __sdk::TableAppliedDiff<'r, Room>,
     room_members: __sdk::TableAppliedDiff<'r, Member>,
+    visible_activity: __sdk::TableAppliedDiff<'r, ActivityEvent>,
     visible_card_poses: __sdk::TableAppliedDiff<'r, CardPose>,
     visible_revealed_cards: __sdk::TableAppliedDiff<'r, RevealedCard>,
     visible_room_games: __sdk::TableAppliedDiff<'r, RoomGame>,
@@ -392,6 +410,11 @@ impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
         );
         callbacks.invoke_table_row_callbacks::<Room>("my_rooms", &self.my_rooms, event);
         callbacks.invoke_table_row_callbacks::<Member>("room_members", &self.room_members, event);
+        callbacks.invoke_table_row_callbacks::<ActivityEvent>(
+            "visible_activity",
+            &self.visible_activity,
+            event,
+        );
         callbacks.invoke_table_row_callbacks::<CardPose>(
             "visible_card_poses",
             &self.visible_card_poses,
@@ -1071,6 +1094,7 @@ impl __sdk::SpacetimeModule for RemoteModule {
         my_room_capability_table::register_table(client_cache);
         my_rooms_table::register_table(client_cache);
         room_members_table::register_table(client_cache);
+        visible_activity_table::register_table(client_cache);
         visible_card_poses_table::register_table(client_cache);
         visible_revealed_cards_table::register_table(client_cache);
         visible_room_games_table::register_table(client_cache);
@@ -1080,6 +1104,7 @@ impl __sdk::SpacetimeModule for RemoteModule {
         "my_room_capability",
         "my_rooms",
         "room_members",
+        "visible_activity",
         "visible_card_poses",
         "visible_revealed_cards",
         "visible_room_games",

@@ -46,7 +46,8 @@ use poche_bevy_spacetimedb::{
 };
 use poche_slug::{SlugFont, rasterize_text_rgba};
 use poche_spacetimedb_client::{
-    CardPoseView, ClientConfig, DEFAULT_DATABASE, DEFAULT_URI, RoomCapability, valid_join_code,
+    CardPoseView, ClientConfig, ClientSnapshot, DEFAULT_DATABASE, DEFAULT_URI, RoomCapability,
+    valid_join_code,
 };
 use poche_spatial::{
     AabbMm, HalfExtentsMm, LayoutId, ObjectId, Point3Mm, SceneObjectKind, SpatialLayout, TableId,
@@ -542,6 +543,7 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
                 sync_room_labels,
                 sync_card_entities,
                 sync_player_entities,
+                update_rendered_scene_metrics,
                 update_table_camera,
                 update_hand_camera,
                 drag_cards,
@@ -575,6 +577,8 @@ struct UiState {
     confirm_leave: bool,
     escape_menu_open: bool,
     escape_menu_page: EscapeMenuPage,
+    rendered_card_count: usize,
+    rendered_player_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -631,6 +635,8 @@ impl UiState {
             confirm_leave: false,
             escape_menu_open: false,
             escape_menu_page: EscapeMenuPage::Main,
+            rendered_card_count: 0,
+            rendered_player_count: 0,
         }
     }
 }
@@ -696,6 +702,9 @@ struct RotationSnapLabel;
 
 #[derive(Component)]
 struct PlayerListLabel;
+
+#[derive(Component)]
+struct ActivityLogLabel;
 
 #[derive(Component)]
 struct EscapeMenuRoot;
@@ -2052,6 +2061,21 @@ fn enter_room(
                 BackgroundColor(Color::srgba(0.035, 0.08, 0.085, 0.88)),
             ));
             root.spawn((
+                ActivityLogLabel,
+                Text::new("ACTIVITY\nWaiting for public activity…"),
+                TextFont::from_font_size(14.),
+                TextColor(Color::srgb(0.78, 0.84, 0.8)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: px(22.),
+                    top: px(238.),
+                    width: px(300.),
+                    padding: px(12.).all(),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.035, 0.08, 0.085, 0.88)),
+            ));
+            root.spawn((
                 RoomCodeLabel,
                 Text::new("Lobby code"),
                 TextFont::from_font_size(17.),
@@ -2363,6 +2387,7 @@ fn sync_room_labels(
             Without<HandSummary>,
             Without<LatencyLabel>,
             Without<PlayerListLabel>,
+            Without<ActivityLogLabel>,
         ),
     >,
     mut seats: Query<
@@ -2373,6 +2398,7 @@ fn sync_room_labels(
             Without<LatencyLabel>,
             Without<UiAction>,
             Without<PlayerListLabel>,
+            Without<ActivityLogLabel>,
         ),
     >,
     mut hands: Query<
@@ -2383,6 +2409,7 @@ fn sync_room_labels(
             Without<SeatLabel>,
             Without<LatencyLabel>,
             Without<PlayerListLabel>,
+            Without<ActivityLogLabel>,
         ),
     >,
     mut latency: Query<
@@ -2393,6 +2420,7 @@ fn sync_room_labels(
             Without<HandSummary>,
             Without<SeatLabel>,
             Without<PlayerListLabel>,
+            Without<ActivityLogLabel>,
         ),
     >,
     mut game_status: Query<
@@ -2404,6 +2432,7 @@ fn sync_room_labels(
             Without<SeatLabel>,
             Without<LatencyLabel>,
             Without<PlayerListLabel>,
+            Without<ActivityLogLabel>,
         ),
     >,
     mut player_list: Query<
@@ -2415,6 +2444,19 @@ fn sync_room_labels(
             Without<HandSummary>,
             Without<LatencyLabel>,
             Without<GameStatusLabel>,
+            Without<ActivityLogLabel>,
+        ),
+    >,
+    mut activity_log: Query<
+        &mut Text,
+        (
+            With<ActivityLogLabel>,
+            Without<RoomCodeLabel>,
+            Without<SeatLabel>,
+            Without<HandSummary>,
+            Without<LatencyLabel>,
+            Without<GameStatusLabel>,
+            Without<PlayerListLabel>,
         ),
     >,
     mut actions: Query<(&UiAction, &mut Node), Without<SeatLabel>>,
@@ -2452,6 +2494,10 @@ fn sync_room_labels(
     for mut text in &mut hands {
         text.0 = if own_seat.is_none() {
             "Take a seat; cards are dealt when both seats are occupied.".into()
+        } else if model.snapshot.game.is_none() {
+            "Waiting for both seats; the authority will deal when the table is ready.".into()
+        } else if private_hand_is_synchronizing(&model.snapshot) {
+            "Synchronizing your private hand… actions are temporarily disabled.".into()
         } else if model.snapshot.hand.is_empty() {
             "Your hand is empty; the first round is complete.".into()
         } else {
@@ -2516,6 +2562,21 @@ fn sync_room_labels(
             format!("PLAYERS\n{}", rows.join("\n"))
         };
     }
+    for mut text in &mut activity_log {
+        let rows = model
+            .snapshot
+            .activity
+            .iter()
+            .rev()
+            .take(8)
+            .map(|event| format!("#{}  {}", event.sequence + 1, event.summary))
+            .collect::<Vec<_>>();
+        text.0 = if rows.is_empty() {
+            "ACTIVITY\nNo public actions yet.".into()
+        } else {
+            format!("ACTIVITY · newest first\n{}", rows.join("\n"))
+        };
+    }
     for (action, mut node) in &mut actions {
         node.display =
             match action {
@@ -2539,11 +2600,7 @@ fn sync_room_labels(
                     }
                 }
                 UiAction::Bid(tricks) => {
-                    let may_bid = model.snapshot.game.as_ref().is_some_and(|game| {
-                        game.phase == "bidding"
-                            && game.actor_seat == own_seat
-                            && *tricks <= game.hand_size
-                    });
+                    let may_bid = may_bid(&model.snapshot, *tricks);
                     if may_bid {
                         Display::Flex
                     } else {
@@ -2583,6 +2640,29 @@ fn sync_room_labels(
                 | UiAction::Join => continue,
             };
     }
+}
+
+fn own_public_hand_count(snapshot: &ClientSnapshot) -> Option<u8> {
+    let seat = usize::from(snapshot.own_seat()?);
+    snapshot
+        .game
+        .as_ref()
+        .and_then(|game| game.hand_counts.get(seat).copied())
+}
+
+fn private_hand_is_synchronizing(snapshot: &ClientSnapshot) -> bool {
+    snapshot.hand.is_empty() && own_public_hand_count(snapshot).is_some_and(|count| count > 0)
+}
+
+fn may_bid(snapshot: &ClientSnapshot, tricks: u8) -> bool {
+    let own_seat = snapshot.own_seat();
+    !snapshot.hand.is_empty()
+        && snapshot.game.as_ref().is_some_and(|game| {
+            game.phase == "bidding"
+                && game.actor_seat == own_seat
+                && own_public_hand_count(snapshot) == Some(game.hand_size)
+                && tricks <= game.hand_size
+        })
 }
 
 fn update_rotation_snap_labels(
@@ -2653,12 +2733,13 @@ fn sync_card_entities(
     mut poses: ResMut<PoseDisplay>,
     existing: Query<(Entity, &CardVisual)>,
     room: Query<(), With<RoomRoot>>,
+    entered_room: Query<(), (With<RoomRoot>, Added<RoomRoot>)>,
     assets: Res<SpatialAssets>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
 ) {
-    if !model.is_changed() || room.is_empty() {
+    if (!model.is_changed() && entered_room.is_empty()) || room.is_empty() {
         return;
     }
     let wanted: HashSet<_> = model
@@ -2820,9 +2901,11 @@ fn sync_player_entities(
     layout: Res<CanonicalLayout>,
     assets: Res<SpatialAssets>,
     existing: Query<(Entity, &SpatialPlayer)>,
+    room: Query<(), With<RoomRoot>>,
+    entered_room: Query<(), (With<RoomRoot>, Added<RoomRoot>)>,
     mut commands: Commands,
 ) {
-    if !model.is_changed() {
+    if (!model.is_changed() && entered_room.is_empty()) || room.is_empty() {
         return;
     }
     for (entity, _) in &existing {
@@ -2853,6 +2936,19 @@ fn sync_player_entities(
             }),
             Transform::from_translation(position),
         ));
+    }
+}
+
+fn update_rendered_scene_metrics(
+    cards: Query<(), With<CardVisual>>,
+    players: Query<(), With<SpatialPlayer>>,
+    mut state: ResMut<UiState>,
+) {
+    let card_count = cards.iter().count();
+    let player_count = players.iter().count();
+    if state.rendered_card_count != card_count || state.rendered_player_count != player_count {
+        state.rendered_card_count = card_count;
+        state.rendered_player_count = player_count;
     }
 }
 
@@ -3376,6 +3472,59 @@ fn update_status_labels(state: Res<UiState>, mut labels: Query<&mut Text, With<S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use poche_spacetimedb_client::{GameView, HandCardView, MemberView};
+
+    fn bidding_snapshot(private_hand_ready: bool) -> ClientSnapshot {
+        ClientSnapshot {
+            identity: Some("alice-id".into()),
+            members: vec![MemberView {
+                identity: "alice-id".into(),
+                display_name: "Alice".into(),
+                seat: Some(0),
+                connected: true,
+                is_self: true,
+            }],
+            hand: private_hand_ready
+                .then(|| HandCardView {
+                    card_key: "room:alice:card-0-0".into(),
+                    card_id: "card-0-0".into(),
+                    face: "A♠".into(),
+                })
+                .into_iter()
+                .collect(),
+            game: Some(GameView {
+                phase: "bidding".into(),
+                actor_seat: Some(0),
+                dealer_seat: Some(0),
+                round_index: 0,
+                hand_size: 1,
+                hand_counts: [1, 1],
+                bids: [None, None],
+                trick_count: 0,
+                trick_seats: [None, None],
+                trick_cards: [None, None],
+                tricks_won: [0, 0],
+                scores: [0, 0],
+                pot_cents: 50,
+                trump: Some(0),
+                action_count: 0,
+            }),
+            ..ClientSnapshot::default()
+        }
+    }
+
+    #[test]
+    fn bidding_waits_for_the_private_hand_view_to_match_the_public_projection() {
+        let synchronizing = bidding_snapshot(false);
+        assert!(private_hand_is_synchronizing(&synchronizing));
+        assert!(!may_bid(&synchronizing, 0));
+
+        let ready = bidding_snapshot(true);
+        assert!(!private_hand_is_synchronizing(&ready));
+        assert!(may_bid(&ready, 0));
+        assert!(may_bid(&ready, 1));
+        assert!(!may_bid(&ready, 2));
+    }
 
     #[test]
     fn pose_transform_maps_network_units_at_the_rendering_boundary() {

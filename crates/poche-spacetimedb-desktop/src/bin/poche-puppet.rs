@@ -226,6 +226,7 @@ struct AcceptanceReport {
     completed_actions: u64,
     final_phase: String,
     revealed_cards: usize,
+    public_activity_events: usize,
     winning_logical_location: String,
     checks: AcceptanceChecks,
     peer_members_after_leave: usize,
@@ -361,13 +362,28 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     send(alice_root, FileControlAction::TakeSeat { seat: 0 })?;
     send(bob_root, FileControlAction::TakeSeat { seat: 1 })?;
     let alice_ready = wait_until(alice_root, |observation| {
-        observation.own_hand.len() == 1 && observation.game.is_some()
+        observation.own_hand.len() == 1
+            && observation.game.is_some()
+            && observation.rendered_card_count == observation.card_poses.len()
+            && observation.rendered_player_count == 2
     })?;
     let bob_ready = wait_until(bob_root, |observation| {
-        observation.own_hand.len() == 1 && observation.game.is_some()
+        observation.own_hand.len() == 1
+            && observation.game.is_some()
+            && observation.rendered_card_count == observation.card_poses.len()
+            && observation.rendered_player_count == 2
     })?;
     if !alice_ready.revealed_cards.is_empty() || !bob_ready.revealed_cards.is_empty() {
         return Err("the deal exposed a card face through the public revealed-card view".into());
+    }
+    for required in ["room-created", "room-joined", "seat-taken", "deal-started"] {
+        if !alice_ready
+            .activity
+            .iter()
+            .any(|event| event.kind == required)
+        {
+            return Err(format!("initial public activity omitted {required:?}"));
+        }
     }
     let distinct_private_faces = alice_ready.own_hand[0].face != bob_ready.own_hand[0].face;
     if !distinct_private_faces {
@@ -457,6 +473,16 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     if alice_resolved.game != bob_resolved.game || !same_reveals {
         return Err("the two devices did not converge on one public resolved trick".into());
     }
+    if alice_resolved.activity != bob_resolved.activity
+        || !["bid", "card-played"].into_iter().all(|required| {
+            alice_resolved
+                .activity
+                .iter()
+                .any(|event| event.kind == required)
+        })
+    {
+        return Err("the two devices did not converge on one public activity history".into());
+    }
     let resolved_alice = capture(alice_root)?;
     let resolved_bob = capture(bob_root)?;
     let captures = [seated_alice, seated_bob, resolved_alice, resolved_bob];
@@ -489,9 +515,12 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
         if selected.viewer_identity != alice_resolved.viewer_identity
             || selected.own_seat != alice_resolved.own_seat
             || selected.own_hand != alice_resolved.own_hand
+            || selected.members != alice_resolved.members
+            || selected.card_poses != alice_resolved.card_poses
+            || selected.activity != alice_resolved.activity
         {
             return Err(
-                "the resumed Alice device did not recover the same identity, seat, and hand".into(),
+                "the resumed Alice device did not hydrate the same identity, seat, hand, roster, cards, and activity before entering the table".into(),
             );
         }
         let recovered_capability = send(
@@ -508,9 +537,24 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
             );
         }
         resume_offer_capture = Some(capture(&mirror_root)?);
-        let resumed = send(&mirror_root, FileControlAction::ResumeLobby)?.observation;
-        if resumed.surface != "table" {
-            return Err("accepting the resume offer did not open the table".into());
+        send(&mirror_root, FileControlAction::ResumeLobby)?;
+        let resumed = wait_until(&mirror_root, |observation| {
+            observation.surface == "table"
+                && observation.rendered_player_count
+                    == observation
+                        .members
+                        .iter()
+                        .filter(|member| member.seat.is_some())
+                        .count()
+                && observation.rendered_card_count == observation.card_poses.len()
+        })?;
+        if resumed.members != alice_resolved.members
+            || resumed.card_poses != alice_resolved.card_poses
+            || resumed.activity != alice_resolved.activity
+        {
+            return Err(
+                "the resumed table did not render its preloaded authoritative model".into(),
+            );
         }
         Ok(())
     })();
@@ -562,11 +606,17 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
                 .members
                 .first()
                 .is_some_and(|member| member.is_self)
+            && observation.game.is_none()
+            && observation.card_poses.is_empty()
+            && observation
+                .activity
+                .last()
+                .is_some_and(|event| event.kind == "room-left")
     })?;
     let menu_after_leave = capture(alice_root)?;
 
     let report = AcceptanceReport {
-        schema: "poche-spacetimedb-multi-device-acceptance-v7",
+        schema: "poche-spacetimedb-multi-device-acceptance-v8",
         completed_unix_ms: unix_millis()?,
         authority_profile: authority.profile.clone(),
         authority_uri: authority.uri.clone(),
@@ -598,6 +648,7 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
             .as_ref()
             .map_or_else(|| "missing".into(), |game| game.phase.clone()),
         revealed_cards: alice_resolved.revealed_cards.len(),
+        public_activity_events: alice_resolved.activity.len(),
         winning_logical_location: alice_resolved
             .card_poses
             .first()
