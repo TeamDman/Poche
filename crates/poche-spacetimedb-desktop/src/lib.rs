@@ -24,6 +24,7 @@ use bevy::{
     asset::RenderAssetUsages,
     camera::{RenderTarget, ScalingMode, Viewport, visibility::RenderLayers},
     clipboard::{Clipboard, ClipboardRead},
+    core_pipeline::core_3d::Opaque3d,
     dev_tools::fps_overlay::{
         FpsOverlayConfig, FpsOverlayPlugin, FpsOverlaySystems, FrameTimeGraphConfig,
     },
@@ -32,10 +33,14 @@ use bevy::{
     log::LogPlugin,
     prelude::*,
     render::{
-        RenderPlugin,
-        render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
+        Render, RenderApp, RenderPlugin, RenderSystems,
+        extract_component::{ExtractComponent, ExtractComponentPlugin},
+        render_phase::ViewBinnedRenderPhases,
+        render_resource::{
+            Extent3d, PipelineCache, TextureDimension, TextureFormat, TextureUsages,
+        },
         settings::{Backends, WgpuSettings},
-        view::screenshot::Screenshot,
+        view::{ExtractedView, screenshot::Screenshot},
     },
     text::{EditableText, TextCursorStyle, TextEdit},
     window::{ExitCondition, PresentMode, PrimaryWindow, WindowResized, WindowResolution},
@@ -56,7 +61,13 @@ use poche_spatial::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 const CARD_PICK_RADIUS_PX: f32 = 68.0;
 const CARD_WORLD_WIDTH: f32 = 0.064;
@@ -499,6 +510,7 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
 
     let mut app = App::new();
     app.add_plugins(plugins);
+    app.add_plugins(TableRenderReadinessPlugin);
     if let Some(path) = &log_path {
         tracing::info!(log_file = %path.display(), "Poche durable logging initialized");
     }
@@ -600,10 +612,8 @@ struct UiState {
     escape_menu_page: EscapeMenuPage,
     rendered_card_count: usize,
     rendered_player_count: usize,
-    room_scene_ready_frames: u8,
+    room_scene_generation: u64,
 }
-
-const ROOM_SCENE_WARMUP_FRAMES: u8 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UiScreen {
@@ -662,7 +672,7 @@ impl UiState {
             escape_menu_page: EscapeMenuPage::Main,
             rendered_card_count: 0,
             rendered_player_count: 0,
-            room_scene_ready_frames: 0,
+            room_scene_generation: 0,
         }
     }
 }
@@ -682,8 +692,74 @@ struct RoomRoot;
 #[derive(Component)]
 struct PocheUiCamera;
 
-#[derive(Component)]
-struct TabletopCamera;
+#[derive(Component, Clone, ExtractComponent)]
+struct TabletopCamera {
+    scene_generation: u64,
+}
+
+#[derive(Clone, Default, Resource)]
+struct TableRenderReadiness(Arc<AtomicU64>);
+
+impl TableRenderReadiness {
+    fn mark_rendered(&self, scene_generation: u64) {
+        self.0.fetch_max(scene_generation, Ordering::Release);
+    }
+
+    fn has_rendered(&self, scene_generation: u64) -> bool {
+        scene_generation != 0 && self.0.load(Ordering::Acquire) >= scene_generation
+    }
+}
+
+struct TableRenderReadinessPlugin;
+
+impl Plugin for TableRenderReadinessPlugin {
+    fn build(&self, app: &mut App) {
+        let readiness = TableRenderReadiness::default();
+        app.insert_resource(readiness.clone())
+            .add_plugins(ExtractComponentPlugin::<TabletopCamera>::default());
+
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        render_app
+            .insert_resource(readiness)
+            .add_systems(Render, report_rendered_table.after(RenderSystems::Render));
+    }
+}
+
+fn report_rendered_table(
+    readiness: Res<TableRenderReadiness>,
+    pipeline_cache: Res<PipelineCache>,
+    opaque_phases: Res<ViewBinnedRenderPhases<Opaque3d>>,
+    cameras: Query<(&TabletopCamera, &ExtractedView)>,
+) {
+    for (camera, view) in &cameras {
+        let Some(phase) = opaque_phases.get(&view.retained_view_entity) else {
+            continue;
+        };
+        let has_meshes = !phase.multidrawable_meshes.is_empty()
+            || !phase.batchable_meshes.is_empty()
+            || !phase.unbatchable_meshes.is_empty();
+        let pipelines_ready = phase
+            .multidrawable_meshes
+            .keys()
+            .all(|key| pipeline_cache.get_render_pipeline(key.pipeline).is_some())
+            && phase
+                .batchable_meshes
+                .keys()
+                .all(|(key, _)| pipeline_cache.get_render_pipeline(key.pipeline).is_some())
+            && phase
+                .unbatchable_meshes
+                .keys()
+                .all(|(key, _)| pipeline_cache.get_render_pipeline(key.pipeline).is_some());
+        if has_meshes && pipelines_ready {
+            // This runs after the render graph. The next main-world update can
+            // remove the opaque loading curtain without exposing a frame in
+            // which Bevy has not yet drawn the static table geometry.
+            readiness.mark_rendered(camera.scene_generation);
+        }
+    }
+}
 
 #[derive(Component)]
 struct HandCamera;
@@ -946,12 +1022,13 @@ fn spawn_spatial_cameras(
     commands: &mut Commands,
     surface: &RenderSurface,
     table_transform: Transform,
+    scene_generation: u64,
 ) {
     let mut camera = commands.spawn((
         Camera3d::default(),
         Camera::default(),
         table_transform,
-        TabletopCamera,
+        TabletopCamera { scene_generation },
         RenderLayers::layer(0),
     ));
     if let Some(target) = surface.render_target() {
@@ -1782,7 +1859,7 @@ fn begin_joining_lobby(
 
 fn begin_room_loading(state: &mut UiState, status: &str) {
     state.screen = UiScreen::LoadingRoom;
-    state.room_scene_ready_frames = 0;
+    state.room_scene_generation = state.room_scene_generation.saturating_add(1).max(1);
     state.busy = true;
     state.status = status.into();
 }
@@ -1806,6 +1883,7 @@ fn remember_capability(state: &UiState, vault: &mut IdentityVault) {
 fn advance_room_loading(
     mut state: ResMut<UiState>,
     model: Res<BridgeModel>,
+    render_readiness: Res<TableRenderReadiness>,
     table_cameras: Query<(), With<TabletopCamera>>,
 ) {
     if state.screen != UiScreen::LoadingRoom {
@@ -1814,21 +1892,15 @@ fn advance_room_loading(
     if !room_projection_ready(&model.snapshot, state.capability.as_ref())
         || !room_scene_projection_ready(&model.snapshot, &state, !table_cameras.is_empty())
     {
-        state.room_scene_ready_frames = 0;
         return;
     }
-    if !room_scene_warmup_complete(state.room_scene_ready_frames) {
-        state.room_scene_ready_frames += 1;
+    if !render_readiness.has_rendered(state.room_scene_generation) {
         return;
     }
     state.screen = UiScreen::Table;
     state.busy = false;
     state.pending_flow = None;
     state.status = "The synchronized table is ready.".into();
-}
-
-fn room_scene_warmup_complete(ready_frames: u8) -> bool {
-    ready_frames >= ROOM_SCENE_WARMUP_FRAMES
 }
 
 fn room_scene_projection_ready(
@@ -2202,7 +2274,6 @@ fn enter_room(
         drag.card_key = None;
         drag.reset_rotation_repeat();
         camera_controller.last_seat = CameraSeat::Uninitialized;
-        state.room_scene_ready_frames = 0;
         for entity in &table_cameras {
             commands.entity(entity).despawn();
         }
@@ -2223,6 +2294,7 @@ fn enter_room(
             &mut commands,
             &surface,
             camera_controller.current.transform(),
+            state.room_scene_generation,
         );
     }
     if state.screen == UiScreen::LoadingRoom || !room.is_empty() {
@@ -3807,7 +3879,7 @@ mod tests {
     }
 
     #[test]
-    fn loading_does_not_reveal_an_unseated_table_before_the_3d_scene_frame() {
+    fn loading_does_not_reveal_an_unseated_table_before_the_render_world_confirms_it() {
         let capability = RoomCapability {
             room_id: "room-one".into(),
             join_code: "PCH-1111-1111-1111-1111".into(),
@@ -3832,14 +3904,23 @@ mod tests {
                 is_self: true,
             },
         ]);
-        let state = UiState::default();
+        let state = UiState {
+            room_scene_generation: 2,
+            ..UiState::default()
+        };
+        let render_readiness = TableRenderReadiness::default();
 
         assert!(room_projection_ready(&snapshot, Some(&capability)));
         assert!(!room_scene_projection_ready(&snapshot, &state, false));
         assert!(room_scene_projection_ready(&snapshot, &state, true));
-        assert!(!room_scene_warmup_complete(0));
-        assert!(!room_scene_warmup_complete(1));
-        assert!(room_scene_warmup_complete(2));
+        assert!(!render_readiness.has_rendered(state.room_scene_generation));
+        render_readiness.mark_rendered(1);
+        assert!(
+            !render_readiness.has_rendered(state.room_scene_generation),
+            "a render confirmation from an older room scene must not reveal this one"
+        );
+        render_readiness.mark_rendered(state.room_scene_generation);
+        assert!(render_readiness.has_rendered(state.room_scene_generation));
     }
 
     #[test]

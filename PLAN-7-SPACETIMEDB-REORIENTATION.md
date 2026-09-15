@@ -3,7 +3,7 @@
 **Plan status:** Active; the create/join/seat/private-hand/shared-pose MVP and first oracle-backed trick are accepted, while multi-round play, recovery, and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-15 (implemented recent-lobby recovery, coherent room loading, durable crash logs, and the leave-to-title resize fix)
+**Last updated:** 2026-09-15 (renderer-confirmed room loading, recent-lobby recovery, durable crash logs, and the leave-to-title resize fix)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
@@ -469,6 +469,18 @@ play, and formal lifecycle parity remain open.
   Thirty-one focused tests, strict Clippy, and full Maincloud acceptance pass;
   the acceptance measured 61.57 ms authority response and 128.01 ms peer
   observation, and all four reviewed captures contained the 3D table.
+- A second visible two-window run proved that main-world update cycles were
+  still the wrong evidence boundary: both unseated clients could reveal the
+  complete table HUD over a black scene, then draw the 3D table later without
+  input. The loading gate now consumes a generation-scoped signal emitted by
+  Bevy's render world only after the table camera has a non-empty opaque 3D
+  phase, every referenced render pipeline is compiled, and the render graph
+  has run. An older scene generation cannot release a newer loading screen.
+  The corrected regression is
+  `loading_does_not_reveal_an_unseated_table_before_the_render_world_confirms_it`.
+  The two-device Maincloud acceptance remained green at 85.37 ms authority
+  response and 142.85 ms peer observation, with all reviewed final captures
+  containing the rendered table.
 - **Intent audit pass 1 — extraction:** reread the full current request and
   extracted six independent requirements: Escape-menu stand, per-identity
   post-leave history, coherent join/rejoin loading, exact maximize crash,
@@ -492,6 +504,16 @@ play, and formal lifecycle parity remain open.
   loading screen visible rather than replacing blackness with a second blank
   state, covers the zero-card/zero-seated-player lobby shown by the user, and
   still requires private card/player entities before revealing a resumed deal.
+- **Renderer follow-up extraction pass:** preserved the user's exact second
+  failure: two standing identities, zero cards, correct HUD, no loading curtain,
+  a black 3D region, and eventual recovery without user input.
+- **Renderer follow-up traceability pass:** replaced the main-world warmup
+  premise in U42 with U43's render-world generation signal and mapped it to the
+  focused regression, strict build gates, and two-device acceptance.
+- **Renderer follow-up adversarial omission pass:** checked that the gate does
+  not use an arbitrary longer delay, cannot accept stale evidence from a prior
+  room, supports a legitimate zero-avatar/zero-card lobby, and retains the
+  table-scoped camera teardown which fixed leave-to-title resize crashes.
 
 This advances T3.3, T4.1, T4.5, T6.2, T6.3, T6.5, and T7.1. It does not yet
 close unavailable-authority retry/backoff, real process restart, final-member
@@ -542,7 +564,8 @@ stale-code rejection, or complete multi-round play.
 | U39 | The Escape menu should contain a nested Options menu with a camera-Y inversion toggle, and the default vertical response should be the opposite of the current behavior. | Model parent/options navigation explicitly, apply the toggle only to local RMB vertical orbit, default it to inverted, and verify navigation plus both response signs. | — |
 | U40 | The table needs a public activity history below its player list, and a resumed client must render subscribed players/cards immediately without waiting for another action. Leaving/rejoining may not strand bidding controls against an absent private hand. | Store and subscribe only hidden-information-safe activity; invalidate Bevy reconciliation on table entry; expose rendered counts to the puppet; distinguish disconnect from explicit seat-vacating leave; suppress actions during private-view synchronization. | — |
 | U41 | Stand belongs in the Escape menu; an identity needs recent-lobby rejoin after explicit leave; join/rejoin must hide partial 3D hydration behind a loading screen; leaving then maximizing the title must not crash; ordinary crashes need durable app-data logs and a readable terminal. | Move infrequent stand, persist bounded per-identity bearer history, gate table entry on a coherent projection, scope spatial cameras to the table lifecycle, and add durable logging plus a terminal-aware panic receipt. Extend file control so the exact visible resize flow is reproducible. | — |
-| U42 | The loading screen must remain visible while the 3D scene is absent; semantic room readiness alone must not reveal a black table with only HUD elements. | Build spatial cameras and subscribed entities behind the opaque loading frontend. Require a present camera, matching rendered counts, and completed scene-update cycles before switching to the table UI. | — |
+| U42 | The loading screen must remain visible while the 3D scene is absent; semantic room readiness alone must not reveal a black table with only HUD elements. | Build spatial cameras and subscribed entities behind the opaque loading frontend. Require a present camera, matching rendered counts, and completed scene-update cycles before switching to the table UI. | U43 |
+| U43 | Both clients still revealed the HUD over black 3D regions after the U42 update-cycle gate, then recovered without input; loading must follow actual renderer progress. | Replace main-world frame counting with generation-scoped Bevy render-world evidence: a non-empty table-camera opaque phase, compiled referenced pipelines, and a completed render-graph pass. | — |
 
 ## Guidance traceability
 
@@ -567,6 +590,7 @@ stale-code rejection, or complete multi-round play.
 | U39, U40 | T2.2, T2.3, T4.5, T6.2, T6.5 | Nested-options captures, converged public activity, pre-action resume-scene counts, and coherent post-leave projection |
 | U41 | T3.3, T4.1, T4.5, T6.2, T6.3, T6.5, T7.1 | Recent-lobby title view, loading readiness tests, durable panic log, and a live table -> leave -> title -> maximize puppet receipt |
 | U42 | T4.5, T6.2 | Exact unseated-scene regression plus reviewed two-client captures in which every revealed table surface contains the 3D scene |
+| U43 | T4.5, T6.2 | Render-world generation regression, strict desktop tests/Clippy, and two-device acceptance that cannot complete unless the GPU image target reports readiness |
 
 ## Purpose
 

@@ -172,9 +172,13 @@ and the corresponding shared card poses form one coherent projection. While
 that opaque loading surface remains visible, Poche creates the table and hand
 cameras and reconciles the subscribed card/player entities behind it. The
 table HUD is revealed only after the camera exists, rendered entity counts
-match the projection, and two complete scene-update cycles have elapsed. This
-prevents a semantic-ready but visually black table from appearing between the
-loading screen and the first 3D frame.
+match the projection, and Bevy's render world confirms that the table camera's
+opaque 3D phase has compiled pipelines and completed a render-graph pass. The
+confirmation carries a room-scene generation, so a completed frame from an
+older lobby cannot unlock a newly joined one. This prevents a semantic-ready
+but visually black table from appearing between the loading screen and the
+first 3D frame; ordinary main-world update counts are not treated as rendering
+evidence.
 
 RMB vertical orbit is inverted by default, the opposite of the original
 prototype response. Open **Escape → Options** and activate **Invert camera Y:
