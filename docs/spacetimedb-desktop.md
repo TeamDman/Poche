@@ -168,8 +168,13 @@ peer interpolates subscribed updates.
 
 Create, join, and rejoin first show **Preparing the table**. Poche keeps that
 loading surface until the authoritative room, this member, the private hand,
-and the corresponding shared card poses form one coherent projection. It does
-not expose the table HUD over a black or partially hydrated 3D scene.
+and the corresponding shared card poses form one coherent projection. While
+that opaque loading surface remains visible, Poche creates the table and hand
+cameras and reconciles the subscribed card/player entities behind it. The
+table HUD is revealed only after the camera exists, rendered entity counts
+match the projection, and two complete scene-update cycles have elapsed. This
+prevents a semantic-ready but visually black table from appearing between the
+loading screen and the first 3D frame.
 
 RMB vertical orbit is inverted by default, the opposite of the original
 prototype response. Open **Escape → Options** and activate **Invert camera Y:

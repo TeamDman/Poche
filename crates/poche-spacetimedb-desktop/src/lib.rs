@@ -600,8 +600,10 @@ struct UiState {
     escape_menu_page: EscapeMenuPage,
     rendered_card_count: usize,
     rendered_player_count: usize,
-    room_loading_frames: u8,
+    room_scene_ready_frames: u8,
 }
+
+const ROOM_SCENE_WARMUP_FRAMES: u8 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UiScreen {
@@ -660,7 +662,7 @@ impl UiState {
             escape_menu_page: EscapeMenuPage::Main,
             rendered_card_count: 0,
             rendered_player_count: 0,
-            room_loading_frames: 0,
+            room_scene_ready_frames: 0,
         }
     }
 }
@@ -1780,7 +1782,7 @@ fn begin_joining_lobby(
 
 fn begin_room_loading(state: &mut UiState, status: &str) {
     state.screen = UiScreen::LoadingRoom;
-    state.room_loading_frames = 2;
+    state.room_scene_ready_frames = 0;
     state.busy = true;
     state.status = status.into();
 }
@@ -1801,21 +1803,47 @@ fn remember_capability(state: &UiState, vault: &mut IdentityVault) {
     }
 }
 
-fn advance_room_loading(mut state: ResMut<UiState>, model: Res<BridgeModel>) {
+fn advance_room_loading(
+    mut state: ResMut<UiState>,
+    model: Res<BridgeModel>,
+    table_cameras: Query<(), With<TabletopCamera>>,
+) {
     if state.screen != UiScreen::LoadingRoom {
         return;
     }
-    if state.room_loading_frames > 0 {
-        state.room_loading_frames -= 1;
+    if !room_projection_ready(&model.snapshot, state.capability.as_ref())
+        || !room_scene_projection_ready(&model.snapshot, &state, !table_cameras.is_empty())
+    {
+        state.room_scene_ready_frames = 0;
         return;
     }
-    if !room_projection_ready(&model.snapshot, state.capability.as_ref()) {
+    if !room_scene_warmup_complete(state.room_scene_ready_frames) {
+        state.room_scene_ready_frames += 1;
         return;
     }
     state.screen = UiScreen::Table;
     state.busy = false;
     state.pending_flow = None;
     state.status = "The synchronized table is ready.".into();
+}
+
+fn room_scene_warmup_complete(ready_frames: u8) -> bool {
+    ready_frames >= ROOM_SCENE_WARMUP_FRAMES
+}
+
+fn room_scene_projection_ready(
+    snapshot: &ClientSnapshot,
+    state: &UiState,
+    table_camera_exists: bool,
+) -> bool {
+    let expected_players = snapshot
+        .members
+        .iter()
+        .filter(|member| member.seat.is_some())
+        .count();
+    table_camera_exists
+        && state.rendered_card_count == snapshot.card_poses.len()
+        && state.rendered_player_count == expected_players
 }
 
 fn room_projection_ready(snapshot: &ClientSnapshot, capability: Option<&RoomCapability>) -> bool {
@@ -2158,8 +2186,9 @@ fn enter_room(
     mut camera_controller: ResMut<TableCameraController>,
     mut commands: Commands,
 ) {
-    let should_show_table = state.screen == UiScreen::Table && model.snapshot.room_id().is_some();
-    if !should_show_table {
+    let should_prepare_table = model.snapshot.room_id().is_some()
+        && matches!(state.screen, UiScreen::LoadingRoom | UiScreen::Table);
+    if !should_prepare_table {
         for entity in &room {
             commands.entity(entity).despawn();
         }
@@ -2173,6 +2202,7 @@ fn enter_room(
         drag.card_key = None;
         drag.reset_rotation_repeat();
         camera_controller.last_seat = CameraSeat::Uninitialized;
+        state.room_scene_ready_frames = 0;
         for entity in &table_cameras {
             commands.entity(entity).despawn();
         }
@@ -2187,7 +2217,15 @@ fn enter_room(
         state.escape_menu_page = EscapeMenuPage::Main;
         return;
     }
-    if !room.is_empty() {
+    if table_cameras.is_empty() && hand_cameras.is_empty() {
+        camera_controller.reset_for_seat(model.snapshot.own_seat(), true);
+        spawn_spatial_cameras(
+            &mut commands,
+            &surface,
+            camera_controller.current.transform(),
+        );
+    }
+    if state.screen == UiScreen::LoadingRoom || !room.is_empty() {
         return;
     }
     for entity in &frontend {
@@ -2198,14 +2236,6 @@ fn enter_room(
     };
     ui_camera.order = 10;
     ui_camera.clear_color = ui_camera_clear_for_screen(UiScreen::Table);
-    if table_cameras.is_empty() && hand_cameras.is_empty() {
-        camera_controller.reset_for_seat(model.snapshot.own_seat(), true);
-        spawn_spatial_cameras(
-            &mut commands,
-            &surface,
-            camera_controller.current.transform(),
-        );
-    }
     state.confirm_leave = false;
     state.escape_menu_open = false;
     state.escape_menu_page = EscapeMenuPage::Main;
@@ -2939,14 +2969,14 @@ fn sync_card_entities(
     model: Res<BridgeModel>,
     mut poses: ResMut<PoseDisplay>,
     existing: Query<(Entity, &CardVisual)>,
-    room: Query<(), With<RoomRoot>>,
-    entered_room: Query<(), (With<RoomRoot>, Added<RoomRoot>)>,
+    table_camera: Query<(), With<TabletopCamera>>,
+    entered_scene: Query<(), (With<TabletopCamera>, Added<TabletopCamera>)>,
     assets: Res<SpatialAssets>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut commands: Commands,
 ) {
-    if (!model.is_changed() && entered_room.is_empty()) || room.is_empty() {
+    if (!model.is_changed() && entered_scene.is_empty()) || table_camera.is_empty() {
         return;
     }
     let wanted: HashSet<_> = model
@@ -3108,11 +3138,11 @@ fn sync_player_entities(
     layout: Res<CanonicalLayout>,
     assets: Res<SpatialAssets>,
     existing: Query<(Entity, &SpatialPlayer)>,
-    room: Query<(), With<RoomRoot>>,
-    entered_room: Query<(), (With<RoomRoot>, Added<RoomRoot>)>,
+    table_camera: Query<(), With<TabletopCamera>>,
+    entered_scene: Query<(), (With<TabletopCamera>, Added<TabletopCamera>)>,
     mut commands: Commands,
 ) {
-    if (!model.is_changed() && entered_room.is_empty()) || room.is_empty() {
+    if (!model.is_changed() && entered_scene.is_empty()) || table_camera.is_empty() {
         return;
     }
     for (entity, _) in &existing {
@@ -3335,16 +3365,12 @@ fn update_hand_camera(
     windows: Query<&Window, With<PrimaryWindow>>,
     model: Res<BridgeModel>,
     poses: Res<PoseDisplay>,
-    room: Query<(), With<RoomRoot>>,
     mut hand_cameras: Query<
         (&mut Camera, &mut Transform, &Projection),
         (With<HandCamera>, Without<TabletopCamera>),
     >,
     mut table_cameras: Query<&mut Camera, (With<TabletopCamera>, Without<HandCamera>)>,
 ) {
-    if room.is_empty() {
-        return;
-    }
     let size = match &*surface {
         RenderSurface::Windowless { width, height, .. } => UVec2::new(*width, *height),
         RenderSurface::Windowed => {
@@ -3419,6 +3445,9 @@ fn drag_cards(
     mut poses: ResMut<PoseDisplay>,
     mut drag: ResMut<DragState>,
 ) {
+    if state.screen != UiScreen::Table {
+        return;
+    }
     let Ok(window) = windows.single() else {
         return;
     };
@@ -3775,6 +3804,42 @@ mod tests {
             });
         }
         assert!(room_projection_ready(&snapshot, Some(&capability)));
+    }
+
+    #[test]
+    fn loading_does_not_reveal_an_unseated_table_before_the_3d_scene_frame() {
+        let capability = RoomCapability {
+            room_id: "room-one".into(),
+            join_code: "PCH-1111-1111-1111-1111".into(),
+        };
+        let mut snapshot = ClientSnapshot::default();
+        snapshot.rooms.push(RoomView {
+            room_id: capability.room_id.clone(),
+        });
+        snapshot.members.extend([
+            MemberView {
+                identity: "alice-id".into(),
+                display_name: "Alice".into(),
+                seat: None,
+                connected: true,
+                is_self: false,
+            },
+            MemberView {
+                identity: "bob-id".into(),
+                display_name: "Bob".into(),
+                seat: None,
+                connected: true,
+                is_self: true,
+            },
+        ]);
+        let state = UiState::default();
+
+        assert!(room_projection_ready(&snapshot, Some(&capability)));
+        assert!(!room_scene_projection_ready(&snapshot, &state, false));
+        assert!(room_scene_projection_ready(&snapshot, &state, true));
+        assert!(!room_scene_warmup_complete(0));
+        assert!(!room_scene_warmup_complete(1));
+        assert!(room_scene_warmup_complete(2));
     }
 
     #[test]

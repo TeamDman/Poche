@@ -458,6 +458,17 @@ play, and formal lifecycle parity remain open.
   clipboard. The focused package now has 30 passing unit tests after the
   camera lifecycle replacement; the preceding teardown-helper version had 31
   before its helper-only test was removed.
+- A follow-up visible run exposed a narrower readiness gap: the semantic model
+  could select `UiScreen::Table` before the newly spawned spatial cameras and
+  dynamic entities reached a rendered frame. Loading now creates cameras,
+  cards, and seated avatars behind its opaque frontend; it reveals the table
+  only when the `TabletopCamera` exists, rendered counts match the subscribed
+  projection, and two complete scene-update cycles have elapsed. The exact
+  unseated Alice/Bob state is preserved as
+  `loading_does_not_reveal_an_unseated_table_before_the_3d_scene_frame`.
+  Thirty-one focused tests, strict Clippy, and full Maincloud acceptance pass;
+  the acceptance measured 61.57 ms authority response and 128.01 ms peer
+  observation, and all four reviewed captures contained the 3D table.
 - **Intent audit pass 1 — extraction:** reread the full current request and
   extracted six independent requirements: Escape-menu stand, per-identity
   post-leave history, coherent join/rejoin loading, exact maximize crash,
@@ -471,6 +482,16 @@ play, and formal lifecycle parity remain open.
   covers both join and rejoin, stand is absent from the frequent bar, crash
   evidence uses the reported table-to-title resize order, and a clean run does
   not claim windowless rendering proves swapchain behavior.
+- **Follow-up extraction pass:** recorded the exact distinction in U42 between
+  semantic room readiness and visible 3D readiness; the attached image showed
+  standing Alice/Bob, table HUD, and an otherwise black scene.
+- **Follow-up traceability pass:** mapped U42 to T4.5, T6.2, the staged-camera
+  implementation, rendered-count guard, warmup guard, regression test, and
+  two-client capture review.
+- **Follow-up adversarial omission pass:** verified that the fix keeps the
+  loading screen visible rather than replacing blackness with a second blank
+  state, covers the zero-card/zero-seated-player lobby shown by the user, and
+  still requires private card/player entities before revealing a resumed deal.
 
 This advances T3.3, T4.1, T4.5, T6.2, T6.3, T6.5, and T7.1. It does not yet
 close unavailable-authority retry/backoff, real process restart, final-member
@@ -521,6 +542,7 @@ stale-code rejection, or complete multi-round play.
 | U39 | The Escape menu should contain a nested Options menu with a camera-Y inversion toggle, and the default vertical response should be the opposite of the current behavior. | Model parent/options navigation explicitly, apply the toggle only to local RMB vertical orbit, default it to inverted, and verify navigation plus both response signs. | — |
 | U40 | The table needs a public activity history below its player list, and a resumed client must render subscribed players/cards immediately without waiting for another action. Leaving/rejoining may not strand bidding controls against an absent private hand. | Store and subscribe only hidden-information-safe activity; invalidate Bevy reconciliation on table entry; expose rendered counts to the puppet; distinguish disconnect from explicit seat-vacating leave; suppress actions during private-view synchronization. | — |
 | U41 | Stand belongs in the Escape menu; an identity needs recent-lobby rejoin after explicit leave; join/rejoin must hide partial 3D hydration behind a loading screen; leaving then maximizing the title must not crash; ordinary crashes need durable app-data logs and a readable terminal. | Move infrequent stand, persist bounded per-identity bearer history, gate table entry on a coherent projection, scope spatial cameras to the table lifecycle, and add durable logging plus a terminal-aware panic receipt. Extend file control so the exact visible resize flow is reproducible. | — |
+| U42 | The loading screen must remain visible while the 3D scene is absent; semantic room readiness alone must not reveal a black table with only HUD elements. | Build spatial cameras and subscribed entities behind the opaque loading frontend. Require a present camera, matching rendered counts, and completed scene-update cycles before switching to the table UI. | — |
 
 ## Guidance traceability
 
@@ -544,6 +566,7 @@ stale-code rejection, or complete multi-round play.
 | U38 | G5, T3.1, T4.1, T4.5, T6.2, T6.3 | Multi-account identity-gate captures plus Alice/Bob and same-Alice two-process receipts |
 | U39, U40 | T2.2, T2.3, T4.5, T6.2, T6.5 | Nested-options captures, converged public activity, pre-action resume-scene counts, and coherent post-leave projection |
 | U41 | T3.3, T4.1, T4.5, T6.2, T6.3, T6.5, T7.1 | Recent-lobby title view, loading readiness tests, durable panic log, and a live table -> leave -> title -> maximize puppet receipt |
+| U42 | T4.5, T6.2 | Exact unseated-scene regression plus reviewed two-client captures in which every revealed table surface contains the 3D scene |
 
 ## Purpose
 
