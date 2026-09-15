@@ -166,6 +166,11 @@ camera and focus to the viewer's seat-relative home. All camera changes
 interpolate instead of teleporting. Local card motion is immediate while the
 peer interpolates subscribed updates.
 
+Create, join, and rejoin first show **Preparing the table**. Poche keeps that
+loading surface until the authoritative room, this member, the private hand,
+and the corresponding shared card poses form one coherent projection. It does
+not expose the table HUD over a black or partially hydrated 3D scene.
+
 RMB vertical orbit is inverted by default, the opposite of the original
 prototype response. Open **Escape → Options** and activate **Invert camera Y:
 On/Off** to switch between the two signs. The setting is local to that running
@@ -177,10 +182,10 @@ for this lobby. Directly below it, **Activity** shows the newest accepted public
 room actions: create/join/leave, seat changes, deal start, bids, and played
 cards. It never records an unplayed card face or a private-hand snapshot.
 Only seated members have world avatars; unseated members remain visible in the
-roster without appearing in the middle of the table. Escape
-opens the table menu. **Options** opens its own nested menu, while **Leave
-lobby** changes to **Confirm leave lobby** after the first click. Successful
-leave clears the active-room
+roster without appearing in the middle of the table. Escape opens the table
+menu. **Stand up** and **Options** live there rather than in the frequent action
+bar. **Leave lobby** changes to **Confirm leave lobby** after the first click.
+Successful leave clears the active-room
 projection and shows **You have left the lobby** with an explicit **Return to
 title** action while remaining peers see the roster update.
 
@@ -200,6 +205,12 @@ principal, but never tokens. `--identity-vault PATH` selects an explicit
 catalogue for testing. Display names are presentation, not credential keys.
 Selecting the same account in another process therefore reconnects as the
 same SpacetimeDB identity, seat, and private hand.
+
+Each account also retains up to eight recently used lobby capabilities in this
+local catalogue, newest first. Returning to the title after an explicit leave
+shows **Recent lobbies** with direct rejoin actions. The list is per account and
+authority. Its join codes are bearer secrets, so the catalogue remains local
+and must not be attached to bug reports.
 
 After account selection, the initial sender-scoped subscription is recovery
 authority. If it contains an active room, Poche shows **Unfinished lobby
@@ -224,6 +235,25 @@ other mutation is needed to make the scene appear. If a public game projection
 says this player still owns cards but its sender-scoped hand rows have not yet
 arrived, the HUD says that the private hand is synchronizing and suppresses bid
 actions instead of claiming the round is complete.
+
+## Logs and crash evidence
+
+An ordinary windowed run writes a durable log to
+`%LOCALAPPDATA%\Poche\logs\poche-<timestamp>-<process-id>.log`. Use
+`--log-file FILE_OR_EXISTING_DIRECTORY` to select an explicit file or an
+existing directory. Terminal output remains enabled. If Poche panics while
+attached to an interactive terminal, it prints the log path and waits for
+Enter so the terminal does not disappear before the error can be read;
+redirected automation never waits.
+
+The reported leave-to-title resize crash was an ownership problem at the DX12
+surface boundary: inactive table and hand cameras remained bound to the window
+after the table UI had gone away. Spatial cameras now exist only for the table
+screen. A visible regression run created a Maincloud lobby, opened Escape,
+confirmed leave, returned to the title, maximized the window, and successfully
+observed the still-running process through file control. The failing reduced
+run logged `ResizeBuffers ... window is in use`; the passing run produced no
+render error.
 
 ## Reproducible windowless acceptance
 
@@ -285,6 +315,9 @@ target\debug\poche-puppet.exe play target\live\alice 0
 target\debug\poche-puppet.exe menu target\live\alice
 target\debug\poche-puppet.exe leave target\live\alice
 target\debug\poche-puppet.exe leave target\live\alice
+target\debug\poche-puppet.exe return-title target\live\alice
+target\debug\poche-puppet.exe maximize target\live\alice
+target\debug\poche-puppet.exe restore target\live\alice
 target\debug\poche-puppet.exe capture target\live\alice
 target\debug\poche-puppet.exe stop target\live\alice
 ```

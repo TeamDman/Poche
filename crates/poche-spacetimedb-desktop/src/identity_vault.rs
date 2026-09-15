@@ -23,6 +23,15 @@ const VAULT_SCHEMA_VERSION: u16 = 1;
 const LOCK_RETRY: Duration = Duration::from_millis(10);
 const LOCK_ATTEMPTS: usize = 200;
 const STALE_LOCK_AGE: Duration = Duration::from_secs(30);
+const MAX_LOBBY_HISTORY: usize = 8;
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LobbyHistoryEntry {
+    pub room_id: String,
+    pub join_code: String,
+    pub last_used_unix_ms: u64,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -34,6 +43,8 @@ pub struct IdentityAccount {
     pub database: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub principal: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lobby_history: Vec<LobbyHistoryEntry>,
 }
 
 impl IdentityAccount {
@@ -161,6 +172,7 @@ impl IdentityVault {
             authority_uri: authority_uri.trim_end_matches('/').to_owned(),
             database: database.to_owned(),
             principal: None,
+            lobby_history: Vec::new(),
         };
         self.upsert(account.clone())?;
         Ok(account)
@@ -183,6 +195,56 @@ impl IdentityVault {
         }
         account.principal = Some(principal.to_owned());
         self.upsert(account)
+    }
+
+    /// Record a bearer lobby capability in the selected account's device-local recent history.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the account or capability is incomplete, the clock is invalid, or
+    /// the locked atomic vault update fails.
+    pub fn remember_lobby(
+        &mut self,
+        account_id: &str,
+        room_id: &str,
+        join_code: &str,
+    ) -> Result<(), String> {
+        if room_id.is_empty() || join_code.is_empty() {
+            return Err("cannot remember an incomplete lobby capability".into());
+        }
+        let last_used_unix_ms = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|error| format!("system clock is before the Unix epoch: {error}"))?
+            .as_millis()
+            .try_into()
+            .map_err(|_| "lobby history timestamp does not fit u64")?;
+        let _lock = VaultLock::acquire(&self.path)?;
+        let mut accounts = read_vault(&self.path)?.accounts;
+        let account = accounts
+            .iter_mut()
+            .find(|account| account.account_id == account_id)
+            .ok_or("selected identity is absent from the local vault")?;
+        if account.lobby_history.first().is_some_and(|entry| {
+            entry.room_id == room_id && entry.join_code.eq_ignore_ascii_case(join_code)
+        }) {
+            self.accounts = accounts;
+            return Ok(());
+        }
+        account.lobby_history.retain(|entry| {
+            entry.room_id != room_id && !entry.join_code.eq_ignore_ascii_case(join_code)
+        });
+        account.lobby_history.insert(
+            0,
+            LobbyHistoryEntry {
+                room_id: room_id.to_owned(),
+                join_code: join_code.to_owned(),
+                last_used_unix_ms,
+            },
+        );
+        account.lobby_history.truncate(MAX_LOBBY_HISTORY);
+        write_vault(&self.path, &accounts)?;
+        self.accounts = accounts;
+        Ok(())
     }
 
     fn upsert(&mut self, account: IdentityAccount) -> Result<(), String> {
@@ -363,5 +425,58 @@ mod tests {
                 .unwrap_err()
                 .contains("different identity")
         );
+    }
+
+    #[test]
+    fn old_vault_without_history_remains_readable() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("identities.json");
+        fs::write(
+            &path,
+            r#"{
+  "schema_version": 1,
+  "accounts": [{
+    "account_id": "account-old",
+    "label": "Alice",
+    "display_name": "Alice",
+    "authority_uri": "https://maincloud.spacetimedb.com",
+    "database": "poche"
+  }]
+}"#,
+        )
+        .expect("old vault fixture");
+        let vault = IdentityVault::load(path).expect("backward-compatible vault");
+        assert!(
+            vault
+                .account("account-old")
+                .unwrap()
+                .lobby_history
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn lobby_history_is_recent_deduplicated_and_durable() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("identities.json");
+        let mut vault = IdentityVault::load(path.clone()).expect("vault");
+        let account = vault
+            .create("Alice", "https://maincloud.spacetimedb.com", "poche")
+            .expect("account");
+        vault
+            .remember_lobby(&account.account_id, "room-one", "PCH-1111-1111-1111-1111")
+            .expect("first lobby");
+        vault
+            .remember_lobby(&account.account_id, "room-two", "PCH-2222-2222-2222-2222")
+            .expect("second lobby");
+        vault
+            .remember_lobby(&account.account_id, "room-one", "PCH-1111-1111-1111-1111")
+            .expect("revisited lobby");
+
+        let reloaded = IdentityVault::load(path).expect("persisted vault");
+        let history = &reloaded.account(&account.account_id).unwrap().lobby_history;
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].room_id, "room-one");
+        assert_eq!(history[1].room_id, "room-two");
     }
 }

@@ -3,7 +3,7 @@
 **Plan status:** Active; the create/join/seat/private-hand/shared-pose MVP and first oracle-backed trick are accepted, while multi-round play, recovery, and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-14 (published and accepted public activity, immediate resume-scene hydration, and coherent active-deal leave recovery)
+**Last updated:** 2026-09-15 (implemented recent-lobby recovery, coherent room loading, durable crash logs, and the leave-to-title resize fix)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
@@ -425,6 +425,57 @@ This advances T2.2, T2.3, T4.5, and T6.2/T6.5. A true process stop/relaunch,
 final-member stale-code rejection, unavailable-authority recovery, multi-round
 play, and formal lifecycle parity remain open.
 
+## 2026-09-15 lobby-lifecycle and crash-evidence checkpoint
+
+- Moved **Stand up** from the frequent table action bar into the Escape menu.
+  Leaving remains a two-step Escape-menu action and still presents the
+  deliberate lobby-ended interstitial before returning to the title.
+- Extended each local identity account with a bounded, newest-first list of
+  recent room capabilities. Create and authoritative capability hydration
+  atomically persist the entry; the title exposes up to four direct rejoin
+  actions after an explicit leave. Old version-one catalogues deserialize with
+  an empty history, and concurrent catalogue writes retain the existing lock
+  and atomic-replace discipline.
+- Added a typed `LoadingRoom` surface for create, join, and resume. It remains
+  until at least two Bevy frames have elapsed and the authoritative room,
+  self-member row, private hand, and expected public poses agree. The table HUD
+  is not shown on a black or partially populated 3D scene.
+- Added default durable windowed logs under the platform-local Poche app-data
+  directory, `--log-file FILE_OR_EXISTING_DIRECTORY`, and a panic hook which
+  records a forced backtrace. Interactive terminals wait for Enter after a
+  fatal error; redirected/windowless automation never waits. The behavior was
+  informed by the local `teamy-rust-cli` reference checkout without persisting
+  its machine-specific absolute path or importing it as a dependency.
+- Reduced the reported maximize crash across three real DX12 runs. Fresh-title
+  maximize passed; live-table maximize passed; table -> explicit leave ->
+  lobby-ended -> title -> maximize failed with `ResizeBuffers` and `window is
+  in use`. The table and private-hand cameras remained bound to the primary
+  swapchain even when inactive. They now exist only while `UiScreen::Table`
+  exists. The exact flow then passed and the puppet observed the maximized
+  title process still running.
+- File-control schema v4 adds return-to-title and maximize/restore actions so
+  the OS-window lifecycle is reproducible without Computer Use or the user's
+  clipboard. The focused package now has 30 passing unit tests after the
+  camera lifecycle replacement; the preceding teardown-helper version had 31
+  before its helper-only test was removed.
+- **Intent audit pass 1 — extraction:** reread the full current request and
+  extracted six independent requirements: Escape-menu stand, per-identity
+  post-leave history, coherent join/rejoin loading, exact maximize crash,
+  persistent app-data logs, and readable terminal failure behavior.
+- **Intent audit pass 2 — traceability:** mapped all six requirements to U41,
+  this checkpoint, T4.5/T6.3/T7.1, code, focused tests, or the visible puppet
+  transcript; the local template reference is recorded generically under the
+  path-safety policy.
+- **Intent audit pass 3 — adversarial omission:** checked that history means
+  rejoin after explicit leave rather than only resume membership, loading
+  covers both join and rejoin, stand is absent from the frequent bar, crash
+  evidence uses the reported table-to-title resize order, and a clean run does
+  not claim windowless rendering proves swapchain behavior.
+
+This advances T3.3, T4.1, T4.5, T6.2, T6.3, T6.5, and T7.1. It does not yet
+close unavailable-authority retry/backoff, real process restart, final-member
+stale-code rejection, or complete multi-round play.
+
 ## Authoritative user guidance ledger
 
 | ID | Active guidance | Required plan consequence | Superseded by |
@@ -469,6 +520,7 @@ play, and formal lifecycle parity remain open.
 | U38 | One installation should retain multiple authenticated identities. Each launched window chooses its identity before any resume prompt; the title shows an identity carousel and its name opens an identity selection/creation screen. | Separate immutable local account ID, mutable display name, protected token, and per-process active selection. Add an identity gate and title selector; scope resume discovery to the chosen identity. | Supersedes T3.1's 2026-09-13 automatic-last-profile assumption. |
 | U39 | The Escape menu should contain a nested Options menu with a camera-Y inversion toggle, and the default vertical response should be the opposite of the current behavior. | Model parent/options navigation explicitly, apply the toggle only to local RMB vertical orbit, default it to inverted, and verify navigation plus both response signs. | — |
 | U40 | The table needs a public activity history below its player list, and a resumed client must render subscribed players/cards immediately without waiting for another action. Leaving/rejoining may not strand bidding controls against an absent private hand. | Store and subscribe only hidden-information-safe activity; invalidate Bevy reconciliation on table entry; expose rendered counts to the puppet; distinguish disconnect from explicit seat-vacating leave; suppress actions during private-view synchronization. | — |
+| U41 | Stand belongs in the Escape menu; an identity needs recent-lobby rejoin after explicit leave; join/rejoin must hide partial 3D hydration behind a loading screen; leaving then maximizing the title must not crash; ordinary crashes need durable app-data logs and a readable terminal. | Move infrequent stand, persist bounded per-identity bearer history, gate table entry on a coherent projection, scope spatial cameras to the table lifecycle, and add durable logging plus a terminal-aware panic receipt. Extend file control so the exact visible resize flow is reproducible. | — |
 
 ## Guidance traceability
 
@@ -491,6 +543,7 @@ play, and formal lifecycle parity remain open.
 | U34–U37 | T4.3, T4.4, T6.2–T6.4 | Exact angle tests, visible Q/E/snap behavior, real 3D two-window captures, and a clean Windows DX12 startup log |
 | U38 | G5, T3.1, T4.1, T4.5, T6.2, T6.3 | Multi-account identity-gate captures plus Alice/Bob and same-Alice two-process receipts |
 | U39, U40 | T2.2, T2.3, T4.5, T6.2, T6.5 | Nested-options captures, converged public activity, pre-action resume-scene counts, and coherent post-leave projection |
+| U41 | T3.3, T4.1, T4.5, T6.2, T6.3, T6.5, T7.1 | Recent-lobby title view, loading readiness tests, durable panic log, and a live table -> leave -> title -> maximize puppet receipt |
 
 ## Purpose
 
@@ -1254,6 +1307,12 @@ not.
   the authority exists but the room was disbanded, clear the stale resume hint
   and show “This lobby has ended” before returning to the main menu.
 - Permit explicit leave; final leave disbands and presents a terminal screen.
+- Retain a bounded recent-lobby list per local identity so an explicit leaver
+  can rejoin by capability from the title without being mistaken for a
+  still-authorized resume. Gate create/join/resume table entry behind a loading
+  state until private and spatial projections agree.
+- Keep table/hand cameras scoped to the table screen so a later title-screen
+  resize cannot retain or reconfigure an in-use swapchain.
 - Exercise a second device for one identity and prove it does not create
   another player or vote.
 - Replace the membership `connected: bool` write-on-every-connect/disconnect
@@ -1396,6 +1455,9 @@ contact sheet with no visible windows or clipboard changes.
 - Record screenshots/captures and machine-readable observations without
   claiming a headless test proves OS integration.
 - Confirm neither process nor the local server requests UAC.
+- Repeat the exact table -> confirmed leave -> lobby-ended -> title -> maximize
+  path through the ordinary window and require a subsequent semantic
+  observation. Preserve the render/crash log as evidence.
 
 **Validation:**
 
@@ -1629,7 +1691,7 @@ remote branch contains all intended commits.
 
 ## Immediate next slice
 
-Continue from the accepted multi-account/activity lifecycle checkpoint by
+Continue from the accepted multi-account/activity/lifecycle checkpoint by
 testing real process restart, unavailable-authority recovery, final-member
 disband/stale-code rejection, and visible two-window account switching, then
 expand the one-trick oracle adapter into multi-round Poche play. Keep

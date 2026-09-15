@@ -5,6 +5,7 @@
 fn main() {
     if let Err(error) = poche_spacetimedb_desktop::run_from_env() {
         eprintln!("poche: {error}");
+        poche_spacetimedb_desktop::observability::pause_console_on_failure();
         std::process::exit(2);
     }
 }

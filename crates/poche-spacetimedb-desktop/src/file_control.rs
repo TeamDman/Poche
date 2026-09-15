@@ -13,7 +13,7 @@ use super::{
     PoseDisplay, RenderMode, RenderSurface, UiScreen, UiState, activate_leave,
     begin_identity_selection, toggle_escape_menu,
 };
-use bevy::{prelude::*, render::view::screenshot::save_to_disk};
+use bevy::{prelude::*, render::view::screenshot::save_to_disk, window::PrimaryWindow};
 use poche_bevy_spacetimedb::{BridgeHandle, BridgeIntent, BridgeModel};
 use poche_spacetimedb_client::{RoomCapability, valid_join_code};
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u16 = 3;
+pub const SCHEMA_VERSION: u16 = 4;
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 const APP_REQUEST_TIMEOUT: Duration = Duration::from_secs(18);
@@ -74,6 +74,7 @@ pub enum FileControlAction {
         label: String,
     },
     ResumeLobby,
+    ReturnToTitle,
     CreateLobby,
     JoinLobby {
         join_code: String,
@@ -87,6 +88,9 @@ pub enum FileControlAction {
     ToggleCameraYInversion,
     CloseOptions,
     ActivateLeave,
+    SetWindowMaximized {
+        maximized: bool,
+    },
     Bid {
         tricks: u8,
     },
@@ -267,6 +271,7 @@ impl FileControlPlugin {
                 "create_or_join_as_selected_identity".into(),
                 "take_or_release_seat".into(),
                 "toggle_table_menu".into(),
+                "return_to_title_and_resize_window".into(),
                 "activate_leave_button".into(),
                 "bid_or_play_owned_card".into(),
                 "move_owned_card".into(),
@@ -346,6 +351,7 @@ fn drive_file_control(
     authority: Res<AuthorityEndpoint>,
     mut vault: ResMut<IdentityVault>,
     mut camera_options: ResMut<CameraOptions>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
     endpoint.frame = endpoint.frame.saturating_add(1);
     if let Some(mut pending) = endpoint.pending.take() {
@@ -460,20 +466,34 @@ fn drive_file_control(
             }),
         FileControlAction::ResumeLobby => {
             if model.snapshot.room_id().is_some() {
-                state.screen = UiScreen::Table;
-                state.status = "Developer control resumed this identity's active lobby.".into();
+                pending.completion = Completion::RoomJoined;
+                super::begin_room_loading(
+                    &mut state,
+                    "Developer control is synchronizing the resumed lobby…",
+                );
                 Ok(())
             } else {
                 Err("the selected identity has no active lobby to resume".into())
+            }
+        }
+        FileControlAction::ReturnToTitle => {
+            if state.screen == UiScreen::LobbyEnded {
+                state.screen = UiScreen::MainMenu;
+                state.status = "Ready to rejoin a recent lobby or create another one.".into();
+                Ok(())
+            } else {
+                Err("return to title is available only after leaving a lobby".into())
             }
         }
         FileControlAction::CreateLobby => {
             if !model.connected || state.active_account_id.is_none() {
                 Err("select an identity before creating a lobby".into())
             } else {
-                state.busy = true;
                 state.pending_flow = Some(PendingFlow::CreateRoom);
-                state.status = "Creating a shared table…".into();
+                super::begin_room_loading(
+                    &mut state,
+                    "Developer control is creating and synchronizing a shared table…",
+                );
                 pending.completion = Completion::RoomCreated;
                 bridge.send(BridgeIntent::Create {
                     display_name: state.display_name.clone(),
@@ -489,9 +509,11 @@ fn drive_file_control(
                     room_id: String::new(),
                     join_code: code.clone(),
                 });
-                state.busy = true;
                 state.pending_flow = Some(PendingFlow::JoinRoom);
-                state.status = "Joining the shared table…".into();
+                super::begin_room_loading(
+                    &mut state,
+                    "Developer control is joining and synchronizing the shared table…",
+                );
                 pending.completion = Completion::RoomJoined;
                 bridge.send(BridgeIntent::Join {
                     display_name: state.display_name.clone(),
@@ -565,6 +587,21 @@ fn drive_file_control(
                     Ok(())
                 }
                 Err(error) => Err(error),
+            }
+        }
+        FileControlAction::SetWindowMaximized { maximized } => {
+            if !matches!(surface.as_ref(), RenderSurface::Windowed) {
+                Err("window maximize is available only on an interactive window".into())
+            } else if let Ok(mut window) = windows.single_mut() {
+                window.set_maximized(maximized);
+                state.status = if maximized {
+                    "Maximizing the game window…".into()
+                } else {
+                    "Restoring the game window…".into()
+                };
+                Ok(())
+            } else {
+                Err("the primary game window is unavailable".into())
             }
         }
         FileControlAction::Bid { tricks } => submit_game_action(
@@ -999,6 +1036,7 @@ fn observation(
         surface: match state.screen {
             UiScreen::IdentityGate => "identity_gate",
             UiScreen::Connecting => "connecting",
+            UiScreen::LoadingRoom => "loading_room",
             UiScreen::ResumeOffer => "resume_offer",
             UiScreen::MainMenu => "main_menu",
             UiScreen::Table => "table",

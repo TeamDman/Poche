@@ -76,6 +76,10 @@ fn run() -> Result<(), String> {
             let root = PathBuf::from(args.next().ok_or("resume requires CONTROL_ROOT")?);
             print_response(send(&root, FileControlAction::ResumeLobby)?)
         }
+        Some("return-title") => {
+            let root = PathBuf::from(args.next().ok_or("return-title requires CONTROL_ROOT")?);
+            print_response(send(&root, FileControlAction::ReturnToTitle)?)
+        }
         Some("create") => {
             let root = PathBuf::from(args.next().ok_or("create requires CONTROL_ROOT")?);
             print_response(send(&root, FileControlAction::CreateLobby)?)
@@ -118,6 +122,18 @@ fn run() -> Result<(), String> {
             let root = PathBuf::from(args.next().ok_or("leave requires CONTROL_ROOT")?);
             print_response(send(&root, FileControlAction::ActivateLeave)?)
         }
+        Some(command @ ("maximize" | "restore")) => {
+            let root = PathBuf::from(
+                args.next()
+                    .ok_or_else(|| format!("{command} requires CONTROL_ROOT"))?,
+            );
+            print_response(send(
+                &root,
+                FileControlAction::SetWindowMaximized {
+                    maximized: command == "maximize",
+                },
+            )?)
+        }
         Some("bid") => {
             let root = PathBuf::from(args.next().ok_or("bid requires CONTROL_ROOT")?);
             let tricks = parse(&mut args, "TRICKS")?;
@@ -158,6 +174,7 @@ fn run() -> Result<(), String> {
                  \x20                       [--output PATH]\n\
                  poche-puppet observe ROOT [--include-join-code]\n\
                  poche-puppet set-name ROOT NAME | select-identity ROOT LABEL | resume ROOT\n\
+                 poche-puppet return-title ROOT | maximize ROOT | restore ROOT\n\
                  poche-puppet create ROOT | join ROOT CODE\n\
                  poche-puppet seat ROOT 0|1 | stand ROOT | menu ROOT | options ROOT | back ROOT\n\
                  poche-puppet invert-camera-y ROOT | leave ROOT | bid ROOT TRICKS\n\

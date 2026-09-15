@@ -17,6 +17,7 @@
 
 pub mod file_control;
 pub mod identity_vault;
+pub mod observability;
 
 use bevy::{
     app::ScheduleRunnerPlugin,
@@ -37,7 +38,7 @@ use bevy::{
         view::screenshot::Screenshot,
     },
     text::{EditableText, TextCursorStyle, TextEdit},
-    window::{ExitCondition, PresentMode, PrimaryWindow, WindowResolution},
+    window::{ExitCondition, PresentMode, PrimaryWindow, WindowResized, WindowResolution},
     winit::WinitPlugin,
 };
 use identity_vault::{IdentityAccount, IdentityVault};
@@ -271,6 +272,7 @@ pub struct LaunchOptions {
     pub graphics_backend: GraphicsBackend,
     pub file_control: Option<file_control::FileControlOptions>,
     pub identity_vault_path: Option<PathBuf>,
+    pub log_file_path: Option<PathBuf>,
     pub authority: AuthorityEndpoint,
 }
 
@@ -386,6 +388,11 @@ pub fn run_from_env() -> Result<(), String> {
                     args.next().ok_or("--identity-vault requires a path")?,
                 ));
             }
+            "--log-file" => {
+                options.log_file_path = Some(PathBuf::from(
+                    args.next().ok_or("--log-file requires a path")?,
+                ));
+            }
             "--graphics-backend" => {
                 options.graphics_backend = GraphicsBackend::parse(
                     &args.next().ok_or("--graphics-backend requires a value")?,
@@ -395,7 +402,7 @@ pub fn run_from_env() -> Result<(), String> {
             "--help" | "-h" => {
                 println!(
                     "poche [--server local|maincloud|URL] [--database NAME]\n\
-                     \x20     [--identity-vault PATH]\n\
+                     \x20     [--identity-vault PATH] [--log-file FILE_OR_EXISTING_DIRECTORY]\n\
                      \x20     [--graphics-backend auto|dx12|vulkan]\n\
                      \x20     [--control-root PATH --instance-id ID] [--windowless]\n\
                      The safe default is local. The maincloud shorthand selects\n\
@@ -429,6 +436,11 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
     let authority = options.authority.clone();
     let windowless = options.render_mode == RenderMode::WindowlessImage;
     let surface = RenderSurface::from_mode(options.render_mode);
+    let log_path = if windowless {
+        None
+    } else {
+        Some(observability::initialize(options.log_file_path.as_deref())?)
+    };
     let mut wgpu_settings = WgpuSettings::default();
     if let Some(backends) = options.graphics_backend.backends() {
         wgpu_settings.backends = Some(backends);
@@ -452,6 +464,10 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
     };
     let mut plugins = DefaultPlugins
         .set(window_plugin)
+        .set(LogPlugin {
+            custom_layer: observability::file_log_layer,
+            ..default()
+        })
         .set(ImagePlugin::default_nearest())
         .set(RenderPlugin {
             render_creation: wgpu_settings.into(),
@@ -483,6 +499,9 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
 
     let mut app = App::new();
     app.add_plugins(plugins);
+    if let Some(path) = &log_path {
+        tracing::info!(log_file = %path.display(), "Poche durable logging initialized");
+    }
     let font = app
         .world_mut()
         .resource_mut::<Assets<Font>>()
@@ -537,6 +556,7 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
                 handle_escape_key,
                 poll_clipboard,
                 handle_bridge_notices,
+                advance_room_loading,
                 sync_frontend_screen,
                 enter_room,
                 sync_escape_menu,
@@ -550,6 +570,7 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
                 animate_and_place_cards,
                 update_status_labels,
                 update_rotation_snap_labels,
+                log_window_resize,
                 apply_poche_font,
             )
                 .chain(),
@@ -579,12 +600,14 @@ struct UiState {
     escape_menu_page: EscapeMenuPage,
     rendered_card_count: usize,
     rendered_player_count: usize,
+    room_loading_frames: u8,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UiScreen {
     IdentityGate,
     Connecting,
+    LoadingRoom,
     ResumeOffer,
     MainMenu,
     Table,
@@ -637,6 +660,7 @@ impl UiState {
             escape_menu_page: EscapeMenuPage::Main,
             rendered_card_count: 0,
             rendered_player_count: 0,
+            room_loading_frames: 0,
         }
     }
 }
@@ -742,6 +766,7 @@ enum UiAction {
     Create,
     Paste,
     Join,
+    JoinHistory(String),
     CopyCode,
     TakeSeat(u8),
     ReleaseSeat,
@@ -796,7 +821,6 @@ fn setup_render_target(mut images: ResMut<Assets<Image>>, mut surface: ResMut<Re
 
 fn setup_spatial_renderer(
     mut commands: Commands,
-    surface: Res<RenderSurface>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -805,35 +829,6 @@ fn setup_spatial_renderer(
         LayoutId::new(2, 1).expect("two-player layout id is valid"),
     )
     .expect("registered two-player layout is valid");
-    let mut camera = commands.spawn((
-        Camera3d::default(),
-        Camera {
-            is_active: false,
-            ..default()
-        },
-        spectator_camera_transform(),
-        TabletopCamera,
-        RenderLayers::layer(0),
-    ));
-    if let Some(target) = surface.render_target() {
-        camera.insert(target);
-    }
-    let mut hand_camera = commands.spawn((
-        Camera3d::default(),
-        Camera {
-            is_active: false,
-            order: 1,
-            clear_color: bevy::camera::ClearColorConfig::None,
-            ..default()
-        },
-        Transform::from_xyz(0.0, 0.48, 0.52).looking_at(Vec3::new(0.0, 0.04, 0.52), Vec3::NEG_Z),
-        HandCamera,
-        RenderLayers::layer(1),
-    ));
-    if let Some(target) = surface.render_target() {
-        hand_camera.insert(target);
-    }
-
     commands.insert_resource(ClearColor(Color::srgb(0.012, 0.022, 0.026)));
     commands.insert_resource(GlobalAmbientLight {
         color: Color::srgb(0.78, 0.84, 0.9),
@@ -943,6 +938,38 @@ fn setup_spatial_renderer(
         peer_avatar_material: materials.add(Color::srgb(0.22, 0.48, 0.82)),
     });
     commands.insert_resource(CanonicalLayout(layout));
+}
+
+fn spawn_spatial_cameras(
+    commands: &mut Commands,
+    surface: &RenderSurface,
+    table_transform: Transform,
+) {
+    let mut camera = commands.spawn((
+        Camera3d::default(),
+        Camera::default(),
+        table_transform,
+        TabletopCamera,
+        RenderLayers::layer(0),
+    ));
+    if let Some(target) = surface.render_target() {
+        camera.insert(target);
+    }
+    let mut hand_camera = commands.spawn((
+        Camera3d::default(),
+        Camera {
+            is_active: false,
+            order: 1,
+            clear_color: bevy::camera::ClearColorConfig::None,
+            ..default()
+        },
+        Transform::from_xyz(0.0, 0.48, 0.52).looking_at(Vec3::new(0.0, 0.04, 0.52), Vec3::NEG_Z),
+        HandCamera,
+        RenderLayers::layer(1),
+    ));
+    if let Some(target) = surface.render_target() {
+        hand_camera.insert(target);
+    }
 }
 
 fn point_to_world(point: Point3Mm) -> Vec3 {
@@ -1113,10 +1140,6 @@ fn tactical_camera_home(seat: Option<u8>) -> CameraPose {
     }
 }
 
-fn spectator_camera_transform() -> Transform {
-    camera_home(None).transform()
-}
-
 #[cfg(test)]
 fn player_camera_transform(seat: Option<u8>) -> Transform {
     camera_home(seat).transform()
@@ -1235,6 +1258,29 @@ fn spawn_frontend(
             spawn_button(parent, "Cancel", UiAction::CancelConnecting, false);
             spawn_frontend_status(parent, state);
         }
+        UiScreen::LoadingRoom => {
+            spawn_brand(parent, authority);
+            parent.spawn((
+                Text::new("PREPARING THE TABLE"),
+                TextFont::from_font_size(32.),
+                TextColor(Color::srgb(0.96, 0.88, 0.58)),
+            ));
+            parent.spawn((
+                Text::new("Synchronizing the lobby, seats, private hand, and shared 3D scene…"),
+                TextFont::from_font_size(18.),
+                TextColor(Color::srgb(0.78, 0.86, 0.82)),
+                Node {
+                    max_width: px(680.),
+                    ..default()
+                },
+            ));
+            parent.spawn((
+                Text::new("●  ●  ●"),
+                TextFont::from_font_size(24.),
+                TextColor(Color::srgb(0.34, 0.78, 0.65)),
+            ));
+            spawn_frontend_status(parent, state);
+        }
         UiScreen::ResumeOffer => {
             spawn_identity_selector(parent, state);
             parent.spawn((
@@ -1296,6 +1342,39 @@ fn spawn_frontend(
                     spawn_button(row, "Paste valid code", UiAction::Paste, false);
                     spawn_button(row, "Join lobby", UiAction::Join, true);
                 });
+            if let Some(account) = state
+                .active_account_id
+                .as_deref()
+                .and_then(|account_id| vault.account(account_id))
+                && !account.lobby_history.is_empty()
+            {
+                parent.spawn((
+                    Text::new("RECENT LOBBIES"),
+                    TextFont::from_font_size(18.),
+                    TextColor(Color::srgb(0.96, 0.88, 0.58)),
+                    Node {
+                        margin: px(8.).top(),
+                        ..default()
+                    },
+                ));
+                parent
+                    .spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(7.),
+                        min_width: px(420.),
+                        ..default()
+                    })
+                    .with_children(|history| {
+                        for entry in account.lobby_history.iter().take(4) {
+                            spawn_button(
+                                history,
+                                &format!("Join {}", entry.join_code),
+                                UiAction::JoinHistory(entry.join_code.clone()),
+                                false,
+                            );
+                        }
+                    });
+            }
             spawn_frontend_status(parent, state);
             parent.spawn((
                 Text::new("F3 · performance overlay"),
@@ -1516,8 +1595,7 @@ fn handle_buttons(
             }
             UiAction::ResumeLobby => {
                 if model.snapshot.room_id().is_some() {
-                    state.screen = UiScreen::Table;
-                    state.status = "Resumed this identity's active lobby.".into();
+                    begin_room_loading(&mut state, "Rejoining this identity's active lobby…");
                 } else {
                     state.status = "This identity no longer has an active lobby.".into();
                 }
@@ -1534,7 +1612,7 @@ fn handle_buttons(
             UiAction::Paste => {
                 pending.0 = Some(clipboard.fetch_text());
             }
-            UiAction::Create | UiAction::Join if state.busy => {}
+            UiAction::Create | UiAction::Join | UiAction::JoinHistory(_) if state.busy => {}
             UiAction::Create => {
                 if state.active_account_id.is_none() || !model.connected {
                     state.status = "Choose and connect an identity before creating a lobby.".into();
@@ -1542,40 +1620,22 @@ fn handle_buttons(
                 }
                 state.busy = true;
                 state.pending_flow = Some(PendingFlow::CreateRoom);
-                state.status = "Creating a shared table…".into();
+                begin_room_loading(&mut state, "Creating and synchronizing a shared table…");
                 if let Err(error) = bridge.send(BridgeIntent::Create {
                     display_name: state.display_name.clone(),
                 }) {
                     state.busy = false;
                     state.pending_flow = None;
+                    state.screen = UiScreen::MainMenu;
                     state.status = error;
                 }
             }
             UiAction::Join => {
                 let code = field_value(Field::Invitation).trim().to_ascii_uppercase();
-                if state.active_account_id.is_none() || !model.connected {
-                    state.status = "Choose and connect an identity before joining a lobby.".into();
-                    continue;
-                }
-                if !valid_join_code(&code) {
-                    state.status = "Enter a code shaped like PCH-0000-0000-0000-0000.".into();
-                    continue;
-                }
-                state.capability = Some(RoomCapability {
-                    room_id: String::new(),
-                    join_code: code.clone(),
-                });
-                state.busy = true;
-                state.pending_flow = Some(PendingFlow::JoinRoom);
-                state.status = "Joining the shared table…".into();
-                if let Err(error) = bridge.send(BridgeIntent::Join {
-                    display_name: state.display_name.clone(),
-                    join_code: code,
-                }) {
-                    state.busy = false;
-                    state.pending_flow = None;
-                    state.status = error;
-                }
+                begin_joining_lobby(&mut state, &model, &bridge, code);
+            }
+            UiAction::JoinHistory(code) => {
+                begin_joining_lobby(&mut state, &model, &bridge, code.clone());
             }
             UiAction::CopyCode => {
                 state.status = match state
@@ -1685,6 +1745,126 @@ fn begin_identity_selection(
     state.capability = None;
     state.status = format!("Signing in as {}…", account.label);
     Ok(())
+}
+
+fn begin_joining_lobby(
+    state: &mut UiState,
+    model: &BridgeModel,
+    bridge: &BridgeHandle,
+    code: String,
+) {
+    if state.active_account_id.is_none() || !model.connected {
+        state.status = "Choose and connect an identity before joining a lobby.".into();
+        return;
+    }
+    if !valid_join_code(&code) {
+        state.status = "Enter a code shaped like PCH-0000-0000-0000-0000.".into();
+        return;
+    }
+    state.capability = Some(RoomCapability {
+        room_id: String::new(),
+        join_code: code.clone(),
+    });
+    state.pending_flow = Some(PendingFlow::JoinRoom);
+    begin_room_loading(state, "Joining and synchronizing the shared table…");
+    if let Err(error) = bridge.send(BridgeIntent::Join {
+        display_name: state.display_name.clone(),
+        join_code: code,
+    }) {
+        state.busy = false;
+        state.pending_flow = None;
+        state.screen = UiScreen::MainMenu;
+        state.status = error;
+    }
+}
+
+fn begin_room_loading(state: &mut UiState, status: &str) {
+    state.screen = UiScreen::LoadingRoom;
+    state.room_loading_frames = 2;
+    state.busy = true;
+    state.status = status.into();
+}
+
+fn remember_capability(state: &UiState, vault: &mut IdentityVault) {
+    let (Some(account_id), Some(capability)) = (
+        state.active_account_id.as_deref(),
+        state.capability.as_ref(),
+    ) else {
+        return;
+    };
+    if capability.room_id.is_empty() || capability.join_code.is_empty() {
+        return;
+    }
+    if let Err(error) = vault.remember_lobby(account_id, &capability.room_id, &capability.join_code)
+    {
+        tracing::warn!(%error, "could not persist recent lobby capability");
+    }
+}
+
+fn advance_room_loading(mut state: ResMut<UiState>, model: Res<BridgeModel>) {
+    if state.screen != UiScreen::LoadingRoom {
+        return;
+    }
+    if state.room_loading_frames > 0 {
+        state.room_loading_frames -= 1;
+        return;
+    }
+    if !room_projection_ready(&model.snapshot, state.capability.as_ref()) {
+        return;
+    }
+    state.screen = UiScreen::Table;
+    state.busy = false;
+    state.pending_flow = None;
+    state.status = "The synchronized table is ready.".into();
+}
+
+fn room_projection_ready(snapshot: &ClientSnapshot, capability: Option<&RoomCapability>) -> bool {
+    let Some(room_id) = snapshot.room_id() else {
+        return false;
+    };
+    if !capability
+        .is_some_and(|capability| capability.room_id == room_id && !capability.join_code.is_empty())
+        || !snapshot.members.iter().any(|member| member.is_self)
+    {
+        return false;
+    }
+    let Some(game) = snapshot.game.as_ref() else {
+        return true;
+    };
+    if snapshot
+        .members
+        .iter()
+        .filter(|member| member.seat.is_some())
+        .count()
+        < 2
+    {
+        return false;
+    }
+    if let Some(own_seat) = snapshot.own_seat()
+        && game.hand_counts[usize::from(own_seat)] as usize != snapshot.hand.len()
+    {
+        return false;
+    }
+    snapshot.card_poses.len() >= usize::from(game.hand_size) * 2
+}
+
+fn ui_camera_clear_for_screen(screen: UiScreen) -> bevy::camera::ClearColorConfig {
+    if screen == UiScreen::Table {
+        bevy::camera::ClearColorConfig::None
+    } else {
+        bevy::camera::ClearColorConfig::Default
+    }
+}
+
+fn log_window_resize(mut resized: MessageReader<WindowResized>, state: Res<UiState>) {
+    for event in resized.read() {
+        tracing::info!(
+            width = event.width,
+            height = event.height,
+            screen = ?state.screen,
+            "Poche window resized"
+        );
+    }
 }
 
 fn adjacent_account(
@@ -1820,10 +2000,12 @@ fn handle_bridge_notices(
             BridgeNotice::RoomCreated(capability) => {
                 state.capability = Some(capability.clone());
                 state.status = "Lobby created.".into();
+                remember_capability(&state, &mut vault);
             }
             BridgeNotice::Snapshot(snapshot) => {
                 if let Some(capability) = &snapshot.room_capability {
                     state.capability = Some(capability.clone());
+                    remember_capability(&state, &mut vault);
                 }
                 match state.pending_flow {
                     Some(PendingFlow::SelectIdentity) if snapshot.identity.is_some() => {
@@ -1840,9 +2022,7 @@ fn handle_bridge_notices(
                     Some(PendingFlow::CreateRoom | PendingFlow::JoinRoom)
                         if snapshot.room_id().is_some() =>
                     {
-                        state.busy = false;
-                        state.pending_flow = None;
-                        state.screen = UiScreen::Table;
+                        state.status = "Room accepted; synchronizing its complete scene…".into();
                     }
                     Some(PendingFlow::LeaveRoom) if snapshot.room_id().is_none() => {
                         state.busy = false;
@@ -1935,7 +2115,7 @@ fn sync_frontend_screen(
         return;
     };
     ui_camera.order = 10;
-    ui_camera.clear_color = bevy::camera::ClearColorConfig::None;
+    ui_camera.clear_color = ui_camera_clear_for_screen(state.screen);
     spawn_frontend(
         &mut commands,
         camera,
@@ -1949,6 +2129,7 @@ fn sync_frontend_screen(
 fn enter_room(
     model: Res<BridgeModel>,
     mut state: ResMut<UiState>,
+    surface: Res<RenderSurface>,
     rotation_snap: Res<RotationSnap>,
     camera_options: Res<CameraOptions>,
     frontend: Query<Entity, With<FrontendRoot>>,
@@ -1956,7 +2137,22 @@ fn enter_room(
     cards: Query<Entity, With<CardVisual>>,
     players: Query<Entity, With<SpatialPlayer>>,
     mut ui_cameras: Query<(Entity, &mut Camera), With<PocheUiCamera>>,
-    mut table_cameras: Query<&mut Camera, (With<TabletopCamera>, Without<PocheUiCamera>)>,
+    table_cameras: Query<
+        Entity,
+        (
+            With<TabletopCamera>,
+            Without<PocheUiCamera>,
+            Without<HandCamera>,
+        ),
+    >,
+    hand_cameras: Query<
+        Entity,
+        (
+            With<HandCamera>,
+            Without<TabletopCamera>,
+            Without<PocheUiCamera>,
+        ),
+    >,
     mut poses: ResMut<PoseDisplay>,
     mut drag: ResMut<DragState>,
     mut camera_controller: ResMut<TableCameraController>,
@@ -1977,10 +2173,15 @@ fn enter_room(
         drag.card_key = None;
         drag.reset_rotation_repeat();
         camera_controller.last_seat = CameraSeat::Uninitialized;
-        for mut table_camera in &mut table_cameras {
-            table_camera.is_active = false;
+        for entity in &table_cameras {
+            commands.entity(entity).despawn();
         }
-        state.busy = false;
+        for entity in &hand_cameras {
+            commands.entity(entity).despawn();
+        }
+        if !matches!(state.screen, UiScreen::Connecting | UiScreen::LoadingRoom) {
+            state.busy = false;
+        }
         state.confirm_leave = false;
         state.escape_menu_open = false;
         state.escape_menu_page = EscapeMenuPage::Main;
@@ -1996,9 +2197,14 @@ fn enter_room(
         return;
     };
     ui_camera.order = 10;
-    ui_camera.clear_color = bevy::camera::ClearColorConfig::None;
-    for mut table_camera in &mut table_cameras {
-        table_camera.is_active = true;
+    ui_camera.clear_color = ui_camera_clear_for_screen(UiScreen::Table);
+    if table_cameras.is_empty() && hand_cameras.is_empty() {
+        camera_controller.reset_for_seat(model.snapshot.own_seat(), true);
+        spawn_spatial_cameras(
+            &mut commands,
+            &surface,
+            camera_controller.current.transform(),
+        );
     }
     state.confirm_leave = false;
     state.escape_menu_open = false;
@@ -2143,7 +2349,6 @@ fn enter_room(
             .with_children(|bar| {
                 spawn_button(bar, "Take seat 1", UiAction::TakeSeat(0), true);
                 spawn_button(bar, "Take seat 2", UiAction::TakeSeat(1), true);
-                spawn_button(bar, "Stand up", UiAction::ReleaseSeat, false);
                 spawn_button(bar, "Bid 0 tricks", UiAction::Bid(0), true);
                 spawn_button(bar, "Bid 1 trick", UiAction::Bid(1), true);
                 spawn_button(bar, "Play your card", UiAction::PlayFirstCard, true);
@@ -2208,6 +2413,7 @@ fn enter_room(
                             TextColor(Color::srgb(0.72, 0.82, 0.8)),
                         ));
                         spawn_button(panel, "Resume table", UiAction::ResumeMenu, true);
+                        spawn_button(panel, "Stand up", UiAction::ReleaseSeat, false);
                         spawn_button(panel, "Options", UiAction::OpenOptions, false);
                         panel
                             .spawn((
@@ -2637,7 +2843,8 @@ fn sync_room_labels(
                 | UiAction::ReturnToTitle
                 | UiAction::Create
                 | UiAction::Paste
-                | UiAction::Join => continue,
+                | UiAction::Join
+                | UiAction::JoinHistory(_) => continue,
             };
     }
 }
@@ -3135,6 +3342,9 @@ fn update_hand_camera(
     >,
     mut table_cameras: Query<&mut Camera, (With<TabletopCamera>, Without<HandCamera>)>,
 ) {
+    if room.is_empty() {
+        return;
+    }
     let size = match &*surface {
         RenderSurface::Windowless { width, height, .. } => UVec2::new(*width, *height),
         RenderSurface::Windowed => {
@@ -3164,7 +3374,7 @@ fn update_hand_camera(
         });
     }
     for (mut camera, mut transform, projection) in &mut hand_cameras {
-        camera.is_active = has_hand && !room.is_empty() && size.x >= 10 && size.y >= 10;
+        camera.is_active = has_hand && size.x >= 10 && size.y >= 10;
         if !camera.is_active {
             continue;
         }
@@ -3472,7 +3682,7 @@ fn update_status_labels(state: Res<UiState>, mut labels: Query<&mut Text, With<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use poche_spacetimedb_client::{GameView, HandCardView, MemberView};
+    use poche_spacetimedb_client::{GameView, HandCardView, MemberView, RoomView};
 
     fn bidding_snapshot(private_hand_ready: bool) -> ClientSnapshot {
         ClientSnapshot {
@@ -3524,6 +3734,68 @@ mod tests {
         assert!(may_bid(&ready, 0));
         assert!(may_bid(&ready, 1));
         assert!(!may_bid(&ready, 2));
+    }
+
+    #[test]
+    fn room_loading_waits_for_complete_private_and_spatial_projection() {
+        let capability = RoomCapability {
+            room_id: "room-one".into(),
+            join_code: "PCH-1111-1111-1111-1111".into(),
+        };
+        let mut snapshot = bidding_snapshot(false);
+        snapshot.rooms.push(RoomView {
+            room_id: capability.room_id.clone(),
+        });
+        snapshot.room_capability = Some(capability.clone());
+        snapshot.members.push(MemberView {
+            identity: "bob-id".into(),
+            display_name: "Bob".into(),
+            seat: Some(1),
+            connected: true,
+            is_self: false,
+        });
+
+        assert!(!room_projection_ready(&snapshot, Some(&capability)));
+        snapshot.hand.push(HandCardView {
+            card_key: "room:alice:card-0-0".into(),
+            card_id: "card-0-0".into(),
+            face: "A♠".into(),
+        });
+        assert!(!room_projection_ready(&snapshot, Some(&capability)));
+        for (seat, owner) in [(0, "alice-id"), (1, "bob-id")] {
+            snapshot.card_poses.push(CardPoseView {
+                card_key: format!("room:{owner}:card-{seat}-0"),
+                card_id: format!("card-{seat}-0"),
+                owner: owner.into(),
+                owner_seat: seat,
+                logical_location: format!("hand:{seat}"),
+                position_mm: [0, 40, 0],
+                rotation_mdeg: [0, 0, 0],
+                sequence: 0,
+            });
+        }
+        assert!(room_projection_ready(&snapshot, Some(&capability)));
+    }
+
+    #[test]
+    fn every_frontend_screen_clears_a_fresh_swapchain_image() {
+        for screen in [
+            UiScreen::IdentityGate,
+            UiScreen::Connecting,
+            UiScreen::LoadingRoom,
+            UiScreen::ResumeOffer,
+            UiScreen::MainMenu,
+            UiScreen::LobbyEnded,
+        ] {
+            assert!(matches!(
+                ui_camera_clear_for_screen(screen),
+                bevy::camera::ClearColorConfig::Default
+            ));
+        }
+        assert!(matches!(
+            ui_camera_clear_for_screen(UiScreen::Table),
+            bevy::camera::ClearColorConfig::None
+        ));
     }
 
     #[test]
