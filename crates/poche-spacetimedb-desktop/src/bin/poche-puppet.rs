@@ -134,6 +134,18 @@ fn run() -> Result<(), String> {
                 },
             )?)
         }
+        Some(command @ ("minimize" | "unminimize")) => {
+            let root = PathBuf::from(
+                args.next()
+                    .ok_or_else(|| format!("{command} requires CONTROL_ROOT"))?,
+            );
+            print_response(send(
+                &root,
+                FileControlAction::SetWindowMinimized {
+                    minimized: command == "minimize",
+                },
+            )?)
+        }
         Some("bid") => {
             let root = PathBuf::from(args.next().ok_or("bid requires CONTROL_ROOT")?);
             let tricks = parse(&mut args, "TRICKS")?;
@@ -175,6 +187,7 @@ fn run() -> Result<(), String> {
                  poche-puppet observe ROOT [--include-join-code]\n\
                  poche-puppet set-name ROOT NAME | select-identity ROOT LABEL | resume ROOT\n\
                  poche-puppet return-title ROOT | maximize ROOT | restore ROOT\n\
+                 poche-puppet minimize ROOT | unminimize ROOT\n\
                  poche-puppet create ROOT | join ROOT CODE\n\
                  poche-puppet seat ROOT 0|1 | stand ROOT | menu ROOT | options ROOT | back ROOT\n\
                  poche-puppet invert-camera-y ROOT | leave ROOT | bid ROOT TRICKS\n\

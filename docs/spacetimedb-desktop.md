@@ -264,6 +264,15 @@ observed the still-running process through file control. The failing reduced
 run logged `ResizeBuffers ... window is in use`; the passing run produced no
 render error.
 
+A separate untouched-title minimize failure had the same DX12 symptom but a
+different trigger. Windows reports a minimized winit client area as `0x0`;
+reconfiguring the live swapchain for that transient extent failed with
+`ResizeBuffers ... window is in use`. Poche now retains the last non-zero
+physical extent in the render world while minimized and accepts the next
+non-zero resize on restore. This does not resize or unminimize the OS window.
+The file-control schema exposes `minimize` and `unminimize` so this exact
+window-state boundary remains reproducible.
+
 ## Reproducible windowless acceptance
 
 The acceptance puppet launches copies of the ordinary game binary with
@@ -327,6 +336,8 @@ target\debug\poche-puppet.exe leave target\live\alice
 target\debug\poche-puppet.exe return-title target\live\alice
 target\debug\poche-puppet.exe maximize target\live\alice
 target\debug\poche-puppet.exe restore target\live\alice
+target\debug\poche-puppet.exe minimize target\live\alice
+target\debug\poche-puppet.exe unminimize target\live\alice
 target\debug\poche-puppet.exe capture target\live\alice
 target\debug\poche-puppet.exe stop target\live\alice
 ```

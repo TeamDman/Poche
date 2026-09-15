@@ -3,7 +3,7 @@
 **Plan status:** Active; the create/join/seat/private-hand/shared-pose MVP and first oracle-backed trick are accepted, while multi-round play, recovery, and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-15 (renderer-confirmed room loading, recent-lobby recovery, durable crash logs, and the leave-to-title resize fix)
+**Last updated:** 2026-09-15 (renderer-confirmed room loading, title minimize/restore safety, recent-lobby recovery, and durable crash logs)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
@@ -481,6 +481,20 @@ play, and formal lifecycle parity remain open.
   The two-device Maincloud acceptance remained green at 85.37 ms authority
   response and 142.85 ms peer observation, with all reviewed final captures
   containing the rendered table.
+- The durable log reduced an untouched-title minimize crash to a distinct
+  Windows/DX12 surface transition. A minimize event changed Bevy's main-world
+  window extent from `1180x760` to `0x0`; the extracted renderer attempted to
+  reconfigure the live swapchain and exited after `ResizeBuffers` returned
+  `window is in use`. File-control schema v5 adds `minimize`/`unminimize` and
+  reproduced that exact failure in a fresh process. Poche now retains the last
+  non-zero physical render extent during the transient zero-sized interval;
+  ordinary non-zero resize events still replace it. The same controlled
+  minimize -> wait -> restore -> observe sequence then kept the original
+  process alive and reported zero DX12 surface errors. Three regression
+  variants preserve both the failing zero-axis boundary and the nearest
+  passing ordinary resize. Thirty-four focused tests and strict Clippy pass;
+  the full two-device Maincloud acceptance also remained green at 58.75 ms
+  authority response and 178.31 ms peer observation.
 - **Intent audit pass 1 — extraction:** reread the full current request and
   extracted six independent requirements: Escape-menu stand, per-identity
   post-leave history, coherent join/rejoin loading, exact maximize crash,
@@ -514,6 +528,16 @@ play, and formal lifecycle parity remain open.
   not use an arbitrary longer delay, cannot accept stale evidence from a prior
   room, supports a legitimate zero-avatar/zero-card lobby, and retains the
   table-scoped camera teardown which fixed leave-to-title resize crashes.
+- **Minimize extraction pass:** retained the exact context—untouched title,
+  minimize only, `0x0` resize, DX12 `ResizeBuffers` failure, application exit—
+  as U44 rather than conflating it with the earlier post-lobby maximize bug.
+- **Minimize traceability pass:** mapped U44 to the window extent guard, the v5
+  minimize/unminimize puppet actions, three focused tests, and a live
+  before-fails/after-survives process receipt.
+- **Minimize adversarial omission pass:** verified that the fix neither forces
+  the OS window visible nor freezes legitimate resizes, applies before any
+  lobby exists, preserves the table-camera teardown, and treats either zero
+  axis as non-renderable.
 
 This advances T3.3, T4.1, T4.5, T6.2, T6.3, T6.5, and T7.1. It does not yet
 close unavailable-authority retry/backoff, real process restart, final-member
@@ -566,6 +590,7 @@ stale-code rejection, or complete multi-round play.
 | U41 | Stand belongs in the Escape menu; an identity needs recent-lobby rejoin after explicit leave; join/rejoin must hide partial 3D hydration behind a loading screen; leaving then maximizing the title must not crash; ordinary crashes need durable app-data logs and a readable terminal. | Move infrequent stand, persist bounded per-identity bearer history, gate table entry on a coherent projection, scope spatial cameras to the table lifecycle, and add durable logging plus a terminal-aware panic receipt. Extend file control so the exact visible resize flow is reproducible. | — |
 | U42 | The loading screen must remain visible while the 3D scene is absent; semantic room readiness alone must not reveal a black table with only HUD elements. | Build spatial cameras and subscribed entities behind the opaque loading frontend. Require a present camera, matching rendered counts, and completed scene-update cycles before switching to the table UI. | U43 |
 | U43 | Both clients still revealed the HUD over black 3D regions after the U42 update-cycle gate, then recovered without input; loading must follow actual renderer progress. | Replace main-world frame counting with generation-scoped Bevy render-world evidence: a non-empty table-camera opaque phase, compiled referenced pipelines, and a completed render-graph pass. | — |
+| U44 | Minimizing an untouched title-screen window must not crash the game. | Preserve the last non-zero render extent across Windows' transient `0x0` minimize event, accept ordinary restore/resize extents, and keep the exact minimize/restore flow available through file control. | — |
 
 ## Guidance traceability
 
@@ -591,6 +616,7 @@ stale-code rejection, or complete multi-round play.
 | U41 | T3.3, T4.1, T4.5, T6.2, T6.3, T6.5, T7.1 | Recent-lobby title view, loading readiness tests, durable panic log, and a live table -> leave -> title -> maximize puppet receipt |
 | U42 | T4.5, T6.2 | Exact unseated-scene regression plus reviewed two-client captures in which every revealed table surface contains the 3D scene |
 | U43 | T4.5, T6.2 | Render-world generation regression, strict desktop tests/Clippy, and two-device acceptance that cannot complete unless the GPU image target reports readiness |
+| U44 | T4.5, T6.3, T7.1 | Zero/non-zero extent unit variants plus a real DX12 title minimize -> restore -> observe receipt with the same process still alive and no surface error |
 
 ## Purpose
 

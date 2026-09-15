@@ -25,7 +25,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u16 = 4;
+pub const SCHEMA_VERSION: u16 = 5;
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 const APP_REQUEST_TIMEOUT: Duration = Duration::from_secs(18);
@@ -90,6 +90,9 @@ pub enum FileControlAction {
     ActivateLeave,
     SetWindowMaximized {
         maximized: bool,
+    },
+    SetWindowMinimized {
+        minimized: bool,
     },
     Bid {
         tricks: u8,
@@ -271,7 +274,7 @@ impl FileControlPlugin {
                 "create_or_join_as_selected_identity".into(),
                 "take_or_release_seat".into(),
                 "toggle_table_menu".into(),
-                "return_to_title_and_resize_window".into(),
+                "return_to_title_and_change_window_state".into(),
                 "activate_leave_button".into(),
                 "bid_or_play_owned_card".into(),
                 "move_owned_card".into(),
@@ -596,6 +599,21 @@ fn drive_file_control(
                 window.set_maximized(maximized);
                 state.status = if maximized {
                     "Maximizing the game window…".into()
+                } else {
+                    "Restoring the game window…".into()
+                };
+                Ok(())
+            } else {
+                Err("the primary game window is unavailable".into())
+            }
+        }
+        FileControlAction::SetWindowMinimized { minimized } => {
+            if !matches!(surface.as_ref(), RenderSurface::Windowed) {
+                Err("window minimize is available only on an interactive window".into())
+            } else if let Ok(mut window) = windows.single_mut() {
+                window.set_minimized(minimized);
+                state.status = if minimized {
+                    "Minimizing the game window…".into()
                 } else {
                     "Restoring the game window…".into()
                 };
@@ -1309,6 +1327,12 @@ mod tests {
             FileControlAction::Observe {
                 include_join_code: true
             }
+        );
+        let minimize: FileControlAction =
+            serde_json::from_str(r#"{"kind":"set_window_minimized","minimized":true}"#).unwrap();
+        assert_eq!(
+            minimize,
+            FileControlAction::SetWindowMinimized { minimized: true }
         );
     }
 }

@@ -551,11 +551,16 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
         .init_resource::<RotationSnap>()
         .init_resource::<CameraOptions>()
         .init_resource::<TableCameraController>()
+        .init_resource::<WindowSurfaceExtentGuard>()
         .add_message::<ButtonActivation>()
         .add_observer(activate_button)
         .add_systems(
             Update,
             toggle_fps_overlay.before(FpsOverlaySystems::Customize),
+        )
+        .add_systems(
+            Update,
+            preserve_renderable_window_extent.before(handle_buttons),
         )
         .add_systems(
             Startup,
@@ -679,6 +684,19 @@ impl UiState {
 
 #[derive(Resource, Default)]
 struct PendingClipboard(Option<ClipboardRead>);
+
+#[derive(Resource)]
+struct WindowSurfaceExtentGuard {
+    last_nonzero: UVec2,
+}
+
+impl Default for WindowSurfaceExtentGuard {
+    fn default() -> Self {
+        Self {
+            last_nonzero: UVec2::new(AUTOMATION_WIDTH, AUTOMATION_HEIGHT),
+        }
+    }
+}
 
 #[derive(Component)]
 struct MainMenuRoot;
@@ -1964,6 +1982,50 @@ fn log_window_resize(mut resized: MessageReader<WindowResized>, state: Res<UiSta
             screen = ?state.screen,
             "Poche window resized"
         );
+    }
+}
+
+fn preserve_renderable_window_extent(
+    mut resized: MessageReader<WindowResized>,
+    mut windows: Query<&mut Window>,
+    mut guard: ResMut<WindowSurfaceExtentGuard>,
+) {
+    for event in resized.read() {
+        let Ok(mut window) = windows.get_mut(event.window) else {
+            continue;
+        };
+        let reported = UVec2::new(
+            window.resolution.physical_width(),
+            window.resolution.physical_height(),
+        );
+        let (renderable, retained) = retain_last_renderable_extent(reported, guard.last_nonzero);
+        if retained {
+            // On Windows, minimizing a winit window reports a 0x0 client area.
+            // Bevy clamps that to 1x1 and asks DX12 to reconfigure the live
+            // swapchain, which can fail with DXGI_ERROR_INVALID_CALL. Keep the
+            // last real extent in the ECS/render world while the OS window is
+            // minimized; the next non-zero restore event replaces it.
+            window
+                .resolution
+                .set_physical_resolution(renderable.x, renderable.y);
+            tracing::debug!(
+                width = reported.x,
+                height = reported.y,
+                retained_width = renderable.x,
+                retained_height = renderable.y,
+                "Retaining the last renderable window extent while minimized"
+            );
+        } else {
+            guard.last_nonzero = renderable;
+        }
+    }
+}
+
+fn retain_last_renderable_extent(reported: UVec2, last_nonzero: UVec2) -> (UVec2, bool) {
+    if reported.x == 0 || reported.y == 0 {
+        (last_nonzero.max(UVec2::ONE), true)
+    } else {
+        (reported, false)
     }
 }
 
@@ -3942,6 +4004,33 @@ mod tests {
             ui_camera_clear_for_screen(UiScreen::Table),
             bevy::camera::ClearColorConfig::None
         ));
+    }
+
+    #[test]
+    fn title_minimize_retains_the_last_renderable_surface_extent() {
+        let last = UVec2::new(1_180, 760);
+        assert_eq!(
+            retain_last_renderable_extent(UVec2::ZERO, last),
+            (last, true)
+        );
+    }
+
+    #[test]
+    fn ordinary_title_resize_replaces_the_last_surface_extent() {
+        let resized = UVec2::new(1_920, 1_080);
+        assert_eq!(
+            retain_last_renderable_extent(resized, UVec2::new(1_180, 760)),
+            (resized, false)
+        );
+    }
+
+    #[test]
+    fn any_zero_surface_axis_retains_the_last_renderable_extent() {
+        let last = UVec2::new(1_180, 760);
+        assert_eq!(
+            retain_last_renderable_extent(UVec2::new(1_180, 0), last),
+            (last, true)
+        );
     }
 
     #[test]
