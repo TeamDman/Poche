@@ -9121,6 +9121,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "poche-money"
+version = "0.1.0"
+
+[[package]]
 name = "poche-native-tools"
 version = "0.1.0"
 
@@ -9268,6 +9272,7 @@ dependencies = [
  "getrandom 0.3.4",
  "image",
  "poche-bevy-spacetimedb",
+ "poche-money",
  "poche-slug",
  "poche-spacetimedb-client",
  "poche-spatial",
@@ -9283,6 +9288,7 @@ name = "poche-spacetimedb-module"
 version = "0.1.0"
 dependencies = [
  "poche-environment",
+ "poche-money",
  "poche-oracle-rust",
  "spacetimedb",
 ]

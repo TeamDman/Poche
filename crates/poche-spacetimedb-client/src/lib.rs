@@ -105,6 +105,8 @@ pub struct ClientSnapshot {
     pub members: Vec<MemberView>,
     pub hand: Vec<HandCardView>,
     pub card_poses: Vec<CardPoseView>,
+    /// Public physical coins in this viewer's active room, never card secrets.
+    pub coins: Vec<CoinView>,
     pub game: Option<GameView>,
     pub revealed_cards: Vec<RevealedCardView>,
     pub activity: Vec<ActivityView>,
@@ -171,6 +173,21 @@ pub struct CardPoseView {
     pub logical_location: String,
     pub position_mm: [i32; 3],
     pub rotation_mdeg: [i32; 3],
+    pub sequence: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CoinView {
+    pub coin_key: String,
+    pub coin_id: String,
+    pub owner: String,
+    pub owner_seat: Option<u8>,
+    pub is_own: bool,
+    pub denomination_cents: u8,
+    /// Authoritative logical container: jar, lid or bowl. A pose update alone
+    /// does not change this value or contribute an ante.
+    pub container: String,
+    pub position_mm: [i32; 3],
     pub sequence: u64,
 }
 
@@ -506,6 +523,40 @@ impl PocheClient {
         Ok(request_id)
     }
 
+    /// Preview a physical move or commit a container transfer on release.
+    /// Ownership, contribution amounts and container legality remain server
+    /// decisions; successfully queueing this request is not an acceptance.
+    #[allow(clippy::too_many_arguments)]
+    pub fn move_coin(
+        &self,
+        room_id: String,
+        coin_id: String,
+        sequence: u64,
+        container: String,
+        position_mm: [i32; 3],
+        commit: bool,
+    ) -> Result<u64, ClientError> {
+        let request_id = self.next_request();
+        let started = Instant::now();
+        let tx = self.inner.event_tx.clone();
+        self.inner
+            .connection
+            .reducers
+            .move_coin_then(
+                room_id,
+                coin_id,
+                sequence,
+                container,
+                position_mm[0],
+                position_mm[1],
+                position_mm[2],
+                commit,
+                move |_ctx, result| finish_command(&tx, request_id, "move_coin", started, result),
+            )
+            .map_err(|error| ClientError::Request(error.to_string()))?;
+        Ok(request_id)
+    }
+
     pub fn play_card(&self, room_id: String, card_id: String) -> Result<u64, ClientError> {
         let request_id = self.next_request();
         let started = Instant::now();
@@ -634,7 +685,22 @@ fn register_change_callbacks(connection: &DbConnection, event_tx: mpsc::Sender<C
         .on_update(move |_, _, _| {
             let _ = tx.send(ClientEvent::ModelChanged);
         });
+    register_coin_callbacks(connection, event_tx.clone());
     register_activity_callbacks(connection, event_tx);
+}
+
+fn register_coin_callbacks(connection: &DbConnection, event_tx: mpsc::Sender<ClientEvent>) {
+    let tx = event_tx.clone();
+    connection.db.visible_coins().on_insert(move |_, _| {
+        let _ = tx.send(ClientEvent::ModelChanged);
+    });
+    let tx = event_tx.clone();
+    connection.db.visible_coins().on_update(move |_, _, _| {
+        let _ = tx.send(ClientEvent::ModelChanged);
+    });
+    connection.db.visible_coins().on_delete(move |_, _| {
+        let _ = event_tx.send(ClientEvent::ModelChanged);
+    });
 }
 
 fn register_activity_callbacks(connection: &DbConnection, event_tx: mpsc::Sender<ClientEvent>) {
@@ -673,6 +739,7 @@ fn subscribe(
         .add_query(|query| query.from.room_members())
         .add_query(|query| query.from.my_hand())
         .add_query(|query| query.from.visible_card_poses())
+        .add_query(|query| query.from.visible_coins())
         .add_query(|query| query.from.visible_room_games())
         .add_query(|query| query.from.visible_revealed_cards())
         .add_query(|query| query.from.visible_activity())
@@ -691,23 +758,8 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
         .map(|room| RoomView {
             room_id: room.room_id,
         })
-        .collect();
-    let mut members = context
-        .db
-        .room_members()
-        .iter()
-        .map(|member| {
-            let member_identity = member.identity.to_hex().to_string();
-            MemberView {
-                is_self: identity.as_deref() == Some(member_identity.as_str()),
-                identity: member_identity,
-                display_name: member.display_name,
-                seat: member.seat,
-                connected: member.connected,
-            }
-        })
         .collect::<Vec<_>>();
-    members.sort_by(|left, right| left.identity.cmp(&right.identity));
+    let members = member_views(context.db.room_members().iter(), identity.as_deref());
     let mut hand = context
         .db
         .my_hand()
@@ -768,6 +820,12 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
         .collect::<Vec<_>>();
     revealed_cards.sort_by(|left, right| left.card_key.cmp(&right.card_key));
     let activity = activity_from(context);
+    let coins = coin_views(
+        context.db.visible_coins().iter(),
+        &rooms,
+        &members,
+        identity.as_deref(),
+    );
     ClientSnapshot {
         identity,
         room_capability,
@@ -775,10 +833,63 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
         members,
         hand,
         card_poses,
+        coins,
         game,
         revealed_cards,
         activity,
     }
+}
+
+fn member_views(rows: impl IntoIterator<Item = Member>, identity: Option<&str>) -> Vec<MemberView> {
+    let mut members = rows
+        .into_iter()
+        .map(|member| {
+            let member_identity = member.identity.to_hex().to_string();
+            MemberView {
+                is_self: identity == Some(member_identity.as_str()),
+                identity: member_identity,
+                display_name: member.display_name,
+                seat: member.seat,
+                connected: member.connected,
+            }
+        })
+        .collect::<Vec<_>>();
+    members.sort_by(|left, right| left.identity.cmp(&right.identity));
+    members
+}
+
+fn coin_views(
+    rows: impl IntoIterator<Item = Coin>,
+    rooms: &[RoomView],
+    members: &[MemberView],
+    identity: Option<&str>,
+) -> Vec<CoinView> {
+    let mut coins = rows
+        .into_iter()
+        // The sender-scoped server view is the security boundary. This local
+        // filter additionally prevents stale previous-room cache rows being
+        // displayed while independent room/view deletion callbacks settle.
+        .filter(|coin| rooms.iter().any(|room| room.room_id == coin.room_id))
+        .map(|coin| {
+            let owner = coin.owner.to_hex().to_string();
+            CoinView {
+                owner_seat: members
+                    .iter()
+                    .find(|member| member.identity == owner)
+                    .and_then(|member| member.seat),
+                is_own: identity == Some(owner.as_str()),
+                owner,
+                coin_key: coin.coin_key,
+                coin_id: coin.coin_id,
+                denomination_cents: coin.denomination_cents,
+                container: coin.container,
+                position_mm: [coin.x_mm, coin.y_mm, coin.z_mm],
+                sequence: coin.sequence,
+            }
+        })
+        .collect::<Vec<_>>();
+    coins.sort_by(|left, right| left.coin_key.cmp(&right.coin_key));
+    coins
 }
 
 fn activity_from(context: &DbConnection) -> Vec<ActivityView> {
@@ -911,5 +1022,120 @@ mod tests {
         assert_ne!(credential_key(&local), credential_key(&punctuation_variant));
         assert_ne!(credential_key(&hosted), credential_key(&local));
         assert_ne!(credential_key(&hosted), credential_key(&staging));
+    }
+
+    fn quarter(room_id: &str, owner: Identity, coin_id: &str) -> Coin {
+        Coin {
+            coin_key: format!("{room_id}:{}:{coin_id}", owner.to_hex()),
+            room_id: room_id.into(),
+            owner,
+            coin_id: coin_id.into(),
+            denomination_cents: 25,
+            container: "lid".into(),
+            x_mm: 15,
+            y_mm: 40,
+            z_mm: 450,
+            sequence: 3,
+            committed_at: spacetimedb_sdk::Timestamp::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn coin_cache_projection_is_room_scoped_and_does_not_authorize_private_card_faces() {
+        let self_id = Identity::ONE;
+        let peer_id = Identity::from_byte_array([2; 32]);
+        let identity = self_id.to_hex().to_string();
+        let rooms = [RoomView {
+            room_id: "current".into(),
+        }];
+        let members = [
+            MemberView {
+                identity: identity.clone(),
+                display_name: "Owner".into(),
+                seat: Some(1),
+                connected: true,
+                is_self: true,
+            },
+            MemberView {
+                identity: peer_id.to_hex().to_string(),
+                display_name: "Peer".into(),
+                seat: None,
+                connected: true,
+                is_self: false,
+            },
+        ];
+        let rows = vec![
+            quarter("current", peer_id, "q-000"),
+            quarter("previous", self_id, "q-000"),
+            quarter("current", self_id, "q-000"),
+        ];
+        let coins = coin_views(rows.clone(), &rooms, &members, Some(&identity));
+        assert_eq!(coins.len(), 2);
+        let own = coins.iter().find(|coin| coin.is_own).unwrap();
+        assert_eq!(own.owner_seat, Some(1));
+        assert_eq!(own.position_mm, [15, 40, 450]);
+        assert_eq!(own.sequence, 3);
+        assert_eq!(
+            coins.iter().find(|coin| !coin.is_own).unwrap().owner_seat,
+            None
+        );
+        let snapshot = ClientSnapshot {
+            identity: Some(identity.clone()),
+            coins,
+            ..Default::default()
+        };
+        assert!(
+            snapshot
+                .coins
+                .iter()
+                .all(|coin| snapshot.visible_card_face(&coin.coin_key).is_none())
+        );
+        assert!(
+            coin_views(rows, &[], &members, Some(&identity)).is_empty(),
+            "leaving a room must clear coins even before coin-cache delete callbacks finish"
+        );
+    }
+
+    #[test]
+    fn coin_pose_update_preserves_logical_container_until_authority_commits_transfer() {
+        let rooms = [RoomView {
+            room_id: "room".into(),
+        }];
+        let mut row = quarter("room", Identity::ONE, "q-000");
+        row.x_mm = 0;
+        row.y_mm = 75;
+        row.z_mm = 0;
+        row.sequence = 4;
+        let preview = coin_views([row.clone()], &rooms, &[], None);
+        assert_eq!(preview[0].container, "lid");
+        row.container = "bowl".into();
+        row.sequence += 1;
+        let committed = coin_views([row], &rooms, &[], None);
+        assert_eq!(committed[0].container, "bowl");
+        assert_eq!(committed[0].sequence, 5);
+    }
+
+    #[test]
+    fn rejected_coin_transfer_remains_a_rejected_command_completion() {
+        let (tx, rx) = mpsc::channel();
+        finish_command::<String>(
+            &tx,
+            42,
+            "move_coin",
+            Instant::now(),
+            Ok(Err("not your coin".into())),
+        );
+        let ClientEvent::CommandFinished {
+            request_id,
+            operation,
+            result,
+            ..
+        } = rx.recv().unwrap()
+        else {
+            panic!("command completion expected")
+        };
+        assert_eq!(request_id, 42);
+        assert_eq!(operation, "move_coin");
+        assert_eq!(result, Err("not your coin".into()));
     }
 }

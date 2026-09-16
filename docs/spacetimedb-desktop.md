@@ -2,7 +2,7 @@
 
 The default Poche desktop path is now a Bevy 0.19.1 client connected directly
 to SpacetimeDB 2.10.0. Two copies of the same `poche.exe` can create and join a
-lobby, occupy distinct seats, receive distinct private rule-generated hands,
+lobby, occupy distinct seats, pay their quarter antes, receive distinct private rule-generated hands,
 bid, play a complete first-round trick, and move/rotate cards with local
 prediction and subscription-driven peer updates.
 
@@ -17,7 +17,11 @@ of the same shared poses, not extra game objects. The hand view stays anchored
 to the player's physical hand zone as the world camera moves.
 
 Room information lives on world signs and a score sheet. Click notices to
-read them close up. Click the room-code sign to copy its code. The compact
+read them close up. Clicking the ruled scoresheet instead moves the camera to
+an orthographic view above the actual paper. Move with middle mouse to restore
+the preceding view; that gesture is consumed until you release the button.
+Wheel zoom can get close enough to inspect small objects.
+Click the room-code sign to copy its code. The compact
 Speech control and rotation snap remain on screen; Escape opens other controls.
 
 This remains a first-round vertical slice rather than the complete Poche game.
@@ -29,6 +33,27 @@ typed play, reveals the accepted card, and changes its logical location;
 out-of-turn drops remain physical moves without changing logical state or
 revealing the face. The existing Alloy/NuSMV/Prolog evidence checks the pure rules boundary,
 not SpacetimeDB or Bevy execution.
+
+## Coins and the opening ante
+
+Each seated identity receives a room-local play-money inventory: 100 quarters
+and 100 dimes ($35). The tall glass jar starts with $33, and its detached
+dark-green lid holds $2. These supply counts are implementation constants
+in `poche-money`, not a rulebook requirement or cash balance.
+
+Drag a quarter from your lid into the shared bowl. The first deal waits until
+both seated players have paid 25¢. Replenish the lid by moving a coin from the
+jar, or return unused coins to the jar. The floating labels report actual
+shared container totals. Peers see the same coin moving; pickup and release
+height are eased locally too.
+
+This first-round slice accepts exactly one quarter for an unpaid ante and one
+dime for a missed bid once the trick has finished. It rejects overpayment,
+another player's coins and withdrawals from the bowl. Settlement/payout and
+later rounds remain unfinished; do not interpret the bowl as a cash service.
+Coins are conserved across transfers and rejoining. Abandoning a deal refunds
+its bowl coins. Existing pre-coin deals retain their cards and materialize
+their already-paid automatic antes from the new inventory once.
 
 ## Choose Maincloud or local development
 
@@ -251,7 +276,7 @@ Switching accounts disconnects that process but does not leave. Explicit
 disconnect does not. If a seated member explicitly leaves or stands during an
 active deal, the authority abandons that incomplete deal and clears its cards
 and action log. A later code-based join returns unseated to a coherent lobby;
-occupying both seats starts a fresh deal. This avoids inheriting a departed
+occupying both seats and paying both antes starts a fresh deal. This avoids inheriting a departed
 player's private hand or leaving the actor pointed at an empty seat. Server
 presence is keyed by SDK connection ID, so a member remains online while any
 process using that identity is connected.
@@ -304,7 +329,9 @@ target\debug\poche-puppet.exe acceptance
 
 The command captures the initial identity gate, creates independent Alice and
 Bob accounts, captures Alice's account-labelled title, creates a room, joins
-Bob, and seats both devices. It verifies one rule-generated private card per
+Bob, and seats both devices. It tests jar/lid transfers, rejects wrong payments,
+and drags each quarter ante through real pointer input. One payment must leave
+both hands empty; both payments start the deal. It verifies one rule-generated private card per
 player and two face-free shared poses, moves
 Alice's card, waits until Bob observes its exact position/rotation, submits two
 legal bids through pointer clicks on the Speech picker and two legal plays,
@@ -327,7 +354,9 @@ The same run also grabs an inset card using real Bevy pointer input, taps Q,
 moves it into the world, and brings it back. It checks the peer's exact angle,
 lift/release heights, unchanged ownership, and absence of public face disclosure.
 `hand-interaction.png` shows hover, rotation, world drag, return and low-angle
-inspection in one image. The run writes:
+inspection in one image. `scoresheet-inspection.png` shows the actual paper
+and restoration of the previous camera. `manual-antes.png` and
+`missed-bid-payment.png` record conserved money transfers. The run writes:
 
 - `target/poche-puppet/acceptance-contact-sheet.png` — seated and moved views
   for Alice and Bob in one image;
@@ -376,7 +405,7 @@ reports the `resume_offer` surface.
 `menu ROOT`, `options ROOT`, `invert-camera-y ROOT`, and `back ROOT` expose the
 same nested menu path to ad-hoc windowless control and screenshot capture.
 
-File-control schema 6 also accepts real input. On a `--windowless` instance:
+File-control schema 8 also accepts real input. On a `--windowless` instance:
 
 ```powershell
 target\debug\poche-puppet.exe pointer target\live\alice 590 732 down
@@ -390,6 +419,12 @@ run through normal Bevy input and picking, not a pose reducer shortcut. Pointer
 injection is rejected for OS windows so tests cannot move your mouse. The
 observation includes the held card key and visible hand-copy count. Screenshots
 and semantic observations still work for both windowed and windowless instances.
+
+`camera-gesture ROOT DX DY middle|right|up` supplies windowless camera motion.
+It can dismiss scoresheet inspection through the same consumed-gesture path as
+the mouse. Observations include camera pose, inspection state, shared coins and
+visible coin-picking coordinates. These diagnostic picking coordinates are
+computed only when file control is enabled.
 
 The final `move` argument is rotation about table-up Y in millidegrees,
 matching the Q/E control and the card's visible orientation in the perspective

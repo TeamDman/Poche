@@ -6,92 +6,87 @@ use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub(super) struct SetCardPoseArgs {
+pub(super) struct MoveCoinArgs {
     pub room_id: String,
-    pub card_id: String,
+    pub coin_id: String,
     pub sequence: u64,
+    pub container: String,
     pub x_mm: i32,
     pub y_mm: i32,
     pub z_mm: i32,
-    pub rx_mdeg: i32,
-    pub ry_mdeg: i32,
-    pub rz_mdeg: i32,
+    pub commit: bool,
 }
 
-impl From<SetCardPoseArgs> for super::Reducer {
-    fn from(args: SetCardPoseArgs) -> Self {
-        Self::SetCardPose {
+impl From<MoveCoinArgs> for super::Reducer {
+    fn from(args: MoveCoinArgs) -> Self {
+        Self::MoveCoin {
             room_id: args.room_id,
-            card_id: args.card_id,
+            coin_id: args.coin_id,
             sequence: args.sequence,
+            container: args.container,
             x_mm: args.x_mm,
             y_mm: args.y_mm,
             z_mm: args.z_mm,
-            rx_mdeg: args.rx_mdeg,
-            ry_mdeg: args.ry_mdeg,
-            rz_mdeg: args.rz_mdeg,
+            commit: args.commit,
         }
     }
 }
 
-impl __sdk::InModule for SetCardPoseArgs {
+impl __sdk::InModule for MoveCoinArgs {
     type Module = super::RemoteModule;
 }
 
 #[allow(non_camel_case_types)]
-/// Extension trait for access to the reducer `set_card_pose`.
+/// Extension trait for access to the reducer `move_coin`.
 ///
 /// Implemented for [`super::RemoteReducers`].
-pub trait set_card_pose {
-    /// Request that the remote module invoke the reducer `set_card_pose` to run as soon as possible.
+pub trait move_coin {
+    /// Request that the remote module invoke the reducer `move_coin` to run as soon as possible.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`set_card_pose:set_card_pose_then`] to run a callback after the reducer completes.
-    fn set_card_pose(
+    /// /// Use [`move_coin:move_coin_then`] to run a callback after the reducer completes.
+    fn move_coin(
         &self,
         room_id: String,
-        card_id: String,
+        coin_id: String,
         sequence: u64,
+        container: String,
         x_mm: i32,
         y_mm: i32,
         z_mm: i32,
-        rx_mdeg: i32,
-        ry_mdeg: i32,
-        rz_mdeg: i32,
+        commit: bool,
     ) -> __sdk::Result<()> {
-        self.set_card_pose_then(
+        self.move_coin_then(
             room_id,
-            card_id,
+            coin_id,
             sequence,
+            container,
             x_mm,
             y_mm,
             z_mm,
-            rx_mdeg,
-            ry_mdeg,
-            rz_mdeg,
+            commit,
             |_, _| {},
         )
     }
 
-    /// Request that the remote module invoke the reducer `set_card_pose` to run as soon as possible,
+    /// Request that the remote module invoke the reducer `move_coin` to run as soon as possible,
     /// registering `callback` to run when we are notified that the reducer completed.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed with the `callback`.
-    fn set_card_pose_then(
+    fn move_coin_then(
         &self,
         room_id: String,
-        card_id: String,
+        coin_id: String,
         sequence: u64,
+        container: String,
         x_mm: i32,
         y_mm: i32,
         z_mm: i32,
-        rx_mdeg: i32,
-        ry_mdeg: i32,
-        rz_mdeg: i32,
+        commit: bool,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
@@ -99,34 +94,32 @@ pub trait set_card_pose {
     ) -> __sdk::Result<()>;
 }
 
-impl set_card_pose for super::RemoteReducers {
-    fn set_card_pose_then(
+impl move_coin for super::RemoteReducers {
+    fn move_coin_then(
         &self,
         room_id: String,
-        card_id: String,
+        coin_id: String,
         sequence: u64,
+        container: String,
         x_mm: i32,
         y_mm: i32,
         z_mm: i32,
-        rx_mdeg: i32,
-        ry_mdeg: i32,
-        rz_mdeg: i32,
+        commit: bool,
 
         callback: impl FnOnce(&super::ReducerEventContext, Result<Result<(), String>, __sdk::InternalError>)
             + Send
             + 'static,
     ) -> __sdk::Result<()> {
         self.imp.invoke_reducer_with_callback(
-            SetCardPoseArgs {
+            MoveCoinArgs {
                 room_id,
-                card_id,
+                coin_id,
                 sequence,
+                container,
                 x_mm,
                 y_mm,
                 z_mm,
-                rx_mdeg,
-                ry_mdeg,
-                rz_mdeg,
+                commit,
             },
             callback,
         )

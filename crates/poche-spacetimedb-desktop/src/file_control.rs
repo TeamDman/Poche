@@ -23,7 +23,7 @@ use bevy::{
     render::view::screenshot::save_to_disk,
     window::PrimaryWindow,
 };
-use poche_bevy_spacetimedb::{BridgeHandle, BridgeIntent, BridgeModel};
+use poche_bevy_spacetimedb::{BridgeHandle, BridgeIntent, BridgeModel, BridgeNotice};
 use poche_spacetimedb_client::{RoomCapability, valid_join_code};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -34,7 +34,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u16 = 6;
+pub const SCHEMA_VERSION: u16 = 8;
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 const APP_REQUEST_TIMEOUT: Duration = Duration::from_secs(18);
@@ -114,12 +114,24 @@ pub enum FileControlAction {
         position_mm: [i32; 3],
         rotation_mdeg: [i32; 3],
     },
+    MoveCoin {
+        coin_id: String,
+        container: String,
+        position_mm: [i32; 3],
+        commit: bool,
+    },
     /// Windowless-only logical-pixel pointer input, through the ordinary drag
     /// and Bevy UI picking paths. Does not move the operating system cursor.
     Pointer {
         x: f32,
         y: f32,
         primary_down: bool,
+    },
+    /// Windowless-only camera motion through ordinary input; never OS input.
+    CameraGesture {
+        delta: [f32; 2],
+        middle_down: bool,
+        right_down: bool,
     },
     /// Press/release a supported game-control key through ordinary Update input.
     Key {
@@ -172,16 +184,35 @@ pub struct FileControlObservation {
     pub own_hand: Vec<FileControlHandCard>,
     pub members: Vec<FileControlMember>,
     pub card_poses: Vec<FileControlCardPose>,
+    pub coins: Vec<FileControlCoin>,
+    pub money_pick_targets: Vec<FileControlCoinTarget>,
+    pub money_bowl_screen: Option<[f32; 2]>,
+    pub money_jar_screen: Option<[f32; 2]>,
+    pub money_lid_screen: Option<[f32; 2]>,
     pub rendered_card_count: usize,
     pub rendered_player_count: usize,
     pub held_card_key: Option<String>,
     pub visible_hand_copies: usize,
+    pub camera: Option<FileControlCamera>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game: Option<FileControlGame>,
     pub revealed_cards: Vec<FileControlRevealedCard>,
     pub activity: Vec<FileControlActivity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_authority_latency_ms: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FileControlCamera {
+    pub mode: String,
+    pub focus: [f32; 3],
+    pub yaw: f32,
+    pub pitch: f32,
+    pub distance: f32,
+    pub orthographic_scale: f32,
+    pub inspecting_sheet: bool,
+    pub sheet_screen: Option<[f32; 2]>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -215,6 +246,30 @@ pub struct FileControlCardPose {
     pub rotation_mdeg: [i32; 3],
     pub sequence: u64,
     pub is_own: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FileControlCoin {
+    pub coin_key: String,
+    pub coin_id: String,
+    pub owner: String,
+    pub owner_seat: Option<u8>,
+    pub is_own: bool,
+    pub denomination_cents: u8,
+    pub container: String,
+    pub position_mm: [i32; 3],
+    pub sequence: u64,
+}
+
+/// Actual camera-projected pick targets, not alternate semantic click actions.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FileControlCoinTarget {
+    pub coin_id: String,
+    pub screen: [f32; 2],
+    pub container: String,
+    pub denomination_cents: u8,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -301,6 +356,8 @@ impl FileControlPlugin {
                 "activate_leave_button".into(),
                 "bid_or_play_owned_card".into(),
                 "move_owned_card".into(),
+                "move_owned_coin".into(),
+                "coin_camera_pick_targets".into(),
                 "windowless_pointer_and_game_keys".into(),
                 "capture_gpu".into(),
                 "stop".into(),
@@ -322,6 +379,7 @@ impl FileControlPlugin {
 impl Plugin for FileControlPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.endpoint.clone())
+            .insert_resource(DeveloperControlActive)
             .init_resource::<QueuedDeviceInput>()
             .add_systems(
                 PreUpdate,
@@ -332,6 +390,9 @@ impl Plugin for FileControlPlugin {
             .add_systems(Last, drive_file_control);
     }
 }
+
+#[derive(Resource)]
+pub(super) struct DeveloperControlActive;
 
 #[derive(Clone, Resource)]
 struct FileControlEndpoint {
@@ -349,8 +410,19 @@ struct QueuedDeviceInput {
 }
 
 enum DeviceInput {
-    Pointer { point: Vec2, primary_down: bool },
-    Key { key: KeyCode, down: bool },
+    Pointer {
+        point: Vec2,
+        primary_down: bool,
+    },
+    CameraGesture {
+        delta: Vec2,
+        middle_down: bool,
+        right_down: bool,
+    },
+    Key {
+        key: KeyCode,
+        down: bool,
+    },
 }
 
 fn supported_key(name: &str) -> Result<KeyCode, String> {
@@ -390,11 +462,34 @@ fn apply_device_input(
     mut windows: Query<(Entity, &mut Window), With<PrimaryWindow>>,
     surface: Res<RenderSurface>,
     mut pointer_events: MessageWriter<PointerInput>,
+    mut motion: ResMut<bevy::input::mouse::AccumulatedMouseMotion>,
 ) {
     let Some((sequence, input)) = queue.pending.take() else {
         return;
     };
     let result = match input {
+        DeviceInput::CameraGesture {
+            delta,
+            middle_down,
+            right_down,
+        } => {
+            if matches!(surface.as_ref(), RenderSurface::Windowless { .. }) {
+                for (button, down) in [
+                    (MouseButton::Middle, middle_down),
+                    (MouseButton::Right, right_down),
+                ] {
+                    if down {
+                        mouse.press(button);
+                    } else {
+                        mouse.release(button);
+                    }
+                }
+                motion.delta = delta;
+                Ok(())
+            } else {
+                Err("synthetic camera gestures require a windowless viewport".into())
+            }
+        }
         DeviceInput::Key { key, down } => {
             if down {
                 keys.press(key);
@@ -475,6 +570,12 @@ enum Completion {
         position_mm: [i32; 3],
         rotation_mdeg: [i32; 3],
     },
+    Coin {
+        coin_key: String,
+        sequence: u64,
+        container: String,
+        error: Option<String>,
+    },
     GameAction(u64),
     Capture {
         path: PathBuf,
@@ -498,8 +599,23 @@ fn drive_file_control(
     mut camera_options: ResMut<CameraOptions>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut device_input: ResMut<QueuedDeviceInput>,
+    mut notices: MessageReader<BridgeNotice>,
 ) {
     endpoint.frame = endpoint.frame.saturating_add(1);
+    // Read every frame so an earlier rejected human action cannot reject a
+    // later control request. There is only one in-flight control request.
+    for notice in notices.read() {
+        if let BridgeNotice::Command {
+            operation: "move_coin",
+            result: Err(reason),
+            ..
+        } = notice
+            && let Some(pending) = endpoint.pending.as_mut()
+            && let Completion::Coin { error, .. } = &mut pending.completion
+        {
+            *error = Some(reason.clone());
+        }
+    }
     if let Some(mut pending) = endpoint.pending.take() {
         match pending_result(&mut pending, &state, &model, endpoint.frame, &device_input) {
             Some(result) => {
@@ -787,6 +903,20 @@ fn drive_file_control(
             &mut poses,
             &mut pending,
         ),
+        FileControlAction::MoveCoin {
+            coin_id,
+            container,
+            position_mm,
+            commit,
+        } => submit_coin(
+            &coin_id,
+            container,
+            position_mm,
+            commit,
+            &model,
+            &bridge,
+            &mut pending,
+        ),
         FileControlAction::Pointer { x, y, primary_down } => {
             let point = Vec2::new(x, y);
             let valid = if matches!(surface.as_ref(), RenderSurface::Windowless { .. }) {
@@ -810,6 +940,28 @@ fn drive_file_control(
                 ));
                 pending.completion = Completion::Input(pending.request.sequence);
             })
+        }
+        FileControlAction::CameraGesture {
+            delta,
+            middle_down,
+            right_down,
+        } => {
+            if !matches!(surface.as_ref(), RenderSurface::Windowless { .. })
+                || !Vec2::from_array(delta).is_finite()
+            {
+                Err("camera gestures require --windowless and finite deltas".into())
+            } else {
+                device_input.pending = Some((
+                    pending.request.sequence,
+                    DeviceInput::CameraGesture {
+                        delta: Vec2::from_array(delta),
+                        middle_down,
+                        right_down,
+                    },
+                ));
+                pending.completion = Completion::Input(pending.request.sequence);
+                Ok(())
+            }
         }
         FileControlAction::Key { key, down } => supported_key(&key).map(|key| {
             device_input.pending = Some((pending.request.sequence, DeviceInput::Key { key, down }));
@@ -969,6 +1121,24 @@ fn pending_result(
                     && pose.rotation_mdeg == *rotation_mdeg
             })
             .map(|_| Ok(())),
+        Completion::Coin {
+            coin_key,
+            sequence,
+            container,
+            error,
+        } => {
+            if let Some(reason) = error {
+                Some(Err(reason.clone()))
+            } else {
+                model
+                    .snapshot
+                    .coins
+                    .iter()
+                    .find(|coin| &coin.coin_key == coin_key)
+                    .filter(|coin| coin.sequence >= *sequence && &coin.container == container)
+                    .map(|_| Ok(()))
+            }
+        }
         Completion::GameAction(expected) => model
             .snapshot
             .game
@@ -1042,6 +1212,44 @@ fn sorted_hand(model: &BridgeModel) -> Vec<&poche_spacetimedb_client::HandCardVi
     let mut hand = model.snapshot.hand.iter().collect::<Vec<_>>();
     hand.sort_by(|left, right| left.card_key.cmp(&right.card_key));
     hand
+}
+
+fn submit_coin(
+    coin_id: &str,
+    container: String,
+    position_mm: [i32; 3],
+    commit: bool,
+    model: &BridgeModel,
+    bridge: &BridgeHandle,
+    pending: &mut PendingRequest,
+) -> Result<(), String> {
+    let room_id = model
+        .snapshot
+        .room_id()
+        .ok_or("join a room before moving a coin")?;
+    let coin = model
+        .snapshot
+        .coins
+        .iter()
+        .find(|coin| coin.is_own && coin.coin_id == coin_id)
+        .ok_or("coin is not in this player's inventory")?;
+    let sequence = coin.sequence.saturating_add(1);
+    pending.completion = Completion::Coin {
+        coin_key: coin.coin_key.clone(),
+        sequence,
+        container: container.clone(),
+        error: None,
+    };
+    // Commits snap to a server-chosen slot, so completion checks the accepted
+    // sequence/container rather than incorrectly requiring the requested pose.
+    bridge.send(BridgeIntent::MoveCoin {
+        room_id: room_id.into(),
+        coin_id: coin_id.into(),
+        sequence,
+        container,
+        position_mm,
+        commit,
+    })
 }
 
 fn submit_game_action(
@@ -1133,6 +1341,23 @@ fn validate_request(
             if !x.is_finite() || !y.is_finite() || *x < 0.0 || *y < 0.0 =>
         {
             return Err("pointer coordinates must be finite non-negative logical pixels".into());
+        }
+        FileControlAction::MoveCoin {
+            coin_id,
+            container,
+            position_mm,
+            ..
+        } => {
+            validate_identifier(coin_id, "coin identifier")?;
+            if !matches!(container.as_str(), "jar" | "lid" | "bowl") {
+                return Err("coin container must be jar, lid, or bowl".into());
+            }
+            if position_mm
+                .iter()
+                .any(|value| value.unsigned_abs() > 10_000)
+            {
+                return Err("coin pose is outside the server's bounded physical space".into());
+            }
         }
         FileControlAction::Key { key, .. } => {
             supported_key(key)?;
@@ -1299,8 +1524,29 @@ fn observation(
             })
             .collect(),
         rendered_card_count: state.rendered_card_count,
+        coins: model
+            .snapshot
+            .coins
+            .iter()
+            .map(|coin| FileControlCoin {
+                coin_key: coin.coin_key.clone(),
+                coin_id: coin.coin_id.clone(),
+                owner: coin.owner.clone(),
+                owner_seat: coin.owner_seat,
+                is_own: coin.is_own,
+                denomination_cents: coin.denomination_cents,
+                container: coin.container.clone(),
+                position_mm: coin.position_mm,
+                sequence: coin.sequence,
+            })
+            .collect(),
+        money_pick_targets: state.money_pick_targets.clone(),
+        money_bowl_screen: state.money_bowl_screen,
+        money_jar_screen: state.money_jar_screen,
+        money_lid_screen: state.money_lid_screen,
         held_card_key: state.held_card_key.clone(),
         visible_hand_copies: state.visible_hand_copies,
+        camera: state.camera_diagnostics.clone(),
         rendered_player_count: state.rendered_player_count,
         game: model.snapshot.game.as_ref().map(|game| FileControlGame {
             phase: game.phase.clone(),
@@ -1520,6 +1766,106 @@ mod tests {
         assert_eq!(
             minimize,
             FileControlAction::SetWindowMinimized { minimized: true }
+        );
+    }
+
+    #[test]
+    fn coin_control_validates_container_and_bounded_physical_pose() {
+        let endpoint = FileControlEndpoint {
+            root: PathBuf::new(),
+            instance_id: "test".into(),
+            last_sequence: None,
+            frame: 0,
+            pending: None,
+        };
+        let mut request = FileControlRequest {
+            schema_version: SCHEMA_VERSION,
+            request_id: "coin-test".into(),
+            sequence: 1,
+            action: FileControlAction::MoveCoin {
+                coin_id: "q-000".into(),
+                container: "lid".into(),
+                position_mm: [0, 20, 0],
+                commit: true,
+            },
+        };
+        assert!(validate_request(&endpoint, &request).is_ok());
+        if let FileControlAction::MoveCoin { container, .. } = &mut request.action {
+            *container = "someone-elses-wallet".into();
+        }
+        assert!(validate_request(&endpoint, &request).is_err());
+        if let FileControlAction::MoveCoin {
+            container,
+            position_mm,
+            ..
+        } = &mut request.action
+        {
+            *container = "bowl".into();
+            *position_mm = [i32::MIN, 0, 0];
+        }
+        assert!(validate_request(&endpoint, &request).is_err());
+    }
+
+    #[test]
+    fn coin_completion_accepts_server_snap_but_propagates_rejection() {
+        let mut model = BridgeModel::default();
+        model
+            .snapshot
+            .coins
+            .push(poche_spacetimedb_client::CoinView {
+                coin_key: "owned-q-000".into(),
+                coin_id: "q-000".into(),
+                owner: "viewer".into(),
+                owner_seat: Some(0),
+                is_own: true,
+                denomination_cents: 25,
+                container: "bowl".into(),
+                position_mm: [-234, 25, 0],
+                sequence: 4,
+            });
+        let mut pending = PendingRequest {
+            request: FileControlRequest {
+                schema_version: SCHEMA_VERSION,
+                request_id: "coin-test".into(),
+                sequence: 1,
+                action: FileControlAction::MoveCoin {
+                    coin_id: "q-000".into(),
+                    container: "bowl".into(),
+                    position_mm: [0, 20, 0],
+                    commit: true,
+                },
+            },
+            processing_path: PathBuf::new(),
+            started: Instant::now(),
+            completion: Completion::Coin {
+                coin_key: "owned-q-000".into(),
+                sequence: 4,
+                container: "bowl".into(),
+                error: None,
+            },
+        };
+        assert_eq!(
+            pending_result(
+                &mut pending,
+                &UiState::default(),
+                &model,
+                0,
+                &QueuedDeviceInput::default()
+            ),
+            Some(Ok(()))
+        );
+        if let Completion::Coin { error, .. } = &mut pending.completion {
+            *error = Some("overpayment rejected".into());
+        }
+        assert_eq!(
+            pending_result(
+                &mut pending,
+                &UiState::default(),
+                &model,
+                0,
+                &QueuedDeviceInput::default()
+            ),
+            Some(Err("overpayment rejected".into()))
         );
     }
 

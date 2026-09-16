@@ -26,6 +26,7 @@ pub(super) struct WorldUiPlugin;
 impl Plugin for WorldUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WorldInteraction>()
+            .init_resource::<SheetInspectionRequest>()
             .init_resource::<PresentationCache>()
             .add_message::<WorldUiCommand>()
             .add_observer(activate_world_ui)
@@ -51,6 +52,31 @@ pub(super) struct WorldInteraction {
     speech_open: bool,
     reading: Option<PanelKind>,
     hovered: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct SheetInspectionTarget {
+    pub center: Vec3,
+    pub size: Vec2,
+}
+
+#[derive(Resource, Default)]
+pub(super) struct SheetInspectionRequest {
+    pub pending: Option<SheetInspectionTarget>,
+    pub active: bool,
+}
+
+pub(super) fn sheet_inspection_target(layout: &SpatialLayout) -> SheetInspectionTarget {
+    let paper = layout.score_sheet();
+    let mut center = point_to_world(paper.pose.translation);
+    center.y += paper.half_extents.y as f32 / 1000.0 + 0.001;
+    SheetInspectionTarget {
+        center,
+        size: Vec2::new(
+            paper.half_extents.x as f32 * 0.002,
+            paper.half_extents.z as f32 * 0.002,
+        ),
+    }
 }
 
 impl WorldInteraction {
@@ -102,16 +128,30 @@ struct WorldHoverTooltip;
 struct FaceCamera;
 
 #[derive(Component)]
-struct WorldPanel {
+pub(super) struct WorldPanel {
     kind: PanelKind,
     half_size: Vec2,
 }
 
 #[derive(Component)]
-struct WorldUiElement;
+pub(super) struct WorldUiElement;
 
 #[derive(Component)]
 struct WorldReader;
+
+#[derive(Component)]
+struct NameTagBackdrop;
+
+#[derive(Component)]
+struct ScoreSheetCell;
+
+#[derive(Component)]
+struct ScoreSheetRule;
+
+const NAME_TAG_BACKGROUND: [u8; 3] = [15, 28, 25];
+const NAME_TAG_FOREGROUND: [u8; 3] = [242, 237, 209];
+const SHEET_COLUMNS: [f32; 5] = [0.13, 0.23, 0.12, 0.26, 0.26];
+const SHEET_FONT_HEIGHT: f32 = 0.006;
 
 #[derive(Component, Clone, Copy)]
 enum WorldUiAction {
@@ -120,7 +160,7 @@ enum WorldUiAction {
 }
 
 #[derive(Message)]
-struct WorldUiCommand(WorldUiAction);
+pub(super) struct WorldUiCommand(WorldUiAction);
 
 fn activate_world_ui(
     mut click: On<Pointer<Click>>,
@@ -135,7 +175,7 @@ fn activate_world_ui(
     }
 }
 
-fn interact_with_world(
+pub(super) fn interact_with_world(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window>,
@@ -154,7 +194,14 @@ fn interact_with_world(
     bridge: Res<BridgeHandle>,
     poses: Res<PoseDisplay>,
     hand: Res<hand_view::HandProjection>,
+    mut inspection: ResMut<SheetInspectionRequest>,
 ) {
+    if inspection.active {
+        events.clear();
+        interaction.pointer_over_ui = true;
+        interaction.hovered = None;
+        return;
+    }
     for WorldUiCommand(action) in events.read() {
         match action {
             WorldUiAction::ToggleSpeech => interaction.speech_open = !interaction.speech_open,
@@ -294,7 +341,22 @@ fn interact_with_world(
                 _ => "The lobby code could not be copied.".into(),
             };
         }
-        WorldHit::Panel(kind) => interaction.reading = Some(kind),
+        WorldHit::Panel(kind) => open_panel(kind, &layout.0, &mut interaction, &mut inspection),
+    }
+}
+
+fn open_panel(
+    kind: PanelKind,
+    layout: &SpatialLayout,
+    interaction: &mut WorldInteraction,
+    inspection: &mut SheetInspectionRequest,
+) {
+    if kind == PanelKind::ScoreSheet {
+        interaction.reading = None;
+        interaction.speech_open = false;
+        inspection.pending = Some(sheet_inspection_target(layout));
+    } else {
+        interaction.reading = Some(kind);
     }
 }
 
@@ -372,6 +434,7 @@ fn sync_world_presentation(
     state: Res<UiState>,
     layout: Res<CanonicalLayout>,
     interaction: Res<WorldInteraction>,
+    inspection: Res<SheetInspectionRequest>,
     existing: Query<Entity, With<WorldPresentation>>,
     existing_controls: Query<Entity, With<WorldControls>>,
     existing_tooltips: Query<Entity, With<WorldHoverTooltip>>,
@@ -397,7 +460,8 @@ fn sync_world_presentation(
     } else {
         String::new()
     };
-    let controls_content = if room_visible && state.screen == UiScreen::Table {
+    let controls_content = if room_visible && state.screen == UiScreen::Table && !inspection.active
+    {
         format!(
             "{}|{}|{:?}|{}",
             surface_content,
@@ -442,7 +506,7 @@ fn sync_world_presentation(
         for entity in &existing_controls {
             commands.entity(entity).despawn();
         }
-        if room_visible && state.screen == UiScreen::Table {
+        if room_visible && state.screen == UiScreen::Table && !inspection.active {
             spawn_table_controls(&mut commands, &model.snapshot, &state, &interaction);
         }
     }
@@ -486,19 +550,7 @@ fn sync_world_presentation(
         let lines = panel_lines(kind, &model.snapshot, state.capability.as_ref());
         painter.panel(kind, anchor, size, &lines, true);
     }
-    let sheet = layout.0.score_sheet();
-    let mut sheet_position = point_to_world(sheet.pose.translation);
-    sheet_position.y += sheet.half_extents.y as f32 / 1000.0 + 0.001;
-    painter.panel(
-        PanelKind::ScoreSheet,
-        sheet_position,
-        Vec2::new(
-            sheet.half_extents.x as f32 * 0.002,
-            sheet.half_extents.z as f32 * 0.002,
-        ),
-        &panel_lines(PanelKind::ScoreSheet, &model.snapshot, None),
-        false,
-    );
+    painter.score_sheet(sheet_inspection_target(&layout.0), &model.snapshot);
 
     for placement in layout.0.seats() {
         let seat = placement.seat.get();
@@ -545,7 +597,7 @@ fn sync_world_presentation(
                 if member.is_self { " (you)" } else { "" }
             ),
             0.34,
-            [242, 237, 209],
+            NAME_TAG_FOREGROUND,
         );
         if let Some(speech) = player_speech(&model.snapshot, seat) {
             painter.bubble(anchor + Vec3::new(0.4, 0.44, 0.0), &speech);
@@ -561,6 +613,152 @@ struct WorldPainter<'a, 'w, 's> {
 }
 
 impl WorldPainter<'_, '_, '_> {
+    fn score_sheet(&mut self, target: SheetInspectionTarget, snapshot: &ClientSnapshot) {
+        let root = self
+            .commands
+            .spawn((
+                WorldPresentation,
+                WorldPanel {
+                    kind: PanelKind::ScoreSheet,
+                    half_size: target.size * 0.5,
+                },
+                Transform::from_translation(target.center)
+                    .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+                Visibility::default(),
+            ))
+            .id();
+        let paper = self
+            .commands
+            .spawn((
+                Mesh3d(
+                    self.meshes
+                        .add(Cuboid::new(target.size.x, target.size.y, 0.0006)),
+                ),
+                MeshMaterial3d(self.materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.93, 0.90, 0.76),
+                    perceptual_roughness: 0.95,
+                    ..default()
+                })),
+                Transform::default(),
+                RenderLayers::layer(0),
+            ))
+            .id();
+        self.commands.entity(root).add_child(paper);
+        self.text(
+            root,
+            "POCHE · SCORE SHEET",
+            Vec3::new(0.0, target.size.y * 0.425, 0.0006),
+            Vec2::new(target.size.x * 0.9, 0.010),
+            [30, 31, 27],
+        );
+        let rows = score_sheet_cells(snapshot);
+        let first = sheet_cell_bounds(target.size, 0, 0, rows.len());
+        let last = sheet_cell_bounds(target.size, rows.len() - 1, 4, rows.len());
+        let ink = self.materials.add(StandardMaterial {
+            base_color: Color::srgb(0.12, 0.12, 0.10),
+            unlit: true,
+            ..default()
+        });
+        for row in 0..=rows.len() {
+            let y = first.max.y - (first.max.y - last.min.y) * row as f32 / rows.len() as f32;
+            self.sheet_rule(
+                root,
+                Vec2::new(0.0, y),
+                Vec2::new(last.max.x - first.min.x, 0.00022),
+                ink.clone(),
+            );
+        }
+        for column in 0..=SHEET_COLUMNS.len() {
+            let x = if column == SHEET_COLUMNS.len() {
+                last.max.x
+            } else {
+                sheet_cell_bounds(target.size, 0, column, rows.len()).min.x
+            };
+            self.sheet_rule(
+                root,
+                Vec2::new(x, (first.max.y + last.min.y) * 0.5),
+                Vec2::new(0.00022, first.max.y - last.min.y),
+                ink.clone(),
+            );
+        }
+        for (row, cells) in rows.iter().enumerate() {
+            for (column, value) in cells.iter().enumerate() {
+                let bounds = sheet_cell_bounds(target.size, row, column, rows.len());
+                let center = bounds.center();
+                let cell = self
+                    .commands
+                    .spawn((
+                        ScoreSheetCell,
+                        Transform::from_xyz(center.x, center.y, 0.0006),
+                        Visibility::default(),
+                    ))
+                    .id();
+                self.commands.entity(root).add_child(cell);
+                let width = bounds.width() - 0.003;
+                let maximum_characters = (1..=64_usize)
+                    .take_while(|count| *count as f32 * SHEET_FONT_HEIGHT * 0.6 <= width)
+                    .last()
+                    .unwrap_or(1);
+                let label = cell_label(value, maximum_characters);
+                self.text(
+                    cell,
+                    &label,
+                    Vec3::ZERO,
+                    Vec2::new(width, SHEET_FONT_HEIGHT),
+                    [30, 31, 27],
+                );
+            }
+        }
+        let phase = snapshot.game.as_ref().map_or_else(
+            || "Waiting for the first deal".into(),
+            |game| {
+                if game.phase == "scoring" {
+                    "Outcome shown; scoring pending".into()
+                } else {
+                    format!("{} · round {}", game.phase, game.round_index + 1)
+                }
+            },
+        );
+        for (line, label) in [
+            phase.as_str(),
+            "● missed · 1N made · 2N all tricks",
+            "Totals are recorded authority points",
+        ]
+        .iter()
+        .enumerate()
+        {
+            self.text(
+                root,
+                label,
+                Vec3::new(0.0, -target.size.y * (0.335 + line as f32 * 0.045), 0.0006),
+                Vec2::new(target.size.x * 0.9, 0.005),
+                [30, 31, 27],
+            );
+        }
+    }
+
+    fn sheet_rule(
+        &mut self,
+        root: Entity,
+        center: Vec2,
+        size: Vec2,
+        material: Handle<StandardMaterial>,
+    ) {
+        let rule = self
+            .commands
+            .spawn((
+                ScoreSheetRule,
+                Mesh3d(self.meshes.add(Cuboid::new(size.x, size.y, 0.00012))),
+                MeshMaterial3d(material),
+                Transform::from_xyz(center.x, center.y, 0.00045),
+                NotShadowCaster,
+                NotShadowReceiver,
+                RenderLayers::layer(0),
+            ))
+            .id();
+        self.commands.entity(root).add_child(rule);
+    }
+
     fn panel(
         &mut self,
         kind: PanelKind,
@@ -632,7 +830,34 @@ impl WorldPainter<'_, '_, '_> {
                 Visibility::default(),
             ))
             .id();
-        self.text(root, label, Vec3::ZERO, Vec2::new(width, 0.035), color);
+        let background = self
+            .commands
+            .spawn((
+                NameTagBackdrop,
+                Mesh3d(self.meshes.add(Cuboid::new(width + 0.020, 0.052, 0.002))),
+                MeshMaterial3d(self.materials.add(StandardMaterial {
+                    base_color: Color::srgb_u8(
+                        NAME_TAG_BACKGROUND[0],
+                        NAME_TAG_BACKGROUND[1],
+                        NAME_TAG_BACKGROUND[2],
+                    ),
+                    unlit: true,
+                    ..default()
+                })),
+                Transform::default(),
+                NotShadowCaster,
+                NotShadowReceiver,
+                RenderLayers::layer(0),
+            ))
+            .id();
+        self.commands.entity(root).add_child(background);
+        self.text(
+            root,
+            label,
+            Vec3::new(0.0, 0.0, 0.0015),
+            Vec2::new(width, 0.035),
+            color,
+        );
     }
 
     fn bubble(&mut self, anchor: Vec3, speech: &str) {
@@ -793,47 +1018,81 @@ fn seat_name(snapshot: &ClientSnapshot, seat: u8) -> String {
 }
 
 fn score_sheet_lines(snapshot: &ClientSnapshot) -> Vec<String> {
-    let player0 = truncate_text(&seat_name(snapshot, 0), 10);
-    let player1 = truncate_text(&seat_name(snapshot, 1), 10);
-    let mut lines = vec![format!("Round | Dealer | Cards | {player0} | {player1}")];
-    let Some(game) = &snapshot.game else {
-        lines.push("Waiting for the first deal".into());
-        lines.push("Total |       |       | 0 | 0".into());
-        return lines;
-    };
-    let settled = matches!(game.phase.as_str(), "scored" | "finished" | "scoring")
-        && game.hand_counts == [0, 0];
-    let cells = [0_usize, 1].map(|index| match game.bids[index] {
-        None => "—".into(),
-        Some(bid) if !settled => bid.to_string(),
-        Some(bid) => score_cell(bid, game.tricks_won[index], game.hand_size),
-    });
-    lines.push(format!(
-        "{} | {} | {} | {} | {}",
-        game.round_index + 1,
-        game.dealer_seat.map_or_else(
-            || "—".into(),
-            |seat| truncate_text(&seat_name(snapshot, seat), 10)
-        ),
-        game.hand_size,
-        cells[0],
-        cells[1]
-    ));
-    lines.push(format!(
-        "Recorded total |       |       | {} | {}",
-        game.scores[0], game.scores[1]
-    ));
-    lines.push(format!(
-        "Pot ${}.{:02} · {}",
-        game.pot_cents / 100,
-        game.pot_cents % 100,
-        game.phase
-    ));
-    lines.push("Bid → ● missed · 1N made · 2N all tricks".into());
-    if game.phase == "scoring" {
-        lines.push("Outcome shown; authority scoring is pending.".into());
+    // Plain text is useful for diagnostics; the physical paper renders cells
+    // and ruled geometry, never independently scaled lines of pipe characters.
+    score_sheet_cells(snapshot)
+        .iter()
+        .map(|row| row.join(" | "))
+        .collect()
+}
+
+fn score_sheet_cells(snapshot: &ClientSnapshot) -> Vec<[String; 5]> {
+    let mut rows = vec![[
+        "Round".into(),
+        "Dealer".into(),
+        "Cards".into(),
+        seat_name(snapshot, 0),
+        seat_name(snapshot, 1),
+    ]];
+    let mut totals = [0_u16, 0];
+    if let Some(game) = &snapshot.game {
+        let settled = matches!(game.phase.as_str(), "scored" | "finished" | "scoring")
+            && game.hand_counts == [0, 0];
+        let cells = [0_usize, 1].map(|index| match game.bids[index] {
+            None => "—".into(),
+            Some(bid) if !settled => bid.to_string(),
+            Some(bid) => score_cell(bid, game.tricks_won[index], game.hand_size),
+        });
+        rows.push([
+            format!("{}", game.round_index + 1),
+            game.dealer_seat
+                .map_or_else(|| "—".into(), |seat| seat_name(snapshot, seat)),
+            game.hand_size.to_string(),
+            cells[0].clone(),
+            cells[1].clone(),
+        ]);
+        totals = game.scores;
+    } else {
+        rows.push(std::array::from_fn(|_| String::new()));
     }
-    lines
+    // Blank writing space does not invent past/future round results beyond the
+    // authority's current first-round projection.
+    rows.extend((0..5).map(|_| std::array::from_fn(|_| String::new())));
+    rows.push([
+        "Total".into(),
+        "recorded".into(),
+        String::new(),
+        totals[0].to_string(),
+        totals[1].to_string(),
+    ]);
+    rows
+}
+
+fn sheet_cell_bounds(paper: Vec2, row: usize, column: usize, rows: usize) -> Rect {
+    let width = paper.x * 0.90;
+    let left = -width * 0.5 + width * SHEET_COLUMNS[..column].iter().sum::<f32>();
+    let top = paper.y * 0.32;
+    let row_height = paper.y * 0.60 / rows as f32;
+    Rect::from_corners(
+        Vec2::new(left, top - (row + 1) as f32 * row_height),
+        Vec2::new(
+            left + width * SHEET_COLUMNS[column],
+            top - row as f32 * row_height,
+        ),
+    )
+}
+
+fn cell_label(text: &str, maximum: usize) -> String {
+    if text.chars().count() <= maximum {
+        text.into()
+    } else {
+        format!(
+            "{}…",
+            text.chars()
+                .take(maximum.saturating_sub(1))
+                .collect::<String>()
+        )
+    }
 }
 
 fn score_cell(bid: u8, tricks: u8, hand_size: u8) -> String {
@@ -848,6 +1107,12 @@ fn score_cell(bid: u8, tricks: u8, hand_size: u8) -> String {
 
 fn player_speech(snapshot: &ClientSnapshot, seat: u8) -> Option<String> {
     let game = snapshot.game.as_ref()?;
+    if game.phase == "playing" {
+        return (game.actor_seat == Some(seat)).then(|| "Hmm, which card should I play?".into());
+    }
+    if game.phase != "bidding" {
+        return None;
+    }
     let accepted_bid = game
         .bids
         .get(usize::from(seat))
@@ -856,15 +1121,14 @@ fn player_speech(snapshot: &ClientSnapshot, seat: u8) -> Option<String> {
         .map(bid_phrase);
     // The scorekeeper role has not yet been elected in the authority schema.
     // The dealer voices the mechanical prompt; this grants no new permission.
-    if game.phase == "bidding"
-        && game.dealer_seat == Some(seat)
+    if game.actor_seat == Some(seat) {
+        return Some("Hmm, how many tricks should I bid?".into());
+    }
+    if game.dealer_seat == Some(seat)
         && let Some(actor) = game.actor_seat
     {
         let question = format!("{}, how many tricks?", seat_name(snapshot, actor));
         return Some(accepted_bid.map_or(question.clone(), |bid| format!("{bid}. {question}")));
-    }
-    if game.phase == "playing" && game.actor_seat == Some(seat) {
-        return Some("Choosing a card…".into());
     }
     accepted_bid
 }
@@ -874,14 +1138,6 @@ fn bid_phrase(tricks: u8) -> String {
         "I bid {tricks} {}",
         if tricks == 1 { "trick" } else { "tricks" }
     )
-}
-
-fn truncate_text(text: &str, maximum: usize) -> String {
-    let mut result = text.chars().take(maximum).collect::<String>();
-    if text.chars().count() > maximum {
-        result.push('…');
-    }
-    result
 }
 
 fn wrap_text(text: &str, maximum: usize) -> Vec<String> {
@@ -1093,6 +1349,33 @@ mod tests {
         }
     }
 
+    fn presentation_app(mut snapshot: ClientSnapshot) -> App {
+        snapshot.rooms.push(RoomView {
+            room_id: "public-room".into(),
+        });
+        let mut app = App::new();
+        app.insert_resource(BridgeModel {
+            snapshot,
+            ..default()
+        })
+        .insert_resource(UiState {
+            screen: UiScreen::Table,
+            room_scene_generation: 1,
+            ..default()
+        })
+        .insert_resource(CanonicalLayout(
+            registered_layout(TableId::new(1), LayoutId::new(2, 1).unwrap()).unwrap(),
+        ))
+        .init_resource::<WorldInteraction>()
+        .init_resource::<SheetInspectionRequest>()
+        .init_resource::<PresentationCache>()
+        .init_resource::<Assets<Mesh>>()
+        .init_resource::<Assets<StandardMaterial>>()
+        .init_resource::<Assets<Image>>()
+        .add_systems(Update, sync_world_presentation);
+        app
+    }
+
     #[test]
     fn public_world_surfaces_never_include_private_card_faces_or_identifiers() {
         let snapshot = snapshot();
@@ -1109,7 +1392,10 @@ mod tests {
             player_speech(&snapshot, 0).as_deref(),
             Some("Bob, how many tricks?")
         );
-        assert_eq!(player_speech(&snapshot, 1), None);
+        assert_eq!(
+            player_speech(&snapshot, 1).as_deref(),
+            Some("Hmm, how many tricks should I bid?")
+        );
     }
 
     #[test]
@@ -1117,17 +1403,174 @@ mod tests {
         let mut snapshot = snapshot();
         let game = snapshot.game.as_mut().unwrap();
         game.bids = [Some(0), Some(1)];
-        assert!(score_sheet_lines(&snapshot)[1].ends_with("| 0 | 1"));
+        assert_eq!(&score_sheet_cells(&snapshot)[1][3..], ["0", "1"]);
         let game = snapshot.game.as_mut().unwrap();
         game.phase = "scored".into();
         game.hand_counts = [0, 0];
         game.tricks_won = [0, 1];
         game.scores = [10, 21];
-        let lines = score_sheet_lines(&snapshot);
-        assert!(lines[1].ends_with("| 10 | 21"));
-        assert!(lines[2].ends_with("| 10 | 21"));
+        let cells = score_sheet_cells(&snapshot);
+        assert_eq!(&cells[1][3..], ["10", "21"]);
+        assert_eq!(&cells.last().unwrap()[3..], ["10", "21"]);
         snapshot.game.as_mut().unwrap().tricks_won = [1, 0];
-        assert!(score_sheet_lines(&snapshot)[1].ends_with("| ● | ●"));
+        assert_eq!(&score_sheet_cells(&snapshot)[1][3..], ["●", "●"]);
+    }
+
+    #[test]
+    fn speech_thinks_in_first_person_and_does_not_repeat_old_bids_during_play() {
+        let mut snapshot = snapshot();
+        snapshot.game.as_mut().unwrap().actor_seat = Some(0);
+        snapshot.game.as_mut().unwrap().bids[1] = Some(1);
+        assert_eq!(
+            player_speech(&snapshot, 0).as_deref(),
+            Some("Hmm, how many tricks should I bid?")
+        );
+        assert_eq!(
+            player_speech(&snapshot, 1).as_deref(),
+            Some("I bid 1 trick")
+        );
+        let game = snapshot.game.as_mut().unwrap();
+        game.bids[0] = Some(0);
+        game.phase = "playing".into();
+        game.actor_seat = Some(1);
+        assert_eq!(player_speech(&snapshot, 0), None);
+        assert_eq!(
+            player_speech(&snapshot, 1).as_deref(),
+            Some("Hmm, which card should I play?")
+        );
+        snapshot.game.as_mut().unwrap().phase = "scoring".into();
+        assert_eq!(player_speech(&snapshot, 0), None);
+        assert_eq!(player_speech(&snapshot, 1), None);
+    }
+
+    #[test]
+    fn clicking_score_sheet_requests_real_paper_inspection_without_a_gui_reader() {
+        let layout = registered_layout(TableId::new(1), LayoutId::new(2, 2).unwrap()).unwrap();
+        let mut interaction = WorldInteraction::default();
+        let mut inspection = SheetInspectionRequest::default();
+        open_panel(
+            PanelKind::ScoreSheet,
+            &layout,
+            &mut interaction,
+            &mut inspection,
+        );
+        assert_eq!(interaction.reading, None);
+        assert!(!interaction.modal_open());
+        let target = inspection.pending.unwrap();
+        let paper = layout.score_sheet();
+        assert!((target.center.x - point_to_world(paper.pose.translation).x).abs() < 0.000_001);
+        assert!((target.center.y - 0.026).abs() < 0.000_001);
+        assert!((target.size.x - 0.20).abs() < 0.000_001);
+        assert!((target.size.y - 0.29).abs() < 0.000_001);
+        open_panel(
+            PanelKind::Players,
+            &layout,
+            &mut interaction,
+            &mut inspection,
+        );
+        assert_eq!(interaction.reading, Some(PanelKind::Players));
+    }
+
+    #[test]
+    fn rendered_scoresheet_has_aligned_cells_fixed_ink_size_and_real_rules() {
+        let mut snapshot = snapshot();
+        snapshot.members[0].display_name = "A very long identity name".into();
+        let row_count = score_sheet_cells(&snapshot).len();
+        let mut app = presentation_app(snapshot);
+        app.update();
+        let mut cells = app
+            .world_mut()
+            .query_filtered::<(&Transform, Option<&Children>), With<ScoreSheetCell>>();
+        let before = cells
+            .iter(app.world())
+            .map(|(transform, _)| transform.translation)
+            .collect::<Vec<_>>();
+        assert_eq!(before.len(), row_count * SHEET_COLUMNS.len());
+        for (_, children) in cells.iter(app.world()) {
+            if let Some(child) = children.and_then(|children| children.first()) {
+                let ink = app.world().get::<Transform>(*child).unwrap();
+                assert!(
+                    (ink.scale.z - SHEET_FONT_HEIGHT).abs() < 0.000_001,
+                    "cell text must not be independently rescaled: {}",
+                    ink.scale.z
+                );
+            }
+        }
+        let mut rules = app
+            .world_mut()
+            .query_filtered::<Entity, With<ScoreSheetRule>>();
+        assert_eq!(
+            rules.iter(app.world()).count(),
+            row_count + SHEET_COLUMNS.len() + 2
+        );
+        let paper = app.world().resource::<CanonicalLayout>().0.clone();
+        let size = sheet_inspection_target(&paper).size;
+        for row in 0..row_count {
+            for column in 0..SHEET_COLUMNS.len() {
+                let bounds = sheet_cell_bounds(size, row, column, row_count);
+                assert!(
+                    before.iter().any(
+                        |position| (position.truncate() - bounds.center()).length() < 0.000_001
+                    )
+                );
+                if column + 1 < SHEET_COLUMNS.len() {
+                    let next = sheet_cell_bounds(size, row, column + 1, row_count);
+                    assert!((bounds.max.x - next.min.x).abs() < 0.000_001);
+                }
+            }
+        }
+        app.world_mut()
+            .resource_mut::<BridgeModel>()
+            .snapshot
+            .members[0]
+            .display_name = "Jo".into();
+        app.update();
+        assert_eq!(
+            cells
+                .iter(app.world())
+                .map(|(transform, _)| transform.translation)
+                .collect::<Vec<_>>(),
+            before
+        );
+    }
+
+    #[test]
+    fn rendered_names_have_opaque_unlit_backdrops_with_accessible_contrast() {
+        let mut app = presentation_app(snapshot());
+        app.update();
+        let mut backgrounds = app
+            .world_mut()
+            .query_filtered::<&MeshMaterial3d<StandardMaterial>, With<NameTagBackdrop>>();
+        assert_eq!(backgrounds.iter(app.world()).count(), 2);
+        let materials = app.world().resource::<Assets<StandardMaterial>>();
+        for handle in backgrounds.iter(app.world()) {
+            let material = materials.get(&handle.0).unwrap();
+            assert_eq!(material.alpha_mode, AlphaMode::Opaque);
+            assert!(material.unlit);
+            assert_eq!(
+                material.base_color,
+                Color::srgb_u8(
+                    NAME_TAG_BACKGROUND[0],
+                    NAME_TAG_BACKGROUND[1],
+                    NAME_TAG_BACKGROUND[2]
+                )
+            );
+        }
+        let luminance = |rgb: [u8; 3]| {
+            let linear = rgb.map(|channel| {
+                let value = f32::from(channel) / 255.0;
+                if value <= 0.04045 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            });
+            0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+        };
+        assert!(
+            (luminance(NAME_TAG_FOREGROUND) + 0.05) / (luminance(NAME_TAG_BACKGROUND) + 0.05)
+                >= 4.5
+        );
     }
 
     #[test]
@@ -1170,30 +1613,7 @@ mod tests {
 
     #[test]
     fn hovering_and_opening_speech_preserve_world_entities_and_textures() {
-        let mut snapshot = snapshot();
-        snapshot.rooms.push(RoomView {
-            room_id: "public-room".into(),
-        });
-        let state = UiState {
-            screen: UiScreen::Table,
-            room_scene_generation: 1,
-            ..default()
-        };
-        let mut app = App::new();
-        app.insert_resource(BridgeModel {
-            snapshot,
-            ..default()
-        })
-        .insert_resource(state)
-        .insert_resource(CanonicalLayout(
-            registered_layout(TableId::new(1), LayoutId::new(2, 1).unwrap()).unwrap(),
-        ))
-        .init_resource::<WorldInteraction>()
-        .init_resource::<PresentationCache>()
-        .init_resource::<Assets<Mesh>>()
-        .init_resource::<Assets<StandardMaterial>>()
-        .init_resource::<Assets<Image>>()
-        .add_systems(Update, sync_world_presentation);
+        let mut app = presentation_app(snapshot());
         app.update();
         let mut panels = app.world_mut().query_filtered::<Entity, With<WorldPanel>>();
         let before = panels.iter(app.world()).collect::<Vec<_>>();

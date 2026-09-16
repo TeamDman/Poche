@@ -3,12 +3,12 @@
 **Plan status:** Active; the create/join/seat/private-hand/shared-pose MVP and first oracle-backed trick are accepted, while multi-round play, recovery, and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-16 (diegetic table slice tracked in PLAN-8-DIEGETIC-TABLE.md)
+**Last updated:** 2026-09-16 (diegetic table in PLAN-8; tactile interaction and physical money in PLAN-9)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
 
-The current interaction/presentation slice is defined in [PLAN-8-DIEGETIC-TABLE.md](PLAN-8-DIEGETIC-TABLE.md). Its D1–D9 ledger extends, rather than replaces, the constraints below.
+The completed interaction/presentation slices are defined in [PLAN-8-DIEGETIC-TABLE.md](PLAN-8-DIEGETIC-TABLE.md) and [PLAN-9-TABLE-TACTILITY.md](PLAN-9-TABLE-TACTILITY.md). Their ledgers extend, rather than replace, the constraints below. New rooms require physical quarter antes before dealing; this supersedes the earlier automatic deal-on-seat shortcut.
 
 - `[ ]` Not started
 - `[~]` In progress

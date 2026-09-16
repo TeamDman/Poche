@@ -1,0 +1,12 @@
+[package]
+name = "poche-money"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Renderer-neutral coin inventory, payments, and tabletop geometry"
+
+[lints]
+workspace = true

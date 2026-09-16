@@ -8,13 +8,15 @@ use super::{
     PoseDisplay, SpatialAssets, UiScreen, UiState, animate_and_place_cards, card_label_texture,
     mm_position, point_to_world,
 };
-use bevy::{camera::visibility::RenderLayers, prelude::*};
+use bevy::{camera::visibility::RenderLayers, prelude::*, render::render_resource::Face};
 use poche_bevy_spacetimedb::BridgeModel;
 use poche_spatial::{ObjectId, SpatialLayout, ZoneId};
 use std::collections::HashSet;
 
 pub(super) const VIEW_HEIGHT: f32 = 0.14;
 const HAND_LIFT_MM: f32 = 24.0;
+const OUTLINE_WIDTH: f32 = 0.0015;
+const BOUNDS_EPSILON: f32 = 0.000_001;
 
 pub(super) struct HandViewPlugin;
 impl Plugin for HandViewPlugin {
@@ -46,11 +48,42 @@ pub(super) struct DiagnosticZone(pub ObjectId);
 pub(super) struct HandProjection {
     pub center: Vec3,
     pub horizontal_scale: f32,
-    pub half_width: f32,
     pub has_hand: bool,
+    min: Vec3,
+    max: Vec3,
 }
 
 impl HandProjection {
+    /// One physical hand footprint drives visibility, the drop target and its
+    /// indicator. Camera scale only changes presentation, never the world zone.
+    pub fn configure(
+        &mut self,
+        layout: &SpatialLayout,
+        seat: Option<u8>,
+        count: usize,
+        surface_size: UVec2,
+        viewport_size: UVec2,
+    ) {
+        let Some(zone) = layout
+            .zones()
+            .iter()
+            .find(|zone| matches!(zone.id, ZoneId::Hand(id) if Some(id.get()) == seat))
+        else {
+            *self = Self::default();
+            return;
+        };
+        self.min = point_to_world(zone.inner.min);
+        self.max = point_to_world(zone.inner.max);
+        self.center = (self.min + self.max) * 0.5;
+        // Keep the target centered and comfortably wide. A single transform
+        // maps both its edges and every card center, and does not change as a
+        // card is played. Individual card meshes retain their original size.
+        let view_width = VIEW_HEIGHT * viewport_size.x as f32 / viewport_size.y.max(1) as f32;
+        let target_fraction = surface_size.x as f32 * 0.5 / viewport_size.x.max(1) as f32;
+        self.horizontal_scale = view_width * target_fraction / (self.max.x - self.min.x);
+        self.has_hand = count > 0;
+    }
+
     pub fn to_inset(&self, world: Vec3) -> Vec3 {
         Vec3::new(
             self.center.x + (world.x - self.center.x) * self.horizontal_scale,
@@ -66,34 +99,58 @@ impl HandProjection {
         )
     }
     pub fn contains(&self, world: Vec3) -> bool {
-        (world.x - self.center.x).abs() <= self.half_width
-            && (world.z - self.center.z).abs() <= 0.125
+        self.has_hand
+            && world.x >= self.min.x - BOUNDS_EPSILON
+            && world.x <= self.max.x + BOUNDS_EPSILON
+            && world.z >= self.min.z - BOUNDS_EPSILON
+            && world.z <= self.max.z + BOUNDS_EPSILON
     }
-}
 
-pub(super) fn hand_center(layout: &SpatialLayout, seat: Option<u8>) -> Vec3 {
-    layout
-        .zones()
-        .iter()
-        .find(|zone| matches!(zone.id, ZoneId::Hand(id) if Some(id.get()) == seat))
-        .map_or(Vec3::new(0.0, 0.04, 0.52), |zone| {
-            (point_to_world(zone.inner.min) + point_to_world(zone.inner.max)) * 0.5
-        })
+    /// The hand is a horizontal interaction footprint while a card is lifted.
+    /// Its Y coordinate remains free; a grab offset cannot push the center out
+    /// of that footprint while the pointer still lies inside the drop target.
+    pub fn clamp_world(&self, world: Vec3) -> Vec3 {
+        Vec3::new(
+            world.x.clamp(self.min.x, self.max.x),
+            world.y,
+            world.z.clamp(self.min.z, self.max.z),
+        )
+    }
+
+    pub fn screen_rect(&self, camera: &Camera, transform: &GlobalTransform) -> Option<Rect> {
+        if !self.has_hand || !camera.is_active {
+            return None;
+        }
+        let viewport = camera.logical_viewport_rect()?;
+        let mut min = Vec2::splat(f32::INFINITY);
+        let mut max = Vec2::splat(f32::NEG_INFINITY);
+        for x in [self.min.x, self.max.x] {
+            for z in [self.min.z, self.max.z] {
+                let point = camera
+                    .world_to_viewport(transform, self.to_inset(Vec3::new(x, self.center.y, z)))
+                    .ok()?;
+                min = min.min(point);
+                max = max.max(point);
+            }
+        }
+        let min = min.max(viewport.min);
+        let max = max.min(viewport.max);
+        (min.x <= max.x && min.y <= max.y).then_some(Rect::from_corners(min, max))
+    }
+
+    pub fn contains_cursor(
+        &self,
+        cursor: Vec2,
+        camera: &Camera,
+        transform: &GlobalTransform,
+    ) -> bool {
+        self.screen_rect(camera, transform)
+            .is_some_and(|rect| rect.contains(cursor))
+    }
 }
 
 pub(super) fn lift_height(resting: f32) -> f32 {
     resting + HAND_LIFT_MM
-}
-
-/// Uncompressed cards keep their width; only center spacing compresses when a
-/// large hand would run past the inset. This makes rank/suit corners overlap.
-pub(super) fn hand_spacing_scale(count: usize, available_width: f32) -> f32 {
-    let spread = count.saturating_sub(1) as f32 * 0.072;
-    if spread <= 0.0 {
-        1.0
-    } else {
-        ((available_width - CARD_WORLD_WIDTH) / spread).clamp(0.05, 1.0)
-    }
 }
 
 fn sync_hand_copies(
@@ -235,34 +292,31 @@ pub(super) fn spawn_outline(
 ) {
     let material = materials.add(StandardMaterial {
         base_color: Color::srgb(1., 0.83, 0.18),
+        // Expanded backfaces peek around the card's silhouette. Front faces
+        // are culled so the hull cannot cover its private/public face texture.
+        cull_mode: Some(Face::Front),
         unlit: true,
         ..default()
     });
     let outline = commands
         .spawn((
             CardOutline(key.into()),
+            Mesh3d(meshes.add(Cuboid::from_size(outline_size()))),
+            MeshMaterial3d(material),
             Transform::default(),
             Visibility::Hidden,
+            RenderLayers::layer(layer),
+            bevy::light::NotShadowCaster,
+            bevy::light::NotShadowReceiver,
+            Pickable::IGNORE,
         ))
         .id();
-    for (x, z, w, h) in [
-        (-CARD_WORLD_WIDTH / 2., 0., 0.0015, CARD_WORLD_HEIGHT),
-        (CARD_WORLD_WIDTH / 2., 0., 0.0015, CARD_WORLD_HEIGHT),
-        (0., -CARD_WORLD_HEIGHT / 2., CARD_WORLD_WIDTH, 0.0015),
-        (0., CARD_WORLD_HEIGHT / 2., CARD_WORLD_WIDTH, 0.0015),
-    ] {
-        let edge = commands
-            .spawn((
-                Mesh3d(meshes.add(Cuboid::new(w, 0.001, h))),
-                MeshMaterial3d(material.clone()),
-                Transform::from_xyz(x, 0.0016, z),
-                RenderLayers::layer(layer),
-                bevy::light::NotShadowCaster,
-            ))
-            .id();
-        commands.entity(outline).add_child(edge);
-    }
     commands.entity(parent).add_child(outline);
+}
+
+fn outline_size() -> Vec3 {
+    Vec3::new(CARD_WORLD_WIDTH, CARD_WORLD_THICKNESS, CARD_WORLD_HEIGHT)
+        + Vec3::splat(2.0 * OUTLINE_WIDTH)
 }
 
 fn update_outlines(drag: Res<DragState>, mut outlines: Query<(&CardOutline, &mut Visibility)>) {
@@ -299,30 +353,39 @@ fn hand_drop_hint(
     mut commands: Commands,
     drag: Res<DragState>,
     state: Res<UiState>,
+    projection: Res<HandProjection>,
     cameras: Query<Entity, With<PocheUiCamera>>,
-    existing: Query<Entity, With<HandDropHint>>,
+    hand_cameras: Query<(&Camera, &GlobalTransform), With<super::HandCamera>>,
+    mut existing: Query<(Entity, &mut Node), With<HandDropHint>>,
 ) {
-    if drag.card_key.is_none() || state.screen != UiScreen::Table {
-        for entity in &existing {
+    let rect = hand_cameras
+        .single()
+        .ok()
+        .and_then(|(camera, transform)| projection.screen_rect(camera, transform));
+    if drag.card_key.is_none() || state.screen != UiScreen::Table || rect.is_none() {
+        for (entity, _) in &existing {
             commands.entity(entity).despawn();
         }
-    } else if existing.is_empty()
-        && let Ok(camera) = cameras.single()
-    {
-        commands.spawn((
-            HandDropHint,
-            UiTargetCamera(camera),
-            Pickable::IGNORE,
-            Node {
-                position_type: PositionType::Absolute,
-                left: percent(25.),
-                width: percent(50.),
-                bottom: px(6.),
-                height: px(4.),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.35, 0.88, 0.78, 0.8)),
-        ));
+    } else if let Some(rect) = rect {
+        let node = Node {
+            position_type: PositionType::Absolute,
+            left: px(rect.min.x),
+            width: px(rect.width()),
+            top: px(rect.max.y - 8.),
+            height: px(4.),
+            ..default()
+        };
+        if let Ok((_, mut current)) = existing.single_mut() {
+            *current = node;
+        } else if let Ok(camera) = cameras.single() {
+            commands.spawn((
+                HandDropHint,
+                UiTargetCamera(camera),
+                Pickable::IGNORE,
+                node,
+                BackgroundColor(Color::srgba(0.35, 0.88, 0.78, 0.8)),
+            ));
+        }
     }
 }
 
@@ -348,20 +411,34 @@ pub(super) fn stack_offset(poses: &PoseDisplay, key: &str) -> f32 {
         * 0.0022
 }
 
-/// Ray / oriented card rectangle rather than a fixed pixel-radius click target.
+/// Ray / full oriented card bound, including its thin sides.
 pub(super) fn card_hit(ray: Ray3d, position: Vec3, rotation: Quat) -> Option<f32> {
     let inverse = rotation.inverse();
     let origin = inverse * (ray.origin - position);
     let direction = inverse * *ray.direction;
-    if direction.y.abs() < 0.00001 {
-        return None;
+    ray_box_entry(
+        origin,
+        direction,
+        Vec3::new(CARD_WORLD_WIDTH, CARD_WORLD_THICKNESS, CARD_WORLD_HEIGHT) * 0.5,
+    )
+}
+
+fn ray_box_entry(origin: Vec3, direction: Vec3, half_size: Vec3) -> Option<f32> {
+    let mut near = 0.0_f32;
+    let mut far = f32::INFINITY;
+    for axis in 0..3 {
+        if direction[axis].abs() < f32::EPSILON {
+            if origin[axis].abs() > half_size[axis] {
+                return None;
+            }
+        } else {
+            let first = (-half_size[axis] - origin[axis]) / direction[axis];
+            let second = (half_size[axis] - origin[axis]) / direction[axis];
+            near = near.max(first.min(second));
+            far = far.min(first.max(second));
+        }
     }
-    let distance = -origin.y / direction.y;
-    let point = origin + distance * direction;
-    (distance >= 0.0
-        && point.x.abs() <= CARD_WORLD_WIDTH * 0.55
-        && point.z.abs() <= CARD_WORLD_HEIGHT * 0.55)
-        .then_some(distance)
+    (near <= far).then_some(near)
 }
 
 fn inspect_zones(
@@ -387,25 +464,151 @@ fn inspect_zones(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn large_hand_overlaps_centers_without_shrinking_cards_and_mapping_is_reversible() {
-        assert!((hand_spacing_scale(3, 0.6) - 1.0).abs() < f32::EPSILON);
-        let scale = hand_spacing_scale(25, 0.6);
-        assert!(scale * 0.072 < CARD_WORLD_WIDTH);
-        let p = HandProjection {
-            center: Vec3::new(0., 0.04, 0.52),
-            horizontal_scale: scale,
-            half_width: 1.,
-            has_hand: true,
+    use bevy::camera::{
+        CameraProjection, ComputedCameraValues, OrthographicProjection, RenderTargetInfo,
+        ScalingMode, Viewport,
+    };
+    use poche_spatial::{LayoutId, TableId, registered_layout};
+
+    fn projected_hand(
+        size: UVec2,
+        seat: u8,
+        count: usize,
+        scale_factor: f32,
+    ) -> (HandProjection, Camera, GlobalTransform) {
+        let viewport_size = UVec2::new((size.x * 3 / 5).max(1), (size.y / 4).clamp(1, 190));
+        let layout = registered_layout(TableId::new(1), LayoutId::new(2, 2).unwrap()).unwrap();
+        let mut hand = HandProjection::default();
+        hand.configure(&layout, Some(seat), count, size, viewport_size);
+        let mut projection = OrthographicProjection {
+            scaling_mode: ScalingMode::FixedVertical {
+                viewport_height: VIEW_HEIGHT,
+            },
+            near: 0.01,
+            far: 10.0,
+            ..OrthographicProjection::default_3d()
         };
-        let world = Vec3::new(0.35, 0.064, 0.53);
-        assert!(p.to_world(p.to_inset(world)).distance(world) < 0.00001);
+        projection.update(viewport_size.x as f32, viewport_size.y as f32);
+        let camera = Camera {
+            viewport: Some(Viewport {
+                physical_position: UVec2::new(
+                    (size.x - viewport_size.x) / 2,
+                    size.y - viewport_size.y,
+                ),
+                physical_size: viewport_size,
+                ..default()
+            }),
+            computed: ComputedCameraValues {
+                clip_from_view: projection.get_clip_from_view(),
+                target_info: Some(RenderTargetInfo {
+                    physical_size: size,
+                    scale_factor,
+                }),
+                ..default()
+            },
+            ..default()
+        };
+        let up = super::super::hand_camera_up(Some(seat));
+        let focus = hand.center + up * VIEW_HEIGHT * 0.44;
+        let transform = Transform::from_translation(focus + Vec3::Y * 0.7)
+            .looking_at(focus, up)
+            .into();
+        (hand, camera, transform)
+    }
+
+    #[test]
+    fn projected_drop_edges_match_physical_zone_after_resize_and_for_both_seats() {
+        for size in [
+            UVec2::new(1180, 760),
+            UVec2::new(390, 844),
+            UVec2::new(2560, 1080),
+        ] {
+            for seat in [0, 1] {
+                for dpi in [1.0, 2.0] {
+                    let (hand, camera, transform) = projected_hand(size, seat, 1, dpi);
+                    let rect = hand.screen_rect(&camera, &transform).unwrap();
+                    for x in [rect.min.x, rect.center().x, rect.max.x] {
+                        for y in [rect.min.y, rect.center().y, rect.max.y] {
+                            let cursor = Vec2::new(x, y);
+                            assert!(hand.contains_cursor(cursor, &camera, &transform));
+                            let ray = camera.viewport_to_world(&transform, cursor).unwrap();
+                            let distance = (hand.center.y - ray.origin.y) / ray.direction.y;
+                            let world = hand.to_world(ray.origin + *ray.direction * distance);
+                            assert!(
+                                hand.contains(world),
+                                "{size:?} seat{seat} dpi{dpi} cursor{cursor:?} mapped{world:?}"
+                            );
+                            assert!(
+                                hand.to_world(hand.to_inset(world)).distance(world) < 0.000_001
+                            );
+                            // A nonzero grab offset cannot cause loss of the inset
+                            // when a drag reaches the indicator's visible edge.
+                            assert!(
+                                hand.contains(
+                                    hand.clamp_world(world + Vec3::new(0.03, 0.04, 0.03))
+                                )
+                            );
+                        }
+                    }
+                    assert!(!hand.contains_cursor(
+                        Vec2::new(rect.min.x - 1., rect.center().y),
+                        &camera,
+                        &transform
+                    ));
+                    assert!(!hand.contains_cursor(
+                        Vec2::new(rect.max.x + 1., rect.center().y),
+                        &camera,
+                        &transform
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn playing_a_card_does_not_resize_the_physical_drop_target() {
+        let size = UVec2::new(1180, 760);
+        let (one, camera, transform) = projected_hand(size, 0, 1, 1.);
+        let (seven, _, _) = projected_hand(size, 0, 7, 1.);
+        assert_eq!(
+            one.screen_rect(&camera, &transform),
+            seven.screen_rect(&camera, &transform)
+        );
+        assert!(!one.contains(one.center + Vec3::X * 0.076));
+        assert!(one.contains(one.center + Vec3::X * 0.075 + Vec3::Y * 0.03));
+    }
+
+    #[test]
+    fn outline_hull_extends_beyond_every_side_without_covering_the_card_center() {
+        let card = Vec3::new(CARD_WORLD_WIDTH, CARD_WORLD_THICKNESS, CARD_WORLD_HEIGHT) * 0.5;
+        let hull = outline_size() * 0.5;
+        for axis in 0..3 {
+            let outside_axis = (axis + 1) % 3;
+            let mut origin = Vec3::ZERO;
+            origin[axis] = 1.0;
+            origin[outside_axis] = (card[outside_axis] + hull[outside_axis]) * 0.5;
+            let mut direction = Vec3::ZERO;
+            direction[axis] = -1.0;
+            assert!(ray_box_entry(origin, direction, card).is_none());
+            assert!(ray_box_entry(origin, direction, hull).is_some());
+            // At the center the real card's near face hides the expanded
+            // hull's back face (front faces are culled by its material).
+            assert!(1.0 - card[axis] < 1.0 + hull[axis]);
+        }
     }
     #[test]
     fn hover_hits_only_the_oriented_card_not_a_large_screen_circle() {
         let ray = Ray3d::new(Vec3::new(0., 1., 0.), Dir3::NEG_Y);
         assert!(card_hit(ray, Vec3::ZERO, Quat::IDENTITY).is_some());
         assert!(card_hit(ray, Vec3::new(0.08, 0., 0.), Quat::IDENTITY).is_none());
+        assert!(
+            card_hit(
+                Ray3d::new(Vec3::new(1., 0., 0.), Dir3::NEG_X),
+                Vec3::ZERO,
+                Quat::IDENTITY
+            )
+            .is_some()
+        );
         assert!(
             card_hit(
                 Ray3d::new(Vec3::new(0., -1., 0.), Dir3::NEG_Y),

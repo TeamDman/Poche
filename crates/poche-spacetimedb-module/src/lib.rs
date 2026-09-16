@@ -22,6 +22,7 @@ use poche_environment::{
 };
 use poche_oracle_rust::{Card, Game, PhaseTag, Seat, Turn};
 use spacetimedb::{ConnectionId, Identity, ReducerContext, Table, Timestamp, ViewContext};
+mod money;
 
 const MAX_NAME_LEN: usize = 32;
 const MAX_POSE_MM: i32 = 10_000;
@@ -264,6 +265,59 @@ pub struct CardPose {
     pub committed_at: Timestamp,
 }
 
+/// Actual conserved coin objects; the sender-scoped view is the only public
+/// read path. Leaving membership does not discard or recreate an inventory.
+#[spacetimedb::table(accessor = coin)]
+pub struct Coin {
+    #[primary_key]
+    pub coin_key: String,
+    #[index(btree)]
+    pub room_id: String,
+    #[index(btree)]
+    pub owner: Identity,
+    pub coin_id: String,
+    pub denomination_cents: u8,
+    pub container: String,
+    pub x_mm: i32,
+    pub y_mm: i32,
+    pub z_mm: i32,
+    pub sequence: u64,
+    pub committed_at: Timestamp,
+}
+
+#[spacetimedb::view(accessor = visible_coins, public, primary_key = coin_key)]
+pub fn visible_coins(ctx: &ViewContext) -> Vec<Coin> {
+    active_room_id(ctx).map_or_else(Vec::new, |room_id| {
+        ctx.db.coin().room_id().filter(&room_id).collect()
+    })
+}
+
+/// Preview a coin pose or commit a transfer. A true commit snaps the coin into
+/// its canonical destination pile; the server never trusts a client balance.
+#[spacetimedb::reducer]
+#[allow(clippy::too_many_arguments)]
+pub fn move_coin(
+    ctx: &ReducerContext,
+    room_id: String,
+    coin_id: String,
+    sequence: u64,
+    container: String,
+    x_mm: i32,
+    y_mm: i32,
+    z_mm: i32,
+    commit: bool,
+) -> Result<(), String> {
+    money::move_coin(
+        ctx,
+        &room_id,
+        &coin_id,
+        sequence,
+        &container,
+        [x_mm, y_mm, z_mm],
+        commit,
+    )
+}
+
 /// Face-free poses are shared with members of the same room, not globally.
 #[spacetimedb::view(accessor = visible_card_poses, public, primary_key = card_key)]
 pub fn visible_card_poses(ctx: &ViewContext) -> Vec<CardPose> {
@@ -346,6 +400,7 @@ pub fn join_room(
             "room-rejoined",
             format!("{prior_name} rejoined the lobby as {display_name}"),
         );
+        money::migrate_legacy_room(ctx, &secret.room_id);
         repair_deal_if_incoherent(ctx, &secret.room_id);
         return Ok(());
     }
@@ -357,6 +412,7 @@ pub fn join_room(
         "room-joined",
         format!("{display_name} joined the lobby"),
     );
+    money::migrate_legacy_room(ctx, &secret.room_id);
     repair_deal_if_incoherent(ctx, &secret.room_id);
     Ok(())
 }
@@ -382,10 +438,13 @@ pub fn take_seat(ctx: &ReducerContext, room_id: String, seat: u8) -> Result<(), 
     if occupied {
         return Err(format!("seat {seat} is already occupied"));
     }
+    money::migrate_legacy_room(ctx, &room_id);
     let display_name = caller.display_name.clone();
     caller.seat = Some(seat);
     caller.connected = identity_has_connections(ctx, ctx.sender());
     ctx.db.member().member_key().update(caller);
+    money::ensure_inventory(ctx, &room_id, ctx.sender(), seat);
+    money::place_inventory(ctx, &room_id, ctx.sender(), seat);
     append_activity(
         ctx,
         &room_id,
@@ -424,6 +483,8 @@ pub fn release_seat(ctx: &ReducerContext, room_id: String) -> Result<(), String>
                 "deal-abandoned",
                 "The active deal was abandoned because a seat became empty".into(),
             );
+        } else {
+            money::refund_owner(ctx, &room_id, ctx.sender(), seat);
         }
     }
     Ok(())
@@ -482,6 +543,7 @@ pub fn set_card_pose(
 #[spacetimedb::reducer]
 pub fn bid(ctx: &ReducerContext, room_id: String, tricks: u8) -> Result<(), String> {
     let seat = caller_seat(ctx, &room_id)?;
+    money::migrate_legacy_room(ctx, &room_id);
     let mut record = ctx
         .db
         .room_game()
@@ -515,6 +577,7 @@ pub fn bid(ctx: &ReducerContext, room_id: String, tricks: u8) -> Result<(), Stri
 #[spacetimedb::reducer]
 pub fn play_card(ctx: &ReducerContext, room_id: String, card_id: String) -> Result<(), String> {
     let seat = caller_seat(ctx, &room_id)?;
+    money::migrate_legacy_room(ctx, &room_id);
     let key = card_key(&room_id, ctx.sender(), &card_id);
     let private = ctx
         .db
@@ -608,13 +671,17 @@ pub fn leave_room(ctx: &ReducerContext, room_id: String) -> Result<(), String> {
         .member_key()
         .find(&key)
         .ok_or_else(|| "not a room member".to_string())?;
-    if member.seat.is_some() && abandon_deal(ctx, &room_id) {
-        append_activity(
-            ctx,
-            &room_id,
-            "deal-abandoned",
-            "The active deal was abandoned because a seat became empty".into(),
-        );
+    if let Some(seat) = member.seat {
+        if abandon_deal(ctx, &room_id) {
+            append_activity(
+                ctx,
+                &room_id,
+                "deal-abandoned",
+                "The active deal was abandoned because a seat became empty".into(),
+            );
+        } else {
+            money::refund_owner(ctx, &room_id, ctx.sender(), seat);
+        }
     }
     append_activity(
         ctx,
@@ -636,6 +703,7 @@ pub fn leave_room(ctx: &ReducerContext, room_id: String) -> Result<(), String> {
         ctx.db.active_room().identity().delete(&ctx.sender());
     }
     if ctx.db.member().room_id().filter(&room_id).next().is_none() {
+        money::delete_room_inventory(ctx, &room_id);
         ctx.db.room().room_id().delete(&room_id);
         ctx.db.room_secret().room_id().delete(&room_id);
         ctx.db.room_game().room_id().delete(&room_id);
@@ -690,6 +758,7 @@ pub fn identity_connected(ctx: &ReducerContext) {
     }
     set_connected(ctx, true);
     if let Some(active) = ctx.db.active_room().identity().find(&ctx.sender()) {
+        money::migrate_legacy_room(ctx, &active.room_id);
         repair_deal_if_incoherent(ctx, &active.room_id);
     }
 }
@@ -736,11 +805,17 @@ fn ensure_deal(ctx: &ReducerContext, room_id: &str) -> Result<(), String> {
     {
         return Ok(());
     }
+    if seated
+        .iter()
+        .any(|member| money::paid_cents(ctx, room_id, member.identity) != 25)
+    {
+        return Ok(());
+    }
     let seed = seed_for_room(room_id);
     let game = initial_game(seed)?;
-    ctx.db
-        .room_game()
-        .insert(project_room_game(room_id, seed, 0, &game)?);
+    let mut projection = project_room_game(room_id, seed, 0, &game)?;
+    projection.pot_cents = money::pot_cents(ctx, room_id);
+    ctx.db.room_game().insert(projection);
     append_activity(ctx, room_id, "deal-started", "The first deal began".into());
 
     for member in seated {
@@ -794,6 +869,9 @@ fn ensure_deal(ctx: &ReducerContext, room_id: &str) -> Result<(), String> {
 
 fn abandon_deal(ctx: &ReducerContext, room_id: &str) -> bool {
     let had_deal = ctx.db.room_game().room_id().delete(&room_id.to_string());
+    if had_deal {
+        money::refund_all(ctx, room_id);
+    }
     for action in ctx
         .db
         .game_action()
@@ -1092,12 +1170,10 @@ fn write_room_game(
     record: RoomGame,
     game: &Game<PLAYERS>,
 ) -> Result<(), String> {
-    ctx.db.room_game().room_id().update(project_room_game(
-        &record.room_id,
-        record.seed,
-        record.action_count,
-        game,
-    )?);
+    let mut projection =
+        project_room_game(&record.room_id, record.seed, record.action_count, game)?;
+    projection.pot_cents = money::pot_cents(ctx, &record.room_id);
+    ctx.db.room_game().room_id().update(projection);
     Ok(())
 }
 

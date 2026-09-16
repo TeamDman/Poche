@@ -40,6 +40,14 @@ pub enum BridgeIntent {
         position_mm: [i32; 3],
         rotation_mdeg: [i32; 3],
     },
+    MoveCoin {
+        room_id: String,
+        coin_id: String,
+        sequence: u64,
+        container: String,
+        position_mm: [i32; 3],
+        commit: bool,
+    },
     Bid {
         room_id: String,
         tricks: u8,
@@ -249,6 +257,21 @@ fn worker_loop(requests: mpsc::Receiver<BridgeIntent>, events: mpsc::Sender<Work
                         position_mm,
                         rotation_mdeg,
                     ),
+                    BridgeIntent::MoveCoin {
+                        room_id,
+                        coin_id,
+                        sequence,
+                        container,
+                        position_mm,
+                        commit,
+                    } => connected.move_coin(
+                        room_id,
+                        coin_id,
+                        sequence,
+                        container,
+                        position_mm,
+                        commit,
+                    ),
                     BridgeIntent::Bid { room_id, tricks } => connected.bid(room_id, tricks),
                     BridgeIntent::PlayCard { room_id, card_id } => {
                         connected.play_card(room_id, card_id)
@@ -311,5 +334,56 @@ mod tests {
     fn bridge_starts_and_stops_without_a_connection() {
         let bridge = BridgeHandle::start().expect("bridge starts");
         drop(bridge);
+    }
+
+    #[test]
+    fn coin_subscription_snapshots_reach_bevy_and_are_cleared_on_room_departure() {
+        let (request_tx, _request_rx) = mpsc::sync_channel(8);
+        let (event_tx, event_rx) = mpsc::channel();
+        let bridge = BridgeHandle {
+            request_tx,
+            event_rx: Mutex::new(event_rx),
+            worker: Mutex::new(None),
+        };
+        let mut app = App::new();
+        app.insert_resource(bridge)
+            .init_resource::<BridgeModel>()
+            .add_message::<BridgeNotice>()
+            .add_systems(Update, pump_bridge);
+        let coin = poche_spacetimedb_client::CoinView {
+            coin_key: "room:alice:q-000".into(),
+            coin_id: "q-000".into(),
+            owner: "alice".into(),
+            owner_seat: Some(0),
+            is_own: true,
+            denomination_cents: 25,
+            container: "lid".into(),
+            position_mm: [15, 40, 450],
+            sequence: 1,
+        };
+        event_tx
+            .send(WorkerEvent::Notice(BridgeNotice::Snapshot(Box::new(
+                ClientSnapshot {
+                    coins: vec![coin.clone()],
+                    ..Default::default()
+                },
+            ))))
+            .unwrap();
+        app.update();
+        assert_eq!(
+            app.world().resource::<BridgeModel>().snapshot.coins,
+            vec![coin]
+        );
+        event_tx
+            .send(WorkerEvent::Notice(BridgeNotice::Snapshot(Box::default())))
+            .unwrap();
+        app.update();
+        assert!(
+            app.world()
+                .resource::<BridgeModel>()
+                .snapshot
+                .coins
+                .is_empty()
+        );
     }
 }

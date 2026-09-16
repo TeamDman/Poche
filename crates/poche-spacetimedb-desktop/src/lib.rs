@@ -15,9 +15,11 @@
     clippy::type_complexity
 )]
 
+mod camera_inspection;
 pub mod file_control;
 mod hand_view;
 pub mod identity_vault;
+mod money;
 pub mod observability;
 mod world_ui;
 
@@ -85,7 +87,7 @@ const CAMERA_ORBIT_SENSITIVITY: f32 = 0.0045;
 const CAMERA_PAN_SENSITIVITY: f32 = 0.0014;
 const CAMERA_KEYBOARD_SPEED: f32 = 0.72;
 const CAMERA_ZOOM_SENSITIVITY: f32 = 0.14;
-const CAMERA_MIN_DISTANCE: f32 = 0.58;
+const CAMERA_MIN_DISTANCE: f32 = 0.16;
 const CAMERA_MAX_DISTANCE: f32 = 4.5;
 const CAMERA_SMOOTHING: f32 = 10.0;
 const CAMERA_MIN_PITCH: f32 = 3.0_f32.to_radians();
@@ -93,7 +95,7 @@ const CAMERA_MAX_PITCH: f32 = 78.0_f32.to_radians();
 const TACTICAL_CAMERA_PITCH: f32 = 68.0_f32.to_radians();
 const TACTICAL_CAMERA_DISTANCE: f32 = 2.6;
 const TACTICAL_VIEW_HEIGHT: f32 = 2.1;
-const TACTICAL_MIN_SCALE: f32 = 0.45;
+const TACTICAL_MIN_SCALE: f32 = 0.06;
 const TACTICAL_MAX_SCALE: f32 = 2.5;
 const FONT_BYTES: &[u8] = include_bytes!("../../poche-native-ui/assets/CaskaydiaCove-Regular.ttf");
 const MAINCLOUD_URI: &str = "https://maincloud.spacetimedb.com";
@@ -512,7 +514,11 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
     let mut app = App::new();
     app.add_plugins(plugins);
     app.add_plugins(TableRenderReadinessPlugin);
-    app.add_plugins((hand_view::HandViewPlugin, world_ui::WorldUiPlugin));
+    app.add_plugins((
+        hand_view::HandViewPlugin,
+        world_ui::WorldUiPlugin,
+        money::MoneyPlugin,
+    ));
     if let Some(path) = &log_path {
         tracing::info!(log_file = %path.display(), "Poche durable logging initialized");
     }
@@ -621,6 +627,11 @@ struct UiState {
     rendered_player_count: usize,
     held_card_key: Option<String>,
     visible_hand_copies: usize,
+    camera_diagnostics: Option<file_control::FileControlCamera>,
+    money_pick_targets: Vec<file_control::FileControlCoinTarget>,
+    money_bowl_screen: Option<[f32; 2]>,
+    money_jar_screen: Option<[f32; 2]>,
+    money_lid_screen: Option<[f32; 2]>,
     room_scene_generation: u64,
 }
 
@@ -683,6 +694,11 @@ impl UiState {
             rendered_player_count: 0,
             held_card_key: None,
             visible_hand_copies: 0,
+            camera_diagnostics: None,
+            money_pick_targets: Vec::new(),
+            money_bowl_screen: None,
+            money_jar_screen: None,
+            money_lid_screen: None,
             room_scene_generation: 0,
         }
     }
@@ -1119,7 +1135,13 @@ impl CameraPose {
             self.distance * self.pitch.sin(),
             self.yaw.cos() * horizontal,
         );
-        Transform::from_translation(self.focus + offset).looking_at(self.focus, Vec3::Y)
+        // A yaw-derived up axis remains well-defined at a true top-down view.
+        let up = Vec3::new(
+            -self.yaw.sin() * self.pitch.sin(),
+            self.pitch.cos(),
+            -self.yaw.cos() * self.pitch.sin(),
+        );
+        Transform::from_translation(self.focus + offset).looking_at(self.focus, up)
     }
 }
 
@@ -1133,6 +1155,7 @@ struct TableCameraController {
     target_orthographic_scale: f32,
     mode: TableCameraMode,
     last_seat: CameraSeat,
+    inspection: camera_inspection::InspectionState,
 }
 
 #[derive(Resource, Debug)]
@@ -1187,12 +1210,14 @@ impl Default for TableCameraController {
             target_orthographic_scale: 1.0,
             mode: TableCameraMode::Perspective,
             last_seat: CameraSeat::Uninitialized,
+            inspection: default(),
         }
     }
 }
 
 impl TableCameraController {
     fn reset_for_seat(&mut self, seat: Option<u8>, immediate: bool) {
+        self.inspection = default();
         self.perspective_target = camera_home(seat);
         self.tactical_target = tactical_camera_home(seat);
         self.target = match self.mode {
@@ -2731,9 +2756,9 @@ fn sync_room_labels(
     }
     for mut text in &mut hands {
         text.0 = if own_seat.is_none() {
-            "Take a seat; cards are dealt when both seats are occupied.".into()
+            "Take a seat, then move a quarter from your green lid into the bowl.".into()
         } else if model.snapshot.game.is_none() {
-            "Waiting for both seats; the authority will deal when the table is ready.".into()
+            "Pay 25¢ from your green lid into the bowl. Both seated players must pay before dealing.".into()
         } else if private_hand_is_synchronizing(&model.snapshot) {
             "Synchronizing your private hand… actions are temporarily disabled.".into()
         } else if model.snapshot.hand.is_empty() {
@@ -2760,7 +2785,7 @@ fn sync_room_labels(
     }
     for mut text in &mut game_status {
         text.0 = model.snapshot.game.as_ref().map_or_else(
-            || "Waiting for both seats to begin the first deal.".into(),
+            || "Waiting for both seats and both 25¢ antes before dealing.".into(),
             |game| {
                 let actor = game
                     .actor_seat
@@ -2936,6 +2961,26 @@ struct SubmittedPose {
 }
 
 impl DisplayPose {
+    fn set_drag_height(&mut self, height_mm: f32) {
+        self.target[1] = height_mm;
+    }
+
+    fn submission_position_mm(&self) -> [i32; 3] {
+        // Local pointer XZ is immediate, but height is a visual tween. Publish
+        // the requested height once instead of networking every tween frame.
+        [self.current[0], self.target[1], self.current[2]].map(|value| value.round() as i32)
+    }
+
+    fn advance_display(&mut self, alpha: f32, locally_held: bool) {
+        for axis in 0..3 {
+            if axis == 1 || !locally_held {
+                self.current[axis] += (self.target[axis] - self.current[axis]) * alpha;
+            }
+        }
+        self.current_rotation =
+            smooth_card_rotation(self.current_rotation, self.rotation_mdeg, alpha);
+    }
+
     fn from_network(network: &CardPoseView) -> Self {
         let target = network.position_mm.map(|value| value as f32);
         Self {
@@ -2988,19 +3033,20 @@ impl DisplayPose {
             .map_or((network.position_mm, network.rotation_mdeg), |submitted| {
                 (submitted.position_mm, submitted.rotation_mdeg)
             });
-        self.current.map(|value| value.round() as i32) != position || self.rotation_mdeg != rotation
+        self.submission_position_mm() != position || self.rotation_mdeg != rotation
     }
 
     fn submitted(&mut self, sequence: u64) {
         self.sequence = sequence;
         self.last_submitted = Some(SubmittedPose {
             sequence,
-            position_mm: self.current.map(|value| value.round() as i32),
+            position_mm: self.submission_position_mm(),
             rotation_mdeg: self.rotation_mdeg,
         });
         // Release ends direct mouse positioning; interpolation must keep the
         // last submitted position while its authority acknowledgement travels.
-        self.target = self.current;
+        self.target[0] = self.current[0];
+        self.target[2] = self.current[2];
     }
 }
 
@@ -3281,19 +3327,51 @@ fn update_table_camera(
     mouse_scroll: Res<AccumulatedMouseScroll>,
     model: Res<BridgeModel>,
     layout: Res<CanonicalLayout>,
-    state: Res<UiState>,
+    mut state: ResMut<UiState>,
     camera_options: Res<CameraOptions>,
     world_interaction: Res<world_ui::WorldInteraction>,
+    mut sheet_inspection: ResMut<world_ui::SheetInspectionRequest>,
     room: Query<(), With<RoomRoot>>,
     mut controller: ResMut<TableCameraController>,
-    mut cameras: Query<(&mut Transform, &mut Projection), With<TabletopCamera>>,
+    mut cameras: Query<(&Camera, &mut Transform, &mut Projection), With<TabletopCamera>>,
 ) {
     let seat = model.snapshot.own_seat();
     if controller.last_seat != CameraSeat::from(seat) {
         let immediate = controller.last_seat == CameraSeat::Uninitialized;
         controller.reset_for_seat(seat, immediate);
     }
-    if !state.escape_menu_open && !world_interaction.modal_open() && !room.is_empty() {
+    if room.is_empty() {
+        controller.inspection = default();
+        sheet_inspection.pending = None;
+    } else if let Some(sheet) = sheet_inspection.pending.take() {
+        let aspect = cameras
+            .iter()
+            .next()
+            .and_then(|(camera, _, _)| camera.logical_viewport_size())
+            .map_or(1.0, |size| size.x / size.y.max(1.0));
+        controller.inspect_sheet(sheet.center, sheet.size, aspect);
+    }
+    let movement_keys = [
+        KeyCode::KeyW,
+        KeyCode::KeyA,
+        KeyCode::KeyS,
+        KeyCode::KeyD,
+        KeyCode::ArrowUp,
+        KeyCode::ArrowDown,
+        KeyCode::ArrowLeft,
+        KeyCode::ArrowRight,
+        KeyCode::Space,
+        KeyCode::KeyO,
+    ];
+    let key_held = movement_keys.iter().any(|key| keys.pressed(*key));
+    let camera_mouse_held =
+        mouse_buttons.pressed(MouseButton::Middle) || mouse_buttons.pressed(MouseButton::Right);
+    let camera_moved = (camera_mouse_held && mouse_motion.delta.length_squared() > 0.0)
+        || key_held
+        || mouse_scroll.delta.y != 0.0;
+    let consumed = controller.inspection_input(camera_moved, camera_mouse_held || key_held);
+    sheet_inspection.active = controller.inspecting_sheet() || consumed;
+    if !state.escape_menu_open && !world_interaction.modal_open() && !room.is_empty() && !consumed {
         if keys.just_pressed(KeyCode::KeyO) {
             controller.toggle_mode();
         }
@@ -3379,13 +3457,34 @@ fn update_table_camera(
     controller.current_orthographic_scale +=
         (controller.target_orthographic_scale - controller.current_orthographic_scale) * alpha;
     let transform = controller.current.transform();
-    for (mut camera, mut projection) in &mut cameras {
+    let mut sheet_screen = None;
+    for (_, mut camera, mut projection) in &mut cameras {
         *camera = transform;
         apply_table_projection(
             &mut projection,
             controller.mode,
             controller.current_orthographic_scale,
         );
+    }
+    if let Some((camera, _, _)) = cameras.iter().next() {
+        let center = world_ui::sheet_inspection_target(&layout.0).center;
+        sheet_screen = camera
+            .world_to_viewport(&GlobalTransform::from(transform), center)
+            .ok()
+            .map(|point| point.to_array());
+    }
+    let diagnostics = Some(file_control::FileControlCamera {
+        mode: format!("{:?}", controller.mode).to_ascii_lowercase(),
+        focus: controller.current.focus.to_array(),
+        yaw: controller.current.yaw,
+        pitch: controller.current.pitch,
+        distance: controller.current.distance,
+        orthographic_scale: controller.current_orthographic_scale,
+        inspecting_sheet: controller.inspecting_sheet(),
+        sheet_screen,
+    });
+    if state.camera_diagnostics != diagnostics {
+        state.camera_diagnostics = diagnostics;
     }
 }
 
@@ -3473,11 +3572,13 @@ fn update_hand_camera(
     }
     let count = model.snapshot.hand.len();
     let viewport_size = UVec2::new((size.x * 3 / 5).max(1), (size.y / 4).clamp(1, 190));
-    let view_width = hand_view::VIEW_HEIGHT * viewport_size.x as f32 / viewport_size.y as f32;
-    hand.center = hand_view::hand_center(&layout.0, model.snapshot.own_seat());
-    hand.horizontal_scale = hand_view::hand_spacing_scale(count, view_width * 0.9);
-    hand.half_width = 0.105_f32.max(count.saturating_sub(1) as f32 * 0.036 + 0.05);
-    hand.has_hand = count > 0;
+    hand.configure(
+        &layout.0,
+        model.snapshot.own_seat(),
+        count,
+        size,
+        viewport_size,
+    );
     for (mut camera, mut transform) in &mut hand_cameras {
         camera.is_active = count > 0 && size.x >= 10 && size.y >= 10;
         if !camera.is_active {
@@ -3535,7 +3636,7 @@ fn drag_cards(
     {
         if let Some(key) = drag.card_key.take() {
             if let Some(pose) = poses.0.get_mut(&key) {
-                pose.current[1] = drag.resting_height;
+                pose.set_drag_height(drag.resting_height);
             }
             send_pose(
                 &key,
@@ -3626,12 +3727,12 @@ fn drag_cards(
         drag.last_sent = None;
         drag.reset_rotation_repeat();
         if let Some(pose) = poses.0.get_mut(&key) {
-            drag.resting_height = pose.current[1];
-            let point = cursor_to_world_mm(camera, camera_transform, cursor, pose.current[1])
+            drag.resting_height = pose.target[1];
+            let point = cursor_to_world_mm(camera, camera_transform, cursor, drag.resting_height)
                 .map_or(mm_position(pose.current), mm_position);
             let point = if inset { hand.to_world(point) } else { point };
             drag.grab_offset = mm_position(pose.current) - point;
-            pose.current[1] = hand_view::lift_height(drag.resting_height);
+            pose.set_drag_height(hand_view::lift_height(drag.resting_height));
         }
     }
     let Some(key) = drag.card_key.clone() else {
@@ -3639,12 +3740,10 @@ fn drag_cards(
     };
     // The lower hand drop band is contextual, not a permanent panel. Once
     // crossed, rays are interpreted in the other camera's coordinate space.
-    let in_hand_band = views.iter().any(|(camera, _, inset)| {
-        inset.is_some()
-            && camera
-                .logical_viewport_rect()
-                .is_some_and(|r| cursor.y >= r.max.y - r.height() * 0.55)
-    });
+    let in_hand_band = mouse.just_pressed(MouseButton::Left) && drag.hand_space
+        || views.iter().any(|(camera, transform, inset)| {
+            inset.is_some() && hand.contains_cursor(cursor, camera, transform)
+        });
     let selected = views
         .iter()
         .find(|(_, _, inset)| inset.is_some() == in_hand_band)
@@ -3661,11 +3760,16 @@ fn drag_cards(
             camera,
             camera_transform,
             cursor,
-            hand_view::lift_height(drag.resting_height),
+            drag_plane_height(drag.resting_height),
         ) && let Some(pose) = poses.0.get_mut(&key)
         {
             let point = mm_position(physical);
             let point = (if inset { hand.to_world(point) } else { point }) + drag.grab_offset;
+            let point = if inset {
+                hand.clamp_world(point)
+            } else {
+                point
+            };
             pose.current[0] = point.x * 1000.0;
             pose.current[2] = point.z * 1000.0;
         }
@@ -3693,12 +3797,14 @@ fn drag_cards(
     }
     if mouse.just_released(MouseButton::Left) {
         if let Some(pose) = poses.0.get_mut(&key) {
-            pose.current[1] = drag.resting_height;
+            pose.set_drag_height(drag.resting_height);
         }
-        let dropped_in_play = poses
-            .0
-            .get(&key)
-            .is_some_and(|pose| is_play_drop(&layout.0, pose.current));
+        let dropped_in_play = poses.0.get(&key).is_some_and(|pose| {
+            is_play_drop(
+                &layout.0,
+                pose.submission_position_mm().map(|value| value as f32),
+            )
+        });
         let may_play = model.snapshot.game.as_ref().is_some_and(|game| {
             game.phase == "playing" && game.actor_seat == model.snapshot.own_seat()
         });
@@ -3770,7 +3876,7 @@ fn send_pose(
         return;
     }
     let sequence = pose.sequence.max(source.sequence).saturating_add(1);
-    let position_mm = pose.current.map(|value| value.round() as i32);
+    let position_mm = pose.submission_position_mm();
     let result = bridge.send(BridgeIntent::SetCardPose {
         room_id: room_id.into(),
         card_id: source.card_id.clone(),
@@ -3795,13 +3901,7 @@ fn animate_and_place_cards(
 ) {
     let alpha = 1. - (-18. * time.delta_secs()).exp();
     for (key, pose) in &mut poses.0 {
-        if drag.card_key.as_deref() != Some(key) {
-            for axis in 0..3 {
-                pose.current[axis] += (pose.target[axis] - pose.current[axis]) * alpha;
-            }
-        }
-        pose.current_rotation =
-            smooth_card_rotation(pose.current_rotation, pose.rotation_mdeg, alpha);
+        pose.advance_display(alpha, drag.card_key.as_deref() == Some(key));
     }
     for (card, mut transform) in &mut cards {
         let Some(pose) = poses.0.get(&card.key) else {
@@ -3821,6 +3921,16 @@ fn cursor_to_world_mm(
     height_mm: f32,
 ) -> Option<[f32; 3]> {
     let ray = camera.viewport_to_world(camera_transform, cursor).ok()?;
+    cursor_ray_to_world_mm(ray, height_mm)
+}
+
+fn drag_plane_height(resting_height: f32) -> f32 {
+    // Both the initial grab offset and every subsequent mouse ray use this
+    // fixed plane. Raising the visual card must not move the drag plane.
+    resting_height
+}
+
+fn cursor_ray_to_world_mm(ray: Ray3d, height_mm: f32) -> Option<[f32; 3]> {
     let plane_height = height_mm / 1_000.0;
     let distance = ray.intersect_plane(
         Vec3::new(0.0, plane_height, 0.0),

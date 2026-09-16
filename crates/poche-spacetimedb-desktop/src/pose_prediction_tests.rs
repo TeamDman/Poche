@@ -115,7 +115,7 @@ fn stationary_hold_stops_publishing_but_rotation_and_release_still_publish() {
     let mut display = display_pose(&network);
     assert!(!display.needs_submission(&network));
 
-    display.current[1] = hand_view::lift_height(40.0);
+    display.set_drag_height(hand_view::lift_height(40.0));
     assert!(display.needs_submission(&network));
     display.submitted(8);
     // Many frames and publish deadlines may pass before an acknowledgement.
@@ -130,7 +130,7 @@ fn stationary_hold_stops_publishing_but_rotation_and_release_still_publish() {
     display.submitted(9);
     assert!(!display.needs_submission(&network));
 
-    display.current[1] = 40.0;
+    display.set_drag_height(40.0);
     assert!(display.needs_submission(&network));
     display.submitted(10);
     assert!(!display.needs_submission(&network));
@@ -173,4 +173,89 @@ fn submillimeter_pointer_noise_does_not_publish_identical_quantized_poses() {
     assert!(!display.needs_submission(&network));
     display.current[0] += 0.02;
     assert!(display.needs_submission(&network));
+}
+
+fn pickup_after_unchanged_ray(ray: Ray3d, card: [f32; 3]) -> [f32; 3] {
+    let anchor = Vec3::from_array(cursor_ray_to_world_mm(ray, card[1]).unwrap());
+    let offset = Vec3::from_array(card) - anchor;
+    let next = cursor_ray_to_world_mm(ray, drag_plane_height(card[1])).unwrap();
+    (Vec3::from_array(next) + offset).to_array()
+}
+
+#[test]
+fn pickup_jump_perspective_ray_keeps_planar_position_with_unchanged_cursor() {
+    let card = [20.0, 40.0, 300.0];
+    let eye = Vec3::new(1.0, 1.2, 1.0);
+    let ray = Ray3d::new(eye, Dir3::new(mm_position(card) - eye).unwrap());
+    let next = pickup_after_unchanged_ray(ray, card);
+    assert!((next[0] - card[0]).abs() < 0.001, "X jumped: {next:?}");
+    assert!((next[2] - card[2]).abs() < 0.001, "Z jumped: {next:?}");
+}
+
+#[test]
+fn pickup_jump_topdown_ray_is_the_nearest_passing_case() {
+    let card = [20.0, 40.0, 300.0];
+    let ray = Ray3d::new(Vec3::new(0.02, 1.2, 0.3), Dir3::NEG_Y);
+    let next = pickup_after_unchanged_ray(ray, card);
+    assert!((next[0] - card[0]).abs() < 0.001);
+    assert!((next[2] - card[2]).abs() < 0.001);
+}
+
+#[test]
+fn pickup_jump_local_lift_moves_partway_up_without_planar_delay() {
+    let mut display = display_pose(&network_pose(7, 0));
+    display.set_drag_height(hand_view::lift_height(40.0));
+    display.current[0] = 80.0;
+    display.advance_display(0.25, true);
+    assert!(display.current[1] > 40.0 && display.current[1] < 64.0);
+    assert_eq!(display.current[0], 80.0);
+}
+
+#[test]
+fn pickup_jump_lift_and_drop_send_final_height_while_both_clients_ease() {
+    let network = network_pose(7, 0);
+    let mut local = display_pose(&network);
+    let mut peer = display_pose(&network);
+    local.set_drag_height(64.0);
+    local.submitted(8);
+    assert_eq!(local.submission_position_mm(), [20, 64, 300]);
+    assert_eq!(local.current[1], 40.0);
+    let mut accepted = network.clone();
+    accepted.sequence = 8;
+    accepted.position_mm = local.submission_position_mm();
+    peer.reconcile(&accepted, false);
+    local.advance_display(0.25, true);
+    peer.advance_display(0.25, false);
+    assert_eq!(local.current, peer.current);
+    assert_eq!(local.current[1], 46.0);
+    assert!(!local.needs_submission(&network));
+
+    local.set_drag_height(40.0);
+    local.submitted(9);
+    assert_eq!(local.submission_position_mm(), [20, 40, 300]);
+    assert_eq!(local.current[1], 46.0);
+    accepted.sequence = 9;
+    accepted.position_mm = local.submission_position_mm();
+    peer.reconcile(&accepted, false);
+    local.advance_display(0.25, false);
+    peer.advance_display(0.25, false);
+    assert_eq!(local.current, peer.current);
+    assert_eq!(local.current[1], 44.5);
+    assert!(!local.needs_submission(&accepted));
+}
+
+#[test]
+fn pickup_jump_lift_uses_same_fixed_plane_throughout_visual_tween() {
+    let card = [20.0, 40.0, 300.0];
+    let eye = Vec3::new(1.0, 1.2, 1.0);
+    let ray = Ray3d::new(eye, Dir3::new(mm_position(card) - eye).unwrap());
+    let mut display = display_pose(&network_pose(7, 0));
+    display.set_drag_height(64.0);
+    for _ in 0..20 {
+        display.advance_display(0.25, true);
+        let position = pickup_after_unchanged_ray(ray, card);
+        assert!((position[0] - card[0]).abs() < 0.001);
+        assert!((position[2] - card[2]).abs() < 0.001);
+    }
+    assert!(display.current[1] > 63.0);
 }

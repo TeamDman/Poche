@@ -176,6 +176,27 @@ fn run() -> Result<(), String> {
             let root = PathBuf::from(args.next().ok_or("capture requires CONTROL_ROOT")?);
             print_response(send(&root, FileControlAction::Capture)?)
         }
+        Some("move-coin") => {
+            let root = PathBuf::from(args.next().ok_or("move-coin requires CONTROL_ROOT")?);
+            let coin_id = args.next().ok_or("move-coin requires COIN_ID")?;
+            let container = args.next().ok_or("move-coin requires jar|lid|bowl")?;
+            let x = parse(&mut args, "X_MM")?;
+            let y = parse(&mut args, "Y_MM")?;
+            let z = parse(&mut args, "Z_MM")?;
+            let mode = args.next().ok_or("move-coin requires commit|preview")?;
+            if !matches!(mode.as_str(), "commit" | "preview") {
+                return Err("move-coin requires commit|preview".into());
+            }
+            print_response(send(
+                &root,
+                FileControlAction::MoveCoin {
+                    coin_id,
+                    container,
+                    position_mm: [x, y, z],
+                    commit: mode == "commit",
+                },
+            )?)
+        }
         Some("pointer") => {
             let root = PathBuf::from(args.next().ok_or("pointer requires CONTROL_ROOT")?);
             let x = parse(&mut args, "X_LOGICAL_PX")?;
@@ -184,6 +205,25 @@ fn run() -> Result<(), String> {
             print_response(send(
                 &root,
                 FileControlAction::Pointer { x, y, primary_down },
+            )?)
+        }
+        Some("camera-gesture") => {
+            let root = PathBuf::from(args.next().ok_or("camera-gesture requires CONTROL_ROOT")?);
+            let dx = parse(&mut args, "DX")?;
+            let dy = parse(&mut args, "DY")?;
+            let button = args
+                .next()
+                .ok_or("camera-gesture requires middle|right|up")?;
+            if !matches!(button.as_str(), "middle" | "right" | "up") {
+                return Err("camera-gesture requires middle|right|up".into());
+            }
+            print_response(send(
+                &root,
+                FileControlAction::CameraGesture {
+                    delta: [dx, dy],
+                    middle_down: button == "middle",
+                    right_down: button == "right",
+                },
             )?)
         }
         Some("key") => {
@@ -209,7 +249,9 @@ fn run() -> Result<(), String> {
                  poche-puppet invert-camera-y ROOT | leave ROOT | bid ROOT TRICKS\n\
                  poche-puppet play ROOT CARD_INDEX\n\
                  poche-puppet move ROOT CARD_INDEX X_MM Y_MM Z_MM RY_MDEG\n\
+                 poche-puppet move-coin ROOT COIN_ID jar|lid|bowl X_MM Y_MM Z_MM commit|preview\n\
                  poche-puppet pointer ROOT X_LOGICAL_PX Y_LOGICAL_PX down|up (windowless only)\n\
+                 poche-puppet camera-gesture ROOT DX DY middle|right|up (windowless only)\n\
                  poche-puppet key ROOT Q|E|O|Z|Space|W|A|S|D|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Escape|F3 down|up\n\
                  poche-puppet capture ROOT | stop ROOT"
             );
@@ -298,6 +340,13 @@ struct AcceptanceReport {
 #[derive(Serialize)]
 #[allow(clippy::struct_excessive_bools)] // Independent evidence flags, not mutable application state.
 struct AcceptanceChecks {
+    finite_coin_inventory_and_denominations: bool,
+    jar_lid_transfer_preserved_total: bool,
+    real_pointer_quarter_antes: bool,
+    partial_ante_did_not_deal: bool,
+    wrong_denomination_and_overpayment_rejected: bool,
+    missed_bid_dime_paid_and_conserved: bool,
+    scoresheet_camera_inspection_and_consumed_restore: bool,
     real_pointer_drag_and_q_rotation: bool,
     hand_world_hand_mapping: bool,
     leave_showed_terminal: bool,
@@ -307,7 +356,6 @@ struct AcceptanceChecks {
 
 struct AcceptanceContext<'a> {
     output: &'a Path,
-    run_id: &'a str,
     executable: &'a Path,
     run_root: &'a Path,
     alice_root: &'a Path,
@@ -358,7 +406,6 @@ fn acceptance(output: &Path, authority: &AuthorityEndpoint) -> Result<(), String
 
     let result = acceptance_inner(AcceptanceContext {
         output,
-        run_id: &run_id,
         executable: &executable,
         run_root: &run_root,
         alice_root: &alice_root,
@@ -374,7 +421,6 @@ fn acceptance(output: &Path, authority: &AuthorityEndpoint) -> Result<(), String
 fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     let AcceptanceContext {
         output,
-        run_id,
         executable,
         run_root,
         alice_root,
@@ -385,8 +431,7 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     wait_for_descriptor(alice_root)?;
     wait_for_descriptor(bob_root)?;
     let identity_gate_capture = capture(alice_root)?;
-    let short_run = &run_id[..run_id.len().min(12)];
-    let alice_label = format!("Alice {short_run}");
+    let alice_label = "Alice".to_string();
     send(
         alice_root,
         FileControlAction::SetName {
@@ -394,12 +439,7 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
         },
     )?;
     let title_capture = capture(alice_root)?;
-    send(
-        bob_root,
-        FileControlAction::SetName {
-            name: format!("Bob {short_run}"),
-        },
-    )?;
+    send(bob_root, FileControlAction::SetName { name: "Bob".into() })?;
     send(alice_root, FileControlAction::CreateLobby)?;
     let created = send(
         alice_root,
@@ -421,6 +461,9 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     click(alice_root, 348., 548.)?; // Visible first stool in the fixed spectator viewport.
     wait_until(alice_root, |observation| observation.own_seat == Some(0))?;
     send(bob_root, FileControlAction::TakeSeat { seat: 1 })?;
+    wait_until(bob_root, |observation| observation.own_seat == Some(1))?;
+    let money_captures = verify_manual_antes(alice_root, bob_root)?;
+    compose_contact_sheet(&money_captures, &output.with_file_name("manual-antes.png"))?;
     let alice_ready = wait_until(alice_root, |observation| {
         observation.own_hand.len() == 1
             && observation.game.is_some()
@@ -457,6 +500,11 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     compose_contact_sheet(
         &interaction_captures,
         &output.with_file_name("hand-interaction.png"),
+    )?;
+    let sheet_captures = verify_sheet_inspection(alice_root)?;
+    compose_contact_sheet(
+        &sheet_captures,
+        &output.with_file_name("scoresheet-inspection.png"),
     )?;
     let moved_position = [60, 40, 500];
     let moved_rotation = [0, 45_000, 0];
@@ -530,7 +578,22 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
         })?;
     }
     let alice_resolved = wait_until(alice_root, trick_is_resolved)?;
-    let bob_resolved = wait_until(bob_root, trick_is_resolved)?;
+    wait_until(bob_root, trick_is_resolved)?;
+    let penalty_captures = verify_missed_bid_payment(alice_root, bob_root, &alice_resolved)?;
+    compose_contact_sheet(
+        &penalty_captures,
+        &output.with_file_name("missed-bid-payment.png"),
+    )?;
+    let alice_resolved = send(
+        alice_root,
+        FileControlAction::Observe {
+            include_join_code: false,
+        },
+    )?
+    .observation;
+    let bob_resolved = wait_until(bob_root, |o| {
+        o.game == alice_resolved.game && o.activity == alice_resolved.activity
+    })?;
     let same_reveals = alice_resolved
         .revealed_cards
         .iter()
@@ -681,7 +744,7 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     let menu_after_leave = capture(alice_root)?;
 
     let report = AcceptanceReport {
-        schema: "poche-spacetimedb-multi-device-acceptance-v9",
+        schema: "poche-spacetimedb-multi-device-acceptance-v10",
         completed_unix_ms: unix_millis()?,
         authority_profile: authority.profile.clone(),
         authority_uri: authority.uri.clone(),
@@ -719,6 +782,13 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
             .first()
             .map_or_else(|| "missing".into(), |pose| pose.logical_location.clone()),
         checks: AcceptanceChecks {
+            finite_coin_inventory_and_denominations: true,
+            jar_lid_transfer_preserved_total: true,
+            real_pointer_quarter_antes: true,
+            partial_ante_did_not_deal: true,
+            wrong_denomination_and_overpayment_rejected: true,
+            missed_bid_dime_paid_and_conserved: true,
+            scoresheet_camera_inspection_and_consumed_restore: true,
             real_pointer_drag_and_q_rotation: true,
             hand_world_hand_mapping: true,
             leave_showed_terminal,
@@ -734,6 +804,9 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
         screenshots: captures
             .iter()
             .chain(interaction_captures.iter())
+            .chain(sheet_captures.iter())
+            .chain(money_captures.iter())
+            .chain(penalty_captures.iter())
             .chain([
                 &identity_gate_capture,
                 &title_capture,
@@ -954,6 +1027,327 @@ fn verify_hand_input(owner: &Path, peer: &Path) -> Result<Vec<PathBuf>, String> 
     )?;
     std::thread::sleep(Duration::from_millis(600));
     Ok(vec![hover, rotated, world, returned, low_angle])
+}
+
+fn bowl_cents(observation: &FileControlObservation) -> u32 {
+    observation
+        .coins
+        .iter()
+        .filter(|coin| coin.container == "bowl")
+        .map(|coin| u32::from(coin.denomination_cents))
+        .sum()
+}
+
+fn verify_initial_inventory(observation: &FileControlObservation) -> Result<(), String> {
+    let own: Vec<_> = observation
+        .coins
+        .iter()
+        .filter(|coin| coin.is_own)
+        .collect();
+    let quarters = own
+        .iter()
+        .filter(|coin| coin.denomination_cents == 25)
+        .count();
+    let dimes = own
+        .iter()
+        .filter(|coin| coin.denomination_cents == 10)
+        .count();
+    let total: u32 = own
+        .iter()
+        .map(|coin| u32::from(coin.denomination_cents))
+        .sum();
+    let lid: u32 = own
+        .iter()
+        .filter(|coin| coin.container == "lid")
+        .map(|coin| u32::from(coin.denomination_cents))
+        .sum();
+    if quarters != 100 || dimes != 100 || own.len() != 200 || total != 3_500 || lid != 200 {
+        return Err(format!(
+            "unexpected initial inventory: {quarters} quarters, {dimes} dimes, total {total}c, lid {lid}c"
+        ));
+    }
+    if observation.game.is_some()
+        || !observation.own_hand.is_empty()
+        || bowl_cents(observation) != 0
+    {
+        return Err("seating started a deal before the two manual antes".into());
+    }
+    Ok(())
+}
+
+fn verify_manual_antes(alice: &Path, bob: &Path) -> Result<Vec<PathBuf>, String> {
+    let alice_initial = wait_until(alice, |o| {
+        o.coins.len() == 400 && !o.money_pick_targets.is_empty()
+    })?;
+    let bob_initial = wait_until(bob, |o| {
+        o.coins.len() == 400 && !o.money_pick_targets.is_empty()
+    })?;
+    verify_initial_inventory(&alice_initial)?;
+    verify_initial_inventory(&bob_initial)?;
+    let unpaid = capture(alice)?;
+
+    // Explicit ad-hoc coin commands remain useful for diagnostics; the actual
+    // ante below deliberately uses the same projected pointer path as a human.
+    let jar_coin = alice_initial
+        .coins
+        .iter()
+        .find(|coin| coin.is_own && coin.container == "jar" && coin.denomination_cents == 10)
+        .ok_or("initial jar has no dime")?;
+    send(
+        alice,
+        FileControlAction::MoveCoin {
+            coin_id: jar_coin.coin_id.clone(),
+            container: "lid".into(),
+            position_mm: jar_coin.position_mm,
+            commit: true,
+        },
+    )?;
+    let peer_lid = wait_until(bob, |o| {
+        o.coins
+            .iter()
+            .any(|coin| coin.coin_key == jar_coin.coin_key && coin.container == "lid")
+    })?;
+    let before_total: u32 = bob_initial
+        .coins
+        .iter()
+        .map(|c| u32::from(c.denomination_cents))
+        .sum();
+    if peer_lid
+        .coins
+        .iter()
+        .map(|c| u32::from(c.denomination_cents))
+        .sum::<u32>()
+        != before_total
+    {
+        return Err("jar-to-lid transfer changed the conserved coin value".into());
+    }
+    send(
+        alice,
+        FileControlAction::MoveCoin {
+            coin_id: jar_coin.coin_id.clone(),
+            container: "jar".into(),
+            position_mm: jar_coin.position_mm,
+            commit: true,
+        },
+    )?;
+    wait_until(bob, |o| {
+        o.coins
+            .iter()
+            .any(|coin| coin.coin_key == jar_coin.coin_key && coin.container == "jar")
+    })?;
+
+    drag_quarter_to_bowl(alice)?;
+    let alice_partial = wait_until(alice, |o| bowl_cents(o) == 25)?;
+    let bob_partial = wait_until(bob, |o| bowl_cents(o) == 25)?;
+    for observation in [&alice_partial, &bob_partial] {
+        if observation.game.is_some()
+            || !observation.own_hand.is_empty()
+            || !observation.card_poses.is_empty()
+        {
+            return Err("a single player's ante incorrectly started the deal".into());
+        }
+    }
+    let partial = capture(bob)?;
+    let bowl_pose = alice_partial
+        .coins
+        .iter()
+        .find(|coin| coin.container == "bowl")
+        .ok_or("accepted ante has no bowl coin")?
+        .position_mm;
+    // Alice already paid; neither an extra quarter nor a dime may enter the
+    // bowl. Rejections must be surfaced promptly, not mistaken for timeouts.
+    for denomination in [10, 25] {
+        let extra = alice_partial
+            .coins
+            .iter()
+            .find(|coin| {
+                coin.is_own && coin.container == "lid" && coin.denomination_cents == denomination
+            })
+            .ok_or("missing coin for rejected payment probe")?;
+        let response = send_file_control_request(
+            alice,
+            FileControlAction::MoveCoin {
+                coin_id: extra.coin_id.clone(),
+                container: "bowl".into(),
+                position_mm: bowl_pose,
+                commit: true,
+            },
+            Some(TIMEOUT),
+        )?;
+        if response.status != FileControlStatus::Rejected
+            || !response
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("pay exactly"))
+            || bowl_cents(&response.observation) != 25
+        {
+            return Err(format!(
+                "{denomination}c overpayment was not correctly rejected: {:?}",
+                response.error
+            ));
+        }
+        if response
+            .observation
+            .coins
+            .iter()
+            .find(|coin| coin.coin_key == extra.coin_key)
+            != Some(extra)
+        {
+            return Err("rejected payment modified the coin's accepted state".into());
+        }
+    }
+    drag_quarter_to_bowl(bob)?;
+    for root in [alice, bob] {
+        let dealt = wait_until(root, |o| {
+            bowl_cents(o) == 50 && o.game.is_some() && o.own_hand.len() == 1
+        })?;
+        if dealt.game.as_ref().map(|game| game.pot_cents) != Some(50) {
+            return Err("the rule-engine pot disagrees with the physical bowl".into());
+        }
+    }
+    let paid = capture(alice)?;
+    Ok(vec![unpaid, partial, paid])
+}
+
+fn drag_quarter_to_bowl(root: &Path) -> Result<(), String> {
+    drag_coin_to_bowl(root, 25)
+}
+
+fn verify_missed_bid_payment(
+    alice: &Path,
+    bob: &Path,
+    resolved: &FileControlObservation,
+) -> Result<Vec<PathBuf>, String> {
+    let game = resolved.game.as_ref().ok_or("missing resolved game")?;
+    let missed: Vec<_> = (0..2)
+        .filter(|seat| game.bids[*seat] != Some(game.tricks_won[*seat]))
+        .collect();
+    if missed.len() != 1 || bowl_cents(resolved) != 50 {
+        return Err("two zero bids must leave exactly one missed-bid dime unpaid".into());
+    }
+    let payer = root_for_seat(
+        u8::try_from(missed[0]).map_err(|_| "invalid missed-bid seat")?,
+        alice,
+        bob,
+    );
+    let before = capture(payer)?;
+    drag_coin_to_bowl(payer, 10)?;
+    for root in [alice, bob] {
+        let paid = wait_until(root, |o| {
+            bowl_cents(o) == 60
+                && o.game
+                    .as_ref()
+                    .is_some_and(|game| game.phase == "scoring" && game.pot_cents == 60)
+        })?;
+        if paid.coins.len() != 400
+            || paid
+                .coins
+                .iter()
+                .map(|coin| u32::from(coin.denomination_cents))
+                .sum::<u32>()
+                != 7_000
+        {
+            return Err("missed-bid payment changed the conserved inventory".into());
+        }
+    }
+    Ok(vec![before, capture(payer)?])
+}
+
+fn drag_coin_to_bowl(root: &Path, denomination: u8) -> Result<(), String> {
+    let ready = wait_until(root, |o| {
+        o.money_bowl_screen.is_some()
+            && o.money_pick_targets.iter().any(|target| {
+                target.container == "lid" && target.denomination_cents == denomination
+            })
+    })?;
+    let target = ready
+        .money_pick_targets
+        .iter()
+        .find(|target| target.container == "lid" && target.denomination_cents == denomination)
+        .ok_or("no camera-visible coin of the required denomination on this player's lid")?;
+    let [x, y] = target.screen;
+    let [bowl_x, bowl_y] = ready
+        .money_bowl_screen
+        .ok_or("bowl is outside the camera")?;
+    for (x, y, primary_down) in [
+        (x, y, false),
+        (x, y, true),
+        (x.midpoint(bowl_x), y.midpoint(bowl_y), true),
+        (bowl_x, bowl_y, true),
+        (bowl_x, bowl_y, false),
+    ] {
+        send(root, FileControlAction::Pointer { x, y, primary_down })?;
+    }
+    wait_until(root, |o| {
+        o.coins
+            .iter()
+            .any(|coin| coin.is_own && coin.coin_id == target.coin_id && coin.container == "bowl")
+    })?;
+    Ok(())
+}
+
+fn verify_sheet_inspection(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let camera = send(
+        root,
+        FileControlAction::Observe {
+            include_join_code: false,
+        },
+    )?
+    .observation
+    .camera
+    .ok_or("missing camera diagnostics")?;
+    let [x, y] = camera
+        .sheet_screen
+        .ok_or("scoresheet is outside the world camera")?;
+    let before = capture(root)?;
+    click(root, x, y)?;
+    wait_until(root, |o| {
+        o.camera.as_ref().is_some_and(|c| {
+            c.inspecting_sheet
+                && (c.pitch - std::f32::consts::FRAC_PI_2).abs() < 0.001
+                && c.orthographic_scale < 0.25
+        })
+    })?;
+    let inspecting = capture(root)?;
+    send(
+        root,
+        FileControlAction::CameraGesture {
+            delta: [12., 8.],
+            middle_down: true,
+            right_down: false,
+        },
+    )?;
+    // A second movement while the same button remains held must also be consumed.
+    send(
+        root,
+        FileControlAction::CameraGesture {
+            delta: [80., 80.],
+            middle_down: true,
+            right_down: false,
+        },
+    )?;
+    wait_until(root, |o| {
+        o.camera.as_ref().is_some_and(|c| {
+            !c.inspecting_sheet
+                && c.mode == camera.mode
+                && c.focus
+                    .iter()
+                    .zip(camera.focus)
+                    .all(|(a, b)| (*a - b).abs() < 0.001)
+                && (c.distance - camera.distance).abs() < 0.001
+                && (c.pitch - camera.pitch).abs() < 0.001
+        })
+    })?;
+    let restored = capture(root)?;
+    send(
+        root,
+        FileControlAction::CameraGesture {
+            delta: [0., 0.],
+            middle_down: false,
+            right_down: false,
+        },
+    )?;
+    Ok(vec![before, inspecting, restored])
 }
 
 fn click(root: &Path, x: f32, y: f32) -> Result<(), String> {

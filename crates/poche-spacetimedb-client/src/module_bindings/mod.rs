@@ -10,12 +10,14 @@ pub mod active_room_type;
 pub mod activity_event_type;
 pub mod bid_reducer;
 pub mod card_pose_type;
+pub mod coin_type;
 pub mod connection_presence_type;
 pub mod create_room_reducer;
 pub mod game_action_type;
 pub mod join_room_reducer;
 pub mod leave_room_reducer;
 pub mod member_type;
+pub mod move_coin_reducer;
 pub mod my_hand_table;
 pub mod my_room_capability_table;
 pub mod my_rooms_table;
@@ -32,6 +34,7 @@ pub mod set_card_pose_reducer;
 pub mod take_seat_reducer;
 pub mod visible_activity_table;
 pub mod visible_card_poses_table;
+pub mod visible_coins_table;
 pub mod visible_revealed_cards_table;
 pub mod visible_room_games_table;
 
@@ -39,12 +42,14 @@ pub use active_room_type::ActiveRoom;
 pub use activity_event_type::ActivityEvent;
 pub use bid_reducer::bid;
 pub use card_pose_type::CardPose;
+pub use coin_type::Coin;
 pub use connection_presence_type::ConnectionPresence;
 pub use create_room_reducer::create_room;
 pub use game_action_type::GameAction;
 pub use join_room_reducer::join_room;
 pub use leave_room_reducer::leave_room;
 pub use member_type::Member;
+pub use move_coin_reducer::move_coin;
 pub use my_hand_table::*;
 pub use my_room_capability_table::*;
 pub use my_rooms_table::*;
@@ -61,6 +66,7 @@ pub use set_card_pose_reducer::set_card_pose;
 pub use take_seat_reducer::take_seat;
 pub use visible_activity_table::*;
 pub use visible_card_poses_table::*;
+pub use visible_coins_table::*;
 pub use visible_revealed_cards_table::*;
 pub use visible_room_games_table::*;
 
@@ -87,6 +93,16 @@ pub enum Reducer {
     },
     LeaveRoom {
         room_id: String,
+    },
+    MoveCoin {
+        room_id: String,
+        coin_id: String,
+        sequence: u64,
+        container: String,
+        x_mm: i32,
+        y_mm: i32,
+        z_mm: i32,
+        commit: bool,
     },
     PlayCard {
         room_id: String,
@@ -123,6 +139,7 @@ impl __sdk::Reducer for Reducer {
             Reducer::CreateRoom { .. } => "create_room",
             Reducer::JoinRoom { .. } => "join_room",
             Reducer::LeaveRoom { .. } => "leave_room",
+            Reducer::MoveCoin { .. } => "move_coin",
             Reducer::PlayCard { .. } => "play_card",
             Reducer::ReleaseSeat { .. } => "release_seat",
             Reducer::SetCardPose { .. } => "set_card_pose",
@@ -158,6 +175,25 @@ impl __sdk::Reducer for Reducer {
                     room_id: room_id.clone(),
                 })
             }
+            Reducer::MoveCoin {
+                room_id,
+                coin_id,
+                sequence,
+                container,
+                x_mm,
+                y_mm,
+                z_mm,
+                commit,
+            } => __sats::bsatn::to_vec(&move_coin_reducer::MoveCoinArgs {
+                room_id: room_id.clone(),
+                coin_id: coin_id.clone(),
+                sequence: sequence.clone(),
+                container: container.clone(),
+                x_mm: x_mm.clone(),
+                y_mm: y_mm.clone(),
+                z_mm: z_mm.clone(),
+                commit: commit.clone(),
+            }),
             Reducer::PlayCard { room_id, card_id } => {
                 __sats::bsatn::to_vec(&play_card_reducer::PlayCardArgs {
                     room_id: room_id.clone(),
@@ -211,6 +247,7 @@ pub struct DbUpdate {
     room_members: __sdk::TableUpdate<Member>,
     visible_activity: __sdk::TableUpdate<ActivityEvent>,
     visible_card_poses: __sdk::TableUpdate<CardPose>,
+    visible_coins: __sdk::TableUpdate<Coin>,
     visible_revealed_cards: __sdk::TableUpdate<RevealedCard>,
     visible_room_games: __sdk::TableUpdate<RoomGame>,
 }
@@ -239,6 +276,9 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
                 "visible_card_poses" => db_update
                     .visible_card_poses
                     .append(visible_card_poses_table::parse_table_update(table_update)?),
+                "visible_coins" => db_update
+                    .visible_coins
+                    .append(visible_coins_table::parse_table_update(table_update)?),
                 "visible_revealed_cards" => db_update.visible_revealed_cards.append(
                     visible_revealed_cards_table::parse_table_update(table_update)?,
                 ),
@@ -289,6 +329,9 @@ impl __sdk::DbUpdate for DbUpdate {
         diff.visible_card_poses = cache
             .apply_diff_to_table::<CardPose>("visible_card_poses", &self.visible_card_poses)
             .with_updates_by_pk(|row| &row.card_key);
+        diff.visible_coins = cache
+            .apply_diff_to_table::<Coin>("visible_coins", &self.visible_coins)
+            .with_updates_by_pk(|row| &row.coin_key);
         diff.visible_revealed_cards = cache
             .apply_diff_to_table::<RevealedCard>(
                 "visible_revealed_cards",
@@ -322,6 +365,9 @@ impl __sdk::DbUpdate for DbUpdate {
                     .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "visible_card_poses" => db_update
                     .visible_card_poses
+                    .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "visible_coins" => db_update
+                    .visible_coins
                     .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "visible_revealed_cards" => db_update
                     .visible_revealed_cards
@@ -360,6 +406,9 @@ impl __sdk::DbUpdate for DbUpdate {
                 "visible_card_poses" => db_update
                     .visible_card_poses
                     .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "visible_coins" => db_update
+                    .visible_coins
+                    .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 "visible_revealed_cards" => db_update
                     .visible_revealed_cards
                     .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
@@ -387,6 +436,7 @@ pub struct AppliedDiff<'r> {
     room_members: __sdk::TableAppliedDiff<'r, Member>,
     visible_activity: __sdk::TableAppliedDiff<'r, ActivityEvent>,
     visible_card_poses: __sdk::TableAppliedDiff<'r, CardPose>,
+    visible_coins: __sdk::TableAppliedDiff<'r, Coin>,
     visible_revealed_cards: __sdk::TableAppliedDiff<'r, RevealedCard>,
     visible_room_games: __sdk::TableAppliedDiff<'r, RoomGame>,
     __unused: std::marker::PhantomData<&'r ()>,
@@ -420,6 +470,7 @@ impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
             &self.visible_card_poses,
             event,
         );
+        callbacks.invoke_table_row_callbacks::<Coin>("visible_coins", &self.visible_coins, event);
         callbacks.invoke_table_row_callbacks::<RevealedCard>(
             "visible_revealed_cards",
             &self.visible_revealed_cards,
@@ -685,19 +736,19 @@ impl __sdk::SubscriptionHandle for SubscriptionHandle {
 /// either a [`DbConnection`] or an [`EventContext`] and operate on either.
 pub trait RemoteDbContext:
     __sdk::DbContext<
-        DbView = RemoteTables,
-        Reducers = RemoteReducers,
-        SubscriptionBuilder = __sdk::SubscriptionBuilder<RemoteModule>,
-    >
+    DbView = RemoteTables,
+    Reducers = RemoteReducers,
+    SubscriptionBuilder = __sdk::SubscriptionBuilder<RemoteModule>,
+>
 {
 }
 impl<
-    Ctx: __sdk::DbContext<
+        Ctx: __sdk::DbContext<
             DbView = RemoteTables,
             Reducers = RemoteReducers,
             SubscriptionBuilder = __sdk::SubscriptionBuilder<RemoteModule>,
         >,
-> RemoteDbContext for Ctx
+    > RemoteDbContext for Ctx
 {
 }
 
@@ -1096,6 +1147,7 @@ impl __sdk::SpacetimeModule for RemoteModule {
         room_members_table::register_table(client_cache);
         visible_activity_table::register_table(client_cache);
         visible_card_poses_table::register_table(client_cache);
+        visible_coins_table::register_table(client_cache);
         visible_revealed_cards_table::register_table(client_cache);
         visible_room_games_table::register_table(client_cache);
     }
@@ -1106,6 +1158,7 @@ impl __sdk::SpacetimeModule for RemoteModule {
         "room_members",
         "visible_activity",
         "visible_card_poses",
+        "visible_coins",
         "visible_revealed_cards",
         "visible_room_games",
     ];
