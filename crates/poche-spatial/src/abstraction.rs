@@ -224,8 +224,10 @@ mod tests {
 
     #[test]
     fn abstraction_round_trips_canonical_realizations_for_every_layout_cardinality() {
-        for players in 2..=8 {
-            let id = LayoutId::new(players, 1).expect("layout ID");
+        for (players, revision) in
+            (2..=8).flat_map(|players| [1, 2].map(|revision| (players, revision)))
+        {
+            let id = LayoutId::new(players, revision).expect("layout ID");
             let layout = registered_layout(TableId::new(u64::from(players)), id).expect("layout");
             let projection = ViewerSpatialProjection {
                 projection_epoch: 99,
@@ -245,6 +247,16 @@ mod tests {
                 revealed_won_cards: Vec::new(),
             };
             let scene = realize_viewer_scene(&layout, &projection).expect("scene");
+            assert_eq!(scene.cards.len(), 52);
+            assert_eq!(
+                scene
+                    .cards
+                    .iter()
+                    .filter(|card| card.face.is_some())
+                    .count(),
+                2,
+                "only the viewer's hand and public trump have visible faces"
+            );
             assert_eq!(abstract_viewer_scene(&layout, &scene), Ok(projection));
         }
     }

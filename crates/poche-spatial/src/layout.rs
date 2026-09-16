@@ -9,8 +9,10 @@ use crate::{
     SeatId, TableId, YawMilliDegrees, ZoneId,
 };
 
-const LAYOUT_REVISION: u16 = 1;
+const LATEST_LAYOUT_REVISION: u16 = 2;
 const DIRECTION_RADIUS: i32 = 720;
+const SEAT_HALF_EXTENTS: HalfExtentsMm = HalfExtentsMm::new(220, 60, 220);
+const SEAT_TABLE_CLEARANCE_MM: i32 = 30;
 
 /// One registered seat and player-anchor placement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -19,7 +21,7 @@ pub struct SeatPlacement {
     pub seat: SeatId,
     /// Physical seat anchor outside the table edge.
     pub seat_pose: PoseMm,
-    /// Player/token anchor colocated with the seat in v1.
+    /// Player/token anchor above the seat.
     pub player_pose: PoseMm,
 }
 
@@ -149,7 +151,12 @@ impl SpatialLayout {
                 id: ObjectId::Seat(placement.seat),
                 kind: SceneObjectKind::Seat,
                 pose: placement.seat_pose,
-                half_extents: HalfExtentsMm::new(220, 220, 220),
+                half_extents: if self.id.revision() == 1 {
+                    // Revision one is retained byte-for-byte for replay/hash compatibility.
+                    HalfExtentsMm::new(220, 220, 220)
+                } else {
+                    SEAT_HALF_EXTENTS
+                },
             });
             objects.push(SceneObject {
                 id: ObjectId::Player(placement.seat),
@@ -209,7 +216,7 @@ impl SpatialLayout {
     }
 
     fn validate(&self) -> Result<(), LayoutError> {
-        if self.id.revision() != LAYOUT_REVISION {
+        if self.id.revision() > LATEST_LAYOUT_REVISION {
             return Err(LayoutError::UnsupportedRevision);
         }
         if self.table.id != ObjectId::Table || self.table.kind != SceneObjectKind::Table {
@@ -266,14 +273,67 @@ impl SpatialLayout {
                 }
             }
         }
+        if self.id.revision() >= 2 {
+            self.validate_seat_clearance()?;
+        }
         Ok(())
+    }
+
+    fn validate_seat_clearance(&self) -> Result<(), LayoutError> {
+        let table = AabbMm::from_center(self.table.pose.translation, self.table.half_extents)
+            .ok_or(LayoutError::PoseOutsideTable)?;
+        let mut seats = Vec::with_capacity(self.seats.len());
+        for placement in &self.seats {
+            // A conservative cylinder bound, matching the 440mm-wide, 120mm-high
+            // seat rendered by the desktop. Clearance must come from X/Z, not
+            // moving the seat vertically out of the way of the table.
+            let bound = AabbMm::from_center(placement.seat_pose.translation, SEAT_HALF_EXTENTS)
+                .ok_or(LayoutError::PoseOutsideTable)?;
+            if horizontal_intersection(bound, table)
+                || self
+                    .zones
+                    .iter()
+                    .any(|zone| horizontal_intersection(bound, zone.outer))
+                || seats
+                    .iter()
+                    .any(|seat| horizontal_intersection(bound, *seat))
+            {
+                return Err(LayoutError::ObstructedSeat);
+            }
+            seats.push(bound);
+        }
+        Ok(())
+    }
+
+    /// A play target follows the seat's original direction, not the distance of
+    /// its furniture from the table. Moving a stool cannot move a rule zone.
+    pub(crate) fn play_offset(&self, seat: SeatId) -> Result<Point3Mm, LayoutError> {
+        let placement = self
+            .seats
+            .iter()
+            .find(|placement| placement.seat == seat)
+            .ok_or(LayoutError::SeatCardinality)?;
+        let direction = *directions(self.id.players())
+            .get(usize::from(seat.get()))
+            .ok_or(LayoutError::SeatCardinality)?;
+        // Retain revision one's integer rounding exactly.
+        let original_seat = if self.id.revision() == 1 {
+            placement.seat_pose.translation
+        } else {
+            scale_direction(direction, 750, 0)?
+        };
+        Ok(Point3Mm::new(
+            original_seat.x.get() * 50 / 750,
+            0,
+            original_seat.z.get() * 50 / 750,
+        ))
     }
 }
 
 /// Stable failure category for a registered or custom layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayoutError {
-    /// Only layout revision one is currently defined.
+    /// Only layout revisions one and two are currently defined.
     UnsupportedRevision,
     /// A table or score-sheet object has the wrong semantic kind.
     ObjectKind,
@@ -289,18 +349,24 @@ pub enum LayoutError {
     OverlappingInnerZones,
     /// Two dead-band volumes share at least one point.
     OverlappingOuterZones,
+    /// A revision-two seat's horizontal bound intersects the table, a rule
+    /// zone, or another seat.
+    ObstructedSeat,
     /// Arithmetic failed while generating a registered layout.
     GeometryOverflow,
 }
 
-/// Construct the deterministic revision-one layout for 2 through 8 players.
+/// Construct a deterministic layout for 2 through 8 players.
+///
+/// Revision one retains the original geometry for replay compatibility.
+/// Revision two clears seat furniture from the table without moving rule zones.
 ///
 /// # Errors
 ///
 /// Returns [`LayoutError::UnsupportedRevision`] for another revision and a
 /// stable geometry category if the registered constants cease to validate.
 pub fn registered_layout(table_id: TableId, id: LayoutId) -> Result<SpatialLayout, LayoutError> {
-    if id.revision() != LAYOUT_REVISION {
+    if id.revision() > LATEST_LAYOUT_REVISION {
         return Err(LayoutError::UnsupportedRevision);
     }
 
@@ -339,7 +405,11 @@ pub fn registered_layout(table_id: TableId, id: LayoutId) -> Result<SpatialLayou
             .ok_or(LayoutError::GeometryOverflow)?
             / u32::from(id.players());
         let inward_yaw = (outward_yaw + 180_000) % YawMilliDegrees::FULL_TURN;
-        let seat_point = scale_direction(direction, 750, 0)?;
+        let seat_point = if id.revision() == 1 {
+            scale_direction(direction, 750, 0)?
+        } else {
+            seat_outside_table(direction, table)?
+        };
         seats.push(SeatPlacement {
             seat,
             seat_pose: PoseMm::checked(seat_point, YawMilliDegrees::new(inward_yaw))
@@ -370,6 +440,36 @@ pub fn registered_layout(table_id: TableId, id: LayoutId) -> Result<SpatialLayou
     }
 
     SpatialLayout::try_new(table_id, id, table, score_sheet, seats, zones)
+}
+
+fn seat_outside_table(direction: (i32, i32), table: SceneObject) -> Result<Point3Mm, LayoutError> {
+    // Project the direction onto the square perimeter expanded by the seat's
+    // bound. A fixed radial offset is insufficient near a square's corners.
+    let dominant = direction.0.abs().max(direction.1.abs());
+    let extent = i32::try_from(table.half_extents.x.max(table.half_extents.z))
+        .map_err(|_| LayoutError::GeometryOverflow)?
+        + i32::try_from(SEAT_HALF_EXTENTS.x).map_err(|_| LayoutError::GeometryOverflow)?
+        + SEAT_TABLE_CLEARANCE_MM;
+    Ok(Point3Mm::new(
+        direction
+            .0
+            .checked_mul(extent)
+            .ok_or(LayoutError::GeometryOverflow)?
+            / dominant,
+        0,
+        direction
+            .1
+            .checked_mul(extent)
+            .ok_or(LayoutError::GeometryOverflow)?
+            / dominant,
+    ))
+}
+
+fn horizontal_intersection(left: AabbMm, right: AabbMm) -> bool {
+    left.min.x.get() <= right.max.x.get()
+        && left.max.x.get() >= right.min.x.get()
+        && left.min.z.get() <= right.max.z.get()
+        && left.max.z.get() >= right.min.z.get()
 }
 
 fn zone(
@@ -610,7 +710,7 @@ mod tests {
 
     #[test]
     fn invalid_revision_is_rejected_without_fallback() {
-        let id = LayoutId::new(2, 2).expect("syntactically valid future ID");
+        let id = LayoutId::new(2, 3).expect("syntactically valid future ID");
         assert_eq!(
             registered_layout(TableId::new(1), id),
             Err(LayoutError::UnsupportedRevision)
@@ -663,6 +763,116 @@ mod tests {
                 .map(|object| object.id)
                 .collect::<std::collections::HashSet<_>>();
             assert_eq!(objects.len(), unique.len());
+        }
+    }
+
+    #[test]
+    fn original_two_player_seat_reproduces_the_table_intersection() {
+        let layout = registered_layout(TableId::new(1), LayoutId::new(2, 1).unwrap()).unwrap();
+        let rendered_table =
+            AabbMm::from_center(layout.table().pose.translation, layout.table().half_extents)
+                .unwrap();
+        let rendered_seat = AabbMm::from_center(
+            layout.seats()[0].seat_pose.translation,
+            HalfExtentsMm::new(220, 60, 220),
+        )
+        .unwrap();
+        assert!(rendered_table.intersects(rendered_seat));
+        assert_eq!(rendered_table.max.z.get() - rendered_seat.min.z.get(), 120);
+        // Preserve this historical revision, not the rendering bug in new rooms.
+        assert_eq!(
+            layout.seats()[0].seat_pose.translation,
+            Point3Mm::new(0, 0, 750)
+        );
+    }
+
+    #[test]
+    fn revision_two_furniture_clears_table_and_every_rule_zone_in_all_layouts() {
+        for players in 2..=8 {
+            let layout =
+                registered_layout(TableId::new(1), LayoutId::new(players, 2).unwrap()).unwrap();
+            let table =
+                AabbMm::from_center(layout.table().pose.translation, layout.table().half_extents)
+                    .unwrap();
+            for placement in layout.seats() {
+                let seat = AabbMm::from_center(
+                    placement.seat_pose.translation,
+                    HalfExtentsMm::new(220, 60, 220),
+                )
+                .unwrap();
+                // Check horizontal separation even if a future Y value changes.
+                assert!(
+                    !super::horizontal_intersection(table, seat),
+                    "{players} players: {placement:?}"
+                );
+                let gap = (seat.min.x.get() - table.max.x.get())
+                    .max(table.min.x.get() - seat.max.x.get())
+                    .max(seat.min.z.get() - table.max.z.get())
+                    .max(table.min.z.get() - seat.max.z.get());
+                assert!(gap >= 30);
+                for zone in layout.zones() {
+                    assert!(!super::horizontal_intersection(seat, zone.outer));
+                }
+                assert_eq!(
+                    placement.player_pose.translation.x,
+                    placement.seat_pose.translation.x
+                );
+                assert_eq!(
+                    placement.player_pose.translation.z,
+                    placement.seat_pose.translation.z
+                );
+                assert_eq!(placement.seat_pose.translation.y.get(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn moving_seats_does_not_move_rule_zones_or_card_play_targets() {
+        for players in 2..=8 {
+            let old =
+                registered_layout(TableId::new(1), LayoutId::new(players, 1).unwrap()).unwrap();
+            let new =
+                registered_layout(TableId::new(1), LayoutId::new(players, 2).unwrap()).unwrap();
+            assert_eq!(old.zones(), new.zones());
+            assert_eq!(old.table(), new.table());
+            assert_eq!(old.score_sheet(), new.score_sheet());
+            for placement in old.seats() {
+                let location = crate::CardLocation::Play {
+                    seat: placement.seat,
+                };
+                let old_pose = crate::realization::card_pose(&old, location, 1).unwrap();
+                let new_pose = crate::realization::card_pose(&new, location, 1).unwrap();
+                assert_eq!(old_pose, new_pose);
+                let bounds =
+                    AabbMm::from_center(new_pose.translation, HalfExtentsMm::new(32, 1, 44))
+                        .unwrap();
+                assert_eq!(
+                    new.classify_bounds(bounds),
+                    ZoneClassification::Snapped(ZoneId::Play)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn revision_two_rejects_legacy_seat_placement_instead_of_hiding_it_vertically() {
+        let old = registered_layout(TableId::new(1), LayoutId::new(2, 1).unwrap()).unwrap();
+        for height in [0, 500] {
+            let mut placements = old.seats().to_vec();
+            for placement in &mut placements {
+                placement.seat_pose.translation.y = crate::Millimeters::new(height);
+            }
+            assert_eq!(
+                SpatialLayout::try_new(
+                    old.table_id(),
+                    LayoutId::new(2, 2).unwrap(),
+                    old.table(),
+                    old.score_sheet(),
+                    placements,
+                    old.zones().to_vec()
+                ),
+                Err(LayoutError::ObstructedSeat),
+            );
         }
     }
 }

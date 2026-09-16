@@ -176,6 +176,22 @@ fn run() -> Result<(), String> {
             let root = PathBuf::from(args.next().ok_or("capture requires CONTROL_ROOT")?);
             print_response(send(&root, FileControlAction::Capture)?)
         }
+        Some("pointer") => {
+            let root = PathBuf::from(args.next().ok_or("pointer requires CONTROL_ROOT")?);
+            let x = parse(&mut args, "X_LOGICAL_PX")?;
+            let y = parse(&mut args, "Y_LOGICAL_PX")?;
+            let primary_down = parse_button_state(&mut args)?;
+            print_response(send(
+                &root,
+                FileControlAction::Pointer { x, y, primary_down },
+            )?)
+        }
+        Some("key") => {
+            let root = PathBuf::from(args.next().ok_or("key requires CONTROL_ROOT")?);
+            let key = args.next().ok_or("key requires KEY")?;
+            let down = parse_button_state(&mut args)?;
+            print_response(send(&root, FileControlAction::Key { key, down })?)
+        }
         Some("stop") => {
             let root = PathBuf::from(args.next().ok_or("stop requires CONTROL_ROOT")?);
             print_response(send(&root, FileControlAction::Stop)?)
@@ -193,6 +209,8 @@ fn run() -> Result<(), String> {
                  poche-puppet invert-camera-y ROOT | leave ROOT | bid ROOT TRICKS\n\
                  poche-puppet play ROOT CARD_INDEX\n\
                  poche-puppet move ROOT CARD_INDEX X_MM Y_MM Z_MM RY_MDEG\n\
+                 poche-puppet pointer ROOT X_LOGICAL_PX Y_LOGICAL_PX down|up (windowless only)\n\
+                 poche-puppet key ROOT Q|E|O|Z|Space|W|A|S|D|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Escape|F3 down|up\n\
                  poche-puppet capture ROOT | stop ROOT"
             );
             Ok(())
@@ -209,9 +227,17 @@ where
     T::Err: std::fmt::Display,
 {
     args.next()
-        .ok_or_else(|| format!("move requires {label}"))?
+        .ok_or_else(|| format!("missing required {label}"))?
         .parse()
         .map_err(|error| format!("invalid {label}: {error}"))
+}
+
+fn parse_button_state(args: &mut impl Iterator<Item = String>) -> Result<bool, String> {
+    match args.next().as_deref() {
+        Some("down") => Ok(true),
+        Some("up") => Ok(false),
+        _ => Err("input requires down or up".into()),
+    }
 }
 
 fn send(root: &Path, action: FileControlAction) -> Result<FileControlResponse, String> {
@@ -270,7 +296,10 @@ struct AcceptanceReport {
 }
 
 #[derive(Serialize)]
+#[allow(clippy::struct_excessive_bools)] // Independent evidence flags, not mutable application state.
 struct AcceptanceChecks {
+    real_pointer_drag_and_q_rotation: bool,
+    hand_world_hand_mapping: bool,
     leave_showed_terminal: bool,
     same_identity_resume: bool,
     presence_survived_sibling_disconnect: bool,
@@ -389,7 +418,8 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
             join_code: join_code.clone(),
         },
     )?;
-    send(alice_root, FileControlAction::TakeSeat { seat: 0 })?;
+    click(alice_root, 348., 548.)?; // Visible first stool in the fixed spectator viewport.
+    wait_until(alice_root, |observation| observation.own_seat == Some(0))?;
     send(bob_root, FileControlAction::TakeSeat { seat: 1 })?;
     let alice_ready = wait_until(alice_root, |observation| {
         observation.own_hand.len() == 1
@@ -423,6 +453,11 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
 
     let seated_alice = capture(alice_root)?;
     let seated_bob = capture(bob_root)?;
+    let interaction_captures = verify_hand_input(alice_root, bob_root)?;
+    compose_contact_sheet(
+        &interaction_captures,
+        &output.with_file_name("hand-interaction.png"),
+    )?;
     let moved_position = [60, 40, 500];
     let moved_rotation = [0, 45_000, 0];
     let mut owned_keys = alice_ready
@@ -462,10 +497,10 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
             .and_then(|game| game.actor_seat)
             .ok_or("bidding projection omitted its actor")?;
         let previous = turn.game.as_ref().map_or(0, |game| game.action_count);
-        send(
-            root_for_seat(actor, alice_root, bob_root),
-            FileControlAction::Bid { tricks: 0 },
-        )?;
+        let actor_root = root_for_seat(actor, alice_root, bob_root);
+        click(actor_root, 60., 32.)?;
+        capture(actor_root)?;
+        click(actor_root, 100., 115.)?;
         turn = wait_until(alice_root, |observation| {
             observation
                 .game
@@ -646,7 +681,7 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     let menu_after_leave = capture(alice_root)?;
 
     let report = AcceptanceReport {
-        schema: "poche-spacetimedb-multi-device-acceptance-v8",
+        schema: "poche-spacetimedb-multi-device-acceptance-v9",
         completed_unix_ms: unix_millis()?,
         authority_profile: authority.profile.clone(),
         authority_uri: authority.uri.clone(),
@@ -684,6 +719,8 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
             .first()
             .map_or_else(|| "missing".into(), |pose| pose.logical_location.clone()),
         checks: AcceptanceChecks {
+            real_pointer_drag_and_q_rotation: true,
+            hand_world_hand_mapping: true,
             leave_showed_terminal,
             same_identity_resume: true,
             presence_survived_sibling_disconnect,
@@ -696,6 +733,7 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
         identity_contact_sheet: identity_contact_sheet.to_string_lossy().into_owned(),
         screenshots: captures
             .iter()
+            .chain(interaction_captures.iter())
             .chain([
                 &identity_gate_capture,
                 &title_capture,
@@ -782,6 +820,167 @@ fn wait_for_descriptor(root: &Path) -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+    Ok(())
+}
+
+/// Exercise the same input systems as a person, not MoveOwnCard/reducer calls.
+fn verify_hand_input(owner: &Path, peer: &Path) -> Result<Vec<PathBuf>, String> {
+    let initial = send(
+        owner,
+        FileControlAction::Observe {
+            include_join_code: false,
+        },
+    )?
+    .observation;
+    let key = initial
+        .own_hand
+        .first()
+        .ok_or("input test requires an owned card")?
+        .card_key
+        .clone();
+    let source = initial
+        .card_poses
+        .iter()
+        .find(|pose| pose.card_key == key)
+        .ok_or("missing input-test pose")?;
+    let height = source.position_mm[1];
+    let angle = (source.rotation_mdeg[1] + 45_000).rem_euclid(360_000);
+    let pointer =
+        |root, x, y, primary_down| send(root, FileControlAction::Pointer { x, y, primary_down });
+    pointer(owner, 590., 732., false)?;
+    let hover = capture(owner)?;
+    pointer(owner, 590., 732., true)?;
+    wait_until(peer, |observation| {
+        observation
+            .card_poses
+            .iter()
+            .any(|pose| pose.card_key == key && pose.position_mm[1] > height)
+    })?;
+    send(
+        owner,
+        FileControlAction::Key {
+            key: "Q".into(),
+            down: true,
+        },
+    )?;
+    send(
+        owner,
+        FileControlAction::Key {
+            key: "Q".into(),
+            down: false,
+        },
+    )?;
+    wait_until(peer, |observation| {
+        observation
+            .card_poses
+            .iter()
+            .any(|pose| pose.card_key == key && pose.rotation_mdeg[1] == angle)
+    })?;
+    // Capture while held also provides time for late echoes to arrive.
+    let rotated = capture(owner)?;
+    pointer(owner, 600., 350., true)?;
+    wait_until(peer, |observation| {
+        observation
+            .card_poses
+            .iter()
+            .any(|pose| pose.card_key == key && pose.position_mm[2].abs() < 350)
+    })?;
+    let world = capture(owner)?;
+    pointer(owner, 590., 732., true)?;
+    pointer(owner, 590., 732., false)?;
+    let released = wait_until(peer, |observation| {
+        observation.card_poses.iter().any(|pose| {
+            pose.card_key == key
+                && pose.position_mm[1] == height
+                && pose.position_mm[2] > 400
+                && pose.rotation_mdeg[1] == angle
+        })
+    })?;
+    if !released.revealed_cards.is_empty()
+        || !released
+            .card_poses
+            .iter()
+            .any(|pose| pose.card_key == key && pose.logical_location == source.logical_location)
+    {
+        return Err("physical hand/world drag changed logical ownership or exposed a face".into());
+    }
+    wait_until(owner, |observation| {
+        observation.held_card_key.is_none() && observation.visible_hand_copies == 1
+    })?;
+    let returned = capture(owner)?;
+    send(
+        owner,
+        FileControlAction::Key {
+            key: "Z".into(),
+            down: true,
+        },
+    )?;
+    send(
+        owner,
+        FileControlAction::Key {
+            key: "ArrowDown".into(),
+            down: true,
+        },
+    )?;
+    std::thread::sleep(Duration::from_millis(1300));
+    send(
+        owner,
+        FileControlAction::Key {
+            key: "ArrowDown".into(),
+            down: false,
+        },
+    )?;
+    let low_angle = capture(owner)?;
+    send(
+        owner,
+        FileControlAction::Key {
+            key: "Z".into(),
+            down: false,
+        },
+    )?;
+    send(
+        owner,
+        FileControlAction::Key {
+            key: "Space".into(),
+            down: true,
+        },
+    )?;
+    send(
+        owner,
+        FileControlAction::Key {
+            key: "Space".into(),
+            down: false,
+        },
+    )?;
+    std::thread::sleep(Duration::from_millis(600));
+    Ok(vec![hover, rotated, world, returned, low_angle])
+}
+
+fn click(root: &Path, x: f32, y: f32) -> Result<(), String> {
+    send(
+        root,
+        FileControlAction::Pointer {
+            x,
+            y,
+            primary_down: false,
+        },
+    )?;
+    send(
+        root,
+        FileControlAction::Pointer {
+            x,
+            y,
+            primary_down: true,
+        },
+    )?;
+    send(
+        root,
+        FileControlAction::Pointer {
+            x,
+            y,
+            primary_down: false,
+        },
+    )?;
     Ok(())
 }
 

@@ -3,10 +3,12 @@
 **Plan status:** Active; the create/join/seat/private-hand/shared-pose MVP and first oracle-backed trick are accepted, while multi-round play, recovery, and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
-**Last updated:** 2026-09-15 (renderer-confirmed room loading, title minimize/restore safety, recent-lobby recovery, and durable crash logs)
+**Last updated:** 2026-09-16 (diegetic table slice tracked in PLAN-8-DIEGETIC-TABLE.md)
 **Intent audit:** Passed 2026-09-12 against the available original Poche conversation through the request to create `poche-4` and reorient around SpacetimeDB
 
 ## How to update this plan
+
+The current interaction/presentation slice is defined in [PLAN-8-DIEGETIC-TABLE.md](PLAN-8-DIEGETIC-TABLE.md). Its D1–D9 ledger extends, rather than replaces, the constraints below.
 
 - `[ ]` Not started
 - `[~]` In progress

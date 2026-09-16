@@ -11,10 +11,14 @@ scene: a perspective camera, the canonical `poche-spatial` table/seat/zone
 geometry, dimensional cards,
 avatars, shadows, and renderer-neutral filled Slug card labels. Network
 millimetres and millidegrees cross into metres and quaternions only at this
-rendering boundary. A transparent Bevy UI camera remains above the world for
-room codes, game phase, status, rotation snap, and actions. A dedicated inset
-camera renders the viewer's private hand from the same world and hands dragging
-off to the table camera when the pointer crosses viewports.
+rendering boundary. The table fills the window. Private cards peek from the
+bottom edge through a transparent hand camera. These are presentation copies
+of the same shared poses, not extra game objects. The hand view stays anchored
+to the player's physical hand zone as the world camera moves.
+
+Room information lives on world signs and a score sheet. Click notices to
+read them close up. Click the room-code sign to copy its code. The compact
+Speech control and rotation snap remain on screen; Escape opens other controls.
 
 This remains a first-round vertical slice rather than the complete Poche game.
 The module persists a deterministic shuffle seed and ordered typed action log;
@@ -22,8 +26,8 @@ each bid/play reducer reconstructs that log through the transport-free
 `OracleEnvironment<2>` and commits only an accepted pure transition. Physical
 poses remain independent latest-value rows. Dragging into PLAY proposes the
 typed play, reveals the accepted card, and changes its logical location;
-out-of-turn drops return to the hand without changing logical state. The
-existing Alloy/NuSMV/Prolog evidence still checks the same pure rules boundary,
+out-of-turn drops remain physical moves without changing logical state or
+revealing the face. The existing Alloy/NuSMV/Prolog evidence checks the pure rules boundary,
 not SpacetimeDB or Bevy execution.
 
 ## Choose Maincloud or local development
@@ -152,19 +156,31 @@ title shows the selected account; its arrows switch accounts, and clicking
 the account name opens the identity screen.
 
 As Alice, choose **Create lobby** and copy the opaque `PCH-…` code. As Bob,
-paste the code and choose **Join lobby**. Take different seats. The round-one oracle
+paste the code and choose **Join lobby**. Click different stools to sit. The round-one oracle
 deal gives each player one private card while the peer sees an opaque `P` back.
-Use **Bid 0 tricks** or **Bid 1 trick** when it is your turn. During play, drag
+Open Speech and select “I bid 0 tricks” or “I bid 1 trick” when it is your turn.
+The dealer prompts the current bidder; accepted bids appear above the players.
+During play, drag
 your card from the private-hand inset into the highlighted central PLAY zone.
 An accepted play reveals the face to both clients; after the second play both
 cards move to the winner's logical won zone. Wiggling within the hand remains
 only physical state. Hold Q or E while dragging to rotate around table-up Y.
 The **Rotation snap** button cycles through off, 15°, 30°, 45°, 60°, and 90°.
+Hover a card for an outline; grabbing lifts it. Drag from the bottom hand into
+the world and back. A thin hand-drop indicator appears while dragging. Cards
+outside that physical hand region leave the inset, but remain logically yours
+until the authority accepts a play. Large hands compress card spacing without
+shrinking the faces. Opposite rank/suit corners keep turned cards readable.
+Hold Z to inspect zone volumes. These diagnostic shapes do not cast shadows.
 Right-drag orbits around the camera's focal point; middle-drag and WASD pan that
 point across a region twice the table-top extents. Space smoothly returns both
 camera and focus to the viewer's seat-relative home. All camera changes
 interpolate instead of teleporting. Local card motion is immediate while the
 peer interpolates subscribed updates.
+
+Arrow keys also orbit the camera. Perspective pitch can approach 3° above the
+table for gap inspection. O retains the tactical orthographic view; Space
+returns to the wider home view.
 
 Create, join, and rejoin first show **Preparing the table**. Poche keeps that
 loading surface until the authoritative room, this member, the private hand,
@@ -186,12 +202,14 @@ On/Off** to switch between the two signs. The setting is local to that running
 game window and does not alter shared table state. Escape from Options returns
 to the table menu; a second Escape resumes the table.
 
-The player roster beneath rotation snap is the authoritative membership view
-for this lobby. Directly below it, **Activity** shows the newest accepted public
+The player and Activity signs show the authoritative membership and newest public
 room actions: create/join/leave, seat changes, deal start, bids, and played
 cards. It never records an unplayed card face or a private-hand snapshot.
 Only seated members have world avatars; unseated members remain visible in the
-roster without appearing in the middle of the table. Escape opens the table
+roster without appearing in the middle of the table. The table notepad shows
+the current round in rulebook notation. Recorded totals remain authoritative;
+this slice still stops at scoring, so the sheet labels pending scores explicitly.
+Escape opens the table
 menu. **Stand up** and **Options** live there rather than in the frequent action
 bar. **Leave lobby** changes to **Confirm leave lobby** after the first click.
 Successful leave clears the active-room
@@ -289,7 +307,8 @@ Bob accounts, captures Alice's account-labelled title, creates a room, joins
 Bob, and seats both devices. It verifies one rule-generated private card per
 player and two face-free shared poses, moves
 Alice's card, waits until Bob observes its exact position/rotation, submits two
-legal bids and two legal plays, verifies both devices converge on two revealed
+legal bids through pointer clicks on the Speech picker and two legal plays,
+verifies both devices converge on two revealed
 cards in one winner's logical won zone, then starts a simultaneous second
 Alice process from Alice's same vault. That process must receive the resume
 offer and recover the same principal, seat, private hand, roster, public card
@@ -302,7 +321,13 @@ confirmation. It also opens the nested Options menu, captures inverted-Y On,
 toggles and captures Off, and returns to the parent menu before explicitly
 leaving Alice. It verifies the terminal screen and requires Bob to observe the
 public leave event, one remaining member, no stranded game projection, and no
-orphaned card poses. It writes:
+orphaned card poses.
+
+The same run also grabs an inset card using real Bevy pointer input, taps Q,
+moves it into the world, and brings it back. It checks the peer's exact angle,
+lift/release heights, unchanged ownership, and absence of public face disclosure.
+`hand-interaction.png` shows hover, rotation, world drag, return and low-angle
+inspection in one image. The run writes:
 
 - `target/poche-puppet/acceptance-contact-sheet.png` — seated and moved views
   for Alice and Bob in one image;
@@ -350,6 +375,21 @@ reports the `resume_offer` surface.
 
 `menu ROOT`, `options ROOT`, `invert-camera-y ROOT`, and `back ROOT` expose the
 same nested menu path to ad-hoc windowless control and screenshot capture.
+
+File-control schema 6 also accepts real input. On a `--windowless` instance:
+
+```powershell
+target\debug\poche-puppet.exe pointer target\live\alice 590 732 down
+target\debug\poche-puppet.exe key target\live\alice Q down
+target\debug\poche-puppet.exe key target\live\alice Q up
+target\debug\poche-puppet.exe pointer target\live\alice 590 732 up
+```
+
+Coordinates are logical pixels within that instance's viewport. These commands
+run through normal Bevy input and picking, not a pose reducer shortcut. Pointer
+injection is rejected for OS windows so tests cannot move your mouse. The
+observation includes the held card key and visible hand-copy count. Screenshots
+and semantic observations still work for both windowed and windowless instances.
 
 The final `move` argument is rotation about table-up Y in millidegrees,
 matching the Q/E control and the card's visible orientation in the perspective

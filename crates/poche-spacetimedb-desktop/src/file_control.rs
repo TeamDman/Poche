@@ -13,7 +13,16 @@ use super::{
     PoseDisplay, RenderMode, RenderSurface, UiScreen, UiState, activate_leave,
     begin_identity_selection, toggle_escape_menu,
 };
-use bevy::{prelude::*, render::view::screenshot::save_to_disk, window::PrimaryWindow};
+use bevy::{
+    input::InputSystems,
+    picking::{
+        PickingSystems,
+        pointer::{Location, PointerAction, PointerButton, PointerId, PointerInput},
+    },
+    prelude::*,
+    render::view::screenshot::save_to_disk,
+    window::PrimaryWindow,
+};
 use poche_bevy_spacetimedb::{BridgeHandle, BridgeIntent, BridgeModel};
 use poche_spacetimedb_client::{RoomCapability, valid_join_code};
 use serde::{Deserialize, Serialize};
@@ -25,7 +34,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u16 = 5;
+pub const SCHEMA_VERSION: u16 = 6;
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 const APP_REQUEST_TIMEOUT: Duration = Duration::from_secs(18);
@@ -105,6 +114,18 @@ pub enum FileControlAction {
         position_mm: [i32; 3],
         rotation_mdeg: [i32; 3],
     },
+    /// Windowless-only logical-pixel pointer input, through the ordinary drag
+    /// and Bevy UI picking paths. Does not move the operating system cursor.
+    Pointer {
+        x: f32,
+        y: f32,
+        primary_down: bool,
+    },
+    /// Press/release a supported game-control key through ordinary Update input.
+    Key {
+        key: String,
+        down: bool,
+    },
     Capture,
     Stop,
 }
@@ -153,6 +174,8 @@ pub struct FileControlObservation {
     pub card_poses: Vec<FileControlCardPose>,
     pub rendered_card_count: usize,
     pub rendered_player_count: usize,
+    pub held_card_key: Option<String>,
+    pub visible_hand_copies: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game: Option<FileControlGame>,
     pub revealed_cards: Vec<FileControlRevealedCard>,
@@ -278,6 +301,7 @@ impl FileControlPlugin {
                 "activate_leave_button".into(),
                 "bid_or_play_owned_card".into(),
                 "move_owned_card".into(),
+                "windowless_pointer_and_game_keys".into(),
                 "capture_gpu".into(),
                 "stop".into(),
             ],
@@ -298,6 +322,13 @@ impl FileControlPlugin {
 impl Plugin for FileControlPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.endpoint.clone())
+            .init_resource::<QueuedDeviceInput>()
+            .add_systems(
+                PreUpdate,
+                apply_device_input
+                    .after(InputSystems)
+                    .before(PickingSystems::ProcessInput),
+            )
             .add_systems(Last, drive_file_control);
     }
 }
@@ -311,6 +342,116 @@ struct FileControlEndpoint {
     pending: Option<PendingRequest>,
 }
 
+#[derive(Resource, Default)]
+struct QueuedDeviceInput {
+    pending: Option<(u64, DeviceInput)>,
+    completed: Option<(u64, Result<(), String>)>,
+}
+
+enum DeviceInput {
+    Pointer { point: Vec2, primary_down: bool },
+    Key { key: KeyCode, down: bool },
+}
+
+fn supported_key(name: &str) -> Result<KeyCode, String> {
+    match name.to_ascii_lowercase().as_str() {
+        "q" => Ok(KeyCode::KeyQ),
+        "e" => Ok(KeyCode::KeyE),
+        "o" => Ok(KeyCode::KeyO),
+        "z" => Ok(KeyCode::KeyZ),
+        "w" => Ok(KeyCode::KeyW),
+        "a" => Ok(KeyCode::KeyA),
+        "s" => Ok(KeyCode::KeyS),
+        "d" => Ok(KeyCode::KeyD),
+        "space" => Ok(KeyCode::Space),
+        "arrowup" | "up" => Ok(KeyCode::ArrowUp),
+        "arrowdown" | "down" => Ok(KeyCode::ArrowDown),
+        "arrowleft" | "left" => Ok(KeyCode::ArrowLeft),
+        "arrowright" | "right" => Ok(KeyCode::ArrowRight),
+        "escape" | "esc" => Ok(KeyCode::Escape),
+        "f3" => Ok(KeyCode::F3),
+        _ => Err("supported keys: Q E O Z W A S D Space ArrowUp ArrowDown ArrowLeft ArrowRight Escape F3".into()),
+    }
+}
+
+fn validate_pointer(point: Vec2, width: f32, height: f32) -> Result<(), String> {
+    if !point.is_finite() || point.x < 0.0 || point.y < 0.0 || point.x >= width || point.y >= height
+    {
+        Err("pointer coordinates must be finite logical pixels within the current viewport".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn apply_device_input(
+    mut queue: ResMut<QueuedDeviceInput>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut mouse: ResMut<ButtonInput<MouseButton>>,
+    mut windows: Query<(Entity, &mut Window), With<PrimaryWindow>>,
+    surface: Res<RenderSurface>,
+    mut pointer_events: MessageWriter<PointerInput>,
+) {
+    let Some((sequence, input)) = queue.pending.take() else {
+        return;
+    };
+    let result = match input {
+        DeviceInput::Key { key, down } => {
+            if down {
+                keys.press(key);
+            } else {
+                keys.release(key);
+            }
+            Ok(())
+        }
+        DeviceInput::Pointer {
+            point,
+            primary_down,
+        } => {
+            if !matches!(surface.as_ref(), RenderSurface::Windowless { .. }) {
+                Err("synthetic pointer input requires a windowless viewport".into())
+            } else if let Ok((entity, mut window)) = windows.single_mut() {
+                validate_pointer(point, window.width(), window.height()).and_then(|()| {
+                    let target = surface
+                        .render_target()
+                        .and_then(|target| target.normalize(Some(entity)))
+                        .ok_or("the windowless render target is not ready")?;
+                    let previous = window.cursor_position().unwrap_or(point);
+                    window.set_cursor_position(Some(point));
+                    let location = Location {
+                        target,
+                        position: point,
+                    };
+                    pointer_events.write(PointerInput::new(
+                        PointerId::Mouse,
+                        location.clone(),
+                        PointerAction::Move {
+                            delta: point - previous,
+                        },
+                    ));
+                    // Both custom card dragging and native Bevy button observers
+                    // see the same edge. Holding a button does not repeat presses.
+                    if primary_down != mouse.pressed(MouseButton::Left) {
+                        let action = if primary_down {
+                            mouse.press(MouseButton::Left);
+                            PointerAction::Press(PointerButton::Primary)
+                        } else {
+                            mouse.release(MouseButton::Left);
+                            PointerAction::Release(PointerButton::Primary)
+                        };
+                        pointer_events.write(PointerInput::new(PointerId::Mouse, location, action));
+                    }
+                    Ok(())
+                })
+            } else {
+                Err("the primary viewport is unavailable".into())
+            }
+        }
+    };
+    // Last observes this only after the ordinary Update systems have consumed
+    // the injected input. This acknowledges input processing, not server acceptance.
+    queue.completed = Some((sequence, result));
+}
+
 #[derive(Clone)]
 struct PendingRequest {
     request: FileControlRequest,
@@ -322,6 +463,7 @@ struct PendingRequest {
 #[derive(Clone)]
 enum Completion {
     Immediate,
+    Input(u64),
     IdentitySelected,
     RoomCreated,
     RoomJoined,
@@ -355,10 +497,11 @@ fn drive_file_control(
     mut vault: ResMut<IdentityVault>,
     mut camera_options: ResMut<CameraOptions>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    mut device_input: ResMut<QueuedDeviceInput>,
 ) {
     endpoint.frame = endpoint.frame.saturating_add(1);
     if let Some(mut pending) = endpoint.pending.take() {
-        match pending_result(&mut pending, &state, &model, endpoint.frame) {
+        match pending_result(&mut pending, &state, &model, endpoint.frame, &device_input) {
             Some(result) => {
                 let capture = match &pending.completion {
                     Completion::Capture { path, .. } => Some(path.to_string_lossy().into_owned()),
@@ -644,6 +787,34 @@ fn drive_file_control(
             &mut poses,
             &mut pending,
         ),
+        FileControlAction::Pointer { x, y, primary_down } => {
+            let point = Vec2::new(x, y);
+            let valid = if matches!(surface.as_ref(), RenderSurface::Windowless { .. }) {
+                windows
+                    .single()
+                    .map_err(|_| "the primary viewport is unavailable".into())
+                    .and_then(|window| validate_pointer(point, window.width(), window.height()))
+            } else {
+                Err(
+                    "synthetic pointer input requires --windowless so it cannot move the OS cursor"
+                        .into(),
+                )
+            };
+            valid.map(|()| {
+                device_input.pending = Some((
+                    pending.request.sequence,
+                    DeviceInput::Pointer {
+                        point,
+                        primary_down,
+                    },
+                ));
+                pending.completion = Completion::Input(pending.request.sequence);
+            })
+        }
+        FileControlAction::Key { key, down } => supported_key(&key).map(|key| {
+            device_input.pending = Some((pending.request.sequence, DeviceInput::Key { key, down }));
+            pending.completion = Completion::Input(pending.request.sequence);
+        }),
         FileControlAction::Capture => {
             let path = endpoint
                 .root
@@ -718,6 +889,7 @@ fn pending_result(
     state: &UiState,
     model: &BridgeModel,
     frame: u64,
+    device_input: &QueuedDeviceInput,
 ) -> Option<Result<(), String>> {
     if pending.started.elapsed() >= APP_REQUEST_TIMEOUT {
         return Some(Err(
@@ -726,6 +898,11 @@ fn pending_result(
     }
     match &mut pending.completion {
         Completion::Immediate => Some(Ok(())),
+        Completion::Input(sequence) => device_input
+            .completed
+            .as_ref()
+            .filter(|(completed, _)| completed == sequence)
+            .map(|(_, result)| result.clone()),
         Completion::IdentitySelected => {
             if model.connected && matches!(state.screen, UiScreen::MainMenu | UiScreen::ResumeOffer)
             {
@@ -952,6 +1129,14 @@ fn validate_request(
         {
             return Err("pose is outside the server's bounded physical space".into());
         }
+        FileControlAction::Pointer { x, y, .. }
+            if !x.is_finite() || !y.is_finite() || *x < 0.0 || *y < 0.0 =>
+        {
+            return Err("pointer coordinates must be finite non-negative logical pixels".into());
+        }
+        FileControlAction::Key { key, .. } => {
+            supported_key(key)?;
+        }
         _ => {}
     }
     Ok(())
@@ -1114,6 +1299,8 @@ fn observation(
             })
             .collect(),
         rendered_card_count: state.rendered_card_count,
+        held_card_key: state.held_card_key.clone(),
+        visible_hand_copies: state.visible_hand_copies,
         rendered_player_count: state.rendered_player_count,
         game: model.snapshot.game.as_ref().map(|game| FileControlGame {
             phase: game.phase.clone(),
@@ -1334,5 +1521,172 @@ mod tests {
             minimize,
             FileControlAction::SetWindowMinimized { minimized: true }
         );
+    }
+
+    #[test]
+    fn synthetic_pointer_rejects_nonfinite_and_outside_viewport_coordinates() {
+        for point in [
+            Vec2::new(f32::NAN, 10.0),
+            Vec2::new(0.0, f32::INFINITY),
+            Vec2::new(-1.0, 2.0),
+            Vec2::new(100.0, 0.0),
+            Vec2::new(0.0, 80.0),
+        ] {
+            assert!(validate_pointer(point, 100.0, 80.0).is_err());
+        }
+        assert!(validate_pointer(Vec2::ZERO, 100.0, 80.0).is_ok());
+        assert!(validate_pointer(Vec2::new(99.0, 79.0), 100.0, 80.0).is_ok());
+        assert_eq!(supported_key("Q").unwrap(), KeyCode::KeyQ);
+        assert_eq!(supported_key("Space").unwrap(), KeyCode::Space);
+        assert_eq!(supported_key("arrowleft").unwrap(), KeyCode::ArrowLeft);
+        assert!(supported_key("Alt+F4").is_err());
+        assert!(supported_key("").is_err());
+    }
+
+    #[derive(Resource, Default)]
+    struct InputEdges(Vec<(bool, bool, bool, bool)>);
+
+    fn input_test_app() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::input::InputPlugin))
+            .add_message::<PointerInput>()
+            .init_resource::<QueuedDeviceInput>()
+            .init_resource::<InputEdges>()
+            .insert_resource(RenderSurface::Windowless {
+                width: 100,
+                height: 80,
+                target: Some(Handle::default()),
+            })
+            .add_systems(PreUpdate, apply_device_input.after(InputSystems))
+            .add_systems(
+                Update,
+                |keys: Res<ButtonInput<KeyCode>>,
+                 mouse: Res<ButtonInput<MouseButton>>,
+                 mut edges: ResMut<InputEdges>| {
+                    edges.0.push((
+                        keys.just_pressed(KeyCode::KeyQ),
+                        keys.just_released(KeyCode::KeyQ),
+                        mouse.just_pressed(MouseButton::Left),
+                        mouse.just_released(MouseButton::Left),
+                    ));
+                },
+            );
+        app.world_mut().spawn((
+            Window {
+                resolution: bevy::window::WindowResolution::new(100, 80),
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        app
+    }
+
+    #[test]
+    fn queued_input_survives_bevy_preupdate_clear_and_is_visible_to_normal_update() {
+        let mut app = input_test_app();
+        app.world_mut().resource_mut::<QueuedDeviceInput>().pending = Some((
+            1,
+            DeviceInput::Key {
+                key: KeyCode::KeyQ,
+                down: true,
+            },
+        ));
+        assert!(
+            app.world()
+                .resource::<QueuedDeviceInput>()
+                .completed
+                .is_none()
+        );
+        app.update();
+        assert_eq!(
+            app.world().resource::<QueuedDeviceInput>().completed,
+            Some((1, Ok(())))
+        );
+        app.update(); // Held input must not recreate a just-pressed edge.
+        app.world_mut().resource_mut::<QueuedDeviceInput>().pending = Some((
+            2,
+            DeviceInput::Key {
+                key: KeyCode::KeyQ,
+                down: false,
+            },
+        ));
+        app.update();
+        app.world_mut().resource_mut::<QueuedDeviceInput>().pending = Some((
+            3,
+            DeviceInput::Pointer {
+                point: Vec2::new(35.0, 40.0),
+                primary_down: true,
+            },
+        ));
+        app.update();
+        app.update();
+        app.world_mut().resource_mut::<QueuedDeviceInput>().pending = Some((
+            4,
+            DeviceInput::Pointer {
+                point: Vec2::new(55.0, 45.0),
+                primary_down: false,
+            },
+        ));
+        app.update();
+        assert_eq!(
+            app.world().resource::<InputEdges>().0,
+            [
+                (true, false, false, false),
+                (false, false, false, false),
+                (false, true, false, false),
+                (false, false, true, false),
+                (false, false, false, false),
+                (false, false, false, true),
+            ]
+        );
+        let mut windows = app
+            .world_mut()
+            .query_filtered::<&Window, With<PrimaryWindow>>();
+        assert_eq!(
+            windows.single(app.world()).unwrap().cursor_position(),
+            Some(Vec2::new(55.0, 45.0))
+        );
+        let events: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Messages<PointerInput>>()
+            .drain()
+            .collect();
+        assert!(
+            events.iter().any(|event| matches!(
+                event.action,
+                PointerAction::Release(PointerButton::Primary)
+            ))
+        );
+        assert!(events.iter().all(|event| matches!(
+            event.location.target,
+            bevy::camera::NormalizedRenderTarget::Image(_)
+        )));
+    }
+
+    #[test]
+    fn synthetic_pointer_cannot_move_an_interactive_os_window_cursor() {
+        let mut app = input_test_app();
+        app.insert_resource(RenderSurface::Windowed);
+        app.world_mut().resource_mut::<QueuedDeviceInput>().pending = Some((
+            1,
+            DeviceInput::Pointer {
+                point: Vec2::new(35.0, 40.0),
+                primary_down: true,
+            },
+        ));
+        app.update();
+        assert!(matches!(
+            &app.world().resource::<QueuedDeviceInput>().completed,
+            Some((1, Err(_)))
+        ));
+        assert!(
+            !app.world()
+                .resource::<ButtonInput<MouseButton>>()
+                .pressed(MouseButton::Left)
+        );
+        let mut windows = app
+            .world_mut()
+            .query_filtered::<&Window, With<PrimaryWindow>>();
+        assert_eq!(windows.single(app.world()).unwrap().cursor_position(), None);
     }
 }

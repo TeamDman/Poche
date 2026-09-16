@@ -16,8 +16,10 @@
 )]
 
 pub mod file_control;
+mod hand_view;
 pub mod identity_vault;
 pub mod observability;
+mod world_ui;
 
 use bevy::{
     app::ScheduleRunnerPlugin,
@@ -69,7 +71,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-const CARD_PICK_RADIUS_PX: f32 = 68.0;
 const CARD_WORLD_WIDTH: f32 = 0.064;
 const CARD_WORLD_HEIGHT: f32 = 0.088;
 const CARD_WORLD_THICKNESS: f32 = 0.002;
@@ -87,7 +88,7 @@ const CAMERA_ZOOM_SENSITIVITY: f32 = 0.14;
 const CAMERA_MIN_DISTANCE: f32 = 0.58;
 const CAMERA_MAX_DISTANCE: f32 = 4.5;
 const CAMERA_SMOOTHING: f32 = 10.0;
-const CAMERA_MIN_PITCH: f32 = 18.0_f32.to_radians();
+const CAMERA_MIN_PITCH: f32 = 3.0_f32.to_radians();
 const CAMERA_MAX_PITCH: f32 = 78.0_f32.to_radians();
 const TACTICAL_CAMERA_PITCH: f32 = 68.0_f32.to_radians();
 const TACTICAL_CAMERA_DISTANCE: f32 = 2.6;
@@ -511,6 +512,7 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
     let mut app = App::new();
     app.add_plugins(plugins);
     app.add_plugins(TableRenderReadinessPlugin);
+    app.add_plugins((hand_view::HandViewPlugin, world_ui::WorldUiPlugin));
     if let Some(path) = &log_path {
         tracing::info!(log_file = %path.display(), "Poche durable logging initialized");
     }
@@ -617,6 +619,8 @@ struct UiState {
     escape_menu_page: EscapeMenuPage,
     rendered_card_count: usize,
     rendered_player_count: usize,
+    held_card_key: Option<String>,
+    visible_hand_copies: usize,
     room_scene_generation: u64,
 }
 
@@ -677,6 +681,8 @@ impl UiState {
             escape_menu_page: EscapeMenuPage::Main,
             rendered_card_count: 0,
             rendered_player_count: 0,
+            held_card_key: None,
+            visible_hand_copies: 0,
             room_scene_generation: 0,
         }
     }
@@ -922,7 +928,7 @@ fn setup_spatial_renderer(
 ) {
     let layout = registered_layout(
         TableId::new(1),
-        LayoutId::new(2, 1).expect("two-player layout id is valid"),
+        LayoutId::new(2, 2).expect("two-player layout id is valid"),
     )
     .expect("registered two-player layout is valid");
     commands.insert_resource(ClearColor(Color::srgb(0.012, 0.022, 0.026)));
@@ -997,6 +1003,9 @@ fn setup_spatial_renderer(
                     _ => Color::srgba(0.82, 0.86, 0.9, 0.12),
                 };
                 commands.spawn((
+                    hand_view::DiagnosticZone(object.id),
+                    bevy::light::NotShadowCaster,
+                    bevy::light::NotShadowReceiver,
                     Mesh3d(meshes.add(cuboid_from_half_extents(object.half_extents))),
                     MeshMaterial3d(materials.add(StandardMaterial {
                         base_color: color,
@@ -1006,6 +1015,7 @@ fn setup_spatial_renderer(
                     })),
                     Transform::from_translation(position),
                     RenderLayers::layer(0),
+                    Visibility::Hidden,
                 ));
             }
             SceneObjectKind::Player => {}
@@ -1054,6 +1064,14 @@ fn spawn_spatial_cameras(
     }
     let mut hand_camera = commands.spawn((
         Camera3d::default(),
+        Projection::Orthographic(OrthographicProjection {
+            scaling_mode: ScalingMode::FixedVertical {
+                viewport_height: hand_view::VIEW_HEIGHT,
+            },
+            near: 0.01,
+            far: 10.0,
+            ..OrthographicProjection::default_3d()
+        }),
         Camera {
             is_active: false,
             order: 1,
@@ -1210,20 +1228,20 @@ fn camera_home(seat: Option<u8>) -> CameraPose {
         Some(0) => CameraPose {
             focus: Vec3::new(0.0, 0.02, -0.08),
             yaw: 0.0,
-            pitch: 43.0_f32.to_radians(),
-            distance: 1.88,
+            pitch: 50.0_f32.to_radians(),
+            distance: 2.9,
         },
         Some(1) => CameraPose {
             focus: Vec3::new(0.0, 0.02, 0.08),
             yaw: std::f32::consts::PI,
-            pitch: 43.0_f32.to_radians(),
-            distance: 1.88,
+            pitch: 50.0_f32.to_radians(),
+            distance: 2.9,
         },
         _ => CameraPose {
             focus: Vec3::new(0.0, 0.02, 0.0),
             yaw: std::f32::consts::FRAC_PI_4,
             pitch: 46.0_f32.to_radians(),
-            distance: 1.94,
+            distance: 2.9,
         },
     }
 }
@@ -1540,7 +1558,7 @@ fn spawn_identity_selector(parent: &mut ChildSpawnerCommands, state: &UiState) {
 fn spawn_frontend_status(parent: &mut ChildSpawnerCommands, state: &UiState) {
     parent.spawn((
         StatusLabel,
-        Text::new(&state.status),
+        Text::new(display_status(state)),
         TextFont::from_font_size(17.),
         TextColor(Color::srgb(0.88, 0.9, 0.86)),
         Node {
@@ -2144,6 +2162,8 @@ fn handle_bridge_notices(
     mut notices: MessageReader<BridgeNotice>,
     mut state: ResMut<UiState>,
     mut vault: ResMut<IdentityVault>,
+    model: Res<BridgeModel>,
+    mut poses: ResMut<PoseDisplay>,
 ) {
     for notice in notices.read() {
         match notice {
@@ -2215,6 +2235,9 @@ fn handle_bridge_notices(
                     state.status = "You have left this lobby.".into();
                 }
                 if result.is_err() {
+                    if operation == &"set_card_pose" {
+                        poses.reject_predictions(&model.snapshot.card_poses);
+                    }
                     if matches!(*operation, "create_room" | "join_room") {
                         state.capability = None;
                     }
@@ -2387,155 +2410,17 @@ fn enter_room(
         ))
         .with_children(|root| {
             root.spawn((
-                Text::new("POCHE · shared table"),
-                TextFont::from_font_size(28.),
-                TextColor(Color::srgb(0.96, 0.88, 0.58)),
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(24.),
-                    top: px(18.),
-                    ..default()
-                },
+                Button, UiAction::CycleRotationSnap,
+                Node { position_type: PositionType::Absolute, right: px(18.), top: px(18.),
+                    padding: px(9.).all(), ..default() },
+                BackgroundColor(Color::srgba(0.035, 0.08, 0.085, 0.9)),
+                children![(RotationSnapLabel, Text::new(rotation_snap.label()), TextFont::from_font_size(15.))],
             ));
             root.spawn((
-                Button,
-                UiAction::CycleRotationSnap,
-                Node {
-                    position_type: PositionType::Absolute,
-                    right: px(22.),
-                    top: px(82.),
-                    padding: px(9.).all(),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.13, 0.26, 0.27)),
-                children![(
-                    RotationSnapLabel,
-                    Text::new(rotation_snap.label()),
-                    TextFont::from_font_size(16.),
-                )],
-            ));
-            root.spawn((
-                PlayerListLabel,
-                Text::new("PLAYERS\nLoading roster…"),
-                TextFont::from_font_size(16.),
-                TextColor(Color::srgb(0.88, 0.92, 0.88)),
-                Node {
-                    position_type: PositionType::Absolute,
-                    right: px(22.),
-                    top: px(136.),
-                    min_width: px(225.),
-                    max_width: px(320.),
-                    padding: px(12.).all(),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.035, 0.08, 0.085, 0.88)),
-            ));
-            root.spawn((
-                ActivityLogLabel,
-                Text::new("ACTIVITY\nWaiting for public activity…"),
-                TextFont::from_font_size(14.),
-                TextColor(Color::srgb(0.78, 0.84, 0.8)),
-                Node {
-                    position_type: PositionType::Absolute,
-                    right: px(22.),
-                    top: px(238.),
-                    width: px(300.),
-                    padding: px(12.).all(),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.035, 0.08, 0.085, 0.88)),
-            ));
-            root.spawn((
-                RoomCodeLabel,
-                Text::new("Lobby code"),
-                TextFont::from_font_size(17.),
-                Node {
-                    position_type: PositionType::Absolute,
-                    right: px(130.),
-                    top: px(22.),
-                    ..default()
-                },
-            ));
-            spawn_absolute_button(root, "Copy", UiAction::CopyCode, 22., 22., true);
-            for seat in 0..2 {
-                let top = if seat == 0 { 535. } else { 96. };
-                root.spawn((
-                    SeatLabel(seat),
-                    Text::new(format!("Seat {} · empty", seat + 1)),
-                    TextFont::from_font_size(20.),
-                    TextColor(Color::WHITE),
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px(26.),
-                        top: px(top),
-                        ..default()
-                    },
-                ));
-            }
-            root.spawn((
-                HandSummary,
-                Text::new("Take a seat to receive a private hand."),
-                TextFont::from_font_size(18.),
-                TextColor(Color::srgb(0.92, 0.92, 0.84)),
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(26.),
-                    bottom: px(110.),
-                    ..default()
-                },
-            ));
-            root.spawn((
-                GameStatusLabel,
-                Text::new("Waiting for both seats to begin the first deal."),
-                TextFont::from_font_size(20.),
-                TextColor(Color::srgb(0.96, 0.88, 0.58)),
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(26.),
-                    bottom: px(150.),
-                    ..default()
-                },
-            ));
-            root.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(18.),
-                    right: px(18.),
-                    bottom: px(18.),
-                    min_height: px(78.),
-                    padding: px(12.).all(),
-                    column_gap: px(10.),
-                    align_items: AlignItems::Center,
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.055, 0.09, 0.095)),
-            ))
-            .with_children(|bar| {
-                spawn_button(bar, "Take seat 1", UiAction::TakeSeat(0), true);
-                spawn_button(bar, "Take seat 2", UiAction::TakeSeat(1), true);
-                spawn_button(bar, "Bid 0 tricks", UiAction::Bid(0), true);
-                spawn_button(bar, "Bid 1 trick", UiAction::Bid(1), true);
-                spawn_button(bar, "Play your card", UiAction::PlayFirstCard, true);
-                bar.spawn((
-                    LatencyLabel,
-                    Text::new(
-                        "Drag card · Q turn left · E turn right · RMB orbit · MMB/WASD pan · Wheel zoom · O tactical · Space reset · Esc menu · F3 stats",
-                    ),
-                    TextFont::from_font_size(15.),
-                    TextColor(Color::srgb(0.72, 0.82, 0.8)),
-                ));
-            });
-            root.spawn((
-                StatusLabel,
-                Text::new(&state.status),
-                TextFont::from_font_size(16.),
+                StatusLabel, Text::new(&state.status), TextFont::from_font_size(13.),
                 TextColor(Color::srgb(0.98, 0.82, 0.52)),
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(24.),
-                    top: px(52.),
-                    ..default()
-                },
+                Node { position_type: PositionType::Absolute, left: px(18.), top: px(70.),
+                    max_width: percent(45.), ..default() },
             ));
             root.spawn((
                 EscapeMenuRoot,
@@ -2577,6 +2462,10 @@ fn enter_room(
                             TextColor(Color::srgb(0.72, 0.82, 0.8)),
                         ));
                         spawn_button(panel, "Resume table", UiAction::ResumeMenu, true);
+                        spawn_button(panel, "Copy room code", UiAction::CopyCode, false);
+                        spawn_button(panel, "Take seat 1", UiAction::TakeSeat(0), false);
+                        spawn_button(panel, "Take seat 2", UiAction::TakeSeat(1), false);
+                        spawn_button(panel, "Play your card", UiAction::PlayFirstCard, false);
                         spawn_button(panel, "Stand up", UiAction::ReleaseSeat, false);
                         spawn_button(panel, "Options", UiAction::OpenOptions, false);
                         panel
@@ -2628,6 +2517,13 @@ fn enter_room(
                             ),
                             TextFont::from_font_size(15.),
                             TextColor(Color::srgb(0.72, 0.82, 0.8)),
+                        ));
+                        panel.spawn((
+                            Text::new(
+                                "At the table\nClick an empty stool to sit. Click a notice or the score sheet to read it; click the room-code sign to copy. Use Speech → Bid to announce an allowed bid.\n\nCards\nDrag from your bottom-edge hand or the table. Hold Q/E to turn a held card. Hold Z to inspect zones without changing tools.\n\nCamera\nRMB orbit · MMB or WASD pan · wheel zoom\nSpace reset · O tactical views · F3 frame statistics",
+                            ),
+                            TextFont::from_font_size(14.),
+                            TextColor(Color::srgb(0.80, 0.86, 0.81)),
                         ));
                         panel
                             .spawn((
@@ -2716,34 +2612,6 @@ fn sync_escape_menu(
     for mut label in &mut invert_y_labels {
         label.0 = camera_options.invert_y_label();
     }
-}
-
-fn spawn_absolute_button(
-    parent: &mut ChildSpawnerCommands,
-    label: &str,
-    action: UiAction,
-    right: f32,
-    top: f32,
-    primary: bool,
-) {
-    parent
-        .spawn((
-            Button,
-            action,
-            Node {
-                position_type: PositionType::Absolute,
-                right: px(right),
-                top: px(top),
-                padding: px(8.).all(),
-                ..default()
-            },
-            BackgroundColor(if primary {
-                Color::srgb(0.08, 0.48, 0.38)
-            } else {
-                Color::srgb(0.13, 0.26, 0.27)
-            }),
-        ))
-        .with_child(Text::new(label));
 }
 
 fn sync_room_labels(
@@ -3055,10 +2923,102 @@ struct DisplayPose {
     current_rotation: Quat,
     rotation_mdeg: [i32; 3],
     sequence: u64,
+    authority_owner: String,
+    logical_location: String,
+    last_submitted: Option<SubmittedPose>,
 }
+
+#[derive(Clone, Copy, Debug)]
+struct SubmittedPose {
+    sequence: u64,
+    position_mm: [i32; 3],
+    rotation_mdeg: [i32; 3],
+}
+
+impl DisplayPose {
+    fn from_network(network: &CardPoseView) -> Self {
+        let target = network.position_mm.map(|value| value as f32);
+        Self {
+            current: target,
+            target,
+            current_rotation: rotation_mdeg_quat(network.rotation_mdeg),
+            rotation_mdeg: network.rotation_mdeg,
+            sequence: network.sequence,
+            authority_owner: network.owner.clone(),
+            logical_location: network.logical_location.clone(),
+            last_submitted: None,
+        }
+    }
+
+    fn reconcile(&mut self, network: &CardPoseView, actively_dragged: bool) {
+        // A rules transition wins over local physical prediction, even while the
+        // mouse is held. In particular a played card must not remain in hand.
+        if self.authority_owner != network.owner
+            || self.logical_location != network.logical_location
+        {
+            self.accept_authority(network);
+            return;
+        }
+        // Input between the 50 ms publishes is not yet represented by a newer
+        // sequence. Protect it during drag, and protect already-published input
+        // from older echoes after release. Otherwise a single Q/E tap is erased.
+        if actively_dragged || network.sequence < self.sequence {
+            self.sequence = self.sequence.max(network.sequence);
+            return;
+        }
+        self.accept_authority(network);
+    }
+
+    fn accept_authority(&mut self, network: &CardPoseView) {
+        self.target = network.position_mm.map(|value| value as f32);
+        self.rotation_mdeg = network.rotation_mdeg;
+        self.sequence = network.sequence;
+        self.authority_owner.clone_from(&network.owner);
+        self.logical_location.clone_from(&network.logical_location);
+        self.last_submitted = None;
+    }
+
+    fn needs_submission(&self, network: &CardPoseView) -> bool {
+        // Compare with our queued payload only while its sequence is ahead of
+        // the authority. A matching/newer authority sequence supersedes it,
+        // including another device controlling this same player's card.
+        let (position, rotation) = self
+            .last_submitted
+            .filter(|submitted| submitted.sequence > network.sequence)
+            .map_or((network.position_mm, network.rotation_mdeg), |submitted| {
+                (submitted.position_mm, submitted.rotation_mdeg)
+            });
+        self.current.map(|value| value.round() as i32) != position || self.rotation_mdeg != rotation
+    }
+
+    fn submitted(&mut self, sequence: u64) {
+        self.sequence = sequence;
+        self.last_submitted = Some(SubmittedPose {
+            sequence,
+            position_mm: self.current.map(|value| value.round() as i32),
+            rotation_mdeg: self.rotation_mdeg,
+        });
+        // Release ends direct mouse positioning; interpolation must keep the
+        // last submitted position while its authority acknowledgement travels.
+        self.target = self.current;
+    }
+}
+
+#[cfg(test)]
+mod pose_prediction_tests;
 
 #[derive(Resource, Default)]
 struct PoseDisplay(HashMap<String, DisplayPose>);
+
+impl PoseDisplay {
+    fn reject_predictions(&mut self, network: &[CardPoseView]) {
+        for authoritative in network {
+            if let Some(display) = self.0.get_mut(&authoritative.card_key) {
+                display.accept_authority(authoritative);
+            }
+        }
+    }
+}
 
 #[derive(Component)]
 struct CardVisual {
@@ -3069,6 +3029,10 @@ struct CardVisual {
 #[derive(Resource, Default)]
 struct DragState {
     card_key: Option<String>,
+    hover_key: Option<String>,
+    grab_offset: Vec3,
+    hand_space: bool,
+    resting_height: f32,
     last_sent: Option<Instant>,
     rotation_direction: i8,
     next_rotation_step: Option<Instant>,
@@ -3101,6 +3065,7 @@ impl DragState {
 
 fn sync_card_entities(
     model: Res<BridgeModel>,
+    drag: Res<DragState>,
     mut poses: ResMut<PoseDisplay>,
     existing: Query<(Entity, &CardVisual)>,
     table_camera: Query<(), With<TabletopCamera>>,
@@ -3108,6 +3073,7 @@ fn sync_card_entities(
     assets: Res<SpatialAssets>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut commands: Commands,
 ) {
     if (!model.is_changed() && entered_scene.is_empty()) || table_camera.is_empty() {
@@ -3140,31 +3106,17 @@ fn sync_card_entities(
         let display = poses
             .0
             .entry(network.card_key.clone())
-            .or_insert(DisplayPose {
-                current: target,
-                target,
-                current_rotation: rotation_mdeg_quat(network.rotation_mdeg),
-                rotation_mdeg: network.rotation_mdeg,
-                sequence: network.sequence,
-            });
-        display.target = target;
-        display.rotation_mdeg = network.rotation_mdeg;
-        display.sequence = display.sequence.max(network.sequence);
+            .or_insert_with(|| DisplayPose::from_network(network));
+        display.reconcile(
+            network,
+            drag.card_key.as_deref() == Some(network.card_key.as_str()),
+        );
         if existing.contains(&network.card_key) {
             continue;
         }
         let visible_face = model.snapshot.visible_card_face(&network.card_key);
         let label = visible_face.unwrap_or("P");
-        let is_own = model
-            .snapshot
-            .hand
-            .iter()
-            .any(|card| card.card_key == network.card_key);
-        let layers = if is_own {
-            RenderLayers::layer(0).with(1)
-        } else {
-            RenderLayers::layer(0)
-        };
+        let layers = RenderLayers::layer(0);
         let (texture, aspect) = card_label_texture(
             &mut images,
             label,
@@ -3181,7 +3133,7 @@ fn sync_card_entities(
             unlit: true,
             ..default()
         });
-        let (label_width, label_height) = card_label_size(aspect);
+        let (label_width, label_height) = hand_view::corner_label_size(aspect);
         let card = commands
             .spawn((
                 CardVisual {
@@ -3198,25 +3150,23 @@ fn sync_card_entities(
                 layers.clone(),
             ))
             .id();
-        let label =
-            commands
-                .spawn((
-                    Mesh3d(assets.card_label_mesh.clone()),
-                    MeshMaterial3d(label_material),
-                    Transform::from_xyz(0.0, CARD_WORLD_THICKNESS * 0.55, 0.0)
-                        .with_scale(Vec3::new(label_width, 1.0, label_height)),
-                    layers,
-                ))
-                .id();
-        commands.entity(card).add_child(label);
+        hand_view::spawn_card_labels(
+            &mut commands,
+            card,
+            assets.card_label_mesh.clone(),
+            label_material,
+            (label_width, label_height),
+            0,
+        );
+        hand_view::spawn_outline(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            card,
+            &network.card_key,
+            0,
+        );
     }
-}
-
-fn card_label_size(aspect: f32) -> (f32, f32) {
-    let maximum_width = CARD_WORLD_WIDTH * 0.82;
-    let maximum_height = CARD_WORLD_HEIGHT * 0.72;
-    let height = maximum_height.min(maximum_width / aspect.max(0.01));
-    (height * aspect, height)
 }
 
 fn card_label_texture(
@@ -3333,6 +3283,7 @@ fn update_table_camera(
     layout: Res<CanonicalLayout>,
     state: Res<UiState>,
     camera_options: Res<CameraOptions>,
+    world_interaction: Res<world_ui::WorldInteraction>,
     room: Query<(), With<RoomRoot>>,
     mut controller: ResMut<TableCameraController>,
     mut cameras: Query<(&mut Transform, &mut Projection), With<TabletopCamera>>,
@@ -3342,7 +3293,7 @@ fn update_table_camera(
         let immediate = controller.last_seat == CameraSeat::Uninitialized;
         controller.reset_for_seat(seat, immediate);
     }
-    if !state.escape_menu_open && !room.is_empty() {
+    if !state.escape_menu_open && !world_interaction.modal_open() && !room.is_empty() {
         if keys.just_pressed(KeyCode::KeyO) {
             controller.toggle_mode();
         }
@@ -3366,6 +3317,14 @@ fn update_table_camera(
             }
         }
         let delta = mouse_motion.delta;
+        let key_pitch =
+            f32::from(keys.pressed(KeyCode::ArrowUp)) - f32::from(keys.pressed(KeyCode::ArrowDown));
+        let key_yaw = f32::from(keys.pressed(KeyCode::ArrowLeft))
+            - f32::from(keys.pressed(KeyCode::ArrowRight));
+        controller.target.pitch = (controller.target.pitch + key_pitch * time.delta_secs())
+            .clamp(CAMERA_MIN_PITCH, CAMERA_MAX_PITCH);
+        controller.target.yaw =
+            (controller.target.yaw + key_yaw * time.delta_secs()).rem_euclid(std::f32::consts::TAU);
         if mouse_buttons.pressed(MouseButton::Right) {
             controller.target.yaw = (controller.target.yaw - delta.x * CAMERA_ORBIT_SENSITIVITY)
                 .rem_euclid(std::f32::consts::TAU);
@@ -3490,17 +3449,14 @@ fn apply_table_projection(projection: &mut Projection, mode: TableCameraMode, sc
     }
 }
 
-fn fifths(value: u32, numerator: u32) -> u32 {
-    value / 5 * numerator + value % 5 * numerator / 5
-}
-
 fn update_hand_camera(
     surface: Res<RenderSurface>,
     windows: Query<&Window, With<PrimaryWindow>>,
     model: Res<BridgeModel>,
-    poses: Res<PoseDisplay>,
+    layout: Res<CanonicalLayout>,
+    mut hand: ResMut<hand_view::HandProjection>,
     mut hand_cameras: Query<
-        (&mut Camera, &mut Transform, &Projection),
+        (&mut Camera, &mut Transform),
         (With<HandCamera>, Without<TabletopCamera>),
     >,
     mut table_cameras: Query<&mut Camera, (With<TabletopCamera>, Without<HandCamera>)>,
@@ -3512,46 +3468,28 @@ fn update_hand_camera(
             UVec2::new(window.physical_width(), window.physical_height())
         }
     };
-    let own_positions = model
-        .snapshot
-        .hand
-        .iter()
-        .filter_map(|card| {
-            poses
-                .0
-                .get(&card.card_key)
-                .map(|pose| mm_position(pose.current))
-        })
-        .collect::<Vec<_>>();
-    let has_hand = !own_positions.is_empty();
-    let hand_top = fifths(size.y, 3);
-    let actions_top = fifths(size.y, 4);
     for mut camera in &mut table_cameras {
-        camera.viewport = Some(Viewport {
-            physical_position: UVec2::ZERO,
-            physical_size: UVec2::new(size.x, if has_hand { hand_top } else { actions_top }),
-            ..default()
-        });
+        camera.viewport = None; // the table never loses space to a private-hand strip
     }
-    for (mut camera, mut transform, projection) in &mut hand_cameras {
-        camera.is_active = has_hand && size.x >= 10 && size.y >= 10;
+    let count = model.snapshot.hand.len();
+    let viewport_size = UVec2::new((size.x * 3 / 5).max(1), (size.y / 4).clamp(1, 190));
+    let view_width = hand_view::VIEW_HEIGHT * viewport_size.x as f32 / viewport_size.y as f32;
+    hand.center = hand_view::hand_center(&layout.0, model.snapshot.own_seat());
+    hand.horizontal_scale = hand_view::hand_spacing_scale(count, view_width * 0.9);
+    hand.half_width = 0.105_f32.max(count.saturating_sub(1) as f32 * 0.036 + 0.05);
+    hand.has_hand = count > 0;
+    for (mut camera, mut transform) in &mut hand_cameras {
+        camera.is_active = count > 0 && size.x >= 10 && size.y >= 10;
         if !camera.is_active {
             continue;
         }
-        let center = own_positions.iter().copied().sum::<Vec3>() / own_positions.len() as f32;
-        let Projection::Perspective(projection) = projection else {
-            continue;
-        };
-        let viewport_size = UVec2::new(fifths(size.x, 3), actions_top - hand_top);
-        let aspect = viewport_size.x as f32 / viewport_size.y.max(1) as f32;
-        let width = (own_positions.len().saturating_sub(1) as f32 * 0.072 + 0.064) * 1.2;
-        let distance =
-            (0.106_f32.max(width / aspect) / (2.0 * (projection.fov * 0.5).tan())).max(0.15);
-        let hand_up = hand_camera_up(model.snapshot.own_seat());
-        *transform =
-            Transform::from_translation(center + Vec3::Y * distance).looking_at(center, hand_up);
+        // Fixed zone, not the centroid of moving cards. Center lands just above
+        // the bottom edge: ranks/suits peek out while the world remains behind.
+        let up = hand_camera_up(model.snapshot.own_seat());
+        let focus = hand.center + up * (hand_view::VIEW_HEIGHT * 0.44);
+        *transform = Transform::from_translation(focus + Vec3::Y * 0.7).looking_at(focus, up);
         camera.viewport = Some(Viewport {
-            physical_position: UVec2::new(size.x / 5, hand_top),
+            physical_position: UVec2::new((size.x - viewport_size.x) / 2, size.y - viewport_size.y),
             physical_size: viewport_size,
             ..default()
         });
@@ -3571,15 +3509,45 @@ fn drag_cards(
     keys: Res<ButtonInput<KeyCode>>,
     rotation_snap: Res<RotationSnap>,
     windows: Query<&Window>,
-    cameras: Query<(&Camera, &GlobalTransform), Or<(With<TabletopCamera>, With<HandCamera>)>>,
+    cameras: Query<
+        (&Camera, &GlobalTransform, Option<&HandCamera>),
+        Or<(With<TabletopCamera>, With<HandCamera>)>,
+    >,
     model: Res<BridgeModel>,
     bridge: Res<BridgeHandle>,
     layout: Res<CanonicalLayout>,
+    hand: Res<hand_view::HandProjection>,
+    world_interaction: Res<world_ui::WorldInteraction>,
     mut state: ResMut<UiState>,
     mut poses: ResMut<PoseDisplay>,
     mut drag: ResMut<DragState>,
 ) {
-    if state.screen != UiScreen::Table {
+    drag.hover_key = None;
+    // A release outside the viewport or opening a menu must not leave a local
+    // prediction permanently protected from the authority.
+    if drag.card_key.is_some()
+        && (state.escape_menu_open
+            || state.screen != UiScreen::Table
+            || !mouse.pressed(MouseButton::Left) && !mouse.just_released(MouseButton::Left)
+            || windows
+                .single()
+                .is_ok_and(|window| window.cursor_position().is_none()))
+    {
+        if let Some(key) = drag.card_key.take() {
+            if let Some(pose) = poses.0.get_mut(&key) {
+                pose.current[1] = drag.resting_height;
+            }
+            send_pose(
+                &key,
+                &model.snapshot.card_poses,
+                &mut poses,
+                &bridge,
+                model.snapshot.room_id(),
+            );
+        }
+        drag.reset_rotation_repeat();
+    }
+    if state.screen != UiScreen::Table || state.escape_menu_open {
         return;
     }
     let Ok(window) = windows.single() else {
@@ -3588,67 +3556,126 @@ fn drag_cards(
     let Some(cursor) = window.cursor_position() else {
         return;
     };
-    let Some((camera, camera_transform)) = cameras
-        .iter()
-        .filter(|(camera, _)| {
-            camera.is_active
-                && camera
-                    .logical_viewport_rect()
-                    .is_some_and(|rect| rect.contains(cursor))
-        })
-        .max_by_key(|(camera, _)| camera.order)
-    else {
-        return;
-    };
     let own_identity = model.snapshot.identity.as_deref();
     let own_keys: HashSet<_> = model
         .snapshot
-        .card_poses
+        .hand
         .iter()
-        .filter(|pose| Some(pose.owner.as_str()) == own_identity)
-        .map(|pose| pose.card_key.as_str())
+        .map(|card| card.card_key.as_str())
         .collect();
-
-    if mouse.just_pressed(MouseButton::Left) {
-        drag.card_key = poses
-            .0
-            .iter()
-            .filter(|(key, _)| own_keys.contains(key.as_str()))
-            .filter_map(|(key, pose)| {
-                let center = camera
-                    .world_to_viewport(camera_transform, mm_position(pose.current))
-                    .ok()?;
-                let distance = center.distance(cursor);
-                (distance <= CARD_PICK_RADIUS_PX).then_some((key.clone(), distance))
-            })
-            .min_by(|left, right| left.1.total_cmp(&right.1))
-            .map(|(key, _)| key);
-        drag.last_sent = None;
+    if drag
+        .card_key
+        .as_ref()
+        .is_some_and(|key| !own_keys.contains(key.as_str()))
+    {
+        drag.card_key = None;
         drag.reset_rotation_repeat();
     }
-
+    let mut views = cameras
+        .iter()
+        .filter(|(camera, _, _)| {
+            camera.is_active
+                && camera
+                    .logical_viewport_rect()
+                    .is_some_and(|r| r.contains(cursor))
+        })
+        .collect::<Vec<_>>();
+    views.sort_by_key(|(camera, _, _)| -camera.order);
+    let mut hovered = None;
+    for (camera, transform, inset) in &views {
+        let Ok(ray) = camera.viewport_to_world(transform, cursor) else {
+            continue;
+        };
+        let hit = model
+            .snapshot
+            .card_poses
+            .iter()
+            .filter(|network| {
+                Some(network.owner.as_str()) == own_identity
+                    && own_keys.contains(network.card_key.as_str())
+            })
+            .filter_map(|network| {
+                let pose = poses.0.get(&network.card_key)?;
+                let physical = mm_position(pose.current);
+                if inset.is_some() && !hand.contains(physical) {
+                    return None;
+                }
+                let position = (if inset.is_some() {
+                    hand.to_inset(physical)
+                } else {
+                    physical
+                }) + Vec3::Y * hand_view::stack_offset(&poses, &network.card_key);
+                hand_view::card_hit(ray, position, pose.current_rotation)
+                    .map(|distance| (network.card_key.clone(), distance))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((key, _)) = hit {
+            hovered = Some((key, *camera, *transform, inset.is_some()));
+            break;
+        }
+    }
+    if !world_interaction.blocks_card_input() {
+        drag.hover_key = hovered.as_ref().map(|hit| hit.0.clone());
+    }
+    if mouse.just_pressed(MouseButton::Left)
+        && !world_interaction.blocks_card_input()
+        && let Some((key, camera, camera_transform, inset)) = hovered
+    {
+        drag.card_key = Some(key.clone());
+        drag.hand_space = inset;
+        drag.last_sent = None;
+        drag.reset_rotation_repeat();
+        if let Some(pose) = poses.0.get_mut(&key) {
+            drag.resting_height = pose.current[1];
+            let point = cursor_to_world_mm(camera, camera_transform, cursor, pose.current[1])
+                .map_or(mm_position(pose.current), mm_position);
+            let point = if inset { hand.to_world(point) } else { point };
+            drag.grab_offset = mm_position(pose.current) - point;
+            pose.current[1] = hand_view::lift_height(drag.resting_height);
+        }
+    }
     let Some(key) = drag.card_key.clone() else {
         return;
     };
-    if mouse.pressed(MouseButton::Left) {
-        let height_mm = poses.0.get(&key).map(|pose| pose.current[1]);
-        if let Some(physical) = height_mm
-            .and_then(|height| cursor_to_world_mm(camera, camera_transform, cursor, height))
-            && let Some(pose) = poses.0.get_mut(&key)
-        {
-            pose.current[0] = physical[0];
-            pose.current[2] = physical[2];
+    // The lower hand drop band is contextual, not a permanent panel. Once
+    // crossed, rays are interpreted in the other camera's coordinate space.
+    let in_hand_band = views.iter().any(|(camera, _, inset)| {
+        inset.is_some()
+            && camera
+                .logical_viewport_rect()
+                .is_some_and(|r| cursor.y >= r.max.y - r.height() * 0.55)
+    });
+    let selected = views
+        .iter()
+        .find(|(_, _, inset)| inset.is_some() == in_hand_band)
+        .or_else(|| views.last());
+    if mouse.pressed(MouseButton::Left)
+        && let Some((camera, camera_transform, inset)) = selected
+    {
+        let inset = inset.is_some();
+        if inset != drag.hand_space {
+            drag.grab_offset = Vec3::ZERO;
+            drag.hand_space = inset;
         }
-        let rotation_direction =
+        if let Some(physical) = cursor_to_world_mm(
+            camera,
+            camera_transform,
+            cursor,
+            hand_view::lift_height(drag.resting_height),
+        ) && let Some(pose) = poses.0.get_mut(&key)
+        {
+            let point = mm_position(physical);
+            let point = (if inset { hand.to_world(point) } else { point }) + drag.grab_offset;
+            pose.current[0] = point.x * 1000.0;
+            pose.current[2] = point.z * 1000.0;
+        }
+        let direction =
             card_rotation_direction(keys.pressed(KeyCode::KeyQ), keys.pressed(KeyCode::KeyE));
-        if drag.rotation_step_due(rotation_direction, Instant::now())
+        if drag.rotation_step_due(direction, Instant::now())
             && let Some(pose) = poses.0.get_mut(&key)
         {
-            pose.rotation_mdeg[1] = rotate_mdeg(
-                pose.rotation_mdeg[1],
-                rotation_direction,
-                rotation_snap.step_mdeg(),
-            );
+            pose.rotation_mdeg[1] =
+                rotate_mdeg(pose.rotation_mdeg[1], direction, rotation_snap.step_mdeg());
         }
         if drag
             .last_sent
@@ -3665,6 +3692,9 @@ fn drag_cards(
         }
     }
     if mouse.just_released(MouseButton::Left) {
+        if let Some(pose) = poses.0.get_mut(&key) {
+            pose.current[1] = drag.resting_height;
+        }
         let dropped_in_play = poses
             .0
             .get(&key)
@@ -3672,17 +3702,17 @@ fn drag_cards(
         let may_play = model.snapshot.game.as_ref().is_some_and(|game| {
             game.phase == "playing" && game.actor_seat == model.snapshot.own_seat()
         });
+        send_pose(
+            &key,
+            &model.snapshot.card_poses,
+            &mut poses,
+            &bridge,
+            model.snapshot.room_id(),
+        );
         if dropped_in_play && may_play {
-            send_pose(
-                &key,
-                &model.snapshot.card_poses,
-                &mut poses,
-                &bridge,
-                model.snapshot.room_id(),
-            );
             if let (Some(room_id), Some(card)) = (
                 model.snapshot.room_id(),
-                model.snapshot.hand.iter().find(|card| card.card_key == key),
+                model.snapshot.hand.iter().find(|c| c.card_key == key),
             ) {
                 state.status = format!("Playing {}…", card.face);
                 let _ = bridge.send(BridgeIntent::PlayCard {
@@ -3691,24 +3721,9 @@ fn drag_cards(
                 });
             }
         } else if dropped_in_play {
-            restore_card_to_hand(&key, &model, &layout.0, &mut poses);
-            send_pose(
-                &key,
-                &model.snapshot.card_poses,
-                &mut poses,
-                &bridge,
-                model.snapshot.room_id(),
-            );
             state.status =
-                "That card cannot enter PLAY now; its logical location remains your hand.".into();
-        } else {
-            send_pose(
-                &key,
-                &model.snapshot.card_poses,
-                &mut poses,
-                &bridge,
-                model.snapshot.room_id(),
-            );
+                "Physical move only: PLAY is not legal now. The card is still privately yours."
+                    .into();
         }
         drag.card_key = None;
         drag.last_sent = None;
@@ -3725,33 +3740,6 @@ fn is_play_drop(layout: &SpatialLayout, position_mm: [f32; 3]) -> bool {
     .is_some_and(|bounds| {
         layout.classify_bounds(bounds) == ZoneClassification::Snapped(ZoneId::Play)
     })
-}
-
-fn restore_card_to_hand(
-    key: &str,
-    model: &BridgeModel,
-    layout: &SpatialLayout,
-    poses: &mut PoseDisplay,
-) {
-    let Some(seat) = model.snapshot.own_seat() else {
-        return;
-    };
-    let Some(zone) = layout
-        .zones()
-        .iter()
-        .find(|zone| matches!(zone.id, ZoneId::Hand(id) if id.get() == seat))
-    else {
-        return;
-    };
-    let center = [
-        i32::midpoint(zone.inner.min.x.get(), zone.inner.max.x.get()),
-        i32::midpoint(zone.inner.min.y.get(), zone.inner.max.y.get()),
-        i32::midpoint(zone.inner.min.z.get(), zone.inner.max.z.get()),
-    ];
-    if let Some(pose) = poses.0.get_mut(key) {
-        pose.current = center.map(|value| value as f32);
-        pose.target = pose.current;
-    }
 }
 
 fn rotate_mdeg(current: i32, direction: i8, step: i32) -> i32 {
@@ -3778,15 +3766,25 @@ fn send_pose(
     ) else {
         return;
     };
-    pose.sequence = pose.sequence.saturating_add(1);
+    if !pose.needs_submission(source) {
+        return;
+    }
+    let sequence = pose.sequence.max(source.sequence).saturating_add(1);
     let position_mm = pose.current.map(|value| value.round() as i32);
-    let _ = bridge.send(BridgeIntent::SetCardPose {
+    let result = bridge.send(BridgeIntent::SetCardPose {
         room_id: room_id.into(),
         card_id: source.card_id.clone(),
-        sequence: pose.sequence,
+        sequence,
         position_mm,
         rotation_mdeg: pose.rotation_mdeg,
     });
+    match result {
+        Ok(()) => pose.submitted(sequence),
+        Err(error) => {
+            pose.accept_authority(source);
+            tracing::warn!(card_key = key, %error, "card pose was not queued");
+        }
+    }
 }
 
 fn animate_and_place_cards(
@@ -3809,8 +3807,10 @@ fn animate_and_place_cards(
         let Some(pose) = poses.0.get(&card.key) else {
             continue;
         };
-        *transform = Transform::from_translation(mm_position(pose.current))
-            .with_rotation(pose.current_rotation);
+        *transform = Transform::from_translation(
+            mm_position(pose.current) + Vec3::Y * hand_view::stack_offset(&poses, &card.key),
+        )
+        .with_rotation(pose.current_rotation);
     }
 }
 
@@ -3834,10 +3834,21 @@ fn cursor_to_world_mm(
     ])
 }
 
+fn display_status(state: &UiState) -> &str {
+    if state.screen == UiScreen::Table
+        && (state.status.contains(" accepted in ")
+            || state.status == "The synchronized table is ready.")
+    {
+        ""
+    } else {
+        &state.status
+    }
+}
+
 fn update_status_labels(state: Res<UiState>, mut labels: Query<&mut Text, With<StatusLabel>>) {
     if state.is_changed() {
         for mut label in &mut labels {
-            label.0.clone_from(&state.status);
+            label.0 = display_status(&state).into();
         }
     }
 }
@@ -4058,7 +4069,7 @@ mod tests {
     #[test]
     fn card_labels_preserve_aspect_inside_the_canonical_face() {
         for aspect in [0.4, 1.0, 2.5] {
-            let (width, height) = card_label_size(aspect);
+            let (width, height) = hand_view::corner_label_size(aspect);
             assert!(width <= CARD_WORLD_WIDTH * 0.82 + f32::EPSILON);
             assert!(height <= CARD_WORLD_HEIGHT * 0.72 + f32::EPSILON);
             assert!((width / height - aspect).abs() < 0.000_01);

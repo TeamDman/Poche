@@ -502,15 +502,13 @@ pub(crate) fn card_pose(
             (center.x.get() + offset, center.y.get(), center.z.get())
         }
         CardLocation::Play { seat } => {
-            let placement = layout
-                .seats()
-                .iter()
-                .find(|placement| placement.seat == seat)
-                .ok_or(RealizationError::Geometry)?;
+            let offset = layout
+                .play_offset(seat)
+                .map_err(|_| RealizationError::Geometry)?;
             (
-                center.x.get() + placement.seat_pose.translation.x.get() * 50 / 750,
+                center.x.get() + offset.x.get(),
                 center.y.get(),
-                center.z.get() + placement.seat_pose.translation.z.get() * 50 / 750,
+                center.z.get() + offset.z.get(),
             )
         }
         CardLocation::Won { trick, index, .. } => (
