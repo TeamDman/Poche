@@ -1,6 +1,6 @@
 # SpacetimeDB desktop reorientation
 
-**Plan status:** Active; the create/join/seat/private-hand/shared-pose MVP and first oracle-backed trick are accepted, while multi-round play, recovery, and complete formal conformance remain
+**Plan status:** Active; the create/join/seat/private-hand/shared-pose MVP is accepted, with two-round live play and complete pure round-schedule evidence in PLAN-10. Final payout, broader recovery and complete formal conformance remain
 **Primary implementation root:** `D:\Repos\Games\poche-4` on branch `spacetimedb`
 **Base revision:** `f0b371727301730f9db88ad53defa9d66c684269` from `model-checking`
 **Last updated:** 2026-09-16 (diegetic table in PLAN-8; tactile interaction and physical money in PLAN-9)
@@ -9,6 +9,8 @@
 ## How to update this plan
 
 The completed interaction/presentation slices are defined in [PLAN-8-DIEGETIC-TABLE.md](PLAN-8-DIEGETIC-TABLE.md) and [PLAN-9-TABLE-TACTILITY.md](PLAN-9-TABLE-TACTILITY.md). Their ledgers extend, rather than replace, the constraints below. New rooms require physical quarter antes before dealing; this supersedes the earlier automatic deal-on-seat shortcut.
+
+[PLAN-10-ROUND-CONTINUITY.md](PLAN-10-ROUND-CONTINUITY.md) extends round progression, real payment settlement, dealer-driven redealing, public table guidance, coin feedback and camera inspection. Earlier first-round-only evidence below remains historical; see PLAN-10 for the new acceptance boundary and outstanding final payout.
 
 - `[ ]` Not started
 - `[~]` In progress

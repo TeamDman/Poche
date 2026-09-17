@@ -5,6 +5,8 @@
 **Last updated:** 2026-09-16
 **Intent audit:** Passed against the latest pickup, scoresheet, coin and speech request and all three subsequent money replies.
 
+Follow-up: [PLAN-10-ROUND-CONTINUITY.md](PLAN-10-ROUND-CONTINUITY.md) extends this slice with round progression and revised camera controls. Its R6 supersedes T11: pan/zoom now remains in inspection, and clicking the scoresheet again restores the saved view. The completed evidence below records the earlier behavior, not the current controls.
+
 ## How to update this plan
 
 Use `[ ]` not started, `[~]` active, `[x]` complete and `[!]` blocked. Keep evidence below the affected task. Parallel work is intentional: pickup prediction, inset geometry/outline, world text, and camera inspection. Money follows its decision gate. Do not silently replace an unfinished requirement with a smaller feature.

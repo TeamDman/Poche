@@ -108,11 +108,44 @@ pub struct ClientSnapshot {
     /// Public physical coins in this viewer's active room, never card secrets.
     pub coins: Vec<CoinView>,
     pub game: Option<GameView>,
+    /// Completed score-sheet rows, ordered by round, without hidden card faces.
+    pub rounds: Vec<RoundView>,
     pub revealed_cards: Vec<RevealedCardView>,
     pub activity: Vec<ActivityView>,
 }
 
 impl ClientSnapshot {
+    /// Unpaid opening ante or scored missed bids; actual bowl coins are the payments.
+    #[must_use]
+    pub fn payment_due(&self, seat: u8) -> u32 {
+        let index = usize::from(seat);
+        if index >= 2 {
+            return 0;
+        }
+        let mut expected = 25
+            + self
+                .rounds
+                .iter()
+                .map(|round| round.payment_cents[index])
+                .sum::<u32>();
+        if let Some(game) = self.game.as_ref().filter(|game| {
+            game.phase == "scoring"
+                && !self
+                    .rounds
+                    .iter()
+                    .any(|round| round.round_index == game.round_index)
+        }) && game.bids[index].is_some_and(|bid| bid != game.tricks_won[index])
+        {
+            expected += 10;
+        }
+        let paid = self
+            .coins
+            .iter()
+            .filter(|coin| coin.owner_seat == Some(seat) && coin.container == "bowl")
+            .map(|coin| u32::from(coin.denomination_cents))
+            .sum::<u32>();
+        expected.saturating_sub(paid)
+    }
     #[must_use]
     pub fn room_id(&self) -> Option<&str> {
         self.rooms.first().map(|room| room.room_id.as_str())
@@ -221,6 +254,18 @@ pub struct GameView {
     pub pot_cents: u32,
     pub trump: Option<u8>,
     pub action_count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoundView {
+    pub round_index: u16,
+    pub dealer_seat: u8,
+    pub hand_size: u8,
+    pub bids: [u8; 2],
+    pub tricks_won: [u8; 2],
+    pub points: [u16; 2],
+    pub totals: [u16; 2],
+    pub payment_cents: [u32; 2],
 }
 
 #[derive(Debug)]
@@ -523,6 +568,20 @@ impl PocheClient {
         Ok(request_id)
     }
 
+    pub fn deal_next_round(&self, room_id: String) -> Result<u64, ClientError> {
+        let request_id = self.next_request();
+        let started = Instant::now();
+        let tx = self.inner.event_tx.clone();
+        self.inner
+            .connection
+            .reducers
+            .deal_next_round_then(room_id, move |_ctx, result| {
+                finish_command(&tx, request_id, "deal_next_round", started, result);
+            })
+            .map_err(|error| ClientError::Request(error.to_string()))?;
+        Ok(request_id)
+    }
+
     /// Preview a physical move or commit a container transfer on release.
     /// Ownership, contribution amounts and container legality remain server
     /// decisions; successfully queueing this request is not an acceptance.
@@ -686,7 +745,22 @@ fn register_change_callbacks(connection: &DbConnection, event_tx: mpsc::Sender<C
             let _ = tx.send(ClientEvent::ModelChanged);
         });
     register_coin_callbacks(connection, event_tx.clone());
+    register_round_callbacks(connection, event_tx.clone());
     register_activity_callbacks(connection, event_tx);
+}
+
+fn register_round_callbacks(connection: &DbConnection, event_tx: mpsc::Sender<ClientEvent>) {
+    let tx = event_tx.clone();
+    connection.db.visible_rounds().on_insert(move |_, _| {
+        let _ = tx.send(ClientEvent::ModelChanged);
+    });
+    let tx = event_tx.clone();
+    connection.db.visible_rounds().on_update(move |_, _, _| {
+        let _ = tx.send(ClientEvent::ModelChanged);
+    });
+    connection.db.visible_rounds().on_delete(move |_, _| {
+        let _ = event_tx.send(ClientEvent::ModelChanged);
+    });
 }
 
 fn register_coin_callbacks(connection: &DbConnection, event_tx: mpsc::Sender<ClientEvent>) {
@@ -741,11 +815,16 @@ fn subscribe(
         .add_query(|query| query.from.visible_card_poses())
         .add_query(|query| query.from.visible_coins())
         .add_query(|query| query.from.visible_room_games())
+        .add_query(|query| query.from.visible_rounds())
         .add_query(|query| query.from.visible_revealed_cards())
         .add_query(|query| query.from.visible_activity())
         .subscribe();
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "One atomic projection of all sender-scoped SDK tables"
+)]
 fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
     let identity = context
         .try_identity()
@@ -820,6 +899,25 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
         .collect::<Vec<_>>();
     revealed_cards.sort_by(|left, right| left.card_key.cmp(&right.card_key));
     let activity = activity_from(context);
+    let mut rounds = context
+        .db
+        .visible_rounds()
+        .iter()
+        .filter(|row| rooms.iter().any(|room| room.room_id == row.room_id))
+        .filter_map(|row| {
+            Some(RoundView {
+                round_index: row.round_index,
+                dealer_seat: row.dealer_seat,
+                hand_size: row.hand_size,
+                bids: row.bids.try_into().ok()?,
+                tricks_won: row.tricks_won.try_into().ok()?,
+                points: row.points.try_into().ok()?,
+                totals: row.totals.try_into().ok()?,
+                payment_cents: row.payment_cents.try_into().ok()?,
+            })
+        })
+        .collect::<Vec<_>>();
+    rounds.sort_by_key(|row| row.round_index);
     let coins = coin_views(
         context.db.visible_coins().iter(),
         &rooms,
@@ -835,6 +933,7 @@ fn snapshot_from(context: &DbConnection) -> ClientSnapshot {
         card_poses,
         coins,
         game,
+        rounds,
         revealed_cards,
         activity,
     }
@@ -980,6 +1079,55 @@ pub fn valid_join_code(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeat_misses_owe_new_dimes_without_charging_the_ante_again() {
+        let round = RoundView {
+            round_index: 0,
+            dealer_seat: 0,
+            hand_size: 1,
+            bids: [0, 0],
+            tricks_won: [1, 0],
+            points: [0, 10],
+            totals: [0, 10],
+            payment_cents: [10, 0],
+        };
+        let mut snapshot = ClientSnapshot {
+            rounds: vec![round.clone()],
+            ..Default::default()
+        };
+        let coin = CoinView {
+            coin_key: "q".into(),
+            coin_id: "q".into(),
+            owner: "alice".into(),
+            owner_seat: Some(0),
+            is_own: true,
+            denomination_cents: 25,
+            container: "bowl".into(),
+            position_mm: [0; 3],
+            sequence: 1,
+        };
+        snapshot.coins.push(coin.clone());
+        assert_eq!(snapshot.payment_due(0), 10);
+        snapshot.coins.push(CoinView {
+            denomination_cents: 10,
+            coin_id: "d-1".into(),
+            ..coin.clone()
+        });
+        assert_eq!(snapshot.payment_due(0), 0);
+        snapshot.rounds.push(RoundView {
+            round_index: 1,
+            ..round
+        });
+        assert_eq!(snapshot.payment_due(0), 10);
+        snapshot.coins.push(CoinView {
+            denomination_cents: 10,
+            coin_id: "d-2".into(),
+            ..coin
+        });
+        assert_eq!(snapshot.payment_due(0), 0);
+        assert_eq!(snapshot.payment_due(1), 25);
+    }
 
     #[test]
     fn generated_capability_has_valid_opaque_shape() {

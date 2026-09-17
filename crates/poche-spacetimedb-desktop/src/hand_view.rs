@@ -28,6 +28,7 @@ impl Plugin for HandViewPlugin {
                 inspect_zones,
                 update_outlines,
                 hand_drop_hint,
+                play_drop_hint,
                 observe_hand_input,
             )
                 .chain()
@@ -200,14 +201,6 @@ fn sync_hand_copies(
         let Some(pose) = poses.0.get(&card.card_key) else {
             continue;
         };
-        let (texture, aspect) = card_label_texture(&mut images, &card.face, [18, 18, 16]);
-        let material = materials.add(StandardMaterial {
-            base_color_texture: Some(texture),
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            ..default()
-        });
-        let (width, height) = corner_label_size(aspect);
         let entity = commands
             .spawn((
                 HandCardVisual {
@@ -226,12 +219,13 @@ fn sync_hand_copies(
                 },
             ))
             .id();
-        spawn_card_labels(
+        spawn_card_face(
             &mut commands,
             entity,
             assets.card_label_mesh.clone(),
-            material,
-            (width, height),
+            &card.face,
+            &mut images,
+            &mut materials,
             1,
         );
         spawn_outline(
@@ -248,37 +242,71 @@ fn sync_hand_copies(
 #[derive(Component)]
 struct CardOutline(String);
 
-pub(super) fn spawn_card_labels(
+fn face_parts(face: &str) -> Vec<&str> {
+    let Some((index, suit)) = face.char_indices().last() else {
+        return vec![face];
+    };
+    if matches!(suit, '♣' | '♦' | '♥' | '♠') && index > 0 {
+        vec![&face[..index], &face[index..]]
+    } else {
+        vec![face]
+    }
+}
+
+/// Separate rank and suit so the entire ten fits in the exposed corner strip.
+pub(super) fn spawn_card_face(
     commands: &mut Commands,
     parent: Entity,
     mesh: Handle<Mesh>,
-    material: Handle<StandardMaterial>,
-    size: (f32, f32),
+    face: &str,
+    images: &mut Assets<Image>,
+    materials: &mut Assets<StandardMaterial>,
     layer: usize,
 ) {
-    let (width, height) = size;
-    for reverse in [false, true] {
-        let sign = if reverse { -1. } else { 1. };
-        let label = commands
-            .spawn((
-                Mesh3d(mesh.clone()),
-                MeshMaterial3d(material.clone()),
-                Transform::from_xyz(
-                    sign * (-CARD_WORLD_WIDTH * 0.5 + width * 0.5 + 0.003),
-                    CARD_WORLD_THICKNESS * 0.6,
-                    sign * (-CARD_WORLD_HEIGHT * 0.5 + height * 0.5 + 0.004),
-                )
-                .with_rotation(Quat::from_rotation_y(if reverse {
-                    std::f32::consts::PI
-                } else {
-                    0.
-                }))
-                .with_scale(Vec3::new(width, 1., height)),
-                RenderLayers::layer(layer),
-                bevy::light::NotShadowCaster,
-            ))
-            .id();
-        commands.entity(parent).add_child(label);
+    let color = if face == "P" {
+        [224, 232, 248]
+    } else if face.ends_with(['♥', '♦']) {
+        [160, 24, 25]
+    } else {
+        [18, 18, 16]
+    };
+    for (row, part) in face_parts(face).iter().enumerate() {
+        let (texture, aspect) = card_label_texture(images, part, color);
+        let material = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(texture),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        });
+        let height = 0.012_f32.min(0.019 / aspect.max(0.01));
+        let width = height * aspect;
+        for reverse in [false, true] {
+            let sign = if reverse { -1.0 } else { 1.0 };
+            let label = commands
+                .spawn((
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(material.clone()),
+                    Transform::from_xyz(
+                        sign * (-CARD_WORLD_WIDTH * 0.5 + 0.003 + width * 0.5),
+                        CARD_WORLD_THICKNESS * 0.6,
+                        sign * (-CARD_WORLD_HEIGHT * 0.5
+                            + 0.004
+                            + height * 0.5
+                            + row as f32 * 0.014),
+                    )
+                    .with_rotation(Quat::from_rotation_y(if reverse {
+                        std::f32::consts::PI
+                    } else {
+                        0.0
+                    }))
+                    .with_scale(Vec3::new(width, 1.0, height)),
+                    RenderLayers::layer(layer),
+                    bevy::light::NotShadowCaster,
+                ))
+                .id();
+            commands.entity(parent).add_child(label);
+        }
     }
 }
 
@@ -333,6 +361,73 @@ fn update_outlines(drag: Res<DragState>, mut outlines: Query<(&CardOutline, &mut
 
 #[derive(Component)]
 struct HandDropHint;
+
+#[derive(Component)]
+struct PlayDropHint;
+
+fn play_drop_hint(
+    mut commands: Commands,
+    drag: Res<DragState>,
+    model: Res<BridgeModel>,
+    poses: Res<PoseDisplay>,
+    layout: Res<super::CanonicalLayout>,
+    state: Res<UiState>,
+    mut existing: Query<(Entity, &mut Text), With<PlayDropHint>>,
+) {
+    let message = drag.card_key.as_ref().and_then(|key| {
+        if state.screen != UiScreen::Table {
+            return None;
+        }
+        let pose = poses.0.get(key)?;
+        if !model.snapshot.hand.iter().any(|card| card.card_key == *key) {
+            return Some("Repositioning a taken card · this does not play it again.");
+        }
+        let inside = super::is_play_drop(
+            &layout.0,
+            [pose.current[0], drag.resting_height, pose.current[2]],
+        );
+        let turn = model.snapshot.game.as_ref().is_some_and(|game| {
+            game.phase == "playing" && game.actor_seat == model.snapshot.own_seat()
+        });
+        Some(match (inside, turn) {
+            (true, true) => "Release to attempt PLAY · the authority checks follow suit.",
+            (false, true) => {
+                "Physical move only · fit the whole card inside yellow PLAY to play it."
+            }
+            (_, false) => "Physical move only · it is not your card-playing turn.",
+        })
+    });
+    match message {
+        None => {
+            for (entity, _) in &existing {
+                commands.entity(entity).despawn();
+            }
+        }
+        Some(message) => {
+            if let Some((_, mut text)) = existing.iter_mut().next() {
+                if text.0 != message {
+                    text.0 = message.into();
+                }
+            } else {
+                commands.spawn((
+                    PlayDropHint,
+                    Pickable::IGNORE,
+                    Text::new(message),
+                    TextFont::from_font_size(17.),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(18.),
+                        top: px(72.),
+                        padding: UiRect::all(px(8.)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.02, 0.04, 0.03)),
+                    GlobalZIndex(22),
+                ));
+            }
+        }
+    }
+}
 
 fn observe_hand_input(
     drag: Res<DragState>,
@@ -389,6 +484,7 @@ fn hand_drop_hint(
     }
 }
 
+#[cfg(test)]
 pub(super) fn corner_label_size(aspect: f32) -> (f32, f32) {
     let h = (CARD_WORLD_HEIGHT * 0.22).min(CARD_WORLD_WIDTH * 0.85 / aspect.max(0.01));
     (h * aspect, h)
@@ -464,6 +560,13 @@ fn inspect_zones(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ten_and_suit_are_separate_vertical_labels_not_a_wide_single_row() {
+        assert_eq!(face_parts("10♣"), ["10", "♣"]);
+        assert_eq!(face_parts("A♦"), ["A", "♦"]);
+        assert_eq!(face_parts("P"), ["P"]);
+    }
     use bevy::camera::{
         CameraProjection, ComputedCameraValues, OrthographicProjection, RenderTargetInfo,
         ScalingMode, Viewport,

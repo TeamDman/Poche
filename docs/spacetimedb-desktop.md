@@ -3,7 +3,7 @@
 The default Poche desktop path is now a Bevy 0.19.1 client connected directly
 to SpacetimeDB 2.10.0. Two copies of the same `poche.exe` can create and join a
 lobby, occupy distinct seats, pay their quarter antes, receive distinct private rule-generated hands,
-bid, play a complete first-round trick, and move/rotate cards with local
+bid, play successive rounds, and move/rotate cards with local
 prediction and subscription-driven peer updates.
 
 The current SpacetimeDB window draws those three-axis poses into a real Bevy 3D
@@ -18,13 +18,14 @@ to the player's physical hand zone as the world camera moves.
 
 Room information lives on world signs and a score sheet. Click notices to
 read them close up. Clicking the ruled scoresheet instead moves the camera to
-an orthographic view above the actual paper. Move with middle mouse to restore
-the preceding view; that gesture is consumed until you release the button.
-Wheel zoom can get close enough to inspect small objects.
+an orthographic view above the actual paper, fitted to the window with a small
+border. Pan and zoom to inspect details. Click the paper again to restore the
+preceding view. Wheel zoom can get close enough to inspect small objects.
 Click the room-code sign to copy its code. The compact
 Speech control and rotation snap remain on screen; Escape opens other controls.
 
-This remains a first-round vertical slice rather than the complete Poche game.
+The round engine follows the complete two-player schedule. Final pot payout,
+larger player counts and full transport/formal conformance remain unfinished.
 The module persists a deterministic shuffle seed and ordered typed action log;
 each bid/play reducer reconstructs that log through the transport-free
 `OracleEnvironment<2>` and commits only an accepted pure transition. Physical
@@ -47,13 +48,27 @@ jar, or return unused coins to the jar. The floating labels report actual
 shared container totals. Peers see the same coin moving; pickup and release
 height are eased locally too.
 
-This first-round slice accepts exactly one quarter for an unpaid ante and one
-dime for a missed bid once the trick has finished. It rejects overpayment,
-another player's coins and withdrawals from the bowl. Settlement/payout and
-later rounds remain unfinished; do not interpret the bowl as a cash service.
+The table accepts exactly one quarter for an unpaid ante and one dime for each
+missed bid once the round has finished. It rejects overpayment, another
+player's coins and withdrawals from the bowl. This is not a cash service.
 Coins are conserved across transfers and rejoining. Abandoning a deal refunds
 its bowl coins. Existing pre-coin deals retain their cards and materialize
 their already-paid automatic antes from the new inventory once.
+
+After the last trick, points are recorded once and the world notice names
+anyone who owes a dime. When those payments are complete, cards return to the
+deck and the dealer rotates. The new dealer clicks the deck to shuffle and
+deal the next round. The normal client renders only public trump on the deck,
+not undealt faces (see the prototype secrecy limitation below). The scoresheet
+retains completed rounds and
+updates bowl totals as coins move. Bidding speech is available only in the
+bidding phase. The final bowl remains reserved pending payout implementation.
+
+Hover coins to see their silhouette outline. If a coin is dropped outside a
+valid container, it returns to its source; you can grab it during that return.
+Taken cards can be repositioned by the trick winner without replaying them.
+While holding a private card, the hint distinguishes a physical move from a
+drop fully inside PLAY. Follow-suit legality is still checked by the authority.
 
 ## Choose Maincloud or local development
 
@@ -204,8 +219,12 @@ interpolate instead of teleporting. Local card motion is immediate while the
 peer interpolates subscribed updates.
 
 Arrow keys also orbit the camera. Perspective pitch can approach 3° above the
-table for gap inspection. O retains the tactical orthographic view; Space
-returns to the wider home view.
+table for gap inspection. I toggles parallel (orthographic) versus perspective
+projection without changing the viewing angle. O toggles a straight-down angle
+without changing the projection. Parallel projection at an oblique angle gives
+an isometric-style view. These controls also work while inspecting the sheet;
+the second paper click still restores the original camera. Space returns to the
+wider home view.
 
 Create, join, and rejoin first show **Preparing the table**. Poche keeps that
 loading surface until the authoritative room, this member, the private hand,
@@ -232,8 +251,8 @@ room actions: create/join/leave, seat changes, deal start, bids, and played
 cards. It never records an unplayed card face or a private-hand snapshot.
 Only seated members have world avatars; unseated members remain visible in the
 roster without appearing in the middle of the table. The table notepad shows
-the current round in rulebook notation. Recorded totals remain authoritative;
-this slice still stops at scoring, so the sheet labels pending scores explicitly.
+completed rounds and current bids in rulebook notation. Recorded totals remain
+authoritative; the nearby next-step notice explains payments and dealer handoff.
 Escape opens the table
 menu. **Stand up** and **Options** live there rather than in the frequent action
 bar. **Leave lobby** changes to **Confirm leave lobby** after the first click.
@@ -336,12 +355,16 @@ player and two face-free shared poses, moves
 Alice's card, waits until Bob observes its exact position/rotation, submits two
 legal bids through pointer clicks on the Speech picker and two legal plays,
 verifies both devices converge on two revealed
-cards in one winner's logical won zone, then starts a simultaneous second
+cards in one winner's logical won zone. After paying the missed-bid dime, it
+checks the next dealer, clicks the deck to deal 2 cards each, and completes
+another round. It checks cumulative scores, live money totals and readiness
+for the third deal, then starts a simultaneous second
 Alice process from Alice's same vault. That process must receive the resume
 offer and recover the same principal, seat, private hand, roster, public card
 poses, activity history, and exact lobby code. After **Rejoin lobby**, the
 acceptance contract also requires rendered avatar/card counts to match that
-preloaded model before continuing.
+preloaded model before continuing. Between deals, an empty hand is the correct
+projection; loading must not wait for cards the dealer has not dealt.
 After it disconnects, Bob must still observe Alice online through her original
 connection. The puppet then captures the Escape table menu and armed leave
 confirmation. It also opens the nested Options menu, captures inverted-Y On,
@@ -356,7 +379,11 @@ lift/release heights, unchanged ownership, and absence of public face disclosure
 `hand-interaction.png` shows hover, rotation, world drag, return and low-angle
 inspection in one image. `scoresheet-inspection.png` shows the actual paper
 and restoration of the previous camera. `manual-antes.png` and
-`missed-bid-payment.png` record conserved money transfers. The run writes:
+`missed-bid-payment.png` record conserved money transfers.
+`round-continuity.png` shows the dealer handoff, second round and next handoff.
+`won-card-interaction.png` records the winner dragging a captured opponent's
+card through ordinary pointer input and the peer observing its new position.
+The run writes:
 
 - `target/poche-puppet/acceptance-contact-sheet.png` — seated and moved views
   for Alice and Bob in one image;
@@ -405,7 +432,7 @@ reports the `resume_offer` surface.
 `menu ROOT`, `options ROOT`, `invert-camera-y ROOT`, and `back ROOT` expose the
 same nested menu path to ad-hoc windowless control and screenshot capture.
 
-File-control schema 8 also accepts real input. On a `--windowless` instance:
+File-control schema 9 also accepts real input. On a `--windowless` instance:
 
 ```powershell
 target\debug\poche-puppet.exe pointer target\live\alice 590 732 down
@@ -421,8 +448,9 @@ observation includes the held card key and visible hand-copy count. Screenshots
 and semantic observations still work for both windowed and windowless instances.
 
 `camera-gesture ROOT DX DY middle|right|up` supplies windowless camera motion.
-It can dismiss scoresheet inspection through the same consumed-gesture path as
-the mouse. Observations include camera pose, inspection state, shared coins and
+It pans or orbits within scoresheet inspection just like the mouse; inspection
+ends on a second paper click, not on movement. Observations include camera pose,
+inspection state, shared coins and
 visible coin-picking coordinates. These diagnostic picking coordinates are
 computed only when file control is enabled.
 
@@ -445,6 +473,11 @@ scoped views keep one player's faces out of another client's subscription,
 diagnostics, and capture, but they do not hide those faces from the server
 operator. This intentionally trades the Veilid design's decentralization for
 a simpler low-latency product path.
+
+This prototype is not cheat-resistant against a modified client: its current
+public game row includes the deterministic shuffle seed, so hands can be
+reconstructed despite normal clients receiving only their private hand faces.
+Seed hardening is a separate required step before claiming adversarial secrecy.
 
 Poche-authored code remains MPL-2.0. The inspected SpacetimeDB server source is
 Business Source License 1.1 with an additional production-use grant for an

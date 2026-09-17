@@ -10,7 +10,6 @@ use bevy::prelude::*;
 #[derive(Debug, Default)]
 pub(super) struct InspectionState {
     saved: Option<Bookmark>,
-    consume_gesture: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -18,8 +17,7 @@ struct Bookmark {
     pose: CameraPose,
     mode: TableCameraMode,
     scale: f32,
-    perspective_target: CameraPose,
-    tactical_target: CameraPose,
+    top_down_return_angles: Option<Vec2>,
 }
 
 impl TableCameraController {
@@ -28,60 +26,63 @@ impl TableCameraController {
     }
 
     pub(super) fn inspect_sheet(&mut self, center: Vec3, size: Vec2, aspect: f32) {
-        if self.inspecting_sheet() {
+        if let Some(saved) = self.inspection.saved.take() {
+            self.set_projection(saved.mode);
+            self.target = saved.pose;
+            self.target_orthographic_scale = saved.scale;
+            self.top_down_return_angles = saved.top_down_return_angles;
             return;
         }
         self.inspection.saved = Some(Bookmark {
             pose: self.current,
             mode: self.mode,
             scale: self.current_orthographic_scale,
-            perspective_target: self.perspective_target,
-            tactical_target: self.tactical_target,
+            top_down_return_angles: self.top_down_return_angles,
         });
-        if self.mode == TableCameraMode::Perspective {
-            // Match scale at the focal plane before changing projection. Then
-            // both the actual camera pose and close-up framing ease together.
-            self.current_orthographic_scale =
-                perspective_span(self.current.distance) / TACTICAL_VIEW_HEIGHT;
-        }
-        self.mode = TableCameraMode::Tactical;
+        // O can change the inspection angle without creating another camera
+        // mode or overwriting the pre-inspection bookmark.
+        self.top_down_return_angles.get_or_insert(Vec2::new(
+            self.current.yaw,
+            self.current.pitch.min(super::CAMERA_MAX_PITCH),
+        ));
+        self.set_projection(TableCameraMode::Orthographic);
         self.target = CameraPose {
             focus: center,
             yaw: 0.0,
             pitch: std::f32::consts::FRAC_PI_2,
             distance: 0.55,
         };
-        self.target_orthographic_scale =
-            (size.y.max(size.x / aspect.max(0.1)) * 1.35) / TACTICAL_VIEW_HEIGHT;
+        self.target_orthographic_scale = sheet_fit_scale(size, aspect);
     }
 
-    /// Returns true while a dismissal gesture must not also move the camera.
-    /// Consumption is local application state, not an OS button release.
-    pub(super) fn inspection_input(&mut self, movement: bool, held: bool) -> bool {
-        if self.inspection.consume_gesture {
-            self.inspection.consume_gesture = held;
-            return true;
+    /// Match apparent size at the focal plane when changing projection. There
+    /// are no independent hidden poses for perspective versus orthographic.
+    pub(super) fn set_projection(&mut self, mode: TableCameraMode) {
+        if self.mode == mode {
+            return;
         }
-        if !movement {
-            return self.inspecting_sheet();
+        match mode {
+            TableCameraMode::Orthographic => {
+                self.current_orthographic_scale =
+                    perspective_span(self.current.distance) / TACTICAL_VIEW_HEIGHT;
+                self.target_orthographic_scale =
+                    perspective_span(self.target.distance) / TACTICAL_VIEW_HEIGHT;
+            }
+            TableCameraMode::Perspective => {
+                self.current.distance =
+                    self.current_orthographic_scale * TACTICAL_VIEW_HEIGHT / perspective_span(1.0);
+                self.target.distance =
+                    self.target_orthographic_scale * TACTICAL_VIEW_HEIGHT / perspective_span(1.0);
+            }
         }
-        let Some(saved) = self.inspection.saved.take() else {
-            return false;
-        };
-        if saved.mode == TableCameraMode::Perspective {
-            // Preserve apparent size at the sheet while returning to perspective.
-            // Using the old distant pose immediately would be a visible jump.
-            self.current.distance =
-                self.current_orthographic_scale * TACTICAL_VIEW_HEIGHT / perspective_span(1.0);
-        }
-        self.mode = saved.mode;
-        self.target = saved.pose;
-        self.target_orthographic_scale = saved.scale;
-        self.perspective_target = saved.perspective_target;
-        self.tactical_target = saved.tactical_target;
-        self.inspection.consume_gesture = held;
-        true
+        self.mode = mode;
     }
+}
+
+fn sheet_fit_scale(size: Vec2, aspect: f32) -> f32 {
+    // Fit the whole paper to whichever frame dimension is limiting. Six percent
+    // extra span leaves a small border without the former 26% blank margin.
+    (size.y.max(size.x / aspect.max(0.1)) * 1.06) / TACTICAL_VIEW_HEIGHT
 }
 
 fn perspective_span(distance: f32) -> f32 {
@@ -93,41 +94,87 @@ mod tests {
     use super::*;
 
     #[test]
-    fn score_inspection_restores_actual_previous_pose_and_consumes_entire_drag() {
+    fn repeat_sheet_click_restores_view_without_requiring_a_pan() {
+        let mut camera = TableCameraController::default();
+        let before = camera.current;
+        camera.inspect_sheet(Vec3::ZERO, Vec2::new(0.2, 0.29), 1.6);
+        camera.inspect_sheet(Vec3::ZERO, Vec2::new(0.2, 0.29), 1.6);
+        assert!(
+            !camera.inspecting_sheet(),
+            "second click must dismiss inspection"
+        );
+        assert_eq!(camera.target, before);
+    }
+
+    #[test]
+    fn sheet_fills_at_least_ninety_percent_of_the_limiting_frame_dimension() {
+        let mut camera = TableCameraController::default();
+        camera.inspect_sheet(Vec3::ZERO, Vec2::new(0.2, 0.29), 1.6);
+        let height = camera.target_orthographic_scale * TACTICAL_VIEW_HEIGHT;
+        assert!(
+            0.29 / height >= 0.90,
+            "paper occupies too little frame height"
+        );
+    }
+
+    #[test]
+    fn score_inspection_keeps_bookmark_during_pan_zoom_and_restores_on_second_click() {
         let mut camera = TableCameraController::default();
         camera.current.focus = Vec3::new(0.12, 0.02, -0.3);
         camera.current.distance = 1.25;
         let before = camera.current;
         camera.inspect_sheet(Vec3::new(0.265, 0.0265, 0.0), Vec2::new(0.2, 0.29), 1.6);
-        assert_eq!(camera.mode, TableCameraMode::Tactical);
+        assert_eq!(camera.mode, TableCameraMode::Orthographic);
         assert!((camera.target.pitch - std::f32::consts::FRAC_PI_2).abs() < f32::EPSILON);
         assert!(camera.target_orthographic_scale * TACTICAL_VIEW_HEIGHT >= 0.29);
         assert!(camera.target.transform().rotation.is_finite());
-        // Pressing without movement retains inspection. Moving dismisses it.
-        assert!(camera.inspection_input(false, true));
+        // Pan/zoom is ordinary camera input, not an implicit dismiss gesture.
+        camera.target.focus.x += 0.02;
+        camera.target_orthographic_scale =
+            super::super::zoom_orthographic_scale(camera.target_orthographic_scale, 1.0);
         assert!(camera.inspecting_sheet());
-        assert!(camera.inspection_input(true, true));
+        camera.inspect_sheet(Vec3::ZERO, Vec2::ONE, 1.6);
         assert!(!camera.inspecting_sheet());
         assert_eq!(camera.target, before);
         assert_eq!(camera.mode, TableCameraMode::Perspective);
-        assert!(camera.inspection_input(true, true));
-        assert!(camera.inspection_input(false, false));
-        assert!(!camera.inspection_input(true, true));
     }
 
     #[test]
-    fn score_inspection_preserves_tactical_zoom_and_fits_narrow_windows() {
+    fn score_inspection_preserves_orthographic_zoom_and_fits_narrow_windows() {
         let mut camera = TableCameraController::default();
-        camera.toggle_mode();
+        camera.toggle_projection();
         camera.current_orthographic_scale = 0.42;
         camera.current = camera.target;
         let before = camera.current;
         camera.inspect_sheet(Vec3::ZERO, Vec2::new(0.2, 0.29), 0.4);
-        assert!(camera.target_orthographic_scale * TACTICAL_VIEW_HEIGHT * 0.4 >= 0.2);
-        assert!(camera.inspection_input(true, false));
-        assert_eq!(camera.mode, TableCameraMode::Tactical);
+        let width = camera.target_orthographic_scale * TACTICAL_VIEW_HEIGHT * 0.4;
+        assert!(width >= 0.2);
+        assert!(0.2 / width >= 0.90);
+        camera.inspect_sheet(Vec3::ZERO, Vec2::new(0.2, 0.29), 0.4);
+        assert_eq!(camera.mode, TableCameraMode::Orthographic);
         assert_eq!(camera.target, before);
         assert!((camera.target_orthographic_scale - 0.42).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn projection_and_top_down_toggles_do_not_create_nested_inspections() {
+        let mut camera = TableCameraController::default();
+        let before = camera.current;
+        camera.inspect_sheet(Vec3::ZERO, Vec2::new(0.2, 0.29), 1.6);
+        camera.toggle_projection();
+        assert_eq!(camera.mode, TableCameraMode::Perspective);
+        assert!((camera.target.pitch - std::f32::consts::FRAC_PI_2).abs() < f32::EPSILON);
+        camera.toggle_top_down();
+        assert!((camera.target.pitch - before.pitch).abs() < f32::EPSILON);
+        assert_eq!(camera.mode, TableCameraMode::Perspective);
+        assert!(camera.inspecting_sheet());
+        camera.toggle_projection();
+        camera.toggle_top_down();
+        camera.inspect_sheet(Vec3::ZERO, Vec2::ONE, 1.0);
+        assert!(!camera.inspecting_sheet());
+        assert_eq!(camera.mode, TableCameraMode::Perspective);
+        assert_eq!(camera.target, before);
+        assert!(camera.top_down_return_angles.is_none());
     }
 
     #[test]

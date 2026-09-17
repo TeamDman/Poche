@@ -34,7 +34,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u16 = 8;
+pub const SCHEMA_VERSION: u16 = 9;
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 const APP_REQUEST_TIMEOUT: Duration = Duration::from_secs(18);
@@ -106,6 +106,7 @@ pub enum FileControlAction {
     Bid {
         tricks: u8,
     },
+    DealNextRound,
     PlayOwnCard {
         card_index: usize,
     },
@@ -125,6 +126,15 @@ pub enum FileControlAction {
     Pointer {
         x: f32,
         y: f32,
+        primary_down: bool,
+    },
+    /// Track a moving visible coin through real pointer picking, not a reducer.
+    PointerAtCoin {
+        coin_key: String,
+        primary_down: bool,
+    },
+    PointerAtWorld {
+        position_mm: [i32; 3],
         primary_down: bool,
     },
     /// Windowless-only camera motion through ordinary input; never OS input.
@@ -192,10 +202,13 @@ pub struct FileControlObservation {
     pub rendered_card_count: usize,
     pub rendered_player_count: usize,
     pub held_card_key: Option<String>,
+    pub held_coin: Option<FileControlHeldCoin>,
     pub visible_hand_copies: usize,
     pub camera: Option<FileControlCamera>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game: Option<FileControlGame>,
+    pub rounds: Vec<FileControlRound>,
+    pub payment_due_cents: [u32; 2],
     pub revealed_cards: Vec<FileControlRevealedCard>,
     pub activity: Vec<FileControlActivity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -213,6 +226,15 @@ pub struct FileControlCamera {
     pub orthographic_scale: f32,
     pub inspecting_sheet: bool,
     pub sheet_screen: Option<[f32; 2]>,
+    pub deck_screen: Option<[f32; 2]>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FileControlHeldCoin {
+    pub coin_key: String,
+    pub position_m: [f32; 3],
+    pub sequence: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -293,6 +315,19 @@ pub struct FileControlGame {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct FileControlRound {
+    pub round_index: u16,
+    pub dealer_seat: u8,
+    pub hand_size: u8,
+    pub bids: [u8; 2],
+    pub tricks_won: [u8; 2],
+    pub points: [u16; 2],
+    pub totals: [u16; 2],
+    pub payment_cents: [u32; 2],
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct FileControlRevealedCard {
     pub card_key: String,
     pub face: String,
@@ -355,6 +390,7 @@ impl FileControlPlugin {
                 "return_to_title_and_change_window_state".into(),
                 "activate_leave_button".into(),
                 "bid_or_play_owned_card".into(),
+                "deal_next_round".into(),
                 "move_owned_card".into(),
                 "move_owned_coin".into(),
                 "coin_camera_pick_targets".into(),
@@ -371,6 +407,7 @@ impl FileControlPlugin {
                 last_sequence: None,
                 frame: 0,
                 pending: None,
+                held_coin: None,
             },
         })
     }
@@ -401,6 +438,7 @@ struct FileControlEndpoint {
     last_sequence: Option<u64>,
     frame: u64,
     pending: Option<PendingRequest>,
+    held_coin: Option<FileControlHeldCoin>,
 }
 
 #[derive(Resource, Default)]
@@ -430,6 +468,7 @@ fn supported_key(name: &str) -> Result<KeyCode, String> {
         "q" => Ok(KeyCode::KeyQ),
         "e" => Ok(KeyCode::KeyE),
         "o" => Ok(KeyCode::KeyO),
+        "i" => Ok(KeyCode::KeyI),
         "z" => Ok(KeyCode::KeyZ),
         "w" => Ok(KeyCode::KeyW),
         "a" => Ok(KeyCode::KeyA),
@@ -442,7 +481,7 @@ fn supported_key(name: &str) -> Result<KeyCode, String> {
         "arrowright" | "right" => Ok(KeyCode::ArrowRight),
         "escape" | "esc" => Ok(KeyCode::Escape),
         "f3" => Ok(KeyCode::F3),
-        _ => Err("supported keys: Q E O Z W A S D Space ArrowUp ArrowDown ArrowLeft ArrowRight Escape F3".into()),
+        _ => Err("supported keys: Q E I O Z W A S D Space ArrowUp ArrowDown ArrowLeft ArrowRight Escape F3".into()),
     }
 }
 
@@ -576,7 +615,11 @@ enum Completion {
         container: String,
         error: Option<String>,
     },
-    GameAction(u64),
+    GameAction {
+        expected: u64,
+        operation: &'static str,
+        error: Option<String>,
+    },
     Capture {
         path: PathBuf,
         requested: bool,
@@ -600,20 +643,42 @@ fn drive_file_control(
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut device_input: ResMut<QueuedDeviceInput>,
     mut notices: MessageReader<BridgeNotice>,
+    money: Option<Res<super::money::MoneyState>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<super::TabletopCamera>>,
 ) {
     endpoint.frame = endpoint.frame.saturating_add(1);
+    endpoint.held_coin =
+        money
+            .as_ref()
+            .and_then(|money| money.held_coin())
+            .map(|(key, position_m, sequence)| FileControlHeldCoin {
+                coin_key: key.into(),
+                position_m,
+                sequence,
+            });
     // Read every frame so an earlier rejected human action cannot reject a
     // later control request. There is only one in-flight control request.
     for notice in notices.read() {
         if let BridgeNotice::Command {
-            operation: "move_coin",
+            operation,
             result: Err(reason),
             ..
         } = notice
             && let Some(pending) = endpoint.pending.as_mut()
-            && let Completion::Coin { error, .. } = &mut pending.completion
         {
-            *error = Some(reason.clone());
+            match &mut pending.completion {
+                Completion::Coin { error, .. } if *operation == "move_coin" => {
+                    *error = Some(reason.clone());
+                }
+                Completion::GameAction {
+                    operation: expected_operation,
+                    error,
+                    ..
+                } if *operation == *expected_operation => {
+                    *error = Some(reason.clone());
+                }
+                _ => {}
+            }
         }
     }
     if let Some(mut pending) = endpoint.pending.take() {
@@ -884,7 +949,15 @@ fn drive_file_control(
         FileControlAction::Bid { tricks } => submit_game_action(
             &model,
             &mut pending,
+            "bid",
             |room_id| BridgeIntent::Bid { room_id, tricks },
+            &bridge,
+        ),
+        FileControlAction::DealNextRound => submit_game_action(
+            &model,
+            &mut pending,
+            "deal_next_round",
+            |room_id| BridgeIntent::DealNextRound { room_id },
             &bridge,
         ),
         FileControlAction::PlayOwnCard { card_index } => {
@@ -939,6 +1012,52 @@ fn drive_file_control(
                     },
                 ));
                 pending.completion = Completion::Input(pending.request.sequence);
+            })
+        }
+        action @ (FileControlAction::PointerAtCoin { .. }
+        | FileControlAction::PointerAtWorld { .. }) => {
+            let (position, primary_down) = match action {
+                FileControlAction::PointerAtCoin {
+                    coin_key,
+                    primary_down,
+                } => (
+                    money
+                        .as_ref()
+                        .and_then(|money| money.displayed_coin_position(&coin_key))
+                        .ok_or_else(|| "coin has no rendered position".to_string()),
+                    primary_down,
+                ),
+                FileControlAction::PointerAtWorld {
+                    position_mm,
+                    primary_down,
+                } => (
+                    Ok(position_mm.map(|value| value as f32 / 1_000.0)),
+                    primary_down,
+                ),
+                _ => unreachable!(),
+            };
+            position.and_then(|position| {
+                if !matches!(surface.as_ref(), RenderSurface::Windowless { .. }) {
+                    return Err("synthetic pointer input requires a windowless viewport".into());
+                }
+                let (camera, transform) =
+                    cameras.single().map_err(|_| "table camera unavailable")?;
+                let point = camera
+                    .world_to_viewport(transform, Vec3::from_array(position))
+                    .map_err(|_| "pointer target is outside the table camera")?;
+                let window = windows
+                    .single()
+                    .map_err(|_| "primary viewport unavailable")?;
+                validate_pointer(point, window.width(), window.height())?;
+                device_input.pending = Some((
+                    pending.request.sequence,
+                    DeviceInput::Pointer {
+                        point,
+                        primary_down,
+                    },
+                ));
+                pending.completion = Completion::Input(pending.request.sequence);
+                Ok(())
             })
         }
         FileControlAction::CameraGesture {
@@ -1139,12 +1258,20 @@ fn pending_result(
                     .map(|_| Ok(()))
             }
         }
-        Completion::GameAction(expected) => model
-            .snapshot
-            .game
-            .as_ref()
-            .filter(|game| game.action_count >= *expected)
-            .map(|_| Ok(())),
+        Completion::GameAction {
+            expected, error, ..
+        } => {
+            if let Some(error) = error {
+                Some(Err(error.clone()))
+            } else {
+                model
+                    .snapshot
+                    .game
+                    .as_ref()
+                    .filter(|game| game.action_count >= *expected)
+                    .map(|_| Ok(()))
+            }
+        }
         Completion::Capture {
             path,
             requested,
@@ -1255,6 +1382,7 @@ fn submit_coin(
 fn submit_game_action(
     model: &BridgeModel,
     pending: &mut PendingRequest,
+    operation: &'static str,
     intent: impl FnOnce(String) -> BridgeIntent,
     bridge: &BridgeHandle,
 ) -> Result<(), String> {
@@ -1269,7 +1397,11 @@ fn submit_game_action(
         .ok_or("take a seat and wait for the deal before taking a game action")?
         .action_count
         .saturating_add(1);
-    pending.completion = Completion::GameAction(expected);
+    pending.completion = Completion::GameAction {
+        expected,
+        operation,
+        error: None,
+    };
     bridge.send(intent(room_id.into()))
 }
 
@@ -1287,6 +1419,7 @@ fn submit_play_action(
     submit_game_action(
         model,
         pending,
+        "play_card",
         |room_id| BridgeIntent::PlayCard { room_id, card_id },
         bridge,
     )
@@ -1321,9 +1454,6 @@ fn validate_request(
         FileControlAction::TakeSeat { seat } if *seat > 1 => {
             return Err("seat must be 0 or 1".into());
         }
-        FileControlAction::Bid { tricks } if *tricks > 2 => {
-            return Err("the first two-player round permits bids from 0 through 2".into());
-        }
         FileControlAction::MoveOwnCard {
             position_mm,
             rotation_mdeg,
@@ -1341,6 +1471,13 @@ fn validate_request(
             if !x.is_finite() || !y.is_finite() || *x < 0.0 || *y < 0.0 =>
         {
             return Err("pointer coordinates must be finite non-negative logical pixels".into());
+        }
+        FileControlAction::PointerAtWorld { position_mm, .. }
+            if position_mm
+                .iter()
+                .any(|value| value.unsigned_abs() > 10_000) =>
+        {
+            return Err("world pointer target exceeds bounded scene coordinates".into());
         }
         FileControlAction::MoveCoin {
             coin_id,
@@ -1545,6 +1682,7 @@ fn observation(
         money_jar_screen: state.money_jar_screen,
         money_lid_screen: state.money_lid_screen,
         held_card_key: state.held_card_key.clone(),
+        held_coin: endpoint.held_coin.clone(),
         visible_hand_copies: state.visible_hand_copies,
         camera: state.camera_diagnostics.clone(),
         rendered_player_count: state.rendered_player_count,
@@ -1564,6 +1702,22 @@ fn observation(
             trump: game.trump,
             action_count: game.action_count,
         }),
+        rounds: model
+            .snapshot
+            .rounds
+            .iter()
+            .map(|round| FileControlRound {
+                round_index: round.round_index,
+                dealer_seat: round.dealer_seat,
+                hand_size: round.hand_size,
+                bids: round.bids,
+                tricks_won: round.tricks_won,
+                points: round.points,
+                totals: round.totals,
+                payment_cents: round.payment_cents,
+            })
+            .collect(),
+        payment_due_cents: [model.snapshot.payment_due(0), model.snapshot.payment_due(1)],
         revealed_cards: model
             .snapshot
             .revealed_cards
@@ -1777,6 +1931,7 @@ mod tests {
             last_sequence: None,
             frame: 0,
             pending: None,
+            held_coin: None,
         };
         let mut request = FileControlRequest {
             schema_version: SCHEMA_VERSION,

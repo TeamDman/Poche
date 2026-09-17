@@ -79,6 +79,22 @@ pub(super) fn sheet_inspection_target(layout: &SpatialLayout) -> SheetInspection
     }
 }
 
+fn deck_count(snapshot: &ClientSnapshot) -> u8 {
+    snapshot
+        .game
+        .as_ref()
+        .filter(|game| matches!(game.phase.as_str(), "bidding" | "playing" | "scoring"))
+        .map_or(52, |game| 51_u8.saturating_sub(game.hand_size * 2))
+}
+
+pub(super) fn deck_inspection_center(snapshot: &ClientSnapshot) -> Vec3 {
+    Vec3::new(
+        -0.21,
+        0.021 + f32::from(deck_count(snapshot)) * 0.00045 + 0.0025,
+        -0.23,
+    )
+}
+
 impl WorldInteraction {
     pub(super) fn blocks_card_input(&self) -> bool {
         self.reading.is_some() || self.pointer_over_ui
@@ -95,6 +111,8 @@ enum PanelKind {
     Players,
     Activity,
     ScoreSheet,
+    NextStep,
+    Deck,
 }
 
 impl PanelKind {
@@ -104,6 +122,8 @@ impl PanelKind {
             Self::Players => "PLAYERS",
             Self::Activity => "ACTIVITY · newest first",
             Self::ScoreSheet => "POCHE · SCORE SHEET",
+            Self::NextStep => "WHAT HAPPENS NEXT",
+            Self::Deck => "DECK · click to deal",
         }
     }
 }
@@ -196,12 +216,6 @@ pub(super) fn interact_with_world(
     hand: Res<hand_view::HandProjection>,
     mut inspection: ResMut<SheetInspectionRequest>,
 ) {
-    if inspection.active {
-        events.clear();
-        interaction.pointer_over_ui = true;
-        interaction.hovered = None;
-        return;
-    }
     for WorldUiCommand(action) in events.read() {
         match action {
             WorldUiAction::ToggleSpeech => interaction.speech_open = !interaction.speech_open,
@@ -264,11 +278,14 @@ pub(super) fn interact_with_world(
 
     let mut closest: Option<(f32, WorldHit)> = None;
     for (panel, transform) in &panels {
+        if inspection.active && panel.kind != PanelKind::ScoreSheet {
+            continue;
+        }
         if let Some(distance) = intersect_panel(ray, transform, panel.half_size) {
             choose_nearest(&mut closest, distance, WorldHit::Panel(panel.kind));
         }
     }
-    if model.snapshot.own_seat().is_none() {
+    if !inspection.active && model.snapshot.own_seat().is_none() {
         for placement in layout.0.seats() {
             let seat = placement.seat.get();
             if model
@@ -292,8 +309,9 @@ pub(super) fn interact_with_world(
     }
     let nearest_card = model
         .snapshot
-        .hand
+        .card_poses
         .iter()
+        .filter(|card| super::may_manipulate_card(&model.snapshot, card))
         .filter_map(|card| {
             let pose = poses.0.get(&card.card_key)?;
             hand_view::card_hit(ray, mm_position(pose.current), pose.current_rotation)
@@ -301,10 +319,11 @@ pub(super) fn interact_with_world(
         .min_by(f32::total_cmp);
     // A held/owned card placed on the paper stays grabbable. Presentation
     // surfaces behind its face must not claim the same click.
-    if let Some(card_distance) = nearest_card {
+    if let Some(card_distance) = nearest_card.filter(|_| !inspection.active) {
         closest = closest.filter(|(distance, _)| *distance < card_distance);
     }
     let Some((_, target)) = closest else {
+        interaction.pointer_over_ui = inspection.active;
         if keys.pressed(KeyCode::KeyZ) {
             interaction.hovered = zone_hover(ray, &layout.0, &model.snapshot);
         }
@@ -314,6 +333,10 @@ pub(super) fn interact_with_world(
     interaction.hovered = Some(match target {
         WorldHit::Seat(seat) => format!("Take seat {}", seat + 1),
         WorldHit::Panel(PanelKind::RoomCode) => "Copy room code".into(),
+        WorldHit::Panel(PanelKind::Deck) => next_step(&model.snapshot).join("\n"),
+        WorldHit::Panel(PanelKind::ScoreSheet) if inspection.active => {
+            "Click paper again to restore camera · wheel zoom · MMB pan".into()
+        }
         WorldHit::Panel(kind) => format!("Read {}", kind.title().to_lowercase()),
     });
     if !mouse.just_pressed(MouseButton::Left) {
@@ -340,6 +363,22 @@ pub(super) fn interact_with_world(
                 Some(Ok(())) => "Lobby code copied.".into(),
                 _ => "The lobby code could not be copied.".into(),
             };
+        }
+        WorldHit::Panel(PanelKind::Deck) => {
+            if let Some(room_id) = model.snapshot.room_id() {
+                if model.snapshot.game.as_ref().is_some_and(|game| {
+                    game.phase == "awaiting-deal" && game.dealer_seat == model.snapshot.own_seat()
+                }) {
+                    state.status = "Shuffling and dealing…".into();
+                    if let Err(error) = bridge.send(BridgeIntent::DealNextRound {
+                        room_id: room_id.into(),
+                    }) {
+                        state.status = error;
+                    }
+                } else {
+                    state.status = next_step(&model.snapshot).join(" ");
+                }
+            }
         }
         WorldHit::Panel(kind) => open_panel(kind, &layout.0, &mut interaction, &mut inspection),
     }
@@ -447,10 +486,11 @@ fn sync_world_presentation(
         && model.snapshot.room_id().is_some();
     let surface_content = if room_visible {
         format!(
-            "{:?}|{:?}|{:?}|{}|{}",
+            "{:?}|{:?}|{:?}|{:?}|{}|{}",
             model.snapshot.members,
             model.snapshot.game,
             model.snapshot.activity,
+            model.snapshot.rounds,
             state
                 .capability
                 .as_ref()
@@ -546,11 +586,17 @@ fn sync_world_presentation(
             Vec3::new(1.02, 0.29, 0.33),
             Vec2::new(0.72, 0.38),
         ),
+        (
+            PanelKind::NextStep,
+            Vec3::new(-0.72, 0.50, -0.82),
+            Vec2::new(0.74, 0.24),
+        ),
     ] {
         let lines = panel_lines(kind, &model.snapshot, state.capability.as_ref());
         painter.panel(kind, anchor, size, &lines, true);
     }
     painter.score_sheet(sheet_inspection_target(&layout.0), &model.snapshot);
+    painter.deck(&model.snapshot);
 
     for placement in layout.0.seats() {
         let seat = placement.seat.get();
@@ -613,6 +659,88 @@ struct WorldPainter<'a, 'w, 's> {
 }
 
 impl WorldPainter<'_, '_, '_> {
+    fn deck(&mut self, snapshot: &ClientSnapshot) {
+        let active = snapshot
+            .game
+            .as_ref()
+            .is_some_and(|game| matches!(game.phase.as_str(), "bidding" | "playing" | "scoring"));
+        let count = deck_count(snapshot);
+        let height = f32::from(count) * 0.00045;
+        // The public deck sits clear of the bowl. It represents undealt count,
+        // not the private shuffled order or a second source of card identities.
+        let center = Vec3::new(-0.21, 0.021 + height * 0.5, -0.23);
+        let root = self
+            .commands
+            .spawn((
+                WorldPresentation,
+                WorldPanel {
+                    kind: PanelKind::Deck,
+                    half_size: Vec2::new(0.035, 0.048),
+                },
+                Transform::from_translation(center + Vec3::Y * height * 0.5)
+                    .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+                Visibility::default(),
+            ))
+            .id();
+        let stack = self
+            .commands
+            .spawn((
+                Mesh3d(self.meshes.add(Cuboid::new(0.064, 0.088, height))),
+                MeshMaterial3d(self.materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.19, 0.27, 0.42),
+                    perceptual_roughness: 0.85,
+                    ..default()
+                })),
+                Transform::from_xyz(0.0, 0.0, -height * 0.5),
+                RenderLayers::layer(0),
+            ))
+            .id();
+        self.commands.entity(root).add_child(stack);
+        if let Some(trump) = snapshot
+            .game
+            .as_ref()
+            .and_then(|game| game.trump)
+            .filter(|_| active)
+        {
+            let card = self
+                .commands
+                .spawn((
+                    Mesh3d(self.meshes.add(Cuboid::new(0.064, 0.002, 0.088))),
+                    MeshMaterial3d(self.materials.add(StandardMaterial {
+                        base_color: Color::srgb(0.94, 0.92, 0.80),
+                        ..default()
+                    })),
+                    Transform::from_xyz(0.0, 0.0, 0.0015)
+                        .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                    RenderLayers::layer(0),
+                ))
+                .id();
+            self.commands.entity(root).add_child(card);
+            hand_view::spawn_card_face(
+                self.commands,
+                card,
+                self.meshes.add(Plane3d::default()),
+                &public_card_label(trump),
+                self.images,
+                self.materials,
+                0,
+            );
+        }
+        self.label(
+            center + Vec3::new(0.0, height + 0.075, 0.0),
+            &format!(
+                "{count} in deck{}",
+                if active {
+                    " · trump on top"
+                } else {
+                    " · click to deal"
+                }
+            ),
+            0.36,
+            NAME_TAG_FOREGROUND,
+        );
+    }
+
     fn score_sheet(&mut self, target: SheetInspectionTarget, snapshot: &ClientSnapshot) {
         let root = self
             .commands
@@ -681,6 +809,7 @@ impl WorldPainter<'_, '_, '_> {
                 ink.clone(),
             );
         }
+        let font_height = SHEET_FONT_HEIGHT.min(target.size.y * 0.60 / rows.len() as f32 * 0.65);
         for (row, cells) in rows.iter().enumerate() {
             for (column, value) in cells.iter().enumerate() {
                 let bounds = sheet_cell_bounds(target.size, row, column, rows.len());
@@ -696,7 +825,7 @@ impl WorldPainter<'_, '_, '_> {
                 self.commands.entity(root).add_child(cell);
                 let width = bounds.width() - 0.003;
                 let maximum_characters = (1..=64_usize)
-                    .take_while(|count| *count as f32 * SHEET_FONT_HEIGHT * 0.6 <= width)
+                    .take_while(|count| *count as f32 * font_height * 0.6 <= width)
                     .last()
                     .unwrap_or(1);
                 let label = cell_label(value, maximum_characters);
@@ -704,20 +833,23 @@ impl WorldPainter<'_, '_, '_> {
                     cell,
                     &label,
                     Vec3::ZERO,
-                    Vec2::new(width, SHEET_FONT_HEIGHT),
+                    Vec2::new(width, font_height),
                     [30, 31, 27],
                 );
             }
         }
-        let phase = snapshot.game.as_ref().map_or_else(
-            || "Waiting for the first deal".into(),
-            |game| {
-                if game.phase == "scoring" {
-                    "Outcome shown; scoring pending".into()
-                } else {
-                    format!("{} · round {}", game.phase, game.round_index + 1)
-                }
-            },
+        let pot: u32 = snapshot
+            .coins
+            .iter()
+            .filter(|coin| coin.container == "bowl")
+            .map(|coin| u32::from(coin.denomination_cents))
+            .sum();
+        let phase = format!(
+            "Bowl ${}.{:02} · due {}¢ / {}¢",
+            pot / 100,
+            pot % 100,
+            snapshot.payment_due(0),
+            snapshot.payment_due(1)
         );
         for (line, label) in [
             phase.as_str(),
@@ -1002,6 +1134,7 @@ fn panel_lines(
         PanelKind::ScoreSheet => {
             lines.extend(score_sheet_lines(snapshot));
         }
+        PanelKind::NextStep | PanelKind::Deck => lines.extend(next_step(snapshot)),
     }
     lines
 }
@@ -1015,6 +1148,79 @@ fn seat_name(snapshot: &ClientSnapshot, seat: u8) -> String {
             || format!("Seat {}", seat + 1),
             |member| member.display_name.clone(),
         )
+}
+
+fn public_card_label(code: u8) -> String {
+    const RANKS: [&str; 13] = [
+        "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A",
+    ];
+    const SUITS: [&str; 4] = ["♣", "♦", "♥", "♠"];
+    if code >= 52 {
+        return "?".into();
+    }
+    format!(
+        "{}{}",
+        RANKS[usize::from(code % 13)],
+        SUITS[usize::from(code / 13)]
+    )
+}
+
+fn next_step(snapshot: &ClientSnapshot) -> Vec<String> {
+    if snapshot
+        .members
+        .iter()
+        .filter(|member| member.seat.is_some())
+        .count()
+        < 2
+    {
+        return vec!["Take both seats to begin.".into()];
+    }
+    let due = [snapshot.payment_due(0), snapshot.payment_due(1)];
+    if snapshot
+        .game
+        .as_ref()
+        .is_none_or(|game| game.phase == "scoring")
+        && due.iter().any(|value| *value > 0)
+    {
+        return due
+            .iter()
+            .enumerate()
+            .filter(|(_, amount)| **amount > 0)
+            .map(|(seat, amount)| {
+                format!(
+                    "{}: move {amount}¢ into the bowl.",
+                    seat_name(snapshot, seat as u8)
+                )
+            })
+            .collect();
+    }
+    let Some(game) = &snapshot.game else {
+        return vec!["Waiting for the first deal.".into()];
+    };
+    match game.phase.as_str() {
+        "awaiting-deal" => vec![format!(
+            "{}: click the deck to shuffle and deal round {}.",
+            game.dealer_seat
+                .map_or_else(|| "Dealer".into(), |seat| seat_name(snapshot, seat)),
+            game.round_index + 1
+        )],
+        "bidding" => vec![format!(
+            "{}: use Speech to announce a bid.",
+            game.actor_seat
+                .map_or_else(|| "Next player".into(), |seat| seat_name(snapshot, seat))
+        )],
+        "playing" => vec![format!(
+            "{}: place a legal card fully inside PLAY, then release.",
+            game.actor_seat
+                .map_or_else(|| "Next player".into(), |seat| seat_name(snapshot, seat))
+        )],
+        "scoring" => vec!["Payments received. Preparing the next round.".into()],
+        "finished" => vec![
+            "Game complete. Scores are on the sheet.".into(),
+            "The bowl is held pending payout.".into(),
+        ],
+        _ => vec![format!("Authority phase: {}", game.phase)],
+    }
 }
 
 fn score_sheet_lines(snapshot: &ClientSnapshot) -> Vec<String> {
@@ -1035,6 +1241,16 @@ fn score_sheet_cells(snapshot: &ClientSnapshot) -> Vec<[String; 5]> {
         seat_name(snapshot, 1),
     ]];
     let mut totals = [0_u16, 0];
+    for round in &snapshot.rounds {
+        rows.push([
+            (round.round_index + 1).to_string(),
+            seat_name(snapshot, round.dealer_seat),
+            round.hand_size.to_string(),
+            score_cell(round.bids[0], round.tricks_won[0], round.hand_size),
+            score_cell(round.bids[1], round.tricks_won[1], round.hand_size),
+        ]);
+        totals = round.totals;
+    }
     if let Some(game) = &snapshot.game {
         let settled = matches!(game.phase.as_str(), "scored" | "finished" | "scoring")
             && game.hand_counts == [0, 0];
@@ -1043,21 +1259,28 @@ fn score_sheet_cells(snapshot: &ClientSnapshot) -> Vec<[String; 5]> {
             Some(bid) if !settled => bid.to_string(),
             Some(bid) => score_cell(bid, game.tricks_won[index], game.hand_size),
         });
-        rows.push([
-            format!("{}", game.round_index + 1),
-            game.dealer_seat
-                .map_or_else(|| "—".into(), |seat| seat_name(snapshot, seat)),
-            game.hand_size.to_string(),
-            cells[0].clone(),
-            cells[1].clone(),
-        ]);
+        if game.phase != "finished"
+            && !snapshot
+                .rounds
+                .iter()
+                .any(|round| round.round_index == game.round_index)
+        {
+            rows.push([
+                format!("{}", game.round_index + 1),
+                game.dealer_seat
+                    .map_or_else(|| "—".into(), |seat| seat_name(snapshot, seat)),
+                game.hand_size.to_string(),
+                cells[0].clone(),
+                cells[1].clone(),
+            ]);
+        }
         totals = game.scores;
     } else {
         rows.push(std::array::from_fn(|_| String::new()));
     }
-    // Blank writing space does not invent past/future round results beyond the
-    // authority's current first-round projection.
-    rows.extend((0..5).map(|_| std::array::from_fn(|_| String::new())));
+    // Preserve every authority-recorded round; blank writing space does not
+    // invent past or future results. Ink shrinks uniformly for longer sheets.
+    rows.extend((rows.len()..7).map(|_| std::array::from_fn(|_| String::new())));
     rows.push([
         "Total".into(),
         "recorded".into(),
@@ -1178,16 +1401,27 @@ fn spawn_table_controls(
             GlobalZIndex(20),
         ))
         .with_children(|root| {
-            small_button(
-                root,
-                if may_bid(snapshot, 0) {
-                    "Speech · your bid"
-                } else {
-                    "Speech · bids"
-                },
-                WorldUiAction::ToggleSpeech,
-            );
-            if interaction.speech_open {
+            if snapshot
+                .game
+                .as_ref()
+                .is_some_and(|game| game.phase == "bidding")
+            {
+                small_button(
+                    root,
+                    if may_bid(snapshot, 0) {
+                        "Speech · your bid"
+                    } else {
+                        "Speech · bids"
+                    },
+                    WorldUiAction::ToggleSpeech,
+                );
+            }
+            if interaction.speech_open
+                && snapshot
+                    .game
+                    .as_ref()
+                    .is_some_and(|game| game.phase == "bidding")
+            {
                 root.spawn((
                     Node {
                         padding: UiRect::all(px(10.)),
@@ -1417,6 +1651,81 @@ mod tests {
     }
 
     #[test]
+    fn scoresheet_keeps_history_and_does_not_duplicate_current_scored_row() {
+        let mut snapshot = snapshot();
+        snapshot.rounds.push(poche_spacetimedb_client::RoundView {
+            round_index: 0,
+            dealer_seat: 0,
+            hand_size: 1,
+            bids: [0, 0],
+            tricks_won: [1, 0],
+            points: [0, 10],
+            totals: [0, 10],
+            payment_cents: [10, 0],
+        });
+        let game = snapshot.game.as_mut().unwrap();
+        game.phase = "scoring".into();
+        game.scores = [0, 10];
+        let rows = score_sheet_cells(&snapshot);
+        assert_eq!(rows.iter().filter(|row| row[0] == "1").count(), 1);
+        assert_eq!(&rows[1][3..], ["●", "10"]);
+        let game = snapshot.game.as_mut().unwrap();
+        game.phase = "awaiting-deal".into();
+        game.round_index = 1;
+        game.dealer_seat = Some(1);
+        game.hand_size = 2;
+        let rows = score_sheet_cells(&snapshot);
+        assert_eq!(&rows[1][3..], ["●", "10"]);
+        assert_eq!(rows[2][1], "Bob");
+        assert_eq!(&rows.last().unwrap()[3..], ["0", "10"]);
+        assert!(
+            next_step(&snapshot)
+                .join(" ")
+                .contains("Bob: click the deck")
+        );
+    }
+
+    #[test]
+    fn next_step_explains_payment_instead_of_implying_a_bid_turn() {
+        let mut snapshot = snapshot();
+        snapshot.game.as_mut().unwrap().phase = "scoring".into();
+        snapshot.game.as_mut().unwrap().bids = [Some(0), Some(0)];
+        snapshot.game.as_mut().unwrap().tricks_won = [1, 0];
+        let text = next_step(&snapshot).join(" ");
+        assert!(text.contains("Alice: move"));
+        assert!(text.contains("into the bowl"));
+        assert!(!text.contains("Speech"));
+        assert_eq!(public_card_label(8), "10♣");
+        assert_eq!(public_card_label(51), "A♠");
+        assert_eq!(deck_count(&snapshot), 49);
+    }
+
+    #[test]
+    fn finished_scoresheet_does_not_invent_a_fourteenth_round() {
+        let mut snapshot = snapshot();
+        for index in 0..13 {
+            snapshot.rounds.push(poche_spacetimedb_client::RoundView {
+                round_index: index,
+                dealer_seat: (index % 2) as u8,
+                hand_size: 1,
+                bids: [0, 0],
+                tricks_won: [1, 0],
+                points: [0, 10],
+                totals: [0, (index + 1) * 10],
+                payment_cents: [10, 0],
+            });
+        }
+        let game = snapshot.game.as_mut().unwrap();
+        game.phase = "finished".into();
+        game.round_index = 13;
+        game.hand_size = 0;
+        game.scores = [0, 130];
+        let rows = score_sheet_cells(&snapshot);
+        assert_eq!(rows.len(), 15); // header, 13 real rounds, total
+        assert!(!rows.iter().any(|row| row[0] == "14"));
+    }
+
+    #[test]
     fn speech_thinks_in_first_person_and_does_not_repeat_old_bids_during_play() {
         let mut snapshot = snapshot();
         snapshot.game.as_mut().unwrap().actor_seat = Some(0);
@@ -1541,7 +1850,8 @@ mod tests {
         let mut backgrounds = app
             .world_mut()
             .query_filtered::<&MeshMaterial3d<StandardMaterial>, With<NameTagBackdrop>>();
-        assert_eq!(backgrounds.iter(app.world()).count(), 2);
+        // Two name tags and the public deck-count tag use the same backing.
+        assert_eq!(backgrounds.iter(app.world()).count(), 3);
         let materials = app.world().resource::<Assets<StandardMaterial>>();
         for handle in backgrounds.iter(app.world()) {
             let material = materials.get(&handle.0).unwrap();
@@ -1618,7 +1928,7 @@ mod tests {
         let mut panels = app.world_mut().query_filtered::<Entity, With<WorldPanel>>();
         let before = panels.iter(app.world()).collect::<Vec<_>>();
         let images_before = app.world().resource::<Assets<Image>>().len();
-        assert_eq!(before.len(), 4);
+        assert_eq!(before.len(), 6); // four notices, paper and clickable deck
         let mut buttons = app
             .world_mut()
             .query_filtered::<Entity, With<WorldUiElement>>();

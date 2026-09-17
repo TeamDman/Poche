@@ -5,11 +5,10 @@
 //! Private-table adapters for the renderer-neutral conserved coin contract.
 use super::{
     Coin, Identity, ReducerContext, Table, active_room, append_activity, card_key, coin,
-    ensure_deal, member, member_key, room_game,
+    ensure_deal, ensure_score_record, member, member_key, room_game, round_record, settle_if_paid,
 };
 use poche_money::{
-    CoinContainer, PaymentStage, amount_due, coin_rest_pose, first_free_coin_pose,
-    initial_inventory, validate_transfer,
+    CoinContainer, coin_rest_pose, first_free_coin_pose, initial_inventory, validate_transfer,
 };
 
 pub(super) fn pot_cents(ctx: &ReducerContext, room: &str) -> u32 {
@@ -101,27 +100,16 @@ pub(super) fn migrate_legacy_room(ctx: &ReducerContext, room: &str) {
     }
 }
 
-fn payment_due(ctx: &ReducerContext, room: &str, owner: Identity, seat: u8) -> u32 {
-    let stage =
-        ctx.db
-            .room_game()
+pub(super) fn payment_due(ctx: &ReducerContext, room: &str, owner: Identity, seat: u8) -> u32 {
+    let obligations = 25
+        + ctx
+            .db
+            .round_record()
             .room_id()
-            .find(&room.to_string())
-            .map_or(PaymentStage::Ante, |game| {
-                if game.phase == "scoring" {
-                    let (bid, tricks) = if seat == 0 {
-                        (game.bid_0, game.tricks_won_0)
-                    } else {
-                        (game.bid_1, game.tricks_won_1)
-                    };
-                    PaymentStage::Scoring {
-                        missed_bid: bid.is_some_and(|bid| bid != tricks),
-                    }
-                } else {
-                    PaymentStage::Playing
-                }
-            });
-    amount_due(stage, paid_cents(ctx, room, owner))
+            .filter(room)
+            .map(|row| row.payment_cents[usize::from(seat)])
+            .sum::<u32>();
+    obligations.saturating_sub(paid_cents(ctx, room, owner))
 }
 
 pub(super) fn ensure_inventory(ctx: &ReducerContext, room: &str, owner: Identity, seat: u8) {
@@ -198,6 +186,7 @@ pub(super) fn move_coin(
     position: [i32; 3],
     commit: bool,
 ) -> Result<(), String> {
+    ensure_score_record(ctx, room)?;
     let caller = ctx
         .db
         .member()
@@ -273,6 +262,7 @@ pub(super) fn move_coin(
             ctx.db.room_game().room_id().update(game);
         }
         ensure_deal(ctx, room)?;
+        settle_if_paid(ctx, room)?;
     }
     Ok(())
 }

@@ -23,6 +23,7 @@ use poche_environment::{
 use poche_oracle_rust::{Card, Game, PhaseTag, Seat, Turn};
 use spacetimedb::{ConnectionId, Identity, ReducerContext, Table, Timestamp, ViewContext};
 mod money;
+mod round_flow;
 
 const MAX_NAME_LEN: usize = 32;
 const MAX_POSE_MM: i32 = 10_000;
@@ -155,6 +156,30 @@ pub struct GameAction {
     pub seat: u8,
     pub kind: String,
     pub value: u8,
+}
+
+/// Immutable public score-sheet row. Payments are obligations, not minted money.
+#[spacetimedb::table(accessor = round_record)]
+pub struct RoundRecord {
+    #[primary_key]
+    pub round_key: String,
+    #[index(btree)]
+    pub room_id: String,
+    pub round_index: u16,
+    pub dealer_seat: u8,
+    pub hand_size: u8,
+    pub bids: Vec<u8>,
+    pub tricks_won: Vec<u8>,
+    pub points: Vec<u16>,
+    pub totals: Vec<u16>,
+    pub payment_cents: Vec<u32>,
+}
+
+#[spacetimedb::view(accessor = visible_rounds, public, primary_key = round_key)]
+pub fn visible_rounds(ctx: &ViewContext) -> Vec<RoundRecord> {
+    active_room_id(ctx).map_or_else(Vec::new, |room| {
+        ctx.db.round_record().room_id().filter(&room).collect()
+    })
 }
 
 /// An append-only, viewer-safe account of accepted room activity.
@@ -402,6 +427,7 @@ pub fn join_room(
         );
         money::migrate_legacy_room(ctx, &secret.room_id);
         repair_deal_if_incoherent(ctx, &secret.room_id);
+        settle_if_paid(ctx, &secret.room_id)?;
         return Ok(());
     }
     insert_member(ctx, secret.room_id.clone(), display_name.clone());
@@ -414,6 +440,7 @@ pub fn join_room(
     );
     money::migrate_legacy_room(ctx, &secret.room_id);
     repair_deal_if_incoherent(ctx, &secret.room_id);
+    settle_if_paid(ctx, &secret.room_id)?;
     Ok(())
 }
 
@@ -505,24 +532,18 @@ pub fn set_card_pose(
     rz_mdeg: i32,
 ) -> Result<(), String> {
     validate_pose(x_mm, y_mm, z_mm, rx_mdeg, ry_mdeg, rz_mdeg)?;
-    let card_key = card_key(&room_id, ctx.sender(), &card_id);
-    let private_card = ctx
-        .db
-        .private_hand_card()
-        .card_key()
-        .find(&card_key)
-        .ok_or_else(|| "card is not controlled by this identity".to_string())?;
-    if private_card.owner != ctx.sender() {
-        return Err("card is not controlled by this identity".into());
-    }
+    let seat = caller_seat(ctx, &room_id)?;
     let mut pose = ctx
         .db
         .card_pose()
-        .card_key()
-        .find(&card_key)
+        .room_id()
+        .filter(&room_id)
+        .find(|pose| pose.card_id == card_id)
         .ok_or_else(|| "card pose is missing".to_string())?;
-    if pose.logical_location != "hand" {
-        return Err("only a card still in your hand may be manipulated".into());
+    if !((pose.logical_location == "hand" && pose.owner == ctx.sender())
+        || pose.logical_location == format!("won:{seat}"))
+    {
+        return Err("only your hand or your won trick pile may be manipulated".into());
     }
     if sequence <= pose.sequence {
         return Err("stale card pose sequence".into());
@@ -536,6 +557,43 @@ pub fn set_card_pose(
     pose.sequence = sequence;
     pose.committed_at = ctx.timestamp;
     ctx.db.card_pose().card_key().update(pose);
+    Ok(())
+}
+
+/// After all missed-bid payments, only the next dealer may collect/shuffle/deal.
+#[spacetimedb::reducer]
+pub fn deal_next_round(ctx: &ReducerContext, room_id: String) -> Result<(), String> {
+    let seat = caller_seat(ctx, &room_id)?;
+    settle_if_paid(ctx, &room_id)?;
+    let mut record = ctx
+        .db
+        .room_game()
+        .room_id()
+        .find(&room_id)
+        .ok_or("pay both opening antes before the first deal")?;
+    if record.phase != "awaiting-deal" {
+        return Err("finish the round and pay every missed-bid dime before dealing".into());
+    }
+    if record.dealer_seat != Some(seat) {
+        return Err("only the next dealer may deal this round".into());
+    }
+    let game = reconstruct_game(ctx, &record)?;
+    let next = round_flow::deal(&game, record.seed)?;
+    append_action(ctx, &record, seat, "deal", 0);
+    record.action_count += 1;
+    write_room_game(ctx, record, &next)?;
+    clear_round_cards(ctx, &room_id);
+    materialize_hands(ctx, &room_id, &next)?;
+    append_activity(
+        ctx,
+        &room_id,
+        "deal-started",
+        format!(
+            "{} shuffled and dealt round {}",
+            caller_name(ctx, &room_id)?,
+            next.observe(Seat::new(0).map_err(rule_error)?).round_index + 1
+        ),
+    );
     Ok(())
 }
 
@@ -648,17 +706,18 @@ pub fn play_card(ctx: &ReducerContext, room_id: String, card_id: String) -> Resu
     ctx.db.private_card_identity().card_key().delete(&key);
 
     let observation = next.observe(Seat::new(0).map_err(rule_error)?);
-    if observation.phase == PhaseTag::Scoring {
+    if play_index + 1 == PLAYERS {
+        let previous = game.observe(Seat::new(0).map_err(rule_error)?);
         let winner = observation
             .tricks_won
             .iter()
-            .position(|tricks| *tricks == 1)
+            .zip(previous.tricks_won)
+            .position(|(after, before)| *after == before + 1)
             .and_then(|index| u8::try_from(index).ok())
             .ok_or_else(|| "completed trick has no unique winner".to_string())?;
         finish_trick_poses(ctx, &room_id, winner);
-    } else if play_index > 0 {
-        return Err("rules transition did not complete the expected trick".into());
     }
+    settle_if_paid(ctx, &room_id)?;
     Ok(())
 }
 
@@ -760,6 +819,9 @@ pub fn identity_connected(ctx: &ReducerContext) {
     if let Some(active) = ctx.db.active_room().identity().find(&ctx.sender()) {
         money::migrate_legacy_room(ctx, &active.room_id);
         repair_deal_if_incoherent(ctx, &active.room_id);
+        if let Err(error) = settle_if_paid(ctx, &active.room_id) {
+            spacetimedb::log::warn!("round recovery failed: {error}");
+        }
     }
 }
 
@@ -817,7 +879,22 @@ fn ensure_deal(ctx: &ReducerContext, room_id: &str) -> Result<(), String> {
     projection.pot_cents = money::pot_cents(ctx, room_id);
     ctx.db.room_game().insert(projection);
     append_activity(ctx, room_id, "deal-started", "The first deal began".into());
+    materialize_hands(ctx, room_id, &game)
+}
 
+fn materialize_hands(
+    ctx: &ReducerContext,
+    room_id: &str,
+    game: &Game<PLAYERS>,
+) -> Result<(), String> {
+    let seated = ctx
+        .db
+        .member()
+        .room_id()
+        .filter(room_id)
+        .filter(|member| member.seat.is_some())
+        .collect::<Vec<_>>();
+    let round = game.observe(Seat::new(0).map_err(rule_error)?).round_index;
     for member in seated {
         let seat = member.seat.expect("filtered to seated members");
         let player = Seat::new(usize::from(seat)).map_err(rule_error)?;
@@ -826,7 +903,11 @@ fn ensure_deal(ctx: &ReducerContext, room_id: &str) -> Result<(), String> {
         for (slot, card) in hand.iter().enumerate() {
             let slot = u8::try_from(slot).map_err(|_| "hand slot exceeds u8".to_string())?;
             let face_code = card_code(card)?;
-            let card_id = format!("card-{seat}-{slot}");
+            let card_id = if round == 0 {
+                format!("card-{seat}-{slot}")
+            } else {
+                format!("round-{round}-card-{seat}-{slot}")
+            };
             let key = card_key(room_id, member.identity, &card_id);
             if ctx.db.private_hand_card().card_key().find(&key).is_some() {
                 continue;
@@ -881,6 +962,20 @@ fn abandon_deal(ctx: &ReducerContext, room_id: &str) -> bool {
     {
         ctx.db.game_action().action_key().delete(&action.action_key);
     }
+    for row in ctx
+        .db
+        .round_record()
+        .room_id()
+        .filter(room_id)
+        .collect::<Vec<_>>()
+    {
+        ctx.db.round_record().round_key().delete(&row.round_key);
+    }
+    clear_round_cards(ctx, room_id);
+    had_deal
+}
+
+fn clear_round_cards(ctx: &ReducerContext, room_id: &str) {
     for card in ctx
         .db
         .card_pose()
@@ -896,7 +991,6 @@ fn abandon_deal(ctx: &ReducerContext, room_id: &str) -> bool {
         ctx.db.revealed_card().card_key().delete(&card.card_key);
         ctx.db.card_pose().card_key().delete(&card.card_key);
     }
-    had_deal
 }
 
 fn repair_deal_if_incoherent(ctx: &ReducerContext, room_id: &str) {
@@ -1128,19 +1222,8 @@ fn reconstruct_game(ctx: &ReducerContext, record: &RoomGame) -> Result<Game<PLAY
         if action.sequence != u64::try_from(expected).unwrap_or(u64::MAX) {
             return Err("game action log is not contiguous".into());
         }
-        let player = Seat::new(usize::from(action.seat)).map_err(rule_error)?;
-        let player_action = match action.kind.as_str() {
-            "bid" => OraclePlayerAction::Bid {
-                player,
-                tricks: action.value,
-            },
-            "play" => OraclePlayerAction::Play {
-                player,
-                card: card_from_code(action.value)?,
-            },
-            _ => return Err("game action log contains an unknown action".into()),
-        };
-        game = transition_game(&game, EnvironmentAction::Player(player_action))?;
+        game =
+            round_flow::replay_action(&game, record.seed, action.seat, &action.kind, action.value)?;
     }
     Ok(game)
 }
@@ -1152,6 +1235,116 @@ fn transition_game(
     OracleEnvironment::<PLAYERS>::transition(game, action)
         .map(|outcome| outcome.state)
         .map_err(rule_error)
+}
+
+/// Idempotent score recording is separate from the payment-gated phase change.
+fn ensure_score_record(ctx: &ReducerContext, room: &str) -> Result<(), String> {
+    let Some(record) = ctx.db.room_game().room_id().find(&room.to_string()) else {
+        return Ok(());
+    };
+    if record.phase != "scoring" {
+        return Ok(());
+    }
+    let key = format!("{room}:{}", record.round_index);
+    if ctx.db.round_record().round_key().find(&key).is_some() {
+        return Ok(());
+    }
+    let game = reconstruct_game(ctx, &record)?;
+    let view = game.observe(Seat::new(0).map_err(rule_error)?);
+    let scores = std::array::from_fn::<_, 2, _>(|seat| {
+        poche_oracle_rust::score_round(
+            view.bids[seat].expect("scoring has all bids"),
+            view.tricks_won[seat],
+            view.hand_size,
+        )
+    });
+    let totals = round_flow::scored_totals(&game);
+    ctx.db.round_record().insert(RoundRecord {
+        round_key: key,
+        room_id: room.into(),
+        round_index: record.round_index,
+        dealer_seat: record.dealer_seat.expect("scoring has dealer"),
+        hand_size: view.hand_size,
+        bids: view.bids.map(|bid| bid.expect("scoring has bids")).to_vec(),
+        tricks_won: view.tricks_won.to_vec(),
+        points: scores.map(|score| score.points).to_vec(),
+        totals: totals.to_vec(),
+        payment_cents: scores.map(|score| score.payment_cents).to_vec(),
+    });
+    write_room_game(ctx, record, &game)?;
+    append_activity(
+        ctx,
+        room,
+        "round-scored",
+        format!(
+            "Round {} scored: {} and {} points; running totals {} and {}",
+            view.round_index + 1,
+            scores[0].points,
+            scores[1].points,
+            totals[0],
+            totals[1]
+        ),
+    );
+    Ok(())
+}
+
+/// Settles once after all real coins are paid, but never deals on a player's behalf.
+fn settle_if_paid(ctx: &ReducerContext, room: &str) -> Result<(), String> {
+    ensure_score_record(ctx, room)?;
+    let Some(mut record) = ctx.db.room_game().room_id().find(&room.to_string()) else {
+        return Ok(());
+    };
+    if record.phase != "scoring" {
+        return Ok(());
+    }
+    let members = ctx
+        .db
+        .member()
+        .room_id()
+        .filter(room)
+        .filter(|member| member.seat.is_some())
+        .collect::<Vec<_>>();
+    if members.len() != PLAYERS
+        || members
+            .iter()
+            .any(|member| money::payment_due(ctx, room, member.identity, member.seat.unwrap()) != 0)
+    {
+        return Ok(());
+    }
+    let game = reconstruct_game(ctx, &record)?;
+    let next = transition_game(&game, EnvironmentAction::Settle)?;
+    append_action(ctx, &record, 0, "settle", 0);
+    record.action_count += 1;
+    write_room_game(ctx, record, &next)?;
+    clear_round_cards(ctx, room);
+    let view = next.observe(Seat::new(0).map_err(rule_error)?);
+    if view.phase == PhaseTag::Finished {
+        append_activity(
+            ctx,
+            room,
+            "game-finished",
+            format!(
+                "All rounds are complete; final scores {} and {}. The bowl is reserved for the winner(s); payout is not automated",
+                view.scores[0], view.scores[1]
+            ),
+        );
+    } else {
+        let dealer = view.dealer.expect("awaiting deal has dealer").index();
+        let name = members
+            .iter()
+            .find(|member| member.seat == u8::try_from(dealer).ok())
+            .map_or("the next dealer", |member| member.display_name.as_str());
+        append_activity(
+            ctx,
+            room,
+            "round-settled",
+            format!(
+                "All payments settled; cards returned to the deck. {name} can deal round {} by clicking the deck",
+                view.round_index + 1
+            ),
+        );
+    }
+    Ok(())
 }
 
 fn append_action(ctx: &ReducerContext, record: &RoomGame, seat: u8, kind: &str, value: u8) {
@@ -1221,8 +1414,8 @@ fn project_room_game(
         trick_card_1: trick.get(1).map(|play| card_code(play.card)).transpose()?,
         tricks_won_0: view.tricks_won[0],
         tricks_won_1: view.tricks_won[1],
-        score_0: view.scores[0],
-        score_1: view.scores[1],
+        score_0: round_flow::scored_totals(game)[0],
+        score_1: round_flow::scored_totals(game)[1],
         pot_cents: view.pot_cents,
         trump: view.trump.map(card_code).transpose()?,
     })
@@ -1231,19 +1424,27 @@ fn project_room_game(
 fn finish_trick_poses(ctx: &ReducerContext, room_id: &str, winner: u8) {
     let mut cards = ctx
         .db
-        .revealed_card()
+        .card_pose()
         .room_id()
         .filter(room_id)
+        .filter(|pose| pose.logical_location.starts_with("play:"))
         .collect::<Vec<_>>();
     cards.sort_by(|left, right| left.card_key.cmp(&right.card_key));
     let count = i32::try_from(cards.len()).unwrap_or_default();
-    for (index, card) in cards.into_iter().enumerate() {
-        let Some(mut pose) = ctx.db.card_pose().card_key().find(&card.card_key) else {
-            continue;
-        };
+    let previous_count = i32::try_from(
+        ctx.db
+            .card_pose()
+            .room_id()
+            .filter(room_id)
+            .filter(|pose| pose.logical_location == format!("won:{winner}"))
+            .count(),
+    )
+    .unwrap_or(0);
+    for (index, mut pose) in cards.into_iter().enumerate() {
         pose.logical_location = format!("won:{winner}");
-        pose.x_mm = (2 * i32::try_from(index).unwrap_or_default() + 1 - count) * 7;
-        pose.y_mm = 40;
+        pose.x_mm =
+            (2 * i32::try_from(index).unwrap_or_default() + 1 - count) * 18 + previous_count * 4;
+        pose.y_mm = 40 + previous_count / 2 * 3 + i32::try_from(index).unwrap_or_default();
         pose.z_mm = if winner == 0 {
             LAYOUT_WON_Z_MM
         } else {

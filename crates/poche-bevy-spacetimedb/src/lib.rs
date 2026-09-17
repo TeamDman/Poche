@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use poche_spacetimedb_client::{
     ClientConfig, ClientEvent, ClientSnapshot, PocheClient, RoomCapability,
 };
+use std::collections::BTreeMap;
 use std::sync::{Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -52,6 +53,9 @@ pub enum BridgeIntent {
         room_id: String,
         tricks: u8,
     },
+    DealNextRound {
+        room_id: String,
+    },
     PlayCard {
         room_id: String,
         card_id: String,
@@ -72,6 +76,15 @@ pub enum BridgeNotice {
     Command {
         operation: &'static str,
         elapsed: Duration,
+        result: Result<(), String>,
+    },
+    /// Exact local gesture result; generic `Command` still carries latency and
+    /// user-facing status. A stale rejection must not cancel a newer drag.
+    CoinMoveFinished {
+        room_id: String,
+        coin_id: String,
+        sequence: u64,
+        commit: bool,
         result: Result<(), String>,
     },
     Disconnected(Option<String>),
@@ -184,7 +197,7 @@ fn pump_bridge(
                 model.last_error.clone_from(reason);
             }
             BridgeNotice::Error(error) => model.last_error = Some(error.clone()),
-            BridgeNotice::RoomCreated(_) => {}
+            BridgeNotice::RoomCreated(_) | BridgeNotice::CoinMoveFinished { .. } => {}
         }
         notices.write(notice);
     }
@@ -197,12 +210,14 @@ fn pump_bridge(
 )]
 fn worker_loop(requests: mpsc::Receiver<BridgeIntent>, events: mpsc::Sender<WorkerEvent>) {
     let mut client: Option<PocheClient> = None;
+    let mut coin_requests = BTreeMap::new();
     loop {
         match requests.recv_timeout(Duration::from_millis(4)) {
             Ok(BridgeIntent::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Ok(BridgeIntent::Connect { config }) => {
                 client = None;
+                coin_requests.clear();
                 send(&events, BridgeNotice::Snapshot(Box::default()));
                 match PocheClient::connect(config, Duration::from_secs(8)) {
                     Ok(connected) => {
@@ -217,6 +232,7 @@ fn worker_loop(requests: mpsc::Receiver<BridgeIntent>, events: mpsc::Sender<Work
             }
             Ok(BridgeIntent::Disconnect) => {
                 client = None;
+                coin_requests.clear();
                 send(&events, BridgeNotice::Snapshot(Box::default()));
                 send(&events, BridgeNotice::Disconnected(None));
             }
@@ -264,15 +280,31 @@ fn worker_loop(requests: mpsc::Receiver<BridgeIntent>, events: mpsc::Sender<Work
                         container,
                         position_mm,
                         commit,
-                    } => connected.move_coin(
-                        room_id,
-                        coin_id,
-                        sequence,
-                        container,
-                        position_mm,
-                        commit,
-                    ),
+                    } => {
+                        let request = CoinMoveRequest {
+                            room_id,
+                            coin_id,
+                            sequence,
+                            commit,
+                        };
+                        let result = connected.move_coin(
+                            request.room_id.clone(),
+                            request.coin_id.clone(),
+                            sequence,
+                            container,
+                            position_mm,
+                            commit,
+                        );
+                        match &result {
+                            Ok(request_id) => {
+                                coin_requests.insert(*request_id, request);
+                            }
+                            Err(error) => send(&events, request.finished(Err(error.to_string()))),
+                        }
+                        result
+                    }
                     BridgeIntent::Bid { room_id, tricks } => connected.bid(room_id, tricks),
+                    BridgeIntent::DealNextRound { room_id } => connected.deal_next_round(room_id),
                     BridgeIntent::PlayCard { room_id, card_id } => {
                         connected.play_card(room_id, card_id)
                     }
@@ -293,18 +325,24 @@ fn worker_loop(requests: mpsc::Receiver<BridgeIntent>, events: mpsc::Sender<Work
                 match event {
                     ClientEvent::ModelChanged | ClientEvent::Ready => changed = true,
                     ClientEvent::CommandFinished {
+                        request_id,
                         operation,
                         elapsed,
                         result,
                         ..
-                    } => send(
-                        &events,
-                        BridgeNotice::Command {
-                            operation,
-                            elapsed,
-                            result,
-                        },
-                    ),
+                    } => {
+                        if let Some(request) = coin_requests.remove(&request_id) {
+                            send(&events, request.finished(result.clone()));
+                        }
+                        send(
+                            &events,
+                            BridgeNotice::Command {
+                                operation,
+                                elapsed,
+                                result,
+                            },
+                        );
+                    }
                     ClientEvent::Disconnected { reason } => {
                         send(&events, BridgeNotice::Disconnected(reason));
                     }
@@ -322,6 +360,25 @@ fn worker_loop(requests: mpsc::Receiver<BridgeIntent>, events: mpsc::Sender<Work
     }
 }
 
+struct CoinMoveRequest {
+    room_id: String,
+    coin_id: String,
+    sequence: u64,
+    commit: bool,
+}
+
+impl CoinMoveRequest {
+    fn finished(self, result: Result<(), String>) -> BridgeNotice {
+        BridgeNotice::CoinMoveFinished {
+            room_id: self.room_id,
+            coin_id: self.coin_id,
+            sequence: self.sequence,
+            commit: self.commit,
+            result,
+        }
+    }
+}
+
 fn send(events: &mpsc::Sender<WorkerEvent>, notice: BridgeNotice) {
     let _ = events.send(WorkerEvent::Notice(notice));
 }
@@ -329,6 +386,31 @@ fn send(events: &mpsc::Sender<WorkerEvent>, notice: BridgeNotice) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coin_completion_retains_the_exact_room_coin_and_gesture_sequence() {
+        let request = CoinMoveRequest {
+            room_id: "original-room".into(),
+            coin_id: "quarter-4".into(),
+            sequence: 12,
+            commit: true,
+        };
+        let BridgeNotice::CoinMoveFinished {
+            room_id,
+            coin_id,
+            sequence,
+            commit,
+            result,
+        } = request.finished(Err("overpayment".into()))
+        else {
+            panic!("correlated notice")
+        };
+        assert_eq!(room_id, "original-room");
+        assert_eq!(coin_id, "quarter-4");
+        assert_eq!(sequence, 12);
+        assert!(commit);
+        assert_eq!(result, Err("overpayment".into()));
+    }
 
     #[test]
     fn bridge_starts_and_stops_without_a_connection() {

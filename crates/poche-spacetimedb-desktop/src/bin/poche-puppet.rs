@@ -10,8 +10,8 @@
 use image::{Rgba, RgbaImage, imageops};
 use poche_spacetimedb_desktop::AuthorityEndpoint;
 use poche_spacetimedb_desktop::file_control::{
-    FileControlAction, FileControlObservation, FileControlResponse, FileControlStatus,
-    send_file_control_request,
+    FileControlAction, FileControlCardPose, FileControlObservation, FileControlResponse,
+    FileControlStatus, send_file_control_request,
 };
 use serde::Serialize;
 use std::{
@@ -151,6 +151,10 @@ fn run() -> Result<(), String> {
             let tricks = parse(&mut args, "TRICKS")?;
             print_response(send(&root, FileControlAction::Bid { tricks })?)
         }
+        Some("deal") => {
+            let root = PathBuf::from(args.next().ok_or("deal requires CONTROL_ROOT")?);
+            print_response(send(&root, FileControlAction::DealNextRound)?)
+        }
         Some("play") => {
             let root = PathBuf::from(args.next().ok_or("play requires CONTROL_ROOT")?);
             let card_index = parse(&mut args, "CARD_INDEX")?;
@@ -247,12 +251,12 @@ fn run() -> Result<(), String> {
                  poche-puppet create ROOT | join ROOT CODE\n\
                  poche-puppet seat ROOT 0|1 | stand ROOT | menu ROOT | options ROOT | back ROOT\n\
                  poche-puppet invert-camera-y ROOT | leave ROOT | bid ROOT TRICKS\n\
-                 poche-puppet play ROOT CARD_INDEX\n\
+                 poche-puppet play ROOT CARD_INDEX | deal ROOT\n\
                  poche-puppet move ROOT CARD_INDEX X_MM Y_MM Z_MM RY_MDEG\n\
                  poche-puppet move-coin ROOT COIN_ID jar|lid|bowl X_MM Y_MM Z_MM commit|preview\n\
                  poche-puppet pointer ROOT X_LOGICAL_PX Y_LOGICAL_PX down|up (windowless only)\n\
                  poche-puppet camera-gesture ROOT DX DY middle|right|up (windowless only)\n\
-                 poche-puppet key ROOT Q|E|O|Z|Space|W|A|S|D|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Escape|F3 down|up\n\
+                 poche-puppet key ROOT Q|E|I|O|Z|Space|W|A|S|D|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Escape|F3 down|up\n\
                  poche-puppet capture ROOT | stop ROOT"
             );
             Ok(())
@@ -346,8 +350,14 @@ struct AcceptanceChecks {
     partial_ante_did_not_deal: bool,
     wrong_denomination_and_overpayment_rejected: bool,
     missed_bid_dime_paid_and_conserved: bool,
-    scoresheet_camera_inspection_and_consumed_restore: bool,
+    scoresheet_camera_pan_projection_and_click_restore: bool,
+    wrong_dealer_rejected_without_mutation: bool,
+    real_deck_click_dealt_second_round: bool,
+    second_round_scored_and_rotated_dealer: bool,
+    round_history_scores_and_money_conserved: bool,
+    returning_coin_regrabbed_through_real_pointer: bool,
     real_pointer_drag_and_q_rotation: bool,
+    real_pointer_winner_repositioned_opponents_won_card: bool,
     hand_world_hand_mapping: bool,
     leave_showed_terminal: bool,
     same_identity_resume: bool,
@@ -579,6 +589,11 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     }
     let alice_resolved = wait_until(alice_root, trick_is_resolved)?;
     wait_until(bob_root, trick_is_resolved)?;
+    let won_card_captures = verify_won_card_input(alice_root, bob_root, &alice_resolved)?;
+    compose_contact_sheet(
+        &won_card_captures,
+        &output.with_file_name("won-card-interaction.png"),
+    )?;
     let penalty_captures = verify_missed_bid_payment(alice_root, bob_root, &alice_resolved)?;
     compose_contact_sheet(
         &penalty_captures,
@@ -615,6 +630,13 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     let resolved_bob = capture(bob_root)?;
     let captures = [seated_alice, seated_bob, resolved_alice, resolved_bob];
     compose_contact_sheet(&captures, output)?;
+
+    let (continuity_captures, alice_resolved) =
+        verify_round_continuity(alice_root, bob_root, &alice_resolved)?;
+    compose_contact_sheet(
+        &continuity_captures,
+        &output.with_file_name("round-continuity.png"),
+    )?;
 
     let mirror_root = run_root.join("alice-mirror");
     let mut mirror = spawn_device(
@@ -744,7 +766,7 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     let menu_after_leave = capture(alice_root)?;
 
     let report = AcceptanceReport {
-        schema: "poche-spacetimedb-multi-device-acceptance-v10",
+        schema: "poche-spacetimedb-multi-device-acceptance-v12",
         completed_unix_ms: unix_millis()?,
         authority_profile: authority.profile.clone(),
         authority_uri: authority.uri.clone(),
@@ -788,8 +810,14 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
             partial_ante_did_not_deal: true,
             wrong_denomination_and_overpayment_rejected: true,
             missed_bid_dime_paid_and_conserved: true,
-            scoresheet_camera_inspection_and_consumed_restore: true,
+            scoresheet_camera_pan_projection_and_click_restore: true,
+            wrong_dealer_rejected_without_mutation: true,
+            real_deck_click_dealt_second_round: true,
+            second_round_scored_and_rotated_dealer: true,
+            round_history_scores_and_money_conserved: true,
+            returning_coin_regrabbed_through_real_pointer: true,
             real_pointer_drag_and_q_rotation: true,
+            real_pointer_winner_repositioned_opponents_won_card: true,
             hand_world_hand_mapping: true,
             leave_showed_terminal,
             same_identity_resume: true,
@@ -807,6 +835,8 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
             .chain(sheet_captures.iter())
             .chain(money_captures.iter())
             .chain(penalty_captures.iter())
+            .chain(won_card_captures.iter())
+            .chain(continuity_captures.iter())
             .chain([
                 &identity_gate_capture,
                 &title_capture,
@@ -851,7 +881,7 @@ fn trick_is_resolved(observation: &FileControlObservation) -> bool {
         && observation
             .game
             .as_ref()
-            .is_some_and(|game| game.phase == "scoring" && game.action_count == 4)
+            .is_some_and(|game| game.phase == "scoring" && game.round_index == 0)
 }
 
 fn capture(root: &Path) -> Result<PathBuf, String> {
@@ -1136,6 +1166,8 @@ fn verify_manual_antes(alice: &Path, bob: &Path) -> Result<Vec<PathBuf>, String>
             .any(|coin| coin.coin_key == jar_coin.coin_key && coin.container == "jar")
     })?;
 
+    let regrab_captures = verify_coin_return_regrab(alice, bob)?;
+
     drag_quarter_to_bowl(alice)?;
     let alice_partial = wait_until(alice, |o| bowl_cents(o) == 25)?;
     let bob_partial = wait_until(bob, |o| bowl_cents(o) == 25)?;
@@ -1206,11 +1238,249 @@ fn verify_manual_antes(alice: &Path, bob: &Path) -> Result<Vec<PathBuf>, String>
         }
     }
     let paid = capture(alice)?;
-    Ok(vec![unpaid, partial, paid])
+    let mut captures = vec![unpaid, partial, paid];
+    captures.extend(regrab_captures);
+    Ok(captures)
+}
+
+fn verify_coin_return_regrab(owner: &Path, peer: &Path) -> Result<Vec<PathBuf>, String> {
+    let ready = wait_until(owner, |o| {
+        o.money_pick_targets
+            .iter()
+            .any(|target| target.container == "lid" && target.denomination_cents == 25)
+    })?;
+    let target = ready
+        .money_pick_targets
+        .iter()
+        .find(|target| target.container == "lid" && target.denomination_cents == 25)
+        .ok_or("no visible lid quarter for return interruption")?;
+    let coin = ready
+        .coins
+        .iter()
+        .find(|coin| coin.is_own && coin.coin_id == target.coin_id)
+        .ok_or("visible quarter missing from money snapshot")?;
+    send(
+        owner,
+        FileControlAction::PointerAtCoin {
+            coin_key: coin.coin_key.clone(),
+            primary_down: false,
+        },
+    )?;
+    let hover = capture(owner)?;
+    let grabbed = send(
+        owner,
+        FileControlAction::PointerAtCoin {
+            coin_key: coin.coin_key.clone(),
+            primary_down: true,
+        },
+    )?;
+    if grabbed
+        .observation
+        .held_coin
+        .as_ref()
+        .map(|held| &held.coin_key)
+        != Some(&coin.coin_key)
+    {
+        return Err("real pointer did not grab the visible quarter".into());
+    }
+    let table = [0, 20, 330];
+    send(
+        owner,
+        FileControlAction::PointerAtWorld {
+            position_mm: table,
+            primary_down: true,
+        },
+    )?;
+    send(
+        owner,
+        FileControlAction::PointerAtWorld {
+            position_mm: table,
+            primary_down: false,
+        },
+    )?;
+    // Point at its currently drawn center, not a cached 10 Hz pick coordinate or
+    // its destination. This still goes through the normal next-frame ray test.
+    let regrabbed = send(
+        owner,
+        FileControlAction::PointerAtCoin {
+            coin_key: coin.coin_key.clone(),
+            primary_down: true,
+        },
+    )?;
+    let held = regrabbed
+        .observation
+        .held_coin
+        .ok_or("returning coin was not pickable before reaching the lid")?;
+    let separation = (f64::from(held.position_m[0]) - f64::from(coin.position_mm[0]) / 1_000.)
+        .abs()
+        + (f64::from(held.position_m[2]) - f64::from(coin.position_mm[2]) / 1_000.).abs();
+    if held.coin_key != coin.coin_key || separation < 0.01 {
+        return Err(
+            "coin regrab did not interrupt the still-moving return away from its lid".into(),
+        );
+    }
+    send(
+        owner,
+        FileControlAction::PointerAtWorld {
+            position_mm: [80, 20, 330],
+            primary_down: true,
+        },
+    )?;
+    wait_until(peer, |o| {
+        o.coins.iter().any(|remote| {
+            remote.coin_key == coin.coin_key
+                && remote.sequence > held.sequence
+                && remote.position_mm[0] > 20
+                && remote.container == "lid"
+        })
+    })?;
+    let stable = send(
+        owner,
+        FileControlAction::Observe {
+            include_join_code: false,
+        },
+    )?
+    .observation;
+    if !stable
+        .held_coin
+        .as_ref()
+        .is_some_and(|held| held.coin_key == coin.coin_key && held.position_m[0] > 0.02)
+    {
+        return Err("old return acknowledgement stole the quarter from the new drag".into());
+    }
+    let interrupted = capture(owner)?;
+    for primary_down in [true, false] {
+        send(
+            owner,
+            FileControlAction::PointerAtWorld {
+                position_mm: [-220, 20, 430],
+                primary_down,
+            },
+        )?;
+    }
+    wait_until(owner, |o| {
+        o.held_coin.is_none()
+            && o.coins.iter().any(|current| {
+                current.coin_key == coin.coin_key
+                    && current.sequence > held.sequence
+                    && current.container == "lid"
+            })
+    })?;
+    Ok(vec![hover, interrupted])
 }
 
 fn drag_quarter_to_bowl(root: &Path) -> Result<(), String> {
     drag_coin_to_bowl(root, 25)
+}
+
+/// Only ownership relative to the viewer differs between otherwise identical
+/// card projections. Keep every canonical field in the equality check.
+fn same_canonical_card(left: &FileControlCardPose, right: &FileControlCardPose) -> bool {
+    let mut left = left.clone();
+    let mut right = right.clone();
+    left.is_own = false;
+    right.is_own = false;
+    left == right
+}
+
+/// A revealed opponent-owned card must be grabbable by its trick winner through
+/// the same ray picking and drag systems as a human, not just a reducer call.
+fn verify_won_card_input(
+    alice: &Path,
+    bob: &Path,
+    resolved: &FileControlObservation,
+) -> Result<Vec<PathBuf>, String> {
+    let card = resolved
+        .card_poses
+        .iter()
+        .find(|card| {
+            card.logical_location.starts_with("won:")
+                && card.logical_location != format!("won:{}", card.owner_seat)
+        })
+        .ok_or("won-card input test requires a captured opponent's card")?;
+    let winner = card
+        .logical_location
+        .strip_prefix("won:")
+        .ok_or("missing won-card seat")?
+        .parse::<u8>()
+        .map_err(|error| format!("invalid won-card seat: {error}"))?;
+    let owner = root_for_seat(winner, alice, bob);
+    let peer = root_for_seat(1 - winner, alice, bob);
+    wait_until(owner, |o| {
+        o.card_poses
+            .iter()
+            .any(|current| same_canonical_card(current, card))
+    })?;
+    // Give the normal 18/s interpolation time to settle at this stationary
+    // authority pose. PointerAtWorld projects through the live table camera;
+    // no fixed screen coordinates or alternate card-mutation API are involved.
+    std::thread::sleep(Duration::from_millis(500));
+    let before = capture(owner)?;
+    let mut source = card.position_mm;
+    // Pick the exposed outer strip of the fan rather than its overlapped centre.
+    let other = resolved
+        .card_poses
+        .iter()
+        .find(|other| {
+            other.card_key != card.card_key && other.logical_location == card.logical_location
+        })
+        .ok_or("won-card input test requires the completed two-card trick")?;
+    source[0] += if source[0] < other.position_mm[0] {
+        -20
+    } else {
+        20
+    };
+    source[1] += 2;
+    for primary_down in [false, true] {
+        let response = send(
+            owner,
+            FileControlAction::PointerAtWorld {
+                position_mm: source,
+                primary_down,
+            },
+        )?;
+        if primary_down && response.observation.held_card_key.as_ref() != Some(&card.card_key) {
+            return Err(format!(
+                "winner pointer did not grab captured card {}; held {:?}",
+                card.card_key, response.observation.held_card_key
+            ));
+        }
+    }
+    let mut destination = source;
+    destination[0] += 120;
+    for primary_down in [true, false] {
+        send(
+            owner,
+            FileControlAction::PointerAtWorld {
+                position_mm: destination,
+                primary_down,
+            },
+        )?;
+    }
+    let moved = wait_until(peer, |o| {
+        o.card_poses.iter().any(|current| {
+            current.card_key == card.card_key
+                && current.sequence > card.sequence
+                && current.position_mm[0] > card.position_mm[0] + 60
+                && current.position_mm[1] == card.position_mm[1]
+                && current.logical_location == card.logical_location
+        })
+    })?;
+    if moved.game != resolved.game
+        || moved.revealed_cards != resolved.revealed_cards
+        || moved.rounds != resolved.rounds
+    {
+        return Err("repositioning a won card changed the game, score, or revealed faces".into());
+    }
+    wait_until(owner, |o| {
+        o.held_card_key.is_none()
+            && o.card_poses.len() == moved.card_poses.len()
+            && o.card_poses
+                .iter()
+                .zip(&moved.card_poses)
+                .all(|(local, remote)| same_canonical_card(local, remote))
+    })?;
+    Ok(vec![before, capture(owner)?, capture(peer)?])
 }
 
 fn verify_missed_bid_payment(
@@ -1235,9 +1505,11 @@ fn verify_missed_bid_payment(
     for root in [alice, bob] {
         let paid = wait_until(root, |o| {
             bowl_cents(o) == 60
+                && o.rounds.len() == 1
+                && o.payment_due_cents == [0, 0]
                 && o.game
                     .as_ref()
-                    .is_some_and(|game| game.phase == "scoring" && game.pot_cents == 60)
+                    .is_some_and(|game| game.phase == "awaiting-deal" && game.pot_cents == 60)
         })?;
         if paid.coins.len() != 400
             || paid
@@ -1253,6 +1525,219 @@ fn verify_missed_bid_payment(
     Ok(vec![before, capture(payer)?])
 }
 
+/// Continue the real room beyond the previously terminal first-round slice.
+fn verify_round_continuity(
+    alice: &Path,
+    bob: &Path,
+    first: &FileControlObservation,
+) -> Result<(Vec<PathBuf>, FileControlObservation), String> {
+    let game = first.game.as_ref().ok_or("missing paid first round")?;
+    if game.phase != "awaiting-deal"
+        || game.dealer_seat != Some(1)
+        || game.round_index != 1
+        || first.rounds.len() != 1
+        || first.payment_due_cents != [0, 0]
+    {
+        return Err(
+            "paid first round did not rotate to Bob with one complete scoresheet row".into(),
+        );
+    }
+    let first_row = first.rounds[0].clone();
+    if first_row.totals != game.scores || bowl_cents(first) != 60 {
+        return Err("the first round scores or actual pot were not retained".into());
+    }
+    let rejected =
+        send_file_control_request(alice, FileControlAction::DealNextRound, Some(TIMEOUT))?;
+    if rejected.status != FileControlStatus::Rejected
+        || !rejected
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("only the next dealer"))
+        || rejected.observation.game != first.game
+        || rejected.observation.rounds != first.rounds
+        || rejected.observation.coins != first.coins
+    {
+        return Err(format!(
+            "wrong-dealer action was not rejected without mutation: {:?}",
+            rejected.error
+        ));
+    }
+    let before_deal = capture(bob)?;
+    let dealer_view = send(
+        bob,
+        FileControlAction::Observe {
+            include_join_code: false,
+        },
+    )?
+    .observation;
+    let [deck_x, deck_y] = dealer_view
+        .camera
+        .and_then(|camera| camera.deck_screen)
+        .ok_or("dealer cannot see the shared deck")?;
+    click(bob, deck_x, deck_y)?;
+    let mut second = wait_until(alice, |o| {
+        o.game.as_ref().is_some_and(|game| {
+            game.round_index == 1 && game.phase == "bidding" && game.hand_size == 2
+        }) && o.own_hand.len() == 2
+            && o.card_poses.len() == 4
+    })?;
+    let peer = wait_until(bob, |o| o.game == second.game && o.own_hand.len() == 2)?;
+    let second_game = second.game.as_ref().ok_or("second deal missing")?;
+    if second_game.dealer_seat != Some(1)
+        || second_game.trump.is_none()
+        || second_game.scores != first_row.totals
+        || second_game.pot_cents != 60
+        || !second.revealed_cards.is_empty()
+        || !peer.revealed_cards.is_empty()
+        || second.rounds != first.rounds
+        || second.payment_due_cents != [0, 0]
+    {
+        return Err(
+            "second deal failed private-hand, trump, scores, history, or paid-pot invariants"
+                .into(),
+        );
+    }
+    let mut faces: Vec<_> = second
+        .own_hand
+        .iter()
+        .chain(&peer.own_hand)
+        .map(|card| &card.face)
+        .collect();
+    faces.sort();
+    faces.dedup();
+    if faces.len() != 4 {
+        return Err("second deal duplicated a private card face".into());
+    }
+    let dealt = capture(bob)?;
+    for _ in 0..2 {
+        let actor = second
+            .game
+            .as_ref()
+            .and_then(|game| game.actor_seat)
+            .ok_or("second-round bid has no actor")?;
+        let previous = second.game.as_ref().unwrap().action_count;
+        send(
+            root_for_seat(actor, alice, bob),
+            FileControlAction::Bid { tricks: 0 },
+        )?;
+        second = wait_until(alice, |o| {
+            o.game
+                .as_ref()
+                .is_some_and(|game| game.action_count > previous)
+        })?;
+    }
+    for _ in 0..4 {
+        let actor = second
+            .game
+            .as_ref()
+            .and_then(|game| game.actor_seat)
+            .ok_or("second-round play has no actor")?;
+        let actor_root = root_for_seat(actor, alice, bob);
+        let actor_view = send(
+            actor_root,
+            FileControlAction::Observe {
+                include_join_code: false,
+            },
+        )?
+        .observation;
+        let previous = second.game.as_ref().unwrap().action_count;
+        // The actor sees only their own hand. Try its exposed card actions; the
+        // authority's follow-suit rejection must be observable, not time out.
+        let mut accepted = false;
+        for card_index in 0..actor_view.own_hand.len() {
+            let played = send_file_control_request(
+                actor_root,
+                FileControlAction::PlayOwnCard { card_index },
+                Some(TIMEOUT),
+            )?;
+            if played.status == FileControlStatus::Completed {
+                accepted = true;
+                break;
+            }
+            if played.observation.game != actor_view.game {
+                return Err("a denied play mutated the public round".into());
+            }
+        }
+        if !accepted {
+            return Err("second-round actor had no accepted play from their private hand".into());
+        }
+        second = wait_until(alice, |o| {
+            o.game
+                .as_ref()
+                .is_some_and(|game| game.action_count > previous)
+        })?;
+    }
+    let scored = wait_until(alice, |o| {
+        o.rounds.len() == 2
+            && o.own_hand.is_empty()
+            && o.game
+                .as_ref()
+                .is_some_and(|game| game.phase == "scoring" && game.round_index == 1)
+    })?;
+    wait_until(bob, |o| o.game == scored.game && o.rounds == scored.rounds)?;
+    let second_row = &scored.rounds[1];
+    let expected_scores = [
+        first_row.totals[0] + second_row.points[0],
+        first_row.totals[1] + second_row.points[1],
+    ];
+    if scored.rounds[0] != first_row
+        || second_row.totals != expected_scores
+        || scored.game.as_ref().unwrap().scores != expected_scores
+        || second_row.hand_size != 2
+        || second_row.dealer_seat != 1
+        || second_row.tricks_won.iter().sum::<u8>() != 2
+        || scored.payment_due_cents != second_row.payment_cents
+    {
+        return Err(
+            "second round did not append exactly one correct cumulative scoresheet row".into(),
+        );
+    }
+    let scored_capture = capture(alice)?;
+    let due = scored.payment_due_cents;
+    for (seat, amount) in due.into_iter().enumerate() {
+        if !matches!(amount, 0 | 10) {
+            return Err(
+                "second round requested something other than one dime per missed bid".into(),
+            );
+        }
+        if amount != 0 {
+            drag_coin_to_bowl(root_for_seat(u8::try_from(seat).unwrap(), alice, bob), 10)?;
+        }
+    }
+    let expected_pot = 60 + due.iter().sum::<u32>();
+    let paid = wait_until(alice, |o| {
+        o.game.as_ref().is_some_and(|game| {
+            game.phase == "awaiting-deal"
+                && game.round_index == 2
+                && game.dealer_seat == Some(0)
+                && game.pot_cents == expected_pot
+        }) && o.payment_due_cents == [0, 0]
+    })?;
+    let peer = wait_until(bob, |o| {
+        o.game == paid.game && o.rounds == paid.rounds && bowl_cents(o) == expected_pot
+    })?;
+    for view in [&paid, &peer] {
+        if view.rounds != scored.rounds
+            || view.game.as_ref().unwrap().scores != expected_scores
+            || bowl_cents(view) != expected_pot
+            || view.coins.len() != 400
+            || view
+                .coins
+                .iter()
+                .map(|coin| u32::from(coin.denomination_cents))
+                .sum::<u32>()
+                != 7_000
+        {
+            return Err(
+                "round settlement duplicated scores/payments or changed the conserved inventory"
+                    .into(),
+            );
+        }
+    }
+    let settled = capture(alice)?;
+    Ok((vec![before_deal, dealt, scored_capture, settled], paid))
+}
+
 fn drag_coin_to_bowl(root: &Path, denomination: u8) -> Result<(), String> {
     let ready = wait_until(root, |o| {
         o.money_bowl_screen.is_some()
@@ -1263,19 +1748,49 @@ fn drag_coin_to_bowl(root: &Path, denomination: u8) -> Result<(), String> {
     let target = ready
         .money_pick_targets
         .iter()
-        .find(|target| target.container == "lid" && target.denomination_cents == denomination)
+        .filter(|target| target.container == "lid" && target.denomination_cents == denomination)
+        // Prefer the clearly exposed upper row in the fixed acceptance camera,
+        // not map enumeration order. Still verify actual normal picking below.
+        .min_by(|left, right| left.screen[1].total_cmp(&right.screen[1]))
         .ok_or("no camera-visible coin of the required denomination on this player's lid")?;
-    let [x, y] = target.screen;
+    let coin = ready
+        .coins
+        .iter()
+        .find(|coin| coin.is_own && coin.coin_id == target.coin_id)
+        .ok_or("visible payment coin is missing from the inventory")?;
+    // A prior return animation can move this coin between observing its target
+    // and pressing. Reproject its rendered center for each input, then confirm
+    // the actual picked object before beginning the payment drag.
+    send(
+        root,
+        FileControlAction::PointerAtCoin {
+            coin_key: coin.coin_key.clone(),
+            primary_down: false,
+        },
+    )?;
+    let grabbed = send(
+        root,
+        FileControlAction::PointerAtCoin {
+            coin_key: coin.coin_key.clone(),
+            primary_down: true,
+        },
+    )?;
+    if grabbed
+        .observation
+        .held_coin
+        .as_ref()
+        .map(|held| &held.coin_key)
+        != Some(&coin.coin_key)
+    {
+        return Err(format!(
+            "payment pointer did not grab selected {}c coin {}",
+            denomination, coin.coin_id
+        ));
+    }
     let [bowl_x, bowl_y] = ready
         .money_bowl_screen
         .ok_or("bowl is outside the camera")?;
-    for (x, y, primary_down) in [
-        (x, y, false),
-        (x, y, true),
-        (x.midpoint(bowl_x), y.midpoint(bowl_y), true),
-        (bowl_x, bowl_y, true),
-        (bowl_x, bowl_y, false),
-    ] {
+    for (x, y, primary_down) in [(bowl_x, bowl_y, true), (bowl_x, bowl_y, false)] {
         send(root, FileControlAction::Pointer { x, y, primary_down })?;
     }
     wait_until(root, |o| {
@@ -1287,6 +1802,7 @@ fn drag_coin_to_bowl(root: &Path, denomination: u8) -> Result<(), String> {
 }
 
 fn verify_sheet_inspection(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let before = capture(root)?;
     let camera = send(
         root,
         FileControlAction::Observe {
@@ -1299,7 +1815,6 @@ fn verify_sheet_inspection(root: &Path) -> Result<Vec<PathBuf>, String> {
     let [x, y] = camera
         .sheet_screen
         .ok_or("scoresheet is outside the world camera")?;
-    let before = capture(root)?;
     click(root, x, y)?;
     wait_until(root, |o| {
         o.camera.as_ref().is_some_and(|c| {
@@ -1317,15 +1832,65 @@ fn verify_sheet_inspection(root: &Path) -> Result<Vec<PathBuf>, String> {
             right_down: false,
         },
     )?;
-    // A second movement while the same button remains held must also be consumed.
     send(
         root,
         FileControlAction::CameraGesture {
-            delta: [80., 80.],
-            middle_down: true,
+            delta: [0., 0.],
+            middle_down: false,
             right_down: false,
         },
     )?;
+    wait_until(root, |o| {
+        o.camera.as_ref().is_some_and(|c| {
+            c.inspecting_sheet && c.mode == "orthographic" && (c.focus[0] - 0.265).abs() > 0.001
+        })
+    })?;
+    // Projection and angle controls work inside the same inspection bookmark;
+    // neither is a dismissal nor a hidden extra tactical mode.
+    for (key, mode, top_down) in [
+        ("I", "perspective", true),
+        ("O", "perspective", false),
+        ("I", "orthographic", false),
+        ("O", "orthographic", true),
+    ] {
+        send(
+            root,
+            FileControlAction::Key {
+                key: key.into(),
+                down: true,
+            },
+        )?;
+        send(
+            root,
+            FileControlAction::Key {
+                key: key.into(),
+                down: false,
+            },
+        )?;
+        wait_until(root, |o| {
+            o.camera.as_ref().is_some_and(|c| {
+                let angle_ok = if top_down {
+                    (c.pitch - std::f32::consts::FRAC_PI_2).abs() < 0.001
+                } else {
+                    (c.pitch - camera.pitch).abs() < 0.001
+                };
+                c.inspecting_sheet && c.mode == mode && angle_ok
+            })
+        })?;
+    }
+    let adjusted = send(
+        root,
+        FileControlAction::Observe {
+            include_join_code: false,
+        },
+    )?
+    .observation
+    .camera
+    .ok_or("missing inspected camera")?;
+    let [x, y] = adjusted
+        .sheet_screen
+        .ok_or("panned scoresheet is not visible")?;
+    click(root, x, y)?;
     wait_until(root, |o| {
         o.camera.as_ref().is_some_and(|c| {
             !c.inspecting_sheet
@@ -1339,14 +1904,6 @@ fn verify_sheet_inspection(root: &Path) -> Result<Vec<PathBuf>, String> {
         })
     })?;
     let restored = capture(root)?;
-    send(
-        root,
-        FileControlAction::CameraGesture {
-            delta: [0., 0.],
-            middle_down: false,
-            right_down: false,
-        },
-    )?;
     Ok(vec![before, inspecting, restored])
 }
 
@@ -1472,4 +2029,60 @@ fn unix_millis() -> Result<u64, String> {
             .as_millis(),
     )
     .map_err(|_| "system time does not fit milliseconds".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn captured_card() -> FileControlCardPose {
+        // Actual pose from the failed two-viewer run; disposable identity/key
+        // values are replaced, while geometry, sequence and logical zone stay.
+        FileControlCardPose {
+            card_key: "room:alice:card-0-0".into(),
+            card_id: "card-0-0".into(),
+            owner: "alice".into(),
+            owner_seat: 0,
+            logical_location: "won:1".into(),
+            position_mm: [18, 41, -300],
+            rotation_mdeg: [0, 0, 0],
+            sequence: 8,
+            is_own: true,
+        }
+    }
+
+    #[test]
+    fn canonical_card_convergence_ignores_only_viewer_relative_ownership() {
+        let alice = captured_card();
+        let mut bob = alice.clone();
+        bob.is_own = false;
+        assert_ne!(
+            alice, bob,
+            "whole projection equality caused the live timeout"
+        );
+        assert!(same_canonical_card(&alice, &bob));
+        assert!(same_canonical_card(&alice, &alice));
+    }
+
+    #[test]
+    fn canonical_card_convergence_still_rejects_a_one_millimeter_pose_difference() {
+        let alice = captured_card();
+        let mut bob = alice.clone();
+        bob.is_own = false;
+        bob.position_mm[0] += 1;
+        assert!(!same_canonical_card(&alice, &bob));
+    }
+
+    #[test]
+    fn canonical_card_convergence_still_checks_sequence_and_logical_authority() {
+        let alice = captured_card();
+        let mut stale = alice.clone();
+        stale.is_own = false;
+        stale.sequence -= 1;
+        assert!(!same_canonical_card(&alice, &stale));
+        let mut wrong_winner = alice.clone();
+        wrong_winner.is_own = false;
+        wrong_winner.logical_location = "won:0".into();
+        assert!(!same_canonical_card(&alice, &wrong_winner));
+    }
 }

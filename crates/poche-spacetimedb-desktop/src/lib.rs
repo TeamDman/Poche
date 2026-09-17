@@ -92,8 +92,6 @@ const CAMERA_MAX_DISTANCE: f32 = 4.5;
 const CAMERA_SMOOTHING: f32 = 10.0;
 const CAMERA_MIN_PITCH: f32 = 3.0_f32.to_radians();
 const CAMERA_MAX_PITCH: f32 = 78.0_f32.to_radians();
-const TACTICAL_CAMERA_PITCH: f32 = 68.0_f32.to_radians();
-const TACTICAL_CAMERA_DISTANCE: f32 = 2.6;
 const TACTICAL_VIEW_HEIGHT: f32 = 2.1;
 const TACTICAL_MIN_SCALE: f32 = 0.06;
 const TACTICAL_MAX_SCALE: f32 = 2.5;
@@ -1149,8 +1147,7 @@ impl CameraPose {
 struct TableCameraController {
     current: CameraPose,
     target: CameraPose,
-    perspective_target: CameraPose,
-    tactical_target: CameraPose,
+    top_down_return_angles: Option<Vec2>,
     current_orthographic_scale: f32,
     target_orthographic_scale: f32,
     mode: TableCameraMode,
@@ -1182,7 +1179,7 @@ impl CameraOptions {
 enum TableCameraMode {
     #[default]
     Perspective,
-    Tactical,
+    Orthographic,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1204,8 +1201,7 @@ impl Default for TableCameraController {
         Self {
             current: pose,
             target: pose,
-            perspective_target: pose,
-            tactical_target: tactical_camera_home(None),
+            top_down_return_angles: None,
             current_orthographic_scale: 1.0,
             target_orthographic_scale: 1.0,
             mode: TableCameraMode::Perspective,
@@ -1218,12 +1214,8 @@ impl Default for TableCameraController {
 impl TableCameraController {
     fn reset_for_seat(&mut self, seat: Option<u8>, immediate: bool) {
         self.inspection = default();
-        self.perspective_target = camera_home(seat);
-        self.tactical_target = tactical_camera_home(seat);
-        self.target = match self.mode {
-            TableCameraMode::Perspective => self.perspective_target,
-            TableCameraMode::Tactical => self.tactical_target,
-        };
+        self.top_down_return_angles = None;
+        self.target = camera_home(seat);
         self.target_orthographic_scale = 1.0;
         if immediate {
             self.current = self.target;
@@ -1232,18 +1224,22 @@ impl TableCameraController {
         self.last_seat = seat.into();
     }
 
-    fn toggle_mode(&mut self) {
-        match self.mode {
-            TableCameraMode::Perspective => {
-                self.perspective_target = self.target;
-                self.target = self.tactical_target;
-                self.mode = TableCameraMode::Tactical;
-            }
-            TableCameraMode::Tactical => {
-                self.tactical_target = self.target;
-                self.target = self.perspective_target;
-                self.mode = TableCameraMode::Perspective;
-            }
+    /// Projection changes perspective foreshortening, never the viewing angle.
+    fn toggle_projection(&mut self) {
+        self.set_projection(match self.mode {
+            TableCameraMode::Perspective => TableCameraMode::Orthographic,
+            TableCameraMode::Orthographic => TableCameraMode::Perspective,
+        });
+    }
+
+    /// Looking straight down is independent of parallel/perspective projection.
+    fn toggle_top_down(&mut self) {
+        if let Some(angles) = self.top_down_return_angles.take() {
+            self.target.yaw = angles.x;
+            self.target.pitch = angles.y;
+        } else {
+            self.top_down_return_angles = Some(Vec2::new(self.target.yaw, self.target.pitch));
+            self.target.pitch = std::f32::consts::FRAC_PI_2;
         }
     }
 }
@@ -1268,15 +1264,6 @@ fn camera_home(seat: Option<u8>) -> CameraPose {
             pitch: 46.0_f32.to_radians(),
             distance: 2.9,
         },
-    }
-}
-
-fn tactical_camera_home(seat: Option<u8>) -> CameraPose {
-    CameraPose {
-        focus: Vec3::new(0.0, 0.02, 0.0),
-        yaw: camera_home(seat).yaw,
-        pitch: TACTICAL_CAMERA_PITCH,
-        distance: TACTICAL_CAMERA_DISTANCE,
     }
 }
 
@@ -2006,6 +1993,14 @@ fn room_projection_ready(snapshot: &ClientSnapshot, capability: Option<&RoomCapa
     {
         return false;
     }
+    if matches!(game.phase.as_str(), "awaiting-deal" | "finished") {
+        // Settlement clears the previous deal. hand_size describes the next
+        // deal, not cards that should already exist in this projection.
+        return game.hand_counts == [0, 0]
+            && snapshot.hand.is_empty()
+            && snapshot.card_poses.is_empty()
+            && snapshot.revealed_cards.is_empty();
+    }
     snapshot.card_poses.len() >= usize::from(game.hand_size) * 2
 }
 
@@ -2270,6 +2265,7 @@ fn handle_bridge_notices(
                     state.pending_flow = None;
                 }
             }
+            BridgeNotice::CoinMoveFinished { .. } => {}
             BridgeNotice::Disconnected(reason) => {
                 if state.pending_flow != Some(PendingFlow::SelectIdentity) {
                     state.busy = false;
@@ -2545,7 +2541,7 @@ fn enter_room(
                         ));
                         panel.spawn((
                             Text::new(
-                                "At the table\nClick an empty stool to sit. Click a notice or the score sheet to read it; click the room-code sign to copy. Use Speech → Bid to announce an allowed bid.\n\nCards\nDrag from your bottom-edge hand or the table. Hold Q/E to turn a held card. Hold Z to inspect zones without changing tools.\n\nCamera\nRMB orbit · MMB or WASD pan · wheel zoom\nSpace reset · O tactical views · F3 frame statistics",
+                                "At the table\nClick an empty stool to sit. Click a notice to read it; click the room-code sign to copy. Use Speech → Bid to announce an allowed bid.\n\nCards\nDrag from your bottom-edge hand or the table. Hold Q/E to turn a held card. Hold Z to inspect zones without changing tools.\n\nCamera\nRMB orbit · MMB or WASD pan · wheel zoom\nI parallel/perspective projection · O top-down angle\nSpace reset · F3 frame statistics\nClick the score sheet to fill the view. Pan/zoom to inspect; click the paper again to return. Parallel projection at an oblique angle gives the isometric-style view.",
                             ),
                             TextFont::from_font_size(14.),
                             TextColor(Color::srgb(0.80, 0.86, 0.81)),
@@ -2773,11 +2769,11 @@ fn sync_room_labels(
     for mut text in &mut latency {
         text.0 = model.last_command_latency.map_or_else(
             || {
-                "Drag: move · Q/E: turn · wheel: zoom · O: tactical camera · F3: stats".into()
+                "Drag: move · Q/E: turn · wheel: zoom · I: projection · O: top-down · F3: stats".into()
             },
             |value| {
                 format!(
-                    "Last authority response {:.1} ms · drag · Q/E turn · wheel zoom · O tactical · F3 stats",
+                    "Last authority response {:.1} ms · drag · Q/E turn · wheel zoom · I projection · O top-down · F3 stats",
                     value.as_secs_f64() * 1000.
                 )
             },
@@ -3163,23 +3159,6 @@ fn sync_card_entities(
         let visible_face = model.snapshot.visible_card_face(&network.card_key);
         let label = visible_face.unwrap_or("P");
         let layers = RenderLayers::layer(0);
-        let (texture, aspect) = card_label_texture(
-            &mut images,
-            label,
-            if visible_face.is_some() {
-                [18, 18, 16]
-            } else {
-                [224, 232, 248]
-            },
-        );
-        let label_material = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            base_color_texture: Some(texture),
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            ..default()
-        });
-        let (label_width, label_height) = hand_view::corner_label_size(aspect);
         let card = commands
             .spawn((
                 CardVisual {
@@ -3196,12 +3175,13 @@ fn sync_card_entities(
                 layers.clone(),
             ))
             .id();
-        hand_view::spawn_card_labels(
+        hand_view::spawn_card_face(
             &mut commands,
             card,
             assets.card_label_mesh.clone(),
-            label_material,
-            (label_width, label_height),
+            label,
+            &mut images,
+            &mut materials,
             0,
         );
         hand_view::spawn_outline(
@@ -3351,29 +3331,13 @@ fn update_table_camera(
             .map_or(1.0, |size| size.x / size.y.max(1.0));
         controller.inspect_sheet(sheet.center, sheet.size, aspect);
     }
-    let movement_keys = [
-        KeyCode::KeyW,
-        KeyCode::KeyA,
-        KeyCode::KeyS,
-        KeyCode::KeyD,
-        KeyCode::ArrowUp,
-        KeyCode::ArrowDown,
-        KeyCode::ArrowLeft,
-        KeyCode::ArrowRight,
-        KeyCode::Space,
-        KeyCode::KeyO,
-    ];
-    let key_held = movement_keys.iter().any(|key| keys.pressed(*key));
-    let camera_mouse_held =
-        mouse_buttons.pressed(MouseButton::Middle) || mouse_buttons.pressed(MouseButton::Right);
-    let camera_moved = (camera_mouse_held && mouse_motion.delta.length_squared() > 0.0)
-        || key_held
-        || mouse_scroll.delta.y != 0.0;
-    let consumed = controller.inspection_input(camera_moved, camera_mouse_held || key_held);
-    sheet_inspection.active = controller.inspecting_sheet() || consumed;
-    if !state.escape_menu_open && !world_interaction.modal_open() && !room.is_empty() && !consumed {
+    sheet_inspection.active = controller.inspecting_sheet();
+    if !state.escape_menu_open && !world_interaction.modal_open() && !room.is_empty() {
+        if keys.just_pressed(KeyCode::KeyI) {
+            controller.toggle_projection();
+        }
         if keys.just_pressed(KeyCode::KeyO) {
-            controller.toggle_mode();
+            controller.toggle_top_down();
         }
         if keys.just_pressed(KeyCode::Space) {
             controller.reset_for_seat(seat, false);
@@ -3389,7 +3353,7 @@ fn update_table_camera(
                 controller.target.distance =
                     zoom_camera_distance(controller.target.distance, scroll_lines);
             }
-            TableCameraMode::Tactical => {
+            TableCameraMode::Orthographic => {
                 controller.target_orthographic_scale =
                     zoom_orthographic_scale(controller.target_orthographic_scale, scroll_lines);
             }
@@ -3399,16 +3363,20 @@ fn update_table_camera(
             f32::from(keys.pressed(KeyCode::ArrowUp)) - f32::from(keys.pressed(KeyCode::ArrowDown));
         let key_yaw = f32::from(keys.pressed(KeyCode::ArrowLeft))
             - f32::from(keys.pressed(KeyCode::ArrowRight));
-        controller.target.pitch = (controller.target.pitch + key_pitch * time.delta_secs())
-            .clamp(CAMERA_MIN_PITCH, CAMERA_MAX_PITCH);
-        controller.target.yaw =
-            (controller.target.yaw + key_yaw * time.delta_secs()).rem_euclid(std::f32::consts::TAU);
-        if mouse_buttons.pressed(MouseButton::Right) {
+        if key_pitch != 0.0 || key_yaw != 0.0 {
+            controller.top_down_return_angles = None;
+            controller.target.pitch = (controller.target.pitch + key_pitch * time.delta_secs())
+                .clamp(CAMERA_MIN_PITCH, std::f32::consts::FRAC_PI_2);
+            controller.target.yaw = (controller.target.yaw + key_yaw * time.delta_secs())
+                .rem_euclid(std::f32::consts::TAU);
+        }
+        if mouse_buttons.pressed(MouseButton::Right) && delta != Vec2::ZERO {
+            controller.top_down_return_angles = None;
             controller.target.yaw = (controller.target.yaw - delta.x * CAMERA_ORBIT_SENSITIVITY)
                 .rem_euclid(std::f32::consts::TAU);
             controller.target.pitch = (controller.target.pitch
                 + camera_pitch_delta(delta.y, camera_options.invert_y))
-            .clamp(CAMERA_MIN_PITCH, CAMERA_MAX_PITCH);
+            .clamp(CAMERA_MIN_PITCH, std::f32::consts::FRAC_PI_2);
         }
 
         let forward = Vec3::new(
@@ -3421,8 +3389,19 @@ fn update_table_camera(
             0.0,
             -controller.target.yaw.sin(),
         );
+        let focus_before = controller.target.focus;
         if mouse_buttons.pressed(MouseButton::Middle) {
-            let scale = controller.target.distance * CAMERA_PAN_SENSITIVITY;
+            let scale = match controller.mode {
+                TableCameraMode::Perspective => controller.target.distance * CAMERA_PAN_SENSITIVITY,
+                TableCameraMode::Orthographic => {
+                    let viewport_height = cameras
+                        .iter()
+                        .next()
+                        .and_then(|(camera, _, _)| camera.logical_viewport_size())
+                        .map_or(720.0, |size| size.y.max(1.0));
+                    controller.target_orthographic_scale * TACTICAL_VIEW_HEIGHT / viewport_height
+                }
+            };
             controller.target.focus += (-right * delta.x + forward * delta.y) * scale;
         }
         let mut keyboard = Vec3::ZERO;
@@ -3439,10 +3418,16 @@ fn update_table_camera(
             keyboard -= right;
         }
         if keyboard.length_squared() > 0.0 {
+            let zoom_factor = match controller.mode {
+                TableCameraMode::Perspective => 1.0,
+                TableCameraMode::Orthographic => controller.target_orthographic_scale,
+            };
             controller.target.focus +=
-                keyboard.normalize() * CAMERA_KEYBOARD_SPEED * time.delta_secs();
+                keyboard.normalize() * CAMERA_KEYBOARD_SPEED * time.delta_secs() * zoom_factor;
         }
-        controller.target.focus = clamp_table_focus(&layout.0, controller.target.focus);
+        if controller.target.focus != focus_before {
+            controller.target.focus = clamp_table_focus(&layout.0, controller.target.focus);
+        }
     }
 
     let alpha = 1.0 - (-CAMERA_SMOOTHING * time.delta_secs()).exp();
@@ -3458,6 +3443,7 @@ fn update_table_camera(
         (controller.target_orthographic_scale - controller.current_orthographic_scale) * alpha;
     let transform = controller.current.transform();
     let mut sheet_screen = None;
+    let mut deck_screen = None;
     for (_, mut camera, mut projection) in &mut cameras {
         *camera = transform;
         apply_table_projection(
@@ -3472,6 +3458,13 @@ fn update_table_camera(
             .world_to_viewport(&GlobalTransform::from(transform), center)
             .ok()
             .map(|point| point.to_array());
+        deck_screen = camera
+            .world_to_viewport(
+                &GlobalTransform::from(transform),
+                world_ui::deck_inspection_center(&model.snapshot),
+            )
+            .ok()
+            .map(|point| point.to_array());
     }
     let diagnostics = Some(file_control::FileControlCamera {
         mode: format!("{:?}", controller.mode).to_ascii_lowercase(),
@@ -3482,6 +3475,7 @@ fn update_table_camera(
         orthographic_scale: controller.current_orthographic_scale,
         inspecting_sheet: controller.inspecting_sheet(),
         sheet_screen,
+        deck_screen,
     });
     if state.camera_diagnostics != diagnostics {
         state.camera_diagnostics = diagnostics;
@@ -3533,10 +3527,10 @@ fn apply_table_projection(projection: &mut Projection, mode: TableCameraMode, sc
         (TableCameraMode::Perspective, _) => {
             *projection = Projection::Perspective(PerspectiveProjection::default());
         }
-        (TableCameraMode::Tactical, Projection::Orthographic(orthographic)) => {
+        (TableCameraMode::Orthographic, Projection::Orthographic(orthographic)) => {
             orthographic.scale = scale;
         }
-        (TableCameraMode::Tactical, _) => {
+        (TableCameraMode::Orthographic, _) => {
             *projection = Projection::Orthographic(OrthographicProjection {
                 scaling_mode: ScalingMode::FixedVertical {
                     viewport_height: TACTICAL_VIEW_HEIGHT,
@@ -3605,6 +3599,18 @@ fn hand_camera_up(seat: Option<u8>) -> Vec3 {
     }
 }
 
+fn may_manipulate_card(snapshot: &ClientSnapshot, card: &CardPoseView) -> bool {
+    let in_own_hand = snapshot.identity.as_deref() == Some(card.owner.as_str())
+        && snapshot
+            .hand
+            .iter()
+            .any(|hand| hand.card_key == card.card_key);
+    in_own_hand
+        || snapshot
+            .own_seat()
+            .is_some_and(|seat| card.logical_location == format!("won:{seat}"))
+}
+
 fn drag_cards(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -3657,11 +3663,11 @@ fn drag_cards(
     let Some(cursor) = window.cursor_position() else {
         return;
     };
-    let own_identity = model.snapshot.identity.as_deref();
     let own_keys: HashSet<_> = model
         .snapshot
-        .hand
+        .card_poses
         .iter()
+        .filter(|card| may_manipulate_card(&model.snapshot, card))
         .map(|card| card.card_key.as_str())
         .collect();
     if drag
@@ -3691,14 +3697,18 @@ fn drag_cards(
             .snapshot
             .card_poses
             .iter()
-            .filter(|network| {
-                Some(network.owner.as_str()) == own_identity
-                    && own_keys.contains(network.card_key.as_str())
-            })
+            .filter(|network| own_keys.contains(network.card_key.as_str()))
             .filter_map(|network| {
                 let pose = poses.0.get(&network.card_key)?;
                 let physical = mm_position(pose.current);
-                if inset.is_some() && !hand.contains(physical) {
+                if inset.is_some()
+                    && (!hand.contains(physical)
+                        || !model
+                            .snapshot
+                            .hand
+                            .iter()
+                            .any(|card| card.card_key == network.card_key))
+                {
                     return None;
                 }
                 let position = (if inset.is_some() {
@@ -3826,6 +3836,8 @@ fn drag_cards(
                     card_id: card.card_id.clone(),
                 });
             }
+        } else if !model.snapshot.hand.iter().any(|card| card.card_key == key) {
+            state.status = "Won trick repositioned; this is not a new play.".into();
         } else if dropped_in_play {
             state.status =
                 "Physical move only: PLAY is not legal now. The card is still privately yours."
@@ -4018,6 +4030,41 @@ mod tests {
         assert!(may_bid(&ready, 0));
         assert!(may_bid(&ready, 1));
         assert!(!may_bid(&ready, 2));
+    }
+
+    #[test]
+    fn round_boundary_resume_does_not_wait_for_cards_that_have_not_been_dealt() {
+        let capability = RoomCapability {
+            room_id: "round-boundary".into(),
+            join_code: "PCH-1111-1111-1111-1111".into(),
+        };
+        let mut snapshot = bidding_snapshot(false);
+        snapshot.rooms.push(RoomView {
+            room_id: capability.room_id.clone(),
+        });
+        snapshot.members.push(MemberView {
+            identity: "bob-id".into(),
+            display_name: "Bob".into(),
+            seat: Some(1),
+            connected: true,
+            is_self: false,
+        });
+        let game = snapshot.game.as_mut().unwrap();
+        game.phase = "awaiting-deal".into();
+        game.round_index = 2;
+        game.hand_size = 3;
+        game.hand_counts = [0, 0];
+        assert!(
+            room_projection_ready(&snapshot, Some(&capability)),
+            "between deals the complete projection intentionally contains no hand or played cards"
+        );
+        snapshot.game.as_mut().unwrap().phase = "bidding".into();
+        assert!(
+            !room_projection_ready(&snapshot, Some(&capability)),
+            "the same missing cards are incomplete once dealing has started"
+        );
+        snapshot.game.as_mut().unwrap().phase = "finished".into();
+        assert!(room_projection_ready(&snapshot, Some(&capability)));
     }
 
     #[test]
@@ -4229,32 +4276,45 @@ mod tests {
     }
 
     #[test]
-    fn tactical_camera_toggle_preserves_each_mode_and_smooths_from_current_pose() {
+    fn projection_toggle_preserves_the_same_focus_and_view_angle() {
         let mut controller = TableCameraController::default();
         controller.target.focus = Vec3::new(0.2, 0.02, -0.1);
         let perspective_target = controller.target;
         let current = controller.current;
 
-        controller.toggle_mode();
-        assert_eq!(controller.mode, TableCameraMode::Tactical);
+        controller.toggle_projection();
+        assert_eq!(controller.mode, TableCameraMode::Orthographic);
         assert_eq!(controller.current, current);
-        assert_eq!(controller.target, tactical_camera_home(None));
-
-        controller.target.focus = Vec3::new(-0.3, 0.02, 0.25);
-        let tactical_target = controller.target;
-        controller.toggle_mode();
-        assert_eq!(controller.mode, TableCameraMode::Perspective);
         assert_eq!(controller.target, perspective_target);
 
-        controller.toggle_mode();
-        assert_eq!(controller.target, tactical_target);
+        controller.target.focus = Vec3::new(-0.3, 0.02, 0.25);
+        let new_focus = controller.target.focus;
+        controller.toggle_projection();
+        assert_eq!(controller.mode, TableCameraMode::Perspective);
+        assert_eq!(controller.target.focus, new_focus);
+        assert!((controller.target.pitch - perspective_target.pitch).abs() < f32::EPSILON);
+        assert!((controller.target.yaw - perspective_target.yaw).abs() < f32::EPSILON);
+        assert!((controller.target.distance - perspective_target.distance).abs() < 0.00001);
     }
 
     #[test]
-    fn tactical_camera_uses_a_bounded_zoomable_orthographic_projection() {
-        assert!(tactical_camera_home(None).pitch > camera_home(None).pitch);
+    fn top_down_toggle_only_changes_angle_and_projection_is_independent() {
+        let mut controller = TableCameraController::default();
+        let before = controller.target;
+        controller.toggle_top_down();
+        assert_eq!(controller.mode, TableCameraMode::Perspective);
+        assert_eq!(controller.target.focus, before.focus);
+        assert!((controller.target.pitch - std::f32::consts::FRAC_PI_2).abs() < f32::EPSILON);
+        controller.toggle_projection();
+        controller.toggle_top_down();
+        assert_eq!(controller.mode, TableCameraMode::Orthographic);
+        assert_eq!(controller.target, before);
+    }
+
+    #[test]
+    fn parallel_camera_uses_a_bounded_zoomable_orthographic_projection() {
         let mut projection = Projection::Perspective(PerspectiveProjection::default());
-        apply_table_projection(&mut projection, TableCameraMode::Tactical, 1.25);
+        apply_table_projection(&mut projection, TableCameraMode::Orthographic, 1.25);
         let Projection::Orthographic(orthographic) = projection else {
             panic!("tactical camera must use parallel projection");
         };

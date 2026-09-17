@@ -6,44 +6,44 @@ use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub(super) struct ReleaseSeatArgs {
+pub(super) struct DealNextRoundArgs {
     pub room_id: String,
 }
 
-impl From<ReleaseSeatArgs> for super::Reducer {
-    fn from(args: ReleaseSeatArgs) -> Self {
-        Self::ReleaseSeat {
+impl From<DealNextRoundArgs> for super::Reducer {
+    fn from(args: DealNextRoundArgs) -> Self {
+        Self::DealNextRound {
             room_id: args.room_id,
         }
     }
 }
 
-impl __sdk::InModule for ReleaseSeatArgs {
+impl __sdk::InModule for DealNextRoundArgs {
     type Module = super::RemoteModule;
 }
 
 #[allow(non_camel_case_types)]
-/// Extension trait for access to the reducer `release_seat`.
+/// Extension trait for access to the reducer `deal_next_round`.
 ///
 /// Implemented for [`super::RemoteReducers`].
-pub trait release_seat {
-    /// Request that the remote module invoke the reducer `release_seat` to run as soon as possible.
+pub trait deal_next_round {
+    /// Request that the remote module invoke the reducer `deal_next_round` to run as soon as possible.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and this method provides no way to listen for its completion status.
-    /// /// Use [`release_seat:release_seat_then`] to run a callback after the reducer completes.
-    fn release_seat(&self, room_id: String) -> __sdk::Result<()> {
-        self.release_seat_then(room_id, |_, _| {})
+    /// /// Use [`deal_next_round:deal_next_round_then`] to run a callback after the reducer completes.
+    fn deal_next_round(&self, room_id: String) -> __sdk::Result<()> {
+        self.deal_next_round_then(room_id, |_, _| {})
     }
 
-    /// Request that the remote module invoke the reducer `release_seat` to run as soon as possible,
+    /// Request that the remote module invoke the reducer `deal_next_round` to run as soon as possible,
     /// registering `callback` to run when we are notified that the reducer completed.
     ///
     /// This method returns immediately, and errors only if we are unable to send the request.
     /// The reducer will run asynchronously in the future,
     ///  and its status can be observed with the `callback`.
-    fn release_seat_then(
+    fn deal_next_round_then(
         &self,
         room_id: String,
 
@@ -55,8 +55,8 @@ pub trait release_seat {
     ) -> __sdk::Result<()>;
 }
 
-impl release_seat for super::RemoteReducers {
-    fn release_seat_then(
+impl deal_next_round for super::RemoteReducers {
+    fn deal_next_round_then(
         &self,
         room_id: String,
 
@@ -67,6 +67,6 @@ impl release_seat for super::RemoteReducers {
         + 'static,
     ) -> __sdk::Result<()> {
         self.imp
-            .invoke_reducer_with_callback(ReleaseSeatArgs { room_id }, callback)
+            .invoke_reducer_with_callback(DealNextRoundArgs { room_id }, callback)
     }
 }

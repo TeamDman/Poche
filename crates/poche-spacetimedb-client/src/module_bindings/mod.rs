@@ -13,6 +13,7 @@ pub mod card_pose_type;
 pub mod coin_type;
 pub mod connection_presence_type;
 pub mod create_room_reducer;
+pub mod deal_next_round_reducer;
 pub mod game_action_type;
 pub mod join_room_reducer;
 pub mod leave_room_reducer;
@@ -30,6 +31,7 @@ pub mod room_game_type;
 pub mod room_members_table;
 pub mod room_secret_type;
 pub mod room_type;
+pub mod round_record_type;
 pub mod set_card_pose_reducer;
 pub mod take_seat_reducer;
 pub mod visible_activity_table;
@@ -37,6 +39,7 @@ pub mod visible_card_poses_table;
 pub mod visible_coins_table;
 pub mod visible_revealed_cards_table;
 pub mod visible_room_games_table;
+pub mod visible_rounds_table;
 
 pub use active_room_type::ActiveRoom;
 pub use activity_event_type::ActivityEvent;
@@ -45,6 +48,7 @@ pub use card_pose_type::CardPose;
 pub use coin_type::Coin;
 pub use connection_presence_type::ConnectionPresence;
 pub use create_room_reducer::create_room;
+pub use deal_next_round_reducer::deal_next_round;
 pub use game_action_type::GameAction;
 pub use join_room_reducer::join_room;
 pub use leave_room_reducer::leave_room;
@@ -62,6 +66,7 @@ pub use room_game_type::RoomGame;
 pub use room_members_table::*;
 pub use room_secret_type::RoomSecret;
 pub use room_type::Room;
+pub use round_record_type::RoundRecord;
 pub use set_card_pose_reducer::set_card_pose;
 pub use take_seat_reducer::take_seat;
 pub use visible_activity_table::*;
@@ -69,6 +74,7 @@ pub use visible_card_poses_table::*;
 pub use visible_coins_table::*;
 pub use visible_revealed_cards_table::*;
 pub use visible_room_games_table::*;
+pub use visible_rounds_table::*;
 
 #[derive(Clone, PartialEq, Debug)]
 
@@ -86,6 +92,9 @@ pub enum Reducer {
         room_id: String,
         join_code: String,
         display_name: String,
+    },
+    DealNextRound {
+        room_id: String,
     },
     JoinRoom {
         join_code: String,
@@ -137,6 +146,7 @@ impl __sdk::Reducer for Reducer {
         match self {
             Reducer::Bid { .. } => "bid",
             Reducer::CreateRoom { .. } => "create_room",
+            Reducer::DealNextRound { .. } => "deal_next_round",
             Reducer::JoinRoom { .. } => "join_room",
             Reducer::LeaveRoom { .. } => "leave_room",
             Reducer::MoveCoin { .. } => "move_coin",
@@ -163,6 +173,11 @@ impl __sdk::Reducer for Reducer {
                 join_code: join_code.clone(),
                 display_name: display_name.clone(),
             }),
+            Reducer::DealNextRound { room_id } => {
+                __sats::bsatn::to_vec(&deal_next_round_reducer::DealNextRoundArgs {
+                    room_id: room_id.clone(),
+                })
+            }
             Reducer::JoinRoom {
                 join_code,
                 display_name,
@@ -250,6 +265,7 @@ pub struct DbUpdate {
     visible_coins: __sdk::TableUpdate<Coin>,
     visible_revealed_cards: __sdk::TableUpdate<RevealedCard>,
     visible_room_games: __sdk::TableUpdate<RoomGame>,
+    visible_rounds: __sdk::TableUpdate<RoundRecord>,
 }
 
 impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
@@ -285,6 +301,9 @@ impl TryFrom<__ws::v2::TransactionUpdate> for DbUpdate {
                 "visible_room_games" => db_update
                     .visible_room_games
                     .append(visible_room_games_table::parse_table_update(table_update)?),
+                "visible_rounds" => db_update
+                    .visible_rounds
+                    .append(visible_rounds_table::parse_table_update(table_update)?),
 
                 unknown => {
                     return Err(__sdk::InternalError::unknown_name(
@@ -341,6 +360,9 @@ impl __sdk::DbUpdate for DbUpdate {
         diff.visible_room_games = cache
             .apply_diff_to_table::<RoomGame>("visible_room_games", &self.visible_room_games)
             .with_updates_by_pk(|row| &row.room_id);
+        diff.visible_rounds = cache
+            .apply_diff_to_table::<RoundRecord>("visible_rounds", &self.visible_rounds)
+            .with_updates_by_pk(|row| &row.round_key);
 
         diff
     }
@@ -374,6 +396,9 @@ impl __sdk::DbUpdate for DbUpdate {
                     .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 "visible_room_games" => db_update
                     .visible_room_games
+                    .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
+                "visible_rounds" => db_update
+                    .visible_rounds
                     .append(__sdk::parse_row_list_as_inserts(table_rows.rows)?),
                 unknown => {
                     return Err(
@@ -415,6 +440,9 @@ impl __sdk::DbUpdate for DbUpdate {
                 "visible_room_games" => db_update
                     .visible_room_games
                     .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
+                "visible_rounds" => db_update
+                    .visible_rounds
+                    .append(__sdk::parse_row_list_as_deletes(table_rows.rows)?),
                 unknown => {
                     return Err(
                         __sdk::InternalError::unknown_name("table", unknown, "QueryRows").into(),
@@ -439,6 +467,7 @@ pub struct AppliedDiff<'r> {
     visible_coins: __sdk::TableAppliedDiff<'r, Coin>,
     visible_revealed_cards: __sdk::TableAppliedDiff<'r, RevealedCard>,
     visible_room_games: __sdk::TableAppliedDiff<'r, RoomGame>,
+    visible_rounds: __sdk::TableAppliedDiff<'r, RoundRecord>,
     __unused: std::marker::PhantomData<&'r ()>,
 }
 
@@ -479,6 +508,11 @@ impl<'r> __sdk::AppliedDiff<'r> for AppliedDiff<'r> {
         callbacks.invoke_table_row_callbacks::<RoomGame>(
             "visible_room_games",
             &self.visible_room_games,
+            event,
+        );
+        callbacks.invoke_table_row_callbacks::<RoundRecord>(
+            "visible_rounds",
+            &self.visible_rounds,
             event,
         );
     }
@@ -736,19 +770,19 @@ impl __sdk::SubscriptionHandle for SubscriptionHandle {
 /// either a [`DbConnection`] or an [`EventContext`] and operate on either.
 pub trait RemoteDbContext:
     __sdk::DbContext<
-    DbView = RemoteTables,
-    Reducers = RemoteReducers,
-    SubscriptionBuilder = __sdk::SubscriptionBuilder<RemoteModule>,
->
+        DbView = RemoteTables,
+        Reducers = RemoteReducers,
+        SubscriptionBuilder = __sdk::SubscriptionBuilder<RemoteModule>,
+    >
 {
 }
 impl<
-        Ctx: __sdk::DbContext<
+    Ctx: __sdk::DbContext<
             DbView = RemoteTables,
             Reducers = RemoteReducers,
             SubscriptionBuilder = __sdk::SubscriptionBuilder<RemoteModule>,
         >,
-    > RemoteDbContext for Ctx
+> RemoteDbContext for Ctx
 {
 }
 
@@ -1150,6 +1184,7 @@ impl __sdk::SpacetimeModule for RemoteModule {
         visible_coins_table::register_table(client_cache);
         visible_revealed_cards_table::register_table(client_cache);
         visible_room_games_table::register_table(client_cache);
+        visible_rounds_table::register_table(client_cache);
     }
     const ALL_TABLE_NAMES: &'static [&'static str] = &[
         "my_hand",
@@ -1161,5 +1196,6 @@ impl __sdk::SpacetimeModule for RemoteModule {
         "visible_coins",
         "visible_revealed_cards",
         "visible_room_games",
+        "visible_rounds",
     ];
 }

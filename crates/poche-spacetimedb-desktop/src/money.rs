@@ -11,12 +11,14 @@ use super::{
 use bevy::{
     light::{NotShadowCaster, NotShadowReceiver},
     prelude::*,
+    render::render_resource::Face,
     window::PrimaryWindow,
 };
 use poche_bevy_spacetimedb::{BridgeHandle, BridgeIntent, BridgeModel, BridgeNotice};
 use poche_money::{
     BOWL_RADIUS_MM, CoinContainer, JAR_HEIGHT_MM, JAR_RADIUS_MM, LID_RADIUS_MM, container_center_mm,
 };
+use poche_spacetimedb_client::{ClientSnapshot, CoinView};
 use std::collections::{BTreeMap, HashSet};
 
 pub(super) struct MoneyPlugin;
@@ -46,6 +48,9 @@ struct MoneyAssets {
     glass: Handle<StandardMaterial>,
     green: Handle<StandardMaterial>,
     ceramic: Handle<StandardMaterial>,
+    quarter_outline: Handle<Mesh>,
+    dime_outline: Handle<Mesh>,
+    outline: Handle<StandardMaterial>,
 }
 
 fn setup_money_assets(
@@ -66,8 +71,16 @@ fn setup_money_assets(
     let quarter_ink = ink("25¢");
     let dime_ink = ink("10¢");
     commands.insert_resource(MoneyAssets {
-        quarter: meshes.add(Cylinder::new(0.012, 0.0018)),
-        dime: meshes.add(Cylinder::new(0.009, 0.0014)),
+        quarter: meshes.add(coin_shape(25)),
+        dime: meshes.add(coin_shape(10)),
+        quarter_outline: meshes.add(coin_outline_shape(25)),
+        dime_outline: meshes.add(coin_outline_shape(10)),
+        outline: materials.add(StandardMaterial {
+            base_color: Color::srgb(1., 0.83, 0.18),
+            cull_mode: Some(Face::Front),
+            unlit: true,
+            ..default()
+        }),
         silver: materials.add(StandardMaterial {
             base_color: Color::srgb(0.74, 0.77, 0.79),
             metallic: 0.65,
@@ -99,12 +112,13 @@ fn setup_money_assets(
 }
 
 #[derive(Resource, Default)]
-struct MoneyState {
+pub(super) struct MoneyState {
     context: String,
     targets_updated: f64,
     poses: BTreeMap<String, CoinPose>,
     drag: Option<CoinDrag>,
-    pending_commit: Option<(String, u64)>,
+    hover_key: Option<String>,
+    pending_commits: BTreeMap<String, PendingCoinCommit>,
     scene_key: String,
     labels_key: String,
 }
@@ -120,8 +134,124 @@ struct CoinDrag {
     offset: Vec3,
     sent_at: f64,
 }
+#[derive(Clone, Copy)]
+struct PendingCoinCommit {
+    sequence: u64,
+    repair: bool,
+}
+
+impl CoinPose {
+    fn reconcile(&mut self, coin: &CoinView, held: bool) {
+        let locked = !coin.is_own || coin.container == "bowl";
+        if locked || (!held && coin.sequence >= self.sequence) {
+            self.target = mm_position(coin.position_mm.map(|value| value as f32));
+        }
+        // Keep locally reserved sequences even across stale echoes/rejections.
+        self.sequence = self.sequence.max(coin.sequence);
+    }
+}
+
+impl MoneyState {
+    pub(super) fn displayed_coin_position(&self, key: &str) -> Option<[f32; 3]> {
+        self.poses.get(key).map(|pose| pose.current.to_array())
+    }
+
+    pub(super) fn held_coin(&self) -> Option<(&str, [f32; 3], u64)> {
+        let drag = self.drag.as_ref()?;
+        let pose = self.poses.get(&drag.key)?;
+        Some((drag.key.as_str(), pose.current.to_array(), pose.sequence))
+    }
+
+    fn begin_drag(&mut self, key: String, point: Vec3) -> bool {
+        let Some(pose) = self.poses.get_mut(&key) else {
+            return false;
+        };
+        let plane_y = pose.current.y;
+        let offset = pose.current - point;
+        // Interrupt the visual return where it is displayed, not at its old
+        // target. In-flight commits remain tracked but never disable picking.
+        pose.target = pose.current + Vec3::Y * 0.024;
+        pose.last_sent = None;
+        self.drag = Some(CoinDrag {
+            key,
+            plane_y,
+            offset,
+            sent_at: -1.0,
+        });
+        true
+    }
+
+    fn finish_move(
+        &mut self,
+        snapshot: &ClientSnapshot,
+        notice: &BridgeNotice,
+    ) -> Option<BridgeIntent> {
+        let BridgeNotice::CoinMoveFinished {
+            room_id,
+            coin_id,
+            sequence,
+            commit: true,
+            result,
+        } = notice
+        else {
+            return None;
+        };
+        if snapshot.room_id() != Some(room_id.as_str()) {
+            return None;
+        }
+        let coin = snapshot
+            .coins
+            .iter()
+            .find(|coin| coin.is_own && coin.coin_id == *coin_id)?;
+        let pending = self.pending_commits.get(&coin.coin_key)?;
+        if pending.sequence != *sequence {
+            return None;
+        }
+        let pending = self.pending_commits.remove(&coin.coin_key)?;
+        if result.is_ok()
+            || self
+                .drag
+                .as_ref()
+                .is_some_and(|drag| drag.key == coin.coin_key)
+        {
+            return None;
+        }
+        let pose = self.poses.get_mut(&coin.coin_key)?;
+        if pose.sequence > *sequence {
+            return None; // A newer gesture already owns the prediction.
+        }
+        if pending.repair || coin.container == "bowl" {
+            // Never create an infinite repair loop or try to withdraw money
+            // which the authority has already accepted into the bowl.
+            pose.target = mm_position(coin.position_mm.map(|value| value as f32));
+            return None;
+        }
+        // Rejecting a final transfer leaves earlier accepted previews intact.
+        // Commit the existing coin back to its authoritative logical container
+        // once; this changes no balance and cannot mint or withdraw a coin.
+        let next = pose.sequence.max(coin.sequence).saturating_add(1);
+        pose.sequence = next;
+        self.pending_commits.insert(
+            coin.coin_key.clone(),
+            PendingCoinCommit {
+                sequence: next,
+                repair: true,
+            },
+        );
+        Some(BridgeIntent::MoveCoin {
+            room_id: room_id.clone(),
+            coin_id: coin.coin_id.clone(),
+            sequence: next,
+            container: coin.container.clone(),
+            position_mm: coin.position_mm,
+            commit: true,
+        })
+    }
+}
 #[derive(Component)]
 struct CoinVisual(String);
+#[derive(Component)]
+struct CoinOutline(String);
 #[derive(Component)]
 struct MoneyProp;
 #[derive(Component)]
@@ -143,51 +273,6 @@ fn sync_money(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    let rejected = notices.read().any(|notice| {
-        matches!(
-            notice,
-            BridgeNotice::Command {
-                operation: "move_coin",
-                result: Err(_),
-                ..
-            }
-        )
-    });
-    if rejected {
-        money.drag = None;
-        // A rejected transfer does not undo earlier accepted drag previews.
-        // Put that same coin back into its current logical container once.
-        if let Some((key, sent)) = money.pending_commit.take()
-            && let Some(coin) = model
-                .snapshot
-                .coins
-                .iter()
-                .find(|coin| coin.coin_key == key)
-        {
-            let _ = bridge.send(BridgeIntent::MoveCoin {
-                room_id: model.snapshot.room_id().unwrap_or_default().into(),
-                coin_id: coin.coin_id.clone(),
-                sequence: coin.sequence.max(sent).saturating_add(1),
-                container: coin.container.clone(),
-                position_mm: coin.position_mm,
-                commit: true,
-            });
-        }
-        money.poses.clear();
-    }
-    if money
-        .pending_commit
-        .as_ref()
-        .is_some_and(|(key, sequence)| {
-            model
-                .snapshot
-                .coins
-                .iter()
-                .any(|coin| &coin.coin_key == key && coin.sequence >= *sequence)
-        })
-    {
-        money.pending_commit = None;
-    }
     let active = state.screen == UiScreen::Table;
     let context = format!(
         "{:?}:{:?}",
@@ -197,8 +282,13 @@ fn sync_money(
     if money.context != context || !active {
         money.context = context;
         money.drag = None;
-        money.pending_commit = None;
+        money.pending_commits.clear();
         money.poses.clear();
+    }
+    for notice in notices.read() {
+        if active && let Some(intent) = money.finish_move(&model.snapshot, notice) {
+            let _ = bridge.send(intent);
+        }
     }
     let wanted: HashSet<_> = model
         .snapshot
@@ -208,6 +298,9 @@ fn sync_money(
         .map(|c| c.coin_key.as_str())
         .collect();
     money.poses.retain(|key, _| wanted.contains(key.as_str()));
+    money
+        .pending_commits
+        .retain(|key, _| wanted.contains(key.as_str()));
     let mut existing = HashSet::new();
     for (entity, coin) in &coins {
         if wanted.contains(coin.0.as_str()) {
@@ -223,6 +316,14 @@ fn sync_money(
         .filter(|coin| wanted.contains(coin.coin_key.as_str()))
     {
         let network = mm_position(coin.position_mm.map(|value| value as f32));
+        if (!coin.is_own || coin.container == "bowl")
+            && money
+                .drag
+                .as_ref()
+                .is_some_and(|drag| drag.key == coin.coin_key)
+        {
+            money.drag = None;
+        }
         let held = money
             .drag
             .as_ref()
@@ -236,17 +337,19 @@ fn sync_money(
                 sequence: coin.sequence,
                 last_sent: None,
             });
-        if !held && coin.sequence >= pose.sequence {
-            pose.target = network;
-            pose.sequence = coin.sequence;
-        }
+        pose.reconcile(coin, held);
         if existing.contains(coin.coin_key.as_str()) {
             continue;
         }
-        let (mesh, ink, diameter) = if coin.denomination_cents == 25 {
-            (&assets.quarter, &assets.quarter_ink, 0.018)
+        let (mesh, ink, outline, diameter) = if coin.denomination_cents == 25 {
+            (
+                &assets.quarter,
+                &assets.quarter_ink,
+                &assets.quarter_outline,
+                0.018,
+            )
         } else {
-            (&assets.dime, &assets.dime_ink, 0.014)
+            (&assets.dime, &assets.dime_ink, &assets.dime_outline, 0.014)
         };
         commands
             .spawn((
@@ -256,6 +359,16 @@ fn sync_money(
                 Transform::from_translation(network),
             ))
             .with_children(|parent| {
+                parent.spawn((
+                    CoinOutline(coin.coin_key.clone()),
+                    Mesh3d(outline.clone()),
+                    MeshMaterial3d(assets.outline.clone()),
+                    Transform::default(),
+                    Visibility::Hidden,
+                    NotShadowCaster,
+                    NotShadowReceiver,
+                    Pickable::IGNORE,
+                ));
                 parent.spawn((
                     Mesh3d(assets.label_mesh.clone()),
                     MeshMaterial3d(ink.clone()),
@@ -308,14 +421,14 @@ fn sync_money(
                         JAR_HEIGHT_MM as f32 * 0.001,
                     ))),
                     MeshMaterial3d(assets.glass.clone()),
-                    Transform::from_translation(jar + Vec3::Y * (JAR_HEIGHT_MM as f32 * 0.0005)),
+                    Transform::from_translation(jar_body_center(seat)),
                     NotShadowCaster,
                 ));
                 spawn_prop(
                     &mut commands,
                     meshes.add(Torus::new(0.036, 0.041)),
                     assets.glass.clone(),
-                    jar + Vec3::Y * 0.18,
+                    jar + Vec3::Y * (JAR_HEIGHT_MM as f32 * 0.001 + JAR_GLASS_CLEARANCE),
                 );
                 let lid = center(seat, CoinContainer::Lid);
                 spawn_prop(
@@ -413,6 +526,11 @@ fn sync_money(
 fn center(seat: u8, container: CoinContainer) -> Vec3 {
     Vec3::from_array(container_center_mm(seat, container).map(|v| v as f32 * 0.001))
 }
+fn jar_body_center(seat: u8) -> Vec3 {
+    center(seat, CoinContainer::Jar)
+        + Vec3::Y * (JAR_HEIGHT_MM as f32 * 0.0005 + JAR_GLASS_CLEARANCE)
+}
+const JAR_GLASS_CLEARANCE: f32 = 0.001;
 fn spawn_prop(
     commands: &mut Commands,
     mesh: Handle<Mesh>,
@@ -486,8 +604,10 @@ fn interact_money(
     developer: Option<Res<super::file_control::DeveloperControlActive>>,
     hand_projection: Res<super::hand_view::HandProjection>,
     card_poses: Res<super::PoseDisplay>,
+    card_drag: Res<super::DragState>,
     hand_camera: Query<(&Camera, &GlobalTransform), With<super::HandCamera>>,
 ) {
+    money.hover_key = None;
     if state.screen != UiScreen::Table {
         state.money_pick_targets.clear();
         state.money_bowl_screen = None;
@@ -546,12 +666,22 @@ fn interact_money(
     }
     let cursor = windows.single().ok().and_then(Window::cursor_position);
     let ray = cursor.and_then(|point| camera.viewport_to_world(camera_transform, point).ok());
-    let enabled = state.screen == UiScreen::Table && !state.escape_menu_open && !inspection.active;
+    let enabled = state.screen == UiScreen::Table
+        && !state.escape_menu_open
+        && !inspection.active
+        && card_drag.card_key.is_none();
     let inset_card = cursor.is_some_and(|cursor| {
         hand_camera
             .single()
             .ok()
             .is_some_and(|(camera, transform)| {
+                if !camera.is_active
+                    || camera
+                        .logical_viewport_rect()
+                        .is_none_or(|rect| !rect.contains(cursor))
+                {
+                    return false;
+                }
                 camera
                     .viewport_to_world(transform, cursor)
                     .ok()
@@ -571,11 +701,9 @@ fn interact_money(
                     })
             })
     });
-    if enabled
+    let candidate = if enabled
         && !inset_card
-        && money.pending_commit.is_none()
         && !interaction.blocks_card_input()
-        && mouse.just_pressed(MouseButton::Left)
         && let Some(ray) = ray
     {
         let nearest_card = card_poses
@@ -585,21 +713,29 @@ fn interact_money(
                 super::hand_view::card_hit(ray, mm_position(pose.current), pose.current_rotation)
             })
             .min_by(f32::total_cmp);
-        let candidate = nearest_coin(&model, &money, ray).filter(|(distance, _, _)| {
+        nearest_coin(&model, &money, ray).filter(|(distance, _, _)| {
             nearest_card.is_none_or(|card_distance| *distance < card_distance)
-        });
-        if let Some((_, key, point)) = candidate {
-            let pose = money.poses.get_mut(&key).expect("picked coin exists");
-            let plane_y = pose.current.y;
-            let offset = pose.current - point;
-            pose.target.y = plane_y + 0.024;
-            money.drag = Some(CoinDrag {
-                key,
-                plane_y,
-                offset,
-                sent_at: -1.0,
-            });
-        }
+        })
+    } else {
+        None
+    };
+    if let Some((_, key, _)) = &candidate {
+        money.hover_key = Some(key.clone());
+        interaction.pointer_over_ui = true;
+    }
+    if mouse.just_pressed(MouseButton::Left)
+        && let Some((_, key, point)) = candidate
+    {
+        // Picking includes the cylindrical side/cap, but drag mapping uses
+        // the fixed center-height plane so pickup cannot shift X/Z.
+        let point = ray
+            .and_then(|ray| {
+                let center = money.poses.get(&key)?.current;
+                let distance = ray.intersect_plane(center, InfinitePlane3d::new(Vec3::Y))?;
+                Some(ray.get_point(distance))
+            })
+            .unwrap_or(point);
+        money.begin_drag(key, point);
     }
     let Some(mut drag) = money.drag.take() else {
         return;
@@ -666,7 +802,15 @@ fn interact_money(
     }
     if release {
         let sequence = pose.sequence;
-        money.pending_commit = submitted.then(|| (drag.key.clone(), sequence));
+        if submitted {
+            money.pending_commits.insert(
+                drag.key.clone(),
+                PendingCoinCommit {
+                    sequence,
+                    repair: false,
+                },
+            );
+        }
     } else {
         money.drag = Some(drag);
     }
@@ -698,26 +842,61 @@ fn nearest_coin(
         .filter(|c| c.is_own && c.container != "bowl")
         .filter_map(|coin| {
             let pose = money.poses.get(&coin.coin_key)?;
-            let radius = if coin.denomination_cents == 25 {
-                0.012
-            } else {
-                0.009
-            };
-            let distance = ray.intersect_plane(pose.current, InfinitePlane3d::new(Vec3::Y))?;
+            let distance = coin_hit(ray, pose.current, coin.denomination_cents)?;
             let point = ray.get_point(distance);
-            ((point - pose.current).xz().length() <= radius).then_some((
-                distance,
-                coin.coin_key.clone(),
-                point,
-            ))
+            Some((distance, coin.coin_key.clone(), point))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
+}
+
+fn coin_shape(denomination: u8) -> Cylinder {
+    if denomination == 25 {
+        Cylinder::new(0.012, 0.0018)
+    } else {
+        Cylinder::new(0.009, 0.0014)
+    }
+}
+
+fn coin_outline_shape(denomination: u8) -> Cylinder {
+    let shape = coin_shape(denomination);
+    Cylinder::new(shape.radius + 0.0012, shape.half_height * 2. + 0.0024)
+}
+
+/// Intersect the actual finite cylinder, including its narrow side. The hover
+/// hull is presentation only and must not make adjacent coins steal a click.
+fn coin_hit(ray: Ray3d, center: Vec3, denomination: u8) -> Option<f32> {
+    let shape = coin_shape(denomination);
+    let origin = ray.origin - center;
+    let direction = *ray.direction;
+    let mut nearest = f32::INFINITY;
+    if direction.y.abs() > 1e-7 {
+        for y in [-shape.half_height, shape.half_height] {
+            let t = (y - origin.y) / direction.y;
+            if t >= 0. && (origin + direction * t).xz().length_squared() <= shape.radius.powi(2) {
+                nearest = nearest.min(t);
+            }
+        }
+    }
+    let a = direction.xz().length_squared();
+    let b = 2. * origin.xz().dot(direction.xz());
+    let c = origin.xz().length_squared() - shape.radius.powi(2);
+    let discriminant = b * b - 4. * a * c;
+    if a > 1e-10 && discriminant >= 0. {
+        for sign in [-1., 1.] {
+            let t = (-b + sign * discriminant.sqrt()) / (2. * a);
+            if t >= 0. && (origin.y + direction.y * t).abs() <= shape.half_height {
+                nearest = nearest.min(t);
+            }
+        }
+    }
+    nearest.is_finite().then_some(nearest)
 }
 
 fn animate_money(
     time: Res<Time>,
     mut money: ResMut<MoneyState>,
     mut coins: Query<(&CoinVisual, &mut Transform)>,
+    mut outlines: Query<(&CoinOutline, &mut Visibility)>,
     mut labels: Query<&mut Transform, (With<MoneyLabel>, Without<CoinVisual>)>,
     camera: Query<
         &Transform,
@@ -735,6 +914,15 @@ fn animate_money(
             transform.translation = pose.current;
         }
     }
+    for (coin, mut visible) in &mut outlines {
+        *visible = if money.hover_key.as_deref() == Some(coin.0.as_str())
+            || money.drag.as_ref().is_some_and(|drag| drag.key == coin.0)
+        {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
     if let Ok(camera) = camera.single() {
         for mut label in &mut labels {
             label.rotation = camera.rotation;
@@ -745,6 +933,297 @@ fn animate_money(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coin_outline_encloses_top_bottom_and_side_without_covering_the_face() {
+        for denomination in [10, 25] {
+            let body = coin_shape(denomination);
+            let hull = coin_outline_shape(denomination);
+            assert!(hull.radius > body.radius);
+            assert!(hull.half_height > body.half_height);
+            // Inverted hull's back surface is behind the opaque face, from
+            // either direction. Only the expanded silhouette remains visible.
+            assert!(-hull.half_height < -body.half_height);
+        }
+    }
+
+    #[test]
+    fn coin_picking_covers_top_and_side_but_not_outline_only_space() {
+        for denomination in [10, 25] {
+            let body = coin_shape(denomination);
+            assert!(coin_hit(Ray3d::new(Vec3::Y, Dir3::NEG_Y), Vec3::ZERO, denomination).is_some());
+            assert!(coin_hit(Ray3d::new(Vec3::X, Dir3::NEG_X), Vec3::ZERO, denomination).is_some());
+            assert!(
+                coin_hit(
+                    Ray3d::new(Vec3::new(body.radius + 0.0001, 1., 0.), Dir3::NEG_Y),
+                    Vec3::ZERO,
+                    denomination
+                )
+                .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn returning_coin_is_picked_at_displayed_pose_not_its_network_destination() {
+        let money = returning_coin();
+        let mut model = BridgeModel::default();
+        model
+            .snapshot
+            .coins
+            .push(poche_spacetimedb_client::CoinView {
+                coin_key: "quarter".into(),
+                coin_id: "q0".into(),
+                owner: "self".into(),
+                owner_seat: Some(0),
+                is_own: true,
+                denomination_cents: 25,
+                container: "lid".into(),
+                position_mm: [-220, 25, 430],
+                sequence: 7,
+            });
+        let displayed = money.poses["quarter"].current;
+        let ray = Ray3d::new(displayed + Vec3::Y, Dir3::NEG_Y);
+        assert_eq!(nearest_coin(&model, &money, ray).unwrap().1, "quarter");
+        let destination = mm_position(model.snapshot.coins[0].position_mm.map(|v| v as f32));
+        assert!(
+            nearest_coin(
+                &model,
+                &money,
+                Ray3d::new(destination + Vec3::Y, Dir3::NEG_Y)
+            )
+            .is_none()
+        );
+        model.snapshot.coins[0].container = "bowl".into();
+        assert!(
+            nearest_coin(&model, &money, ray).is_none(),
+            "paid coins remain authority-locked"
+        );
+    }
+
+    fn returning_coin() -> MoneyState {
+        let displayed = Vec3::new(-0.1, 0.06, 0.3);
+        MoneyState {
+            poses: BTreeMap::from([(
+                "quarter".into(),
+                CoinPose {
+                    current: displayed,
+                    target: center(0, CoinContainer::Lid) + Vec3::Y * 0.005,
+                    sequence: 7,
+                    last_sent: Some([-100, 60, 300]),
+                },
+            )]),
+            ..default()
+        }
+    }
+
+    #[test]
+    fn returning_coin_can_be_regrabbed_before_commit_acknowledgement() {
+        let mut money = returning_coin();
+        money.pending_commits.insert(
+            "quarter".into(),
+            PendingCoinCommit {
+                sequence: 7,
+                repair: false,
+            },
+        );
+        let displayed = money.poses["quarter"].current;
+        assert!(money.begin_drag("quarter".into(), displayed));
+        assert_eq!(
+            money.drag.as_ref().unwrap().plane_y.to_bits(),
+            displayed.y.to_bits()
+        );
+        assert_eq!(money.poses["quarter"].target.xz(), displayed.xz());
+    }
+
+    fn coin_snapshot() -> ClientSnapshot {
+        ClientSnapshot {
+            rooms: vec![poche_spacetimedb_client::RoomView {
+                room_id: "room".into(),
+            }],
+            coins: vec![CoinView {
+                coin_key: "quarter".into(),
+                coin_id: "q0".into(),
+                owner: "self".into(),
+                owner_seat: Some(0),
+                is_own: true,
+                denomination_cents: 25,
+                container: "lid".into(),
+                position_mm: [-220, 25, 430],
+                sequence: 7,
+            }],
+            ..default()
+        }
+    }
+
+    fn rejected(sequence: u64) -> BridgeNotice {
+        BridgeNotice::CoinMoveFinished {
+            room_id: "room".into(),
+            coin_id: "q0".into(),
+            sequence,
+            commit: true,
+            result: Err("invalid payment".into()),
+        }
+    }
+
+    #[test]
+    fn old_return_acknowledgement_cannot_pull_a_regrabbed_coin_from_the_cursor() {
+        let mut money = returning_coin();
+        let snapshot = coin_snapshot();
+        let displayed = money.poses["quarter"].current;
+        money.begin_drag("quarter".into(), displayed);
+        let held_target = money.poses["quarter"].target;
+        money
+            .poses
+            .get_mut("quarter")
+            .unwrap()
+            .reconcile(&snapshot.coins[0], true);
+        assert_eq!(money.poses["quarter"].target, held_target);
+        assert_eq!(money.poses["quarter"].current, displayed);
+    }
+
+    #[test]
+    fn old_rejection_does_not_cancel_regrab_even_before_its_first_preview() {
+        let mut money = returning_coin();
+        money.pending_commits.insert(
+            "quarter".into(),
+            PendingCoinCommit {
+                sequence: 7,
+                repair: false,
+            },
+        );
+        let displayed = money.poses["quarter"].current;
+        money.begin_drag("quarter".into(), displayed);
+        assert!(money.finish_move(&coin_snapshot(), &rejected(7)).is_none());
+        assert_eq!(money.drag.as_ref().unwrap().key, "quarter");
+        assert_eq!(money.poses["quarter"].current, displayed);
+    }
+
+    #[test]
+    fn old_rejection_cannot_replace_a_newer_release_prediction() {
+        let mut money = returning_coin();
+        money.poses.get_mut("quarter").unwrap().sequence = 9;
+        money.pending_commits.insert(
+            "quarter".into(),
+            PendingCoinCommit {
+                sequence: 9,
+                repair: false,
+            },
+        );
+        assert!(money.finish_move(&coin_snapshot(), &rejected(7)).is_none());
+        assert_eq!(money.pending_commits["quarter"].sequence, 9);
+    }
+
+    #[test]
+    fn old_pose_echo_after_second_release_is_ignored_but_latest_ack_is_applied() {
+        let mut money = returning_coin();
+        let mut snapshot = coin_snapshot();
+        let pose = money.poses.get_mut("quarter").unwrap();
+        pose.sequence = 9;
+        pose.target = Vec3::new(-0.15, 0.049, 0.37);
+        let desired = pose.target;
+        pose.reconcile(&snapshot.coins[0], false);
+        assert_eq!(pose.target, desired);
+        assert_eq!(pose.sequence, 9);
+        snapshot.coins[0].sequence = 9;
+        pose.reconcile(&snapshot.coins[0], false);
+        assert_eq!(pose.target, mm_position([-220., 25., 430.]));
+        assert_eq!(pose.sequence, 9);
+    }
+
+    #[test]
+    fn final_rejected_transfer_repairs_only_that_coin_once_with_a_fresh_sequence() {
+        let mut money = returning_coin();
+        money.pending_commits.insert(
+            "quarter".into(),
+            PendingCoinCommit {
+                sequence: 7,
+                repair: false,
+            },
+        );
+        let snapshot = coin_snapshot();
+        let Some(BridgeIntent::MoveCoin {
+            coin_id,
+            sequence,
+            container,
+            commit,
+            ..
+        }) = money.finish_move(&snapshot, &rejected(7))
+        else {
+            panic!("one corrective commit")
+        };
+        assert_eq!(coin_id, "q0");
+        assert_eq!(sequence, 8);
+        assert_eq!(container, "lid");
+        assert!(commit);
+        assert!(money.finish_move(&snapshot, &rejected(8)).is_none());
+        assert!(money.pending_commits.is_empty());
+        assert_eq!(
+            money.poses["quarter"].target,
+            mm_position([-220., 25., 430.])
+        );
+    }
+
+    #[test]
+    fn another_rooms_rejection_cannot_repair_active_room_coins() {
+        let mut money = returning_coin();
+        money.pending_commits.insert(
+            "quarter".into(),
+            PendingCoinCommit {
+                sequence: 7,
+                repair: false,
+            },
+        );
+        let mut snapshot = coin_snapshot();
+        snapshot.rooms[0].room_id = "different-room".into();
+        assert!(money.finish_move(&snapshot, &rejected(7)).is_none());
+        assert_eq!(money.pending_commits["quarter"].sequence, 7);
+    }
+
+    #[test]
+    fn authoritative_bowl_payment_overrides_a_regrab_and_never_repairs_to_a_wallet() {
+        let mut money = returning_coin();
+        money.pending_commits.insert(
+            "quarter".into(),
+            PendingCoinCommit {
+                sequence: 7,
+                repair: false,
+            },
+        );
+        let mut snapshot = coin_snapshot();
+        snapshot.coins[0].container = "bowl".into();
+        snapshot.coins[0].position_mm = [-240, 25, 0];
+        money
+            .poses
+            .get_mut("quarter")
+            .unwrap()
+            .reconcile(&snapshot.coins[0], true);
+        assert_eq!(money.poses["quarter"].target, mm_position([-240., 25., 0.]));
+        assert!(money.finish_move(&snapshot, &rejected(7)).is_none());
+    }
+
+    #[test]
+    fn settled_coin_can_be_grabbed_without_pending_commit() {
+        let mut money = returning_coin();
+        let displayed = money.poses["quarter"].current;
+        money.poses.get_mut("quarter").unwrap().target = displayed;
+        assert!(money.begin_drag("quarter".into(), displayed));
+        assert_eq!(money.drag.as_ref().unwrap().offset, Vec3::ZERO);
+    }
+
+    #[test]
+    fn jar_bottom_is_separated_from_table_but_keeps_lowest_coins_inside() {
+        for seat in 0..2 {
+            let bottom = jar_body_center(seat).y - JAR_HEIGHT_MM as f32 * 0.0005;
+            let table = center(seat, CoinContainer::Jar).y;
+            let first_coin = poche_money::coin_rest_pose(seat, CoinContainer::Jar, 0, 25);
+            assert!(
+                bottom > table + 0.0001,
+                "jar bottom {bottom} is coplanar with table {table}"
+            );
+            assert!(bottom < first_coin[1] as f32 * 0.001 - 0.0009);
+        }
+    }
     #[test]
     fn each_container_is_a_distinct_drop_target_for_both_seats() {
         for seat in 0..2 {
