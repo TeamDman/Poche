@@ -1,6 +1,6 @@
 # Round continuity and table interaction
 
-**Plan status:** Active
+**Plan status:** Complete for this round-continuity and tabletop interaction slice
 **Primary implementation root:** `spacetimedb`, following PLAN-9
 **Last updated:** 2026-09-16
 **Intent audit:** Passed against the latest resumed-match playtest report.
@@ -75,9 +75,9 @@ Source limitation: none for the latest user report. Earlier foundation remains i
 **Validation:** Failing-old/passing-new controller tests, real sheet click, wheel/pan, second click, I/O combinations via windowless input.
 **Completion criterion:** Inspection fills the viewport appropriately and never unexpectedly dismisses on movement.
 
-## [~] E — Validate and release
+## [x] E — Validate and release
 
-**Completion notes:** Desktop 93 tests and 3 puppet comparison tests passed, including a reproduced between-round resume failure: the loading gate incorrectly expected the next hand's cards before dealing. It now accepts cleared cards in AwaitingDeal/Finished, retaining the active-deal readiness check. Four native authority-helper tests, 7 client tests and 3 bridge tests passed. The final windowless Maincloud run passed all 18 checks in report schema v12, including two rounds, coin regrab, camera input, winner-only captured-opponent-card dragging through real pointer input, same-identity resume, sibling disconnect and explicit leave. The pointer test compares canonical card fields while excluding only the viewer-relative `is_own` flag, with failing-neighbour regressions for pose/sequence/authority differences. Visually inspected the won-card, coin, round-continuity and scoresheet contact sheets. Strict changed-crate Clippy passes with `--no-deps`; an unrestricted invocation encounters a pre-existing missing-panic-doc lint in `poche-spatial/src/physical_identity.rs`. No unrelated dependency code was changed. Additive module publication succeeded without resetting persisted rooms. Commit and push remain.
+**Completion notes:** Desktop 93 tests and 3 puppet comparison tests passed, including a reproduced between-round resume failure: the loading gate incorrectly expected the next hand's cards before dealing. It now accepts cleared cards in AwaitingDeal/Finished, retaining the active-deal readiness check. Four native authority-helper tests, 7 client tests and 3 bridge tests passed. The final windowless Maincloud run passed all 18 checks in report schema v12, including two rounds, coin regrab, camera input, winner-only captured-opponent-card dragging through real pointer input, same-identity resume, sibling disconnect and explicit leave. The pointer test compares canonical card fields while excluding only the viewer-relative `is_own` flag, with failing-neighbour regressions for pose/sequence/authority differences. Visually inspected the won-card, coin, round-continuity and scoresheet contact sheets. Strict changed-crate Clippy passes with `--no-deps`; an unrestricted invocation encounters a pre-existing missing-panic-doc lint in `poche-spatial/src/physical_identity.rs`. No unrelated dependency code was changed. Additive module publication succeeded without resetting persisted rooms. Implementation commit `42de30f` was pushed successfully to `origin/spacetimedb`; this follow-up records the completed release evidence.
 
 Validation commands run from the repository root:
 
