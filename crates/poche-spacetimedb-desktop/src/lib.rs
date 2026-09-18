@@ -18,6 +18,8 @@
 mod camera_inspection;
 mod contextual_diagnostics;
 pub mod file_control;
+#[cfg(test)]
+mod frontend_layout_tests;
 mod hand_options;
 mod hand_view;
 pub mod identity_vault;
@@ -580,6 +582,7 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
             Update,
             preserve_renderable_window_extent.before(handle_buttons),
         )
+        .add_systems(Update, scroll_frontend)
         .add_systems(
             Startup,
             (setup_render_target, setup_spatial_renderer, setup_menu).chain(),
@@ -738,6 +741,12 @@ struct MainMenuRoot;
 
 #[derive(Component)]
 struct FrontendRoot(UiScreen);
+
+#[derive(Component)]
+struct FrontendBody;
+
+#[derive(Component)]
+struct IdentitySelectorRow;
 
 #[derive(Component)]
 struct RoomRoot;
@@ -1323,11 +1332,6 @@ fn spawn_frontend(
     vault: &IdentityVault,
     has_resumable_room: bool,
 ) {
-    let accounts = vault
-        .accounts_for(&authority.uri, &authority.database)
-        .into_iter()
-        .cloned()
-        .collect::<Vec<_>>();
     let mut root = commands.spawn((
         FrontendRoot(state.screen),
         UiTargetCamera(camera),
@@ -1336,9 +1340,9 @@ fn spawn_frontend(
             height: percent(100.),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
+            justify_content: JustifyContent::Start,
             row_gap: px(14.),
-            padding: px(28.).all(),
+            padding: px(16.).all(),
             ..default()
         },
         BackgroundColor(Color::srgb(0.025, 0.055, 0.06)),
@@ -1346,7 +1350,63 @@ fn spawn_frontend(
     if state.screen == UiScreen::MainMenu {
         root.insert(MainMenuRoot);
     }
-    root.with_children(|parent| match state.screen {
+    root.with_children(|outer| {
+        if matches!(
+            state.screen,
+            UiScreen::MainMenu | UiScreen::ResumeOffer | UiScreen::LobbyEnded
+        ) {
+            spawn_identity_selector(outer, state);
+        }
+        // The header reserves real layout space. Only the body scrolls, so a
+        // tall recent-lobby list cannot push branding through the selector.
+        outer
+            .spawn((
+                FrontendBody,
+                Node {
+                    width: percent(100.),
+                    min_height: px(0.),
+                    flex_grow: 1.,
+                    flex_direction: FlexDirection::Column,
+                    overflow: Overflow::scroll_y(),
+                    ..default()
+                },
+                ScrollPosition::default(),
+            ))
+            .with_children(|viewport| {
+                viewport
+                    .spawn(Node {
+                        width: percent(100.),
+                        min_height: percent(100.),
+                        flex_shrink: 0.,
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        row_gap: px(10.),
+                        padding: px(12.).vertical(),
+                        ..default()
+                    })
+                    .with_children(|parent| {
+                        spawn_frontend_contents(
+                            parent,
+                            authority,
+                            state,
+                            vault,
+                            has_resumable_room,
+                        );
+                    });
+            });
+    });
+}
+
+fn spawn_frontend_contents(
+    parent: &mut ChildSpawnerCommands,
+    authority: &AuthorityEndpoint,
+    state: &UiState,
+    vault: &IdentityVault,
+    has_resumable_room: bool,
+) {
+    let accounts = vault.accounts_for(&authority.uri, &authority.database);
+    match state.screen {
         UiScreen::IdentityGate => {
             spawn_brand(parent, authority);
             parent.spawn((
@@ -1386,7 +1446,12 @@ fn spawn_frontend(
             ));
             spawn_field(parent, Field::IdentityLabel, 380., 32, false);
             spawn_button(parent, "Create identity", UiAction::CreateIdentity, false);
-            spawn_button(parent, "Refresh identities", UiAction::RefreshIdentities, false);
+            spawn_button(
+                parent,
+                "Refresh identities",
+                UiAction::RefreshIdentities,
+                false,
+            );
             spawn_frontend_status(parent, state);
         }
         UiScreen::Connecting => {
@@ -1429,7 +1494,6 @@ fn spawn_frontend(
             spawn_frontend_status(parent, state);
         }
         UiScreen::ResumeOffer => {
-            spawn_identity_selector(parent, state);
             parent.spawn((
                 Text::new("UNFINISHED LOBBY FOUND"),
                 TextFont::from_font_size(32.),
@@ -1449,7 +1513,6 @@ fn spawn_frontend(
             spawn_frontend_status(parent, state);
         }
         UiScreen::MainMenu => {
-            spawn_identity_selector(parent, state);
             parent.spawn((
                 Text::new("POCHE"),
                 TextFont::from_font_size(58.),
@@ -1530,7 +1593,6 @@ fn spawn_frontend(
             ));
         }
         UiScreen::LobbyEnded => {
-            spawn_identity_selector(parent, state);
             parent.spawn((
                 Text::new("YOU HAVE LEFT THE LOBBY"),
                 TextFont::from_font_size(34.),
@@ -1546,7 +1608,32 @@ fn spawn_frontend(
             spawn_frontend_status(parent, state);
         }
         UiScreen::Table => {}
-    });
+    }
+}
+
+fn scroll_frontend(
+    scroll: Res<AccumulatedMouseScroll>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut bodies: Query<(&mut ScrollPosition, &ComputedNode), With<FrontendBody>>,
+) {
+    let delta = match scroll.unit {
+        MouseScrollUnit::Line => scroll.delta.y * 32.,
+        MouseScrollUnit::Pixel => scroll.delta.y,
+    };
+    for (mut position, computed) in &mut bodies {
+        let viewport_height = computed.size().y * computed.inverse_scale_factor();
+        let maximum = ((computed.content_size().y - computed.size().y)
+            * computed.inverse_scale_factor())
+        .max(0.);
+        let page = if keys.just_pressed(KeyCode::PageDown) {
+            viewport_height * 0.8
+        } else if keys.just_pressed(KeyCode::PageUp) {
+            -viewport_height * 0.8
+        } else {
+            0.
+        };
+        position.y = (position.y - delta + page).clamp(0., maximum);
+    }
 }
 
 fn spawn_brand(parent: &mut ChildSpawnerCommands, authority: &AuthorityEndpoint) {
@@ -1564,26 +1651,51 @@ fn spawn_brand(parent: &mut ChildSpawnerCommands, authority: &AuthorityEndpoint)
 
 fn spawn_identity_selector(parent: &mut ChildSpawnerCommands, state: &UiState) {
     parent
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            top: px(22.),
-            align_items: AlignItems::Center,
-            column_gap: px(8.),
-            ..default()
-        })
+        .spawn((
+            IdentitySelectorRow,
+            Node {
+                width: percent(100.),
+                max_width: px(520.),
+                flex_shrink: 0.,
+                align_items: AlignItems::Center,
+                column_gap: px(8.),
+                ..default()
+            },
+        ))
         .with_children(|row| {
-            spawn_button(row, "‹", UiAction::PreviousIdentity, false);
-            spawn_button(
-                row,
-                if state.account_label.is_empty() {
-                    "Choose identity"
-                } else {
-                    &state.account_label
-                },
-                UiAction::OpenIdentities,
-                false,
-            );
-            spawn_button(row, "›", UiAction::NextIdentity, false);
+            let label = if state.account_label.is_empty() {
+                "Choose identity"
+            } else {
+                &state.account_label
+            };
+            for (text, action, is_name) in [
+                ("‹", UiAction::PreviousIdentity, false),
+                (label, UiAction::OpenIdentities, true),
+                ("›", UiAction::NextIdentity, false),
+            ] {
+                row.spawn((
+                    Button,
+                    action,
+                    Node {
+                        width: if is_name { auto() } else { px(44.) },
+                        min_width: px(0.),
+                        min_height: px(48.),
+                        flex_basis: if is_name { px(0.) } else { auto() },
+                        flex_grow: if is_name { 1. } else { 0. },
+                        flex_shrink: 0.,
+                        padding: px(10.).all(),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.13, 0.26, 0.27)),
+                ))
+                .with_child((
+                    Text::new(text),
+                    TextFont::from_font_size(20.),
+                    TextLayout::new(Justify::Center, bevy::text::LineBreak::WordOrCharacter),
+                ));
+            }
         });
 }
 

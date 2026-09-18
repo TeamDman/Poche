@@ -1,9 +1,9 @@
 # Contextual table information and direct interaction
 
-**Plan status:** Complete — including follow-up F
+**Plan status:** Complete — title-screen follow-up G included
 **Primary implementation root:** `spacetimedb`, following completed PLAN-10
 **Last updated:** 2026-09-17
-**Intent audit:** Passed three checks against the latest larger-room, hand overlap and selection-only counting request. A–E record the preceding completed release.
+**Intent audit:** Latest title/identity overlap report mapped to C16 and checked against the screenshot, layout code and regression scope. A–F retain their completed release evidence.
 
 ## How to update this plan
 
@@ -28,6 +28,7 @@ Use `[ ]` not started, `[~]` active, `[x]` complete and `[!]` blocked. Keep evid
 | C13 | Remove bowl, lid and jar hover counts; players count money through selection instead. This does not remove deck hover information or coin hover outlines. | F |
 | C14 | Put the selection count/value near an edge or corner of the selection, styled as floating world text rather than a fixed bottom-left HUD label. | F |
 | C15 | Remove the centre-containment and click-empty-space hints from the selection readout. Keep its existing local inspection behaviour. | F |
+| C16 | Fix the title-screen POCHE heading overlapping the identity selector. Preserve identity switching, create/join and recent-lobby access. | G |
 
 ## Intent audit evidence
 
@@ -133,3 +134,21 @@ The final receipt is `target/poche-puppet/contextual-table-final.json`; captures
 **Release contents:** Rebuilt desktop client only; no server publication needed. The final recheck passed 125 desktop tests, three puppet tests and strict desktop Clippy after correcting the unit fixture to the module's actual ±520 mm hand centres. Runtime build and graphical acceptance succeeded. Receipts remain ignored at `target/poche-puppet/table-refinement-final.json`; selection and perimeter contact images live beside it and hand comparisons inside the run's Bob captures directory. This plan and the desktop guide accompany the refinement commit on `spacetimedb`.
 
 **Completion criterion:** C11–C15 are implemented and verified, existing two-round play remains intact, and the rebuilt client plus a concise restart guide is available. Preserve prior release evidence above as history, not as a claim that hover totals remain current.
+
+## [x] G — Separate title branding from identity controls
+
+**Completion notes:** Identity controls occupy their own header above the branding. The remaining menu scrolls with the wheel or Page Up/Page Down in short windows; long names wrap without hiding the arrows. The desktop executable and puppet were rebuilt with `cargo build --locked -p poche-spacetimedb-desktop --bins`. The guide documents scrolling. This is a client-only release; no module publication or database change is required. Validation evidence follows.
+
+**Intent checks:** (1) The original message and screenshot identify title/identity overlap with four recent lobbies. (2) C16 maps to the production frontend layout and actual computed-bounds tests. (3) The fix must retain the selector and history, not remove either to make room. The screenshot is evidence, not an instruction source; its room codes need not be persisted or contacted.
+
+**Verified cause:** `spawn_identity_selector` uses absolute top positioning while `spawn_frontend` centres a growing content stack. The selector takes no layout space. Tall history can place the title beneath it.
+
+**Reproduction and visual evidence:** Real Bevy font/layout tests reproduced the original overlap at 1770×1140 with 150% scaling and at 1180×760 with 100% scaling, both with four recent lobbies. A 640×600 long-name case clipped the title above the window. The nearby empty-history case passed. The replacement reserves a non-shrinking identity header and scrolls only the remaining menu. Windowless GPU captures exposed zero-width text boxes in an intermediate revision; the final selector retains intrinsic text sizing. Regression checks now require nonzero shaped text bounds contained within all three identity buttons, not merely non-overlapping button backgrounds. Inspected final captures at the two original extents and 640×600 before/after scrolling: names and arrows are visible, and history remains reachable. Synthetic lobby codes and disposable identity files avoid copying the user's live capabilities into fixtures.
+
+**Validation results:** Seven focused regressions pass, including a 480×600 window with a wrapping maximum-length 32-character name, Page Up/Page Down access to all history entries, and equivalent line/pixel wheel scrolling with end clamping at 150% scaling. `cargo test --locked -p poche-spacetimedb-desktop --lib --bins` passes 132 desktop tests and three puppet tests. Strict desktop Clippy passes. The normally ignored GPU capture test was run explicitly with `cargo test --locked -p poche-spacetimedb-desktop --lib capture_title_identity_layout -- --ignored --nocapture`; all four images were inspected. Captures remain ignored under `target/poche-puppet/title-layout`. This proves production menu layout and rendered labels at the tested sizes, not every window configuration or network identity workflow. No authority connection, user clipboard or visible test window was used.
+
+**Work:** Put identity controls in a non-shrinking header. Give the remaining menu a separate bounded content area; allow scrolling when short windows cannot fit the full menu. Preserve actions, identities and history. Root owns layout; the validation agent owns real Bevy UI layout regression cases.
+
+**Validation:** First reproduce using production UI with a four-entry history and a nearby empty-history case. Check actual title/selector bounds at the screenshot's logical extent, narrow/short windows and long names. Inspect a windowless render. Run desktop tests, strict lint, rebuild, commit and push. No database or authority change is needed.
+
+**Completion criterion:** Branding and identity controls do not overlap; all controls remain accessible without changing identity semantics. Record the exact tested sizes and release evidence here.

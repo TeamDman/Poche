@@ -225,6 +225,8 @@ connection. Create or select Alice in the first window and Bob in the second.
 If another window just created an account, use **Refresh identities**. The
 title shows the selected account; its arrows switch accounts, and clicking
 the account name opens the identity screen.
+The identity selector stays above the menu. In shorter windows, scroll the
+menu with the mouse wheel or Page Up/Page Down to reach recent lobbies.
 
 As Alice, choose **Create lobby** and copy the opaque `PCH-…` code. As Bob,
 paste the code and choose **Join lobby**. Click different stools to sit, then
