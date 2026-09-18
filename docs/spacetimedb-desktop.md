@@ -47,9 +47,10 @@ in `poche-money`, not a rulebook requirement or cash balance.
 
 Drag a quarter from your lid into the shared bowl. The first deal waits until
 both seated players have paid 25¢. Replenish the lid by moving a coin from the
-jar, or return unused coins to the jar. Hover the jar, lid or bowl to inspect
-its shared coin count and value. Pointing at a coin shows its outline instead
-of the container total. Idle containers have no floating amount labels.
+jar, or return unused coins to the jar. Containers have no amount labels,
+including on hover. Drag from empty space to count coins by selection instead;
+the live count floats beside the selection corner and stays in the world when
+released. Pointing at a coin still shows its outline.
 Peers see the same coin moving; pickup and release height are eased locally too.
 
 Canonical jar stacks put quarters below dimes. Rejoining also repairs the exact
@@ -409,14 +410,20 @@ The door requires a second confirmation click. It verifies the terminal screen a
 public leave event, one remaining member, no stranded game projection, and no
 orphaned card poses.
 
-The current v13 acceptance report has 24 checks. It also verifies exact container
-hover counts, coin-hover precedence, live marquee counting and retained selection.
+The current v14 acceptance report has 27 checks. It verifies absent money
+container counts, coin outlines, live marquee counting and retained selection.
+The selection readout must be a world mesh beside the selection corner, with
+no containment/clear hints. Both seats' two-card hands are captured at normal
+and double size, and each exposed rank corner is clicked to pick that card.
 Actual right-click and slider gestures resize the hand without changing the
 camera or shared poses. Sound counters establish one local pickup/drop pair,
 no peer echo and no audio output during windowless tests. The final run on
-17 September 2026 passed all 24 checks. The inspected
-`contextual-inspection.png` shows the enlarged hand, readable hover total and
-selection preview. See [PLAN-11](../PLAN-11-CONTEXTUAL-TABLE.md) for evidence
+17 September 2026 passed all 27 checks. The inspected
+`contextual-inspection.png` shows the enlarged hand and floating selection
+preview; the run's `two-seat-hand-fans.png` shows both hands at both sizes.
+The door is now at the edge of a 4.2 m square floor, with no floor margin behind
+its frame. The test orbits normally until that farther door can be clicked.
+See [PLAN-11](../PLAN-11-CONTEXTUAL-TABLE.md) for evidence
 boundaries; older receipts do not cover these newer interactions.
 
 The same run also grabs an inset card using real Bevy pointer input, taps Q,
@@ -478,7 +485,7 @@ reports the `resume_offer` surface.
 `menu ROOT`, `options ROOT`, `invert-camera-y ROOT`, and `back ROOT` expose the
 same nested menu path to ad-hoc windowless control and screenshot capture.
 
-File-control schema 10 also accepts real input. On a `--windowless` instance:
+File-control schema 11 also accepts real input. On a `--windowless` instance:
 
 ```powershell
 target\debug\poche-puppet.exe pointer target\live\alice 590 732 down
@@ -493,7 +500,10 @@ injection is rejected for OS windows so tests cannot move your mouse. The
 observation includes the held card key and visible hand-copy count. Screenshots
 and semantic observations still work for both windowed and windowless instances.
 The `contextual` observations expose local selection, hover, hand display and
-sound-cue state. These inspect presentation without granting reducer authority.
+sound-cue state, including the world-space selection readout and the viewer's
+own exposed hand corners for ordinary pointer tests. These inspect presentation
+without granting reducer authority. The legacy `money_hover` field is always
+empty; vessel totals are intentionally selection-only.
 
 `camera-gesture ROOT DX DY middle|right|up` supplies windowless camera motion.
 It pans or orbits within scoresheet inspection just like the mouse; inspection

@@ -204,7 +204,7 @@ fn handle_hand_options(
         hand.contains(world)
             && hand_view::card_hit(
                 ray,
-                hand.to_inset(world) + Vec3::Y * hand_view::stack_offset(&poses, &card.card_key),
+                hand.card_position(&poses, &card.card_key).unwrap(),
                 pose.current_rotation,
             )
             .is_some()

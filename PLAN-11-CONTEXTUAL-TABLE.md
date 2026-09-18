@@ -1,9 +1,9 @@
 # Contextual table information and direct interaction
 
-**Plan status:** Complete
+**Plan status:** Complete — including follow-up F
 **Primary implementation root:** `spacetimedb`, following completed PLAN-10
 **Last updated:** 2026-09-17
-**Intent audit:** Passed against the latest quiet-table, selection, sound and resizable-hand request.
+**Intent audit:** Passed three checks against the latest larger-room, hand overlap and selection-only counting request. A–E record the preceding completed release.
 
 ## How to update this plan
 
@@ -13,7 +13,7 @@ Use `[ ]` not started, `[~]` active, `[x]` complete and `[!]` blocked. Keep evid
 
 | ID | User direction | Coverage |
 | --- | --- | --- |
-| C1 | Reduce always-present visual information. Jar and lid totals appear on hovering their cylinders, not when the pointer is on a coin. Remove persistent money ownership/amount labels, including the bowl. Spatial placement identifies the owner. | A |
+| C1 | Reduce always-present visual information. Original container-hover totals were implemented in A; the latest request explicitly replaces those totals with selection-only counting (C13). Spatial placement identifies the owner. | A, superseded by F |
 | C2 | Primary-button drag on empty screen creates a 2D selection rectangle. Show live coin count/value before release; release selects encompassed pieces. User considers centroid or full enclosure preferable to mere intersection, without insisting on one. | D |
 | C3 | Put larger quarters below dimes in jars. | A |
 | C4 | Unpaid 25¢ ante should prompt first-person speech above each owing player instead of a bowl label. Preserve clear actionable progression. | B |
@@ -23,6 +23,11 @@ Use `[ ]` not started, `[~]` active, `[x]` complete and `[!]` blocked. Keep evid
 | C8 | Move instructions out of Options into a separate Help entry. | C |
 | C9 | Replace Esc-menu Stand up with clicking one's own physical seat and a Stand up hover tag. Add a physical door with Leave hover tag to leave, instead of an Esc-menu Leave lobby button. | B, C |
 | C10 | Preserve working camera reset, bidding, physical payment, game rules and peer synchronization while changing presentation. | E |
+| C11 | Enlarge the room/base plate, moving the exit farther away and to the actual perimeter, without a margin of floor behind it. | F |
+| C12 | Overlapping bottom-screen hand cards must not let the left card hide the rank and suit of cards to its right. | F |
+| C13 | Remove bowl, lid and jar hover counts; players count money through selection instead. This does not remove deck hover information or coin hover outlines. | F |
+| C14 | Put the selection count/value near an edge or corner of the selection, styled as floating world text rather than a fixed bottom-left HUD label. | F |
+| C15 | Remove the centre-containment and click-empty-space hints from the selection readout. Keep its existing local inspection behaviour. | F |
 
 ## Intent audit evidence
 
@@ -35,7 +40,7 @@ Source limitation: none for the latest message. Earlier behavior is documented i
 ## Decisions and scope
 
 - Use projected centres inside the rectangle, with a live preview. Select coins and card pieces; count public coin denominations without exposing hidden card faces. A piece shown both in the world and the inset is counted once. Counting through the glass jar includes its projected coin centres, not just the topmost visible coins.
-- Selection is local inspection, not a new authoritative object move or multi-coin payment. It starts on empty space, not on an existing draggable object or UI control. A click on empty space clears it; contextual feedback explains the centre rule.
+- Selection is local inspection, not a new authoritative object move or multi-coin payment. It starts on empty space, not on an existing draggable object or UI control. A click on empty space clears it. C15 removes the on-screen explanation; Help may describe the gesture.
 - Retain ordinary camera gestures. RMB on a private inset card owns that complete gesture to open its size popup, rather than also rotating the world camera.
 - Keep server-owned logical containers and all conserved money. Any jar restacking changes poses, not denominations, balances or identity; existing held previews must not be reset incidentally.
 - Add short locally generated sound cues, without third-party audio licensing. Windowless tests record cue events without audible output. Local sound can be disabled in Options.
@@ -108,7 +113,23 @@ The final receipt is `target/poche-puppet/contextual-table-final.json`; captures
 ## Risks
 
 - Input ownership: a selection box or size popup must not simultaneously move a card or orbit the camera. Test initial press through release.
-- Hover semantics: occluded coins count in an intentional marquee, but a coin under the cursor suppresses container text. Neither grants movement authority.
+- Hover semantics: occluded coins count in an intentional marquee; C13 removes container totals altogether. Hovering a coin still highlights it without granting movement authority.
 - Existing jars: presentation and authority must agree after canonical restacking; preserve active preview positions until committed/reconnected.
 - Dense UI: labels should be contextual without removing the only discoverable next action. Use speech, hover and Help.
 - Persistent identity and model agreement stay unchanged; no new formal proof is claimed for UI behavior.
+
+## [x] F — Room perimeter, readable hands and selection-only counting
+
+**Intent checks:** (1) Extracted all five changes from the original message and its screenshot. (2) Mapped each to C11–C15 and specific implementation/validation work. (3) Checked for omissions: the door belongs on the floor boundary, not merely farther away; overlap must work from both seats; only money container hover counts are removed; the live and released selection both retain useful counts without hints. No new authority, rule or private-card disclosure is intended.
+
+**Work:** Expand the floor while preserving table/rule geometry. Place the door frame flush with the floor edge. Replace opaque-ID card depth ordering with owner-facing spatial ordering; picking and rendering must agree. Remove container tooltips. Add an unlit, camera-facing world-mesh readout at the selection corner, retaining its world anchor on release. Preserve centroid membership and deduplication.
+
+**Validation:** Reproduce the overlap before fixing it; test both seats and seven-card overlap chains, mesh bounds at the door/floor boundary, terse selection summaries and label placement. Run the windowless two-client acceptance through ordinary input, including absent money hover totals, selection preview/release/clear, world readout diagnostics, enlarged hands and the farther exit. Inspect rendered captures, run desktop tests/lint and build the client. No module republish is needed unless authoritative code changes.
+
+**Evidence:** Before the overlap fix, the filtered test run passed the near-seat two-card test and failed the far-seat two-card and seven-card chain tests. Afterward all six focused overlap tests passed. The floor is 4.2 m square, with mesh-bounds tests proving jamb/floor alignment. Obsolete container tooltip code was removed, not merely hidden. File-control schema 11 records actual mesh readouts and own-hand corner pick targets. The final rebuilt Maincloud windowless run passed all 27 v14 checks, including two full rounds, ordinary pointer picks of both two-card hands at normal and double size, absent container counts, world readout placement/retention/clear, and an ordinary camera orbit plus two-click exit at the perimeter. Inspected the selection, two-seat hand and perimeter captures. Rank/suit corners, including a ten, are visible in both hand scales. The measured authority/peer times were 74.48/192.71 ms in this run, not a guarantee. No stderr output was produced by the test clients. No module, database schema or existing player identity was changed.
+
+**Evidence boundary:** Seven-card and common-rotation coverage checks depth ordering and picking, not every glyph extent in every viewport. Graphical acceptance covers two-card hands from both seats at the tested landscape viewport. The readout is a local world-space annotation, not an authoritative game object. Existing A–E hover screenshots describe the superseded release.
+
+**Release contents:** Rebuilt desktop client only; no server publication needed. The final recheck passed 125 desktop tests, three puppet tests and strict desktop Clippy after correcting the unit fixture to the module's actual ±520 mm hand centres. Runtime build and graphical acceptance succeeded. Receipts remain ignored at `target/poche-puppet/table-refinement-final.json`; selection and perimeter contact images live beside it and hand comparisons inside the run's Bob captures directory. This plan and the desktop guide accompany the refinement commit on `spacetimedb`.
+
+**Completion criterion:** C11–C15 are implemented and verified, existing two-round play remains intact, and the rebuilt client plus a concise restart guide is available. Preserve prior release evidence above as history, not as a claim that hover totals remain current.

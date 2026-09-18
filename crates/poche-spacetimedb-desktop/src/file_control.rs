@@ -34,7 +34,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u16 = 10;
+pub const SCHEMA_VERSION: u16 = 11;
 pub use super::contextual_diagnostics::ContextualDiagnostics;
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);

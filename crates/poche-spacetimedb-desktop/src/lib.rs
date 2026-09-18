@@ -23,6 +23,7 @@ mod hand_view;
 pub mod identity_vault;
 mod money;
 pub mod observability;
+mod room_geometry;
 mod selection;
 mod sound_feedback;
 mod world_ui;
@@ -996,9 +997,9 @@ fn setup_spatial_renderer(
         ..default()
     });
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(3.0, 0.12, 3.0))),
+        Mesh3d(meshes.add(room_geometry::floor_shape())),
         MeshMaterial3d(floor_material),
-        Transform::from_xyz(0.0, -0.08, 0.0),
+        Transform::from_translation(room_geometry::FLOOR_CENTER),
         RenderLayers::layer(0),
     ));
     for object in layout.scene_objects() {
@@ -2989,6 +2990,7 @@ struct DisplayPose {
     rotation_mdeg: [i32; 3],
     sequence: u64,
     authority_owner: String,
+    owner_seat: u8,
     logical_location: String,
     last_submitted: Option<SubmittedPose>,
 }
@@ -3030,6 +3032,7 @@ impl DisplayPose {
             rotation_mdeg: network.rotation_mdeg,
             sequence: network.sequence,
             authority_owner: network.owner.clone(),
+            owner_seat: network.owner_seat,
             logical_location: network.logical_location.clone(),
             last_submitted: None,
         }
@@ -3059,6 +3062,7 @@ impl DisplayPose {
         self.rotation_mdeg = network.rotation_mdeg;
         self.sequence = network.sequence;
         self.authority_owner.clone_from(&network.owner);
+        self.owner_seat = network.owner_seat;
         self.logical_location.clone_from(&network.logical_location);
         self.last_submitted = None;
     }
@@ -3768,11 +3772,11 @@ fn drag_cards(
                 {
                     return None;
                 }
-                let position = (if inset.is_some() {
-                    hand.to_inset(physical)
+                let position = if inset.is_some() {
+                    hand.card_position(&poses, &network.card_key)?
                 } else {
-                    physical
-                }) + Vec3::Y * hand_view::stack_offset(&poses, &network.card_key);
+                    hand_view::visual_position(&poses, &network.card_key)?
+                };
                 hand_view::card_hit(ray, position, pose.current_rotation)
                     .map(|distance| (network.card_key.clone(), distance))
             })
@@ -3976,10 +3980,9 @@ fn animate_and_place_cards(
         let Some(pose) = poses.0.get(&card.key) else {
             continue;
         };
-        *transform = Transform::from_translation(
-            mm_position(pose.current) + Vec3::Y * hand_view::stack_offset(&poses, &card.key),
-        )
-        .with_rotation(pose.current_rotation);
+        *transform =
+            Transform::from_translation(hand_view::visual_position(&poses, &card.key).unwrap())
+                .with_rotation(pose.current_rotation);
     }
 }
 

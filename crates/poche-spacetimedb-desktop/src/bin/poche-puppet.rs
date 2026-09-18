@@ -363,8 +363,11 @@ struct AcceptanceChecks {
     leave_showed_terminal: bool,
     same_identity_resume: bool,
     presence_survived_sibling_disconnect: bool,
-    contextual_money_hover_precedence: bool,
+    money_containers_have_no_hover_counts: bool,
     marquee_coin_count_without_transfers: bool,
+    selection_world_readout_at_corner_without_hints: bool,
+    both_seats_hand_corners_pick_visible_cards: bool,
+    normal_and_enlarged_two_card_hand_captures: bool,
     private_hand_size_popup_preserves_camera_and_authority: bool,
     local_pickup_drop_sound_once_without_peer_echo: bool,
     own_seat_and_door_are_real_pointer_actions: bool,
@@ -794,11 +797,20 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     // Standing changes the camera home. Let that ordinary transition settle
     // before sampling the door's current projected target.
     std::thread::sleep(Duration::from_millis(600));
-    let standing = observe(alice_root)?;
+    // The door now belongs to the room perimeter, not the near-table HUD.
+    // Look around with the same RMB orbit a person uses until its projected
+    // mesh is visible and its real picking path reports the exit action.
+    let standing = look_towards_perimeter_door(alice_root)?;
+    let room_periphery_capture = capture(alice_root)?;
+    fs::copy(
+        &room_periphery_capture,
+        output.with_file_name("room-periphery.png"),
+    )
+    .map_err(|error| format!("could not preserve the room-periphery capture: {error}"))?;
     let [door_x, door_y] = standing
         .contextual
         .door_screen
-        .ok_or("the exit door was not visible from the standing camera")?;
+        .ok_or("the perimeter exit door was not projected after looking around")?;
     click(alice_root, door_x, door_y)?;
     let armed = observe(alice_root)?;
     if armed.room_id != standing.room_id || !armed.status.contains("again") {
@@ -829,7 +841,7 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     let menu_after_leave = capture(alice_root)?;
 
     let report = AcceptanceReport {
-        schema: "poche-spacetimedb-multi-device-acceptance-v13",
+        schema: "poche-spacetimedb-multi-device-acceptance-v14",
         completed_unix_ms: unix_millis()?,
         authority_profile: authority.profile.clone(),
         authority_uri: authority.uri.clone(),
@@ -885,8 +897,11 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
             leave_showed_terminal,
             same_identity_resume: true,
             presence_survived_sibling_disconnect,
-            contextual_money_hover_precedence: true,
+            money_containers_have_no_hover_counts: true,
             marquee_coin_count_without_transfers: true,
+            selection_world_readout_at_corner_without_hints: true,
+            both_seats_hand_corners_pick_visible_cards: true,
+            normal_and_enlarged_two_card_hand_captures: true,
             private_hand_size_popup_preserves_camera_and_authority: true,
             local_pickup_drop_sound_once_without_peer_echo: true,
             own_seat_and_door_are_real_pointer_actions: true,
@@ -917,6 +932,7 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
             .chain(std::iter::once(&help_capture))
             .chain(std::iter::once(&options_default_capture))
             .chain(std::iter::once(&options_toggled_capture))
+            .chain(std::iter::once(&room_periphery_capture))
             .chain(std::iter::once(&leave_confirmation_capture))
             .chain(std::iter::once(&menu_after_leave))
             .map(|path| path.to_string_lossy().into_owned())
@@ -962,6 +978,51 @@ fn capture(root: &Path) -> Result<PathBuf, String> {
         .capture_path
         .map(PathBuf::from)
         .ok_or("capture response omitted its path".into())
+}
+
+fn look_towards_perimeter_door(root: &Path) -> Result<FileControlObservation, String> {
+    for _ in 0..12 {
+        let view = observe(root)?;
+        if let Some([x, y]) = view.contextual.door_screen {
+            let hovered = send(
+                root,
+                FileControlAction::Pointer {
+                    x,
+                    y,
+                    primary_down: false,
+                },
+            )?
+            .observation;
+            if hovered
+                .contextual
+                .world_hover
+                .as_deref()
+                .is_some_and(|hint| hint.starts_with("Leave lobby"))
+            {
+                return Ok(hovered);
+            }
+        }
+        // Rotate in modest increments rather than changing camera resources
+        // or assuming a fixed screen coordinate for the moved door.
+        send(
+            root,
+            FileControlAction::CameraGesture {
+                delta: [-80.0, 0.0],
+                middle_down: false,
+                right_down: true,
+            },
+        )?;
+        send(
+            root,
+            FileControlAction::CameraGesture {
+                delta: [0.0, 0.0],
+                middle_down: false,
+                right_down: false,
+            },
+        )?;
+        std::thread::sleep(Duration::from_millis(600));
+    }
+    Err("RMB orbit did not reveal a pickable perimeter exit door".into())
 }
 
 fn wait_until(
@@ -1251,7 +1312,7 @@ fn verify_contextual_inspection(root: &Path) -> Result<Vec<PathBuf>, String> {
         .iter()
         .filter(|target| target.container == "lid")
         .min_by(|a, b| a.screen[1].total_cmp(&b.screen[1]))
-        .ok_or("hover precedence needs a visible coin on the player's lid")?;
+        .ok_or("coin outline check needs a visible coin on the player's lid")?;
     let coin = resized
         .coins
         .iter()
@@ -1320,7 +1381,9 @@ fn verify_contextual_inspection(root: &Path) -> Result<Vec<PathBuf>, String> {
         },
     )?;
     let selected = wait_until(root, |o| {
-        o.contextual.selecting && o.contextual.selected_cents == expected_cents
+        o.contextual.selecting
+            && o.contextual.selected_cents == expected_cents
+            && o.contextual.selection_readout_is_world_mesh
     })?;
     let selected_keys: std::collections::HashSet<_> = selected
         .contextual
@@ -1332,6 +1395,31 @@ fn verify_contextual_inspection(root: &Path) -> Result<Vec<PathBuf>, String> {
     {
         return Err(
             "marquee preview differs from projected-centre selection or picked up an object".into(),
+        );
+    }
+    let count_box = selected
+        .contextual
+        .selection_readout_screen
+        .ok_or("selection has no floating count")?;
+    if (count_box[0] - start[0]).abs() > 2.
+        || (count_box[3] + 8. - start[1]).abs() > 2.
+        || selected.contextual.selection_readout_world_anchor.is_none()
+        || !selected
+            .contextual
+            .selection_readout_text
+            .contains(&format!(
+                "${}.{:02}",
+                expected_cents / 100,
+                expected_cents % 100
+            ))
+        || selected
+            .contextual
+            .selection_readout_text
+            .contains("inside")
+        || selected.contextual.selection_readout_text.contains("clear")
+    {
+        return Err(
+            "floating count is not beside the selection corner or contains obsolete hints".into(),
         );
     }
     let preview = capture(root)?;
@@ -1349,6 +1437,9 @@ fn verify_contextual_inspection(root: &Path) -> Result<Vec<PathBuf>, String> {
         || retained.contextual.selected_cents != expected_cents
         || retained.coins != before.coins
         || retained.card_poses != before.card_poses
+        || retained.contextual.selection_readout_world_anchor
+            != selected.contextual.selection_readout_world_anchor
+        || !retained.contextual.selection_readout_is_world_mesh
     {
         return Err(
             "selection did not persist on release, or changed authoritative money/cards".into(),
@@ -1360,6 +1451,8 @@ fn verify_contextual_inspection(root: &Path) -> Result<Vec<PathBuf>, String> {
         o.contextual.selected_coin_keys.is_empty()
             && o.contextual.selected_card_keys.is_empty()
             && o.contextual.selected_cents == 0
+            && o.contextual.selection_readout_world_anchor.is_none()
+            && !o.contextual.selection_readout_is_world_mesh
     })?;
     Ok(vec![
         enlarged,
@@ -1374,35 +1467,18 @@ fn verify_container_hover(
     root: &Path,
     snapshot: &FileControlObservation,
 ) -> Result<PathBuf, String> {
-    let member = snapshot
-        .members
-        .iter()
-        .find(|m| m.is_self)
-        .ok_or("container hover needs the local player's name")?;
-    // At most twenty ordinary pointer samples. The projected base centre may
-    // land on a coin; sample exposed glass/rim beside it, never bypass picking.
+    // Ordinary pointer samples cover each vessel's projected centre and rim.
+    // Neither exposed glass nor a coin under the pointer may show a count:
+    // counting is now an explicit selection operation only.
     for (container, screen) in [
         ("jar", snapshot.money_jar_screen),
         ("lid", snapshot.money_lid_screen),
+        ("bowl", snapshot.money_bowl_screen),
     ] {
-        let Some([center_x, center_y]) = screen else {
-            continue;
-        };
-        let coins: Vec<_> = snapshot
-            .coins
-            .iter()
-            .filter(|c| c.is_own && c.container == container)
-            .collect();
-        let cents: u32 = coins.iter().map(|c| u32::from(c.denomination_cents)).sum();
-        let expected = format!(
-            "{}'s {container} · {} {} · ${}.{:02}",
-            member.display_name,
-            coins.len(),
-            if coins.len() == 1 { "coin" } else { "coins" },
-            cents / 100,
-            cents % 100
-        );
+        let [center_x, center_y] =
+            screen.ok_or_else(|| format!("{container} has no projected hover-check position"))?;
         for [dx, dy] in [
+            [0., 0.],
             [-18., -12.],
             [18., -12.],
             [-24., -25.],
@@ -1423,17 +1499,17 @@ fn verify_container_hover(
                 },
             )?
             .observation;
-            if observation.contextual.money_hover.as_deref() == Some(expected.as_str()) {
-                if observation.contextual.hovered_coin_key.is_some() {
-                    return Err(
-                        "container total is visible while its coin has hover priority".into(),
-                    );
-                }
-                return capture(root);
+            if observation.contextual.money_hover.is_some() {
+                return Err(format!(
+                    "hovering {container} showed an obsolete money count"
+                ));
+            }
+            if observation.held_coin.is_some() || observation.coins != snapshot.coins {
+                return Err(format!("hovering {container} grabbed or moved money"));
             }
         }
     }
-    Err("no exposed jar/lid hover showed the exact public coin count and dollar total".into())
+    capture(root)
 }
 
 fn bowl_cents(observation: &FileControlObservation) -> u32 {
@@ -1902,6 +1978,151 @@ fn verify_missed_bid_payment(
     Ok(vec![before, capture(payer)?])
 }
 
+/// Confirm the actual private-hand fan from both seats, at normal and enlarged
+/// scale, by grabbing each exposed rank corner through ordinary pointer input.
+fn verify_two_card_hand_fans(alice: &Path, bob: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut captures = Vec::new();
+    for root in [alice, bob] {
+        let initial = wait_until(root, |o| {
+            o.own_hand.len() == 2 && o.contextual.hand_rank_corners.len() == 2
+        })?;
+        let original_poses = initial.card_poses.clone();
+        for scale in [1.0_f32, 2.0] {
+            if (observe(root)?.contextual.hand_scale - scale).abs() > 0.01 {
+                set_hand_scale_with_pointer(root, scale)?;
+            }
+            for card in &initial.own_hand {
+                let ready = wait_until(root, |o| {
+                    o.held_card_key.is_none()
+                        && o.contextual
+                            .hand_rank_corners
+                            .iter()
+                            .any(|(key, _)| key == &card.card_key)
+                })?;
+                let [x, y] = ready
+                    .contextual
+                    .hand_rank_corners
+                    .iter()
+                    .find(|(key, _)| key == &card.card_key)
+                    .ok_or("private hand omitted the visible rank corner")?
+                    .1;
+                send(
+                    root,
+                    FileControlAction::Pointer {
+                        x,
+                        y,
+                        primary_down: false,
+                    },
+                )?;
+                send(
+                    root,
+                    FileControlAction::Pointer {
+                        x,
+                        y,
+                        primary_down: true,
+                    },
+                )?;
+                let picked = observe(root)?;
+                if picked.held_card_key.as_deref() != Some(card.card_key.as_str()) {
+                    return Err(format!(
+                        "seat {:?} scale {scale}: exposed rank corner picked {:?} instead of {}",
+                        picked.own_seat, picked.held_card_key, card.card_key
+                    ));
+                }
+                send(
+                    root,
+                    FileControlAction::Pointer {
+                        x,
+                        y,
+                        primary_down: false,
+                    },
+                )?;
+                wait_until(root, |o| o.held_card_key.is_none())?;
+            }
+            // Move the pointer away so selection/hover cannot visually hide a
+            // corner in the evidence screenshot. Poses are allowed to settle.
+            send(
+                root,
+                FileControlAction::Pointer {
+                    x: 10.,
+                    y: 10.,
+                    primary_down: false,
+                },
+            )?;
+            wait_until(root, |o| {
+                original_poses.iter().all(|before| {
+                    o.card_poses.iter().any(|after| {
+                        after.card_key == before.card_key
+                            && after.position_mm == before.position_mm
+                            && after.rotation_mdeg == before.rotation_mdeg
+                            && after.logical_location == before.logical_location
+                    })
+                })
+            })?;
+            std::thread::sleep(Duration::from_millis(250));
+            captures.push(capture(root)?);
+        }
+        set_hand_scale_with_pointer(root, 1.0)?;
+    }
+    Ok(captures)
+}
+
+fn set_hand_scale_with_pointer(root: &Path, scale: f32) -> Result<(), String> {
+    let ready = wait_until(root, |o| !o.contextual.hand_rank_corners.is_empty())?;
+    let [x, y] = ready.contextual.hand_rank_corners[0].1;
+    send(
+        root,
+        FileControlAction::Pointer {
+            x,
+            y,
+            primary_down: false,
+        },
+    )?;
+    send(
+        root,
+        FileControlAction::CameraGesture {
+            delta: [0., 0.],
+            middle_down: false,
+            right_down: true,
+        },
+    )?;
+    let opened = wait_until(root, |o| o.contextual.hand_popup)?;
+    send(
+        root,
+        FileControlAction::CameraGesture {
+            delta: [0., 0.],
+            middle_down: false,
+            right_down: false,
+        },
+    )?;
+    let [min_x, min_y, max_x, max_y] = opened
+        .contextual
+        .hand_slider
+        .ok_or("private hand resize popup did not expose its slider")?;
+    click(
+        root,
+        min_x + (scale - 0.75) / (2.5 - 0.75) * (max_x - min_x),
+        (min_y + max_y) * 0.5,
+    )?;
+    wait_until(root, |o| (o.contextual.hand_scale - scale).abs() < 0.01)?;
+    send(
+        root,
+        FileControlAction::Key {
+            key: "Escape".into(),
+            down: true,
+        },
+    )?;
+    send(
+        root,
+        FileControlAction::Key {
+            key: "Escape".into(),
+            down: false,
+        },
+    )?;
+    wait_until(root, |o| !o.contextual.hand_popup)?;
+    Ok(())
+}
+
 /// Continue the real room beyond the previously terminal first-round slice.
 fn verify_round_continuity(
     alice: &Path,
@@ -1986,6 +2207,11 @@ fn verify_round_continuity(
         return Err("second deal duplicated a private card face".into());
     }
     let dealt = capture(bob)?;
+    let hand_fan_captures = verify_two_card_hand_fans(alice, bob)?;
+    compose_contact_sheet(
+        &hand_fan_captures,
+        &dealt.with_file_name("two-seat-hand-fans.png"),
+    )?;
     for _ in 0..2 {
         let actor = second
             .game
@@ -2112,7 +2338,10 @@ fn verify_round_continuity(
         }
     }
     let settled = capture(alice)?;
-    Ok((vec![before_deal, dealt, scored_capture, settled], paid))
+    let mut captures = vec![before_deal, dealt];
+    captures.extend(hand_fan_captures);
+    captures.extend([scored_capture, settled]);
+    Ok((captures, paid))
 }
 
 fn drag_coin_to_bowl(root: &Path, denomination: u8) -> Result<(), String> {

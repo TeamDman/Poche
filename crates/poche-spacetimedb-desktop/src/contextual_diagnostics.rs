@@ -7,8 +7,11 @@
 
 use super::{
     CanonicalLayout, EscapeMenuPage, TabletopCamera, UiAction, UiScreen, UiState,
-    hand_options::HandViewOptions, money::MoneyState, selection::SelectionState,
-    sound_feedback::SoundFeedback, world_ui,
+    hand_options::HandViewOptions,
+    money::MoneyState,
+    selection::{SelectionReadout, SelectionState},
+    sound_feedback::SoundFeedback,
+    world_ui,
 };
 use bevy::{prelude::*, transform::TransformSystems};
 use poche_bevy_spacetimedb::BridgeModel;
@@ -26,11 +29,18 @@ pub struct ContextualDiagnostics {
     pub selecting: bool,
     /// [minimum x, minimum y, maximum x, maximum y], in logical pixels.
     pub selection_box: Option<[f32; 4]>,
+    pub selection_readout_text: String,
+    pub selection_readout_world_anchor: Option<[f32; 3]>,
+    pub selection_readout_screen: Option<[f32; 4]>,
+    pub selection_readout_is_world_mesh: bool,
     /// Projected centres, not card faces or a new authoritative object list.
     pub projected_coins: Vec<(String, [f32; 2])>,
     pub hand_scale: f32,
     pub hand_popup: bool,
     pub hand_slider: Option<[f32; 4]>,
+    /// The viewer's own visible upper-left rank corners, in logical pixels.
+    pub hand_rank_corners: Vec<(String, [f32; 2])>,
+    pub hovered_card_key: Option<String>,
     pub door_screen: Option<[f32; 2]>,
     pub own_seat_screen: Option<[f32; 2]>,
     pub help_button_screen: Option<[f32; 2]>,
@@ -52,10 +62,16 @@ impl Default for ContextualDiagnostics {
             selected_cents: 0,
             selecting: false,
             selection_box: None,
+            selection_readout_text: String::new(),
+            selection_readout_world_anchor: None,
+            selection_readout_screen: None,
+            selection_readout_is_world_mesh: false,
             projected_coins: Vec::new(),
             hand_scale: 1.0,
             hand_popup: false,
             hand_slider: None,
+            hand_rank_corners: Vec::new(),
+            hovered_card_key: None,
             door_screen: None,
             own_seat_screen: None,
             help_button_screen: None,
@@ -93,17 +109,20 @@ fn rect_array(rectangle: Rect) -> [f32; 4] {
     ]
 }
 
-fn observe_contextual_controls(
+pub(super) fn observe_contextual_controls(
     mut state: ResMut<UiState>,
     model: Res<BridgeModel>,
     money: Res<MoneyState>,
     interaction: Res<world_ui::WorldInteraction>,
     selection: Res<SelectionState>,
+    readout: Res<SelectionReadout>,
     hand: Res<HandViewOptions>,
+    hand_input: Res<super::hand_view::HandInputDiagnostics>,
     sound: Res<SoundFeedback>,
     layout: Res<CanonicalLayout>,
     cameras: Query<(&Camera, &GlobalTransform), With<TabletopCamera>>,
     buttons: Query<(&UiAction, &UiGlobalTransform, &ComputedNode), With<Button>>,
+    readout_meshes: Query<(&Mesh3d, Option<&Node>), With<super::selection::SelectionLabel>>,
 ) {
     let in_table = state.screen == UiScreen::Table;
     let mut result = ContextualDiagnostics {
@@ -113,6 +132,8 @@ fn observe_contextual_controls(
             .then(|| hand.slider_rect())
             .flatten()
             .map(rect_array),
+        hand_rank_corners: hand_input.corners.clone(),
+        hovered_card_key: in_table.then(|| hand_input.hovered_key.clone()).flatten(),
         sound_pickup_count: sound.pickup_count,
         sound_release_count: sound.release_count,
         sound_audible_count: sound.audible_count,
@@ -142,7 +163,7 @@ fn observe_contextual_controls(
                 }
             }
         }
-        result.money_hover = money.container_hover_text(&model.snapshot);
+        // Legacy observation remains empty: container counting is selection-only.
         result.hovered_coin_key = money.hovered_coin_key().map(str::to_owned);
         result.world_hover = interaction.hover_hint().map(str::to_owned);
         result.selected_coin_keys = selection.selected_coin_keys.iter().cloned().collect();
@@ -152,6 +173,12 @@ fn observe_contextual_controls(
         result.selected_cents = selection.total_cents;
         result.selecting = selection.selecting;
         result.selection_box = selection.rectangle.map(rect_array);
+        result.selection_readout_text.clone_from(&readout.text);
+        result.selection_readout_world_anchor = readout.anchor.map(|p| p.to_array());
+        result.selection_readout_screen = readout.screen_rect.map(rect_array);
+        result.selection_readout_is_world_mesh = readout_meshes
+            .single()
+            .is_ok_and(|(_, node)| node.is_none());
         result.projected_coins = selection
             .projected_coins
             .iter()

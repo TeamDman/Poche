@@ -8,20 +8,33 @@ use super::{
     animate_and_place_cards, drag_cards, hand_view::HandProjection, mm_position, money::MoneyState,
     world_ui::WorldInteraction,
 };
-use bevy::prelude::*;
+use bevy::{
+    camera::visibility::RenderLayers,
+    light::{NotShadowCaster, NotShadowReceiver},
+    prelude::*,
+    transform::TransformSystems,
+};
 use poche_bevy_spacetimedb::BridgeModel;
 use std::collections::HashSet;
 
 pub(super) struct SelectionPlugin;
 impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SelectionState>().add_systems(
-            Update,
-            (update_selection, draw_selection)
-                .chain()
-                .after(drag_cards)
-                .before(animate_and_place_cards),
-        );
+        app.init_resource::<SelectionState>()
+            .init_resource::<SelectionReadout>()
+            .add_systems(
+                Update,
+                (update_selection, draw_selection)
+                    .chain()
+                    .after(drag_cards)
+                    .before(animate_and_place_cards),
+            )
+            .add_systems(
+                PostUpdate,
+                draw_selection_readout
+                    .after(bevy::camera::CameraUpdateSystems)
+                    .before(TransformSystems::Propagate),
+            );
     }
 }
 
@@ -81,18 +94,26 @@ fn count_selection(selection: &mut SelectionState, pieces: &[Piece], rectangle: 
             selection.selected_card_keys.insert(piece.key.clone());
         }
     }
-    selection.summary = format!(
-        "{} coins · ${}.{:02} · {} cards\nCentres inside the box{}",
-        selection.selected_coin_keys.len(),
+    selection.summary = selection_summary(selection);
+}
+
+fn selection_summary(selection: &SelectionState) -> String {
+    let coins = selection.selected_coin_keys.len();
+    let cards = selection.selected_card_keys.len();
+    let money = format!(
+        "{coins} {} · ${}.{:02}",
+        if coins == 1 { "coin" } else { "coins" },
         selection.total_cents / 100,
-        selection.total_cents % 100,
-        selection.selected_card_keys.len(),
-        if selection.selecting {
-            " · release to select"
-        } else {
-            " · click empty space to clear"
-        }
+        selection.total_cents % 100
     );
+    if cards == 0 {
+        money
+    } else {
+        format!(
+            "{money} · {cards} {}",
+            if cards == 1 { "card" } else { "cards" }
+        )
+    }
 }
 
 pub(super) fn update_selection(
@@ -203,9 +224,16 @@ pub(super) fn update_selection(
                 {
                     continue;
                 }
-                hand.to_inset(world)
+                let Some(position) = hand.card_position(&poses, &card.card_key) else {
+                    continue;
+                };
+                position
             } else {
-                world
+                let Some(position) = super::hand_view::visual_position(&poses, &card.card_key)
+                else {
+                    continue;
+                };
+                position
             };
             if let Some(point) = project(position) {
                 pieces.push(Piece {
@@ -237,13 +265,7 @@ pub(super) fn update_selection(
             .map(|coin| u32::from(coin.denomination_cents))
             .sum();
         if !selection.summary.is_empty() {
-            selection.summary = format!(
-                "{} coins · ${}.{:02} · {} cards\nCentres inside the box · click empty space to clear",
-                selection.selected_coin_keys.len(),
-                selection.total_cents / 100,
-                selection.total_cents % 100,
-                selection.selected_card_keys.len()
-            );
+            selection.summary = selection_summary(&selection);
         }
     }
     if mouse.just_released(MouseButton::Left) {
@@ -260,14 +282,26 @@ pub(super) fn update_selection(
 #[derive(Component)]
 struct Marquee;
 #[derive(Component)]
-struct SelectionLabel;
+pub(super) struct SelectionLabel {
+    text: String,
+    size: Vec2,
+}
+
+/// The count is a world mesh, not a screen HUD. A live marquee positions it at
+/// a corner; on release its world anchor remains fixed as the camera moves.
+#[derive(Resource, Default)]
+pub(super) struct SelectionReadout {
+    pub anchor: Option<Vec3>,
+    pub screen_rect: Option<Rect>,
+    pub text: String,
+    last_rectangle: Option<Rect>,
+}
 
 fn draw_selection(
     mut commands: Commands,
     selection: Res<SelectionState>,
     cameras: Query<Entity, With<PocheUiCamera>>,
     mut boxes: Query<(Entity, &mut Node), With<Marquee>>,
-    mut labels: Query<(Entity, &mut Text), With<SelectionLabel>>,
 ) {
     let Ok(camera) = cameras.single() else {
         return;
@@ -301,33 +335,151 @@ fn draw_selection(
             commands.entity(entity).despawn();
         }
     }
+}
+
+fn readout_rect(selection: Rect, size: Vec2, viewport: Rect) -> Rect {
+    let margin = 8.;
+    let above = selection.min.y - size.y - margin;
+    let y = if above >= viewport.min.y + margin {
+        above
+    } else {
+        selection.min.y + margin
+    };
+    let available_min = viewport.min + Vec2::splat(margin);
+    let available_max = (viewport.max - size - Vec2::splat(margin)).max(available_min);
+    let min = Vec2::new(selection.min.x, y).clamp(available_min, available_max);
+    Rect::from_corners(min, min + size)
+}
+
+fn on_view_plane(
+    camera: &Camera,
+    transform: &GlobalTransform,
+    screen: Vec2,
+    point: Vec3,
+) -> Option<Vec3> {
+    let ray = camera.viewport_to_world(transform, screen).ok()?;
+    let distance = ray.intersect_plane(point, InfinitePlane3d::new(*transform.forward()))?;
+    Some(ray.get_point(distance))
+}
+
+pub(super) fn draw_selection_readout(
+    mut commands: Commands,
+    selection: Res<SelectionState>,
+    mut readout: ResMut<SelectionReadout>,
+    cameras: Query<(&Camera, &Transform), (With<TabletopCamera>, Without<SelectionLabel>)>,
+    mut labels: Query<(Entity, &SelectionLabel, &mut Transform)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    readout.screen_rect = None;
     if selection.summary.is_empty() {
-        for (entity, _) in &labels {
+        for (entity, _, _) in &labels {
             commands.entity(entity).despawn();
         }
-    } else if let Ok((_, mut text)) = labels.single_mut() {
-        if text.0 != selection.summary {
-            text.0.clone_from(&selection.summary);
-        }
-    } else {
-        commands.spawn((
-            SelectionLabel,
-            Pickable::IGNORE,
-            UiTargetCamera(camera),
-            Text::new(&selection.summary),
-            TextFont::from_font_size(17.),
-            TextColor(Color::srgb(0.95, 0.97, 0.89)),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(18.),
-                bottom: px(18.),
-                padding: UiRect::all(px(9.)),
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.02, 0.07, 0.06)),
-            GlobalZIndex(22),
-        ));
+        *readout = SelectionReadout::default();
+        return;
     }
+    let Ok((camera, camera_transform)) = cameras.single() else {
+        return;
+    };
+    let Some(viewport) = camera
+        .logical_viewport_rect()
+        .filter(|r| r.size().min_element() > 32.)
+    else {
+        return;
+    };
+    let camera_global = GlobalTransform::from(*camera_transform);
+    let existing = labels.single().ok();
+    let changed = existing.is_none_or(|(_, label, _)| label.text != selection.summary);
+    let texture = changed
+        .then(|| super::card_label_texture(&mut images, &selection.summary, [242, 247, 226]));
+    let natural_size = texture
+        .as_ref()
+        .map(|(_, aspect)| Vec2::new(18. * aspect + 16., 34.))
+        .or_else(|| existing.map(|(_, label, _)| label.size))
+        .unwrap();
+    // Keep the readout readable even in a narrow window, without overflowing.
+    let size = natural_size
+        * ((viewport.size() - Vec2::splat(16.)) / natural_size)
+            .min_element()
+            .min(1.);
+    let Some(rectangle) = selection.rectangle else {
+        return;
+    };
+    if readout.anchor.is_none() || selection.selecting || readout.last_rectangle != Some(rectangle)
+    {
+        let screen = readout_rect(rectangle, size, viewport).center();
+        // A floating plane in front of the table keeps the readout out of the
+        // surface. Unlike a HUD, the released anchor is a fixed world point.
+        let depth = (camera_transform.translation.length() * 0.65).max(0.15);
+        let point = camera_transform.translation + *camera_transform.forward() * depth;
+        readout.anchor = on_view_plane(camera, &camera_global, screen, point);
+        readout.last_rectangle = Some(rectangle);
+    }
+    let Some(anchor) = readout.anchor else { return };
+    let Ok(screen) = camera.world_to_viewport(&camera_global, anchor) else {
+        return;
+    };
+    let Some(neighbour) = on_view_plane(camera, &camera_global, screen + Vec2::Y, anchor) else {
+        return;
+    };
+    let units_per_pixel = neighbour.distance(anchor);
+    if !units_per_pixel.is_finite() || units_per_pixel <= 0. {
+        return;
+    }
+    let transform = Transform::from_translation(anchor)
+        .with_rotation(camera_transform.rotation)
+        .with_scale(Vec3::new(size.x, size.y, 1.) * units_per_pixel);
+    if let Some((texture, aspect)) = texture {
+        for (entity, _, _) in &labels {
+            commands.entity(entity).despawn();
+        }
+        let text_height = natural_size.y - 16.;
+        let root = commands
+            .spawn((
+                SelectionLabel {
+                    text: selection.summary.clone(),
+                    size: natural_size,
+                },
+                Mesh3d(meshes.add(Rectangle::new(1., 1.))),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.02, 0.07, 0.06),
+                    unlit: true,
+                    ..default()
+                })),
+                transform,
+                Pickable::IGNORE,
+                NotShadowCaster,
+                NotShadowReceiver,
+                RenderLayers::layer(0),
+            ))
+            .id();
+        let text = commands
+            .spawn((
+                Mesh3d(meshes.add(Rectangle::new(
+                    text_height * aspect / natural_size.x,
+                    text_height / natural_size.y,
+                ))),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color_texture: Some(texture),
+                    alpha_mode: AlphaMode::Blend,
+                    unlit: true,
+                    ..default()
+                })),
+                Transform::from_xyz(0., 0., 0.5),
+                Pickable::IGNORE,
+                NotShadowCaster,
+                NotShadowReceiver,
+                RenderLayers::layer(0),
+            ))
+            .id();
+        commands.entity(root).add_child(text);
+    } else if let Ok((_, _, mut current)) = labels.single_mut() {
+        *current = transform;
+    }
+    readout.text.clone_from(&selection.summary);
+    readout.screen_rect = Some(Rect::from_center_size(screen, size));
 }
 
 #[cfg(test)]
@@ -373,11 +525,11 @@ mod tests {
         assert_eq!(state.total_cents, 35);
         assert_eq!(state.selected_coin_keys.len(), 2);
         assert_eq!(state.selected_card_keys.len(), 1);
-        assert!(state.summary.contains("release to select"));
+        assert_eq!(state.summary, "2 coins · $0.35 · 1 card");
         state.selecting = false;
         count_selection(&mut state, &pieces, rect);
         assert_eq!(state.total_cents, 35);
-        assert!(state.summary.contains("click empty space"));
+        assert_eq!(state.summary, "2 coins · $0.35 · 1 card");
     }
     #[test]
     fn dragging_in_either_direction_selects_the_same_centres() {
@@ -387,5 +539,20 @@ mod tests {
         let second = Rect::from_corners(b.min(a), b.max(a));
         assert_eq!(first, second);
         assert!(centre_inside(first, Vec2::new(50., 25.)));
+    }
+
+    #[test]
+    fn floating_count_hugs_selection_corner_and_stays_in_view() {
+        let viewport = Rect::from_corners(Vec2::ZERO, Vec2::new(1180., 780.));
+        let box_rect = Rect::from_corners(Vec2::new(100., 160.), Vec2::new(600., 500.));
+        let label = readout_rect(box_rect, Vec2::new(240., 34.), viewport);
+        assert!((label.min.x - box_rect.min.x).abs() < f32::EPSILON);
+        assert!((label.max.y + 8. - box_rect.min.y).abs() < f32::EPSILON);
+        let at_edge = readout_rect(
+            Rect::from_corners(Vec2::new(1100., 0.), Vec2::new(1180., 80.)),
+            Vec2::new(240., 34.),
+            viewport,
+        );
+        assert!(viewport.contains(at_edge.min) && viewport.contains(at_edge.max));
     }
 }

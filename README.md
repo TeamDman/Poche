@@ -205,10 +205,11 @@ revealing or changing the card's logical location. After the last trick, pay
 any owed 10¢ missed-bid charge. The next dealer clicks the deck to deal again.
 Final pot payout is not yet automated.
 
-Hover a jar, lid or bowl to inspect its total; pointing at a coin shows its
-outline instead. Hover the deck for its count. Drag from empty space to count
-pieces whose projected centres fall inside a selection box. This is local
-inspection, not a bulk transfer, and reveals no hidden card faces.
+Pointing at a coin shows its outline; jars, lids and the bowl have no hover
+totals. Drag from empty space to count pieces whose projected centres fall
+inside a selection box. A floating count/value sits beside the box and stays
+in the world when released. This is local inspection, not a bulk transfer,
+and reveals no hidden card faces. Hover the deck for its card count.
 
 Q/E rotates a dragged card. RMB orbits the table; MMB or WASD pans, the wheel
 zooms, and Space smoothly resets the view. I toggles perspective/orthographic

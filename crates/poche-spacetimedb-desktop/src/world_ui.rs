@@ -8,7 +8,7 @@
 use super::{
     ButtonActivation, CanonicalLayout, HandCamera, PoseDisplay, TabletopCamera, UiAction, UiScreen,
     UiState, card_label_texture, drag_cards, hand_view, may_bid, mm_position, point_to_world,
-    sync_player_entities, update_table_camera,
+    room_geometry, sync_player_entities, update_table_camera,
 };
 use bevy::{
     camera::visibility::RenderLayers,
@@ -301,8 +301,12 @@ pub(super) fn interact_with_world(
             poses.0.get(&card.card_key).is_some_and(|pose| {
                 let physical = mm_position(pose.current);
                 hand.contains(physical)
-                    && hand_view::card_hit(ray, hand.to_inset(physical), pose.current_rotation)
-                        .is_some()
+                    && hand_view::card_hit(
+                        ray,
+                        hand.card_position(&poses, &card.card_key).unwrap(),
+                        pose.current_rotation,
+                    )
+                    .is_some()
             })
         });
         if over_card {
@@ -327,7 +331,11 @@ pub(super) fn interact_with_world(
             intersect_box(
                 ray,
                 transform,
-                Vec3::new(panel.half_size.x, panel.half_size.y, 0.0225),
+                Vec3::new(
+                    panel.half_size.x,
+                    panel.half_size.y,
+                    room_geometry::DOOR_LEAF_SIZE.z * 0.5,
+                ),
             )
         } else {
             intersect_panel(ray, transform, panel.half_size)
@@ -388,7 +396,11 @@ pub(super) fn interact_with_world(
         .filter(|card| super::may_manipulate_card(&model.snapshot, card))
         .filter_map(|card| {
             let pose = poses.0.get(&card.card_key)?;
-            hand_view::card_hit(ray, mm_position(pose.current), pose.current_rotation)
+            hand_view::card_hit(
+                ray,
+                hand_view::visual_position(&poses, &card.card_key)?,
+                pose.current_rotation,
+            )
         })
         .min_by(f32::total_cmp);
     // A held/owned card placed on the paper stays grabbable. Presentation
@@ -521,7 +533,7 @@ fn deck_hover(snapshot: &ClientSnapshot) -> String {
 }
 
 pub(super) fn door_center() -> Vec3 {
-    Vec3::new(-0.82, 0.39, 0.95)
+    room_geometry::door_center()
 }
 
 pub(super) fn seat_pick_center(layout: &SpatialLayout, seat: u8) -> Option<Vec3> {
@@ -854,7 +866,7 @@ impl WorldPainter<'_, '_, '_> {
                 WorldPresentation,
                 WorldPanel {
                     kind: PanelKind::Door,
-                    half_size: Vec2::new(0.20, 0.44),
+                    half_size: room_geometry::DOOR_LEAF_SIZE.truncate() * 0.5,
                 },
                 Pickable::IGNORE,
                 Transform::from_translation(center),
@@ -863,28 +875,15 @@ impl WorldPainter<'_, '_, '_> {
             .id();
         // A tangible door with a jamb and knob, not another floating notice.
         // The full front/back rectangle is pickable from either player view.
-        for (position, size, color) in [
-            (
-                Vec3::ZERO,
-                Vec3::new(0.40, 0.88, 0.045),
-                Color::srgb(0.11, 0.24, 0.20),
-            ),
-            (
-                Vec3::new(-0.22, 0.0, 0.0),
-                Vec3::new(0.045, 0.94, 0.075),
-                Color::srgb(0.23, 0.19, 0.14),
-            ),
-            (
-                Vec3::new(0.22, 0.0, 0.0),
-                Vec3::new(0.045, 0.94, 0.075),
-                Color::srgb(0.23, 0.19, 0.14),
-            ),
-            (
-                Vec3::new(0.0, 0.46, 0.0),
-                Vec3::new(0.485, 0.045, 0.075),
-                Color::srgb(0.23, 0.19, 0.14),
-            ),
-        ] {
+        let leaf = std::iter::once((
+            Vec3::ZERO,
+            room_geometry::DOOR_LEAF_SIZE,
+            Color::srgb(0.11, 0.24, 0.20),
+        ));
+        let frame = room_geometry::door_frame_parts()
+            .into_iter()
+            .map(|(position, size)| (position, size, Color::srgb(0.23, 0.19, 0.14)));
+        for (position, size, color) in leaf.chain(frame) {
             let piece = self
                 .commands
                 .spawn((
@@ -920,6 +919,24 @@ impl WorldPainter<'_, '_, '_> {
         }
         self.text(
             root,
+            "EXIT",
+            Vec3::new(0.0, 0.25, 0.025),
+            Vec2::new(0.27, 0.07),
+            [240, 238, 211],
+        );
+        // The room is on the negative-Z side of this perimeter. Keep the
+        // inside EXIT lettering readable, rather than showing the back of
+        // the outside sign through a two-sided material.
+        let inside_sign = self
+            .commands
+            .spawn((
+                Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
+                Visibility::default(),
+            ))
+            .id();
+        self.commands.entity(root).add_child(inside_sign);
+        self.text(
+            inside_sign,
             "EXIT",
             Vec3::new(0.0, 0.25, 0.025),
             Vec2::new(0.27, 0.07),
@@ -1969,6 +1986,16 @@ mod tests {
         assert_eq!(door_hover(false), "Leave lobby · click the door");
         assert!(door_hover(true).contains("again"));
         assert!(door_hover(true).contains("seat will be released"));
+        let mut panels = app.world_mut().query::<(&WorldPanel, &Transform)>();
+        let (door, transform) = panels
+            .iter(app.world())
+            .find(|(panel, _)| panel.kind == PanelKind::Door)
+            .unwrap();
+        assert_eq!(transform.translation, room_geometry::door_center());
+        assert_eq!(
+            door.half_size,
+            room_geometry::DOOR_LEAF_SIZE.truncate() * 0.5
+        );
     }
 
     #[test]
@@ -2001,7 +2028,7 @@ mod tests {
     fn top_down_door_pick_hits_its_actual_thickness_not_a_parallel_plane() {
         let transform = GlobalTransform::from_translation(door_center());
         let ray = Ray3d::new(door_center() + Vec3::Y, Dir3::NEG_Y);
-        let half_size = Vec3::new(0.20, 0.44, 0.0225);
+        let half_size = room_geometry::DOOR_LEAF_SIZE * 0.5;
         assert!(intersect_panel(ray, &transform, half_size.truncate()).is_none());
         assert!((intersect_box(ray, &transform, half_size).unwrap() - 0.56).abs() < 0.000_001);
         let front = Ray3d::new(door_center() + Vec3::Z, Dir3::NEG_Z);

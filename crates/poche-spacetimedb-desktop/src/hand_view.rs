@@ -21,25 +21,92 @@ const BOUNDS_EPSILON: f32 = 0.000_001;
 pub(super) struct HandViewPlugin;
 impl Plugin for HandViewPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HandProjection>().add_systems(
-            Update,
-            (
-                sync_hand_copies,
-                inspect_zones,
-                update_outlines,
-                hand_drop_hint,
-                play_drop_hint,
-                observe_hand_input,
+        app.init_resource::<HandProjection>()
+            .add_systems(
+                Update,
+                (
+                    sync_hand_copies,
+                    inspect_zones,
+                    update_outlines,
+                    hand_drop_hint,
+                    play_drop_hint,
+                    observe_hand_input,
+                )
+                    .chain()
+                    .after(animate_and_place_cards),
             )
-                .chain()
-                .after(animate_and_place_cards),
-        );
+            .init_resource::<HandInputDiagnostics>()
+            .add_systems(
+                PostUpdate,
+                observe_hand_corners
+                    .after(bevy::transform::TransformSystems::Propagate)
+                    .before(super::contextual_diagnostics::observe_contextual_controls),
+            );
     }
 }
 
 #[derive(Component)]
 pub(super) struct HandCardVisual {
     pub key: String,
+}
+
+#[derive(Resource, Default)]
+pub(super) struct HandInputDiagnostics {
+    pub corners: Vec<(String, [f32; 2])>,
+    pub hovered_key: Option<String>,
+}
+
+/// Read-only targets for ordinary pointer acceptance tests. Only the viewer's
+/// own currently visible cards are included; no other hand faces are read.
+fn observe_hand_corners(
+    state: Res<UiState>,
+    model: Res<BridgeModel>,
+    poses: Res<PoseDisplay>,
+    hand: Res<HandProjection>,
+    drag: Res<DragState>,
+    cameras: Query<(&Camera, &GlobalTransform), With<super::HandCamera>>,
+    mut diagnostics: ResMut<HandInputDiagnostics>,
+) {
+    diagnostics.corners.clear();
+    diagnostics.hovered_key.clone_from(&drag.hover_key);
+    if state.screen != UiScreen::Table {
+        return;
+    }
+    let Ok((camera, transform)) = cameras.single() else {
+        return;
+    };
+    if !camera.is_active {
+        return;
+    }
+    for card in &model.snapshot.hand {
+        let Some(pose) = poses.0.get(&card.card_key) else {
+            continue;
+        };
+        if !hand.contains(mm_position(pose.current)) {
+            continue;
+        }
+        let Some(position) = hand.card_position(&poses, &card.card_key) else {
+            continue;
+        };
+        let corner = position
+            + pose.current_rotation
+                * Vec3::new(
+                    -CARD_WORLD_WIDTH * 0.5 + 0.006,
+                    CARD_WORLD_THICKNESS * 0.5,
+                    -CARD_WORLD_HEIGHT * 0.5 + 0.010,
+                );
+        if let Ok(point) = camera.world_to_viewport(transform, corner)
+            && point.is_finite()
+            && camera
+                .logical_viewport_rect()
+                .is_some_and(|rect| rect.contains(point))
+        {
+            diagnostics
+                .corners
+                .push((card.card_key.clone(), point.to_array()));
+        }
+    }
+    diagnostics.corners.sort_by(|a, b| a.0.cmp(&b.0));
 }
 
 #[derive(Component)]
@@ -98,6 +165,12 @@ impl HandProjection {
             inset.y,
             inset.z,
         )
+    }
+
+    /// The same presentation position is used for rendering, grabbing and
+    /// pointer occlusion. Depth offsets never enter the authoritative pose.
+    pub fn card_position(&self, poses: &PoseDisplay, key: &str) -> Option<Vec3> {
+        visual_position(poses, key).map(|world| self.to_inset(world))
     }
     pub fn contains(&self, world: Vec3) -> bool {
         self.has_hand
@@ -186,8 +259,7 @@ fn sync_hand_copies(
             } else {
                 Visibility::Hidden
             };
-            transform.translation =
-                projection.to_inset(world) + Vec3::Y * stack_offset(&poses, &card.key);
+            transform.translation = projection.card_position(&poses, &card.key).unwrap();
             transform.rotation = pose.current_rotation;
         }
     }
@@ -208,8 +280,10 @@ fn sync_hand_copies(
                 },
                 Mesh3d(assets.card_mesh.clone()),
                 MeshMaterial3d(assets.card_face_material.clone()),
-                Transform::from_translation(projection.to_inset(mm_position(pose.current)))
-                    .with_rotation(pose.current_rotation),
+                Transform::from_translation(
+                    projection.card_position(&poses, &card.card_key).unwrap(),
+                )
+                .with_rotation(pose.current_rotation),
                 RenderLayers::layer(1),
                 bevy::light::NotShadowCaster,
                 if projection.contains(mm_position(pose.current)) {
@@ -501,17 +575,67 @@ pub(super) fn stack_offset(poses: &PoseDisplay, key: &str) -> f32 {
     let Some(pose) = poses.0.get(key) else {
         return 0.;
     };
-    poses
+    // A connected overlap stack needs one consistent depth order. Counting
+    // only direct neighbours gives equal levels at the end of a long fan.
+    // Hand order follows the owner's view, not opaque identity/card keys:
+    // screen-right cards sit above screen-left cards, exposing each left edge.
+    let candidates = poses
         .0
         .iter()
+        .filter(|(_, other)| {
+            (pose.current[1] - other.current[1]).abs() < 2.
+                && (pose.logical_location != "hand"
+                    || other.logical_location == "hand"
+                        && other.authority_owner == pose.authority_owner)
+        })
+        .collect::<Vec<_>>();
+    let mut connected = vec![(key, pose)];
+    let mut next = 0;
+    while next < connected.len() {
+        let current = connected[next].1;
+        for (other_key, other) in &candidates {
+            if !connected
+                .iter()
+                .any(|(member, _)| member == &other_key.as_str())
+                && overlaps_on_table(current, other)
+            {
+                connected.push((other_key.as_str(), other));
+            }
+        }
+        next += 1;
+    }
+    let right = if pose.owner_seat == 1 { -1. } else { 1. };
+    connected
+        .iter()
         .filter(|(other_key, other)| {
-            other_key.as_str() < key
-                && (pose.current[0] - other.current[0]).abs() < CARD_WORLD_WIDTH * 1000.
-                && (pose.current[2] - other.current[2]).abs() < CARD_WORLD_HEIGHT * 1000.
-                && (pose.current[1] - other.current[1]).abs() < 2.
+            let order = if pose.logical_location == "hand" {
+                (other.current[0] * right)
+                    .total_cmp(&(pose.current[0] * right))
+                    .then_with(|| other_key.cmp(&key))
+            } else {
+                other_key.cmp(&key)
+            };
+            order.is_lt()
         })
         .count() as f32
         * 0.0022
+}
+
+fn overlaps_on_table(a: &super::DisplayPose, b: &super::DisplayPose) -> bool {
+    let extents = |pose: &super::DisplayPose| {
+        let x = (pose.current_rotation * Vec3::X * CARD_WORLD_WIDTH * 0.5).abs();
+        let z = (pose.current_rotation * Vec3::Z * CARD_WORLD_HEIGHT * 0.5).abs();
+        (x + z) * 1000.
+    };
+    let reach = extents(a) + extents(b);
+    (a.current[0] - b.current[0]).abs() < reach.x && (a.current[2] - b.current[2]).abs() < reach.z
+}
+
+pub(super) fn visual_position(poses: &PoseDisplay, key: &str) -> Option<Vec3> {
+    poses
+        .0
+        .get(key)
+        .map(|pose| mm_position(pose.current) + Vec3::Y * stack_offset(poses, key))
 }
 
 /// Ray / full oriented card bound, including its thin sides.
@@ -567,6 +691,159 @@ fn inspect_zones(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn dealt_poses(seat: u8, count: u8) -> PoseDisplay {
+        let mut poses = PoseDisplay::default();
+        for slot in 0..count {
+            let key = format!("room:player-{seat}:round-1-card-{seat}-{slot}");
+            let network = super::super::CardPoseView {
+                card_key: key.clone(),
+                card_id: format!("round-1-card-{seat}-{slot}"),
+                owner: format!("player-{seat}"),
+                owner_seat: seat,
+                logical_location: "hand".into(),
+                // Match the module's hand_position / LAYOUT_HAND_Z_MM:
+                // 14 mm between centres, Y = 40 mm, Z = +/-520 mm.
+                position_mm: [
+                    (2 * i32::from(slot) + 1 - i32::from(count)) * 7,
+                    40,
+                    if seat == 0 { 520 } else { -520 },
+                ],
+                rotation_mdeg: [0, if seat == 0 { 0 } else { 180_000 }, 0],
+                sequence: 0,
+            };
+            poses
+                .0
+                .insert(key, super::super::DisplayPose::from_network(&network));
+        }
+        poses
+    }
+
+    fn ordered_hand_keys(poses: &PoseDisplay, seat: u8) -> Vec<&str> {
+        let right = if seat == 0 { 1.0 } else { -1.0 };
+        let mut cards = poses.0.iter().collect::<Vec<_>>();
+        cards.sort_by(|a, b| (a.1.current[0] * right).total_cmp(&(b.1.current[0] * right)));
+        cards.into_iter().map(|(key, _)| key.as_str()).collect()
+    }
+
+    #[test]
+    fn hand_overlap_two_cards_from_far_seat_keep_screen_right_card_on_top() {
+        // Reduced reproduction of the reported 7-clubs / 8-hearts hand: the
+        // camera faces +Z for seat 1, so the larger world X is screen LEFT.
+        let poses = dealt_poses(1, 2);
+        let keys = ordered_hand_keys(&poses, 1);
+        assert!(stack_offset(&poses, keys[1]) > stack_offset(&poses, keys[0]));
+    }
+
+    #[test]
+    fn hand_overlap_two_cards_from_near_seat_keep_screen_right_card_on_top() {
+        let poses = dealt_poses(0, 2);
+        let keys = ordered_hand_keys(&poses, 0);
+        assert!(stack_offset(&poses, keys[1]) > stack_offset(&poses, keys[0]));
+    }
+
+    #[test]
+    fn hand_overlap_seven_card_chain_has_strictly_ordered_depth_without_ties() {
+        // Seven-card unit cases prove depth ordering and corner picking, not
+        // complete glyph visibility in every viewport/scale/rotation. Actual
+        // two-card normal/enlarged views are captured by the live puppet.
+        for seat in [0, 1] {
+            let poses = dealt_poses(seat, 7);
+            let keys = ordered_hand_keys(&poses, seat);
+            for pair in keys.windows(2) {
+                assert!(stack_offset(&poses, pair[1]) > stack_offset(&poses, pair[0]));
+            }
+        }
+    }
+
+    #[test]
+    fn hand_overlap_spatial_order_survives_rearrangement_and_common_rotations() {
+        for seat in [0, 1] {
+            for angle in [0., 45., 90., 180., 270.] {
+                let mut poses = dealt_poses(seat, 7);
+                for pose in poses.0.values_mut() {
+                    // Reversing X deliberately puts spatial order at odds
+                    // with the card IDs; changing yaw must not change depth.
+                    pose.current[0] = -pose.current[0];
+                    pose.current_rotation = Quat::from_rotation_y(f32::to_radians(angle));
+                }
+                let before = poses
+                    .0
+                    .iter()
+                    .map(|(key, pose)| (key.clone(), pose.current))
+                    .collect::<std::collections::HashMap<_, _>>();
+                let keys = ordered_hand_keys(&poses, seat);
+                for pair in keys.windows(2) {
+                    assert!(stack_offset(&poses, pair[1]) > stack_offset(&poses, pair[0]));
+                }
+                for (key, pose) in &poses.0 {
+                    assert_eq!(
+                        pose.current.map(f32::to_bits),
+                        before[key].map(f32::to_bits),
+                        "presentation must not alter shared poses"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hand_overlap_disconnected_and_lifted_cards_do_not_join_the_resting_stack() {
+        let mut poses = dealt_poses(0, 3);
+        let keys = ordered_hand_keys(&poses, 0)
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        poses.0.get_mut(&keys[2]).unwrap().current[0] = 500.;
+        assert!(stack_offset(&poses, &keys[2]).abs() < f32::EPSILON);
+        poses.0.get_mut(&keys[1]).unwrap().current[1] += 24.;
+        assert!(stack_offset(&poses, &keys[1]).abs() < f32::EPSILON);
+        assert!(stack_offset(&poses, &keys[0]).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn hand_overlap_exposed_corners_pick_their_visible_cards_for_both_seats() {
+        for seat in [0, 1] {
+            let poses = dealt_poses(seat, 7);
+            let (hand, _, _) = projected_hand(UVec2::new(1180, 760), seat, 7, 1.);
+            for key in ordered_hand_keys(&poses, seat) {
+                let pose = &poses.0[key];
+                assert!(hand.contains(mm_position(pose.current)));
+                for inset in [false, true] {
+                    let position = |key: &str| {
+                        if inset {
+                            hand.card_position(&poses, key).unwrap()
+                        } else {
+                            visual_position(&poses, key).unwrap()
+                        }
+                    };
+                    for z in [
+                        -CARD_WORLD_HEIGHT * 0.5 + 0.010,
+                        -CARD_WORLD_HEIGHT * 0.5 + 0.024,
+                    ] {
+                        let corner = position(key)
+                            + pose.current_rotation
+                                * Vec3::new(-CARD_WORLD_WIDTH * 0.5 + 0.006, 0., z);
+                        let ray = Ray3d::new(corner + Vec3::Y, Dir3::NEG_Y);
+                        let hit = poses
+                            .0
+                            .iter()
+                            .filter_map(|(other_key, other)| {
+                                card_hit(ray, position(other_key), other.current_rotation)
+                                    .map(|distance| (other_key.as_str(), distance))
+                            })
+                            .min_by(|a, b| a.1.total_cmp(&b.1))
+                            .unwrap()
+                            .0;
+                        assert_eq!(
+                            hit, key,
+                            "seat{seat} inset{inset}: rank/suit corner must select the visible card"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn ten_and_suit_are_separate_vertical_labels_not_a_wide_single_row() {
