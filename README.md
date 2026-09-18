@@ -18,6 +18,7 @@ dependencies.
 - [Completed player-facing web plan](PLAN-4-PLAYER-WEB-EXPERIENCE.md)
 - [Completed desktop Veilid, shared card movement, recovery, and live-control plan](PLAN-6-DESKTOP-VEILID.md)
 - [Active SpacetimeDB desktop reorientation plan](PLAN-7-SPACETIMEDB-REORIENTATION.md)
+- [Contextual table controls and inspection plan](PLAN-11-CONTEXTUAL-TABLE.md)
 - [Play and inspect the SpacetimeDB desktop table](docs/spacetimedb-desktop.md)
 - [Previous native Veilid desktop client](docs/desktop-veilid.md)
 - [Previous unified executable, device-orchestration, capture, and puppet plan](PLAN-5-LIVE-CONTROL-PUPPETS.md)
@@ -170,9 +171,10 @@ accident.
 The acceptance command is windowless. It launches two copies of the ordinary
 game binary, creates and joins a room, seats both identities, proves private
 hands and face-free peer poses, moves one card, measures peer observation,
-submits two bids and two plays through the pure rules boundary, and verifies
-both viewers converge on the revealed won trick. It writes one four-view
-contact sheet plus a machine-readable report under ignored
+submits bids and plays through the pure rules boundary, and checks both viewers
+converge on revealed won tricks across 2 rounds. Physical payments gate the
+first deal and missed-bid settlement; the next dealer clicks the deck.
+It writes contact sheets and a machine-readable report under ignored
 `target/poche-puppet/` storage. See the
 [SpacetimeDB desktop guide](docs/spacetimedb-desktop.md) for local server setup,
 ad-hoc control commands, trust, privacy, and license boundaries. The earlier
@@ -191,18 +193,34 @@ Start-Process -FilePath .\target\debug\poche.exe
 Start-Process -FilePath .\target\debug\poche.exe
 ```
 
-The first player enters a name and chooses **Create lobby**, then copies the
-opaque `PCH-…` code. The second enters a different name, pastes the code, and
-chooses **Join lobby**. Take different seats. The first rule-generated round
-gives each player one private card. Bid from the action bar, then drag the
-current actor's card from the private-hand inset into the highlighted PLAY
-zone. The server replays the typed action log through the pure Rust oracle
-before revealing or changing the card's logical location. Ordinary hand
-wiggling is locally predicted and published at a bounded rate; peers
-interpolate the face-free pose. Q/E rotates a dragged card. RMB orbits the
-table, MMB or WASD pans, the wheel zooms, Space resets the view, and O toggles
-between the perspective orbit and tactical orthographic camera. F3 toggles the
-FPS and frame-time graph.
+Choose or create a different local identity in each window. The first player
+chooses Create lobby and copies the opaque `PCH-…` code. The second pastes the
+code and chooses Join lobby. Click different seats and each move a quarter
+from the lid into the bowl. Both 25¢ antes are required before the first deal.
+
+Each player receives one private card. Bid using the Speech picker, then drag
+the current actor's card from the bottom inset into the highlighted PLAY zone.
+The server replays the typed action log through the pure Rust oracle before
+revealing or changing the card's logical location. After the last trick, pay
+any owed 10¢ missed-bid charge. The next dealer clicks the deck to deal again.
+Final pot payout is not yet automated.
+
+Hover a jar, lid or bowl to inspect its total; pointing at a coin shows its
+outline instead. Hover the deck for its count. Drag from empty space to count
+pieces whose projected centres fall inside a selection box. This is local
+inspection, not a bulk transfer, and reveals no hidden card faces.
+
+Q/E rotates a dragged card. RMB orbits the table; MMB or WASD pans, the wheel
+zooms, and Space smoothly resets the view. I toggles perspective/orthographic
+projection; O independently toggles a top-down angle. F3 toggles the FPS graph.
+Right-click a private inset card for the 75% to 250% hand-size slider. That
+setting changes only the local display, not the shared cards.
+
+Click your own seat to stand up. Click the door to arm leaving, then click it
+again to confirm. Escape contains Options and separate Help; Options includes
+camera inversion and the local pickup/drop sound toggle. See the
+[desktop guide](docs/spacetimedb-desktop.md) for the scoresheet, identity recovery
+and windowless control details.
 
 ## Play in two browser tabs
 

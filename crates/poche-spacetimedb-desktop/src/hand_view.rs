@@ -347,10 +347,17 @@ fn outline_size() -> Vec3 {
         + Vec3::splat(2.0 * OUTLINE_WIDTH)
 }
 
-fn update_outlines(drag: Res<DragState>, mut outlines: Query<(&CardOutline, &mut Visibility)>) {
+fn update_outlines(
+    drag: Res<DragState>,
+    selection: Option<Res<super::selection::SelectionState>>,
+    mut outlines: Query<(&CardOutline, &mut Visibility)>,
+) {
     for (card, mut visible) in &mut outlines {
         *visible = if drag.hover_key.as_deref() == Some(card.0.as_str())
             || drag.card_key.as_deref() == Some(card.0.as_str())
+            || selection
+                .as_ref()
+                .is_some_and(|selected| selected.selected_card_keys.contains(&card.0))
         {
             Visibility::Inherited
         } else {
@@ -579,7 +586,18 @@ mod tests {
         count: usize,
         scale_factor: f32,
     ) -> (HandProjection, Camera, GlobalTransform) {
-        let viewport_size = UVec2::new((size.x * 3 / 5).max(1), (size.y / 4).clamp(1, 190));
+        projected_hand_at_scale(size, seat, count, scale_factor, 1.0)
+    }
+
+    fn projected_hand_at_scale(
+        size: UVec2,
+        seat: u8,
+        count: usize,
+        scale_factor: f32,
+        hand_scale: f32,
+    ) -> (HandProjection, Camera, GlobalTransform) {
+        let viewport_size =
+            super::super::hand_options::hand_viewport_size(size, scale_factor, hand_scale);
         let layout = registered_layout(TableId::new(1), LayoutId::new(2, 2).unwrap()).unwrap();
         let mut hand = HandProjection::default();
         hand.configure(&layout, Some(seat), count, size, viewport_size);
@@ -617,6 +635,42 @@ mod tests {
             .looking_at(focus, up)
             .into();
         (hand, camera, transform)
+    }
+
+    #[test]
+    fn resizing_the_private_hand_preserves_world_zone_and_pointer_mapping() {
+        for size in [
+            UVec2::new(1180, 760),
+            UVec2::new(3840, 2160),
+            UVec2::new(390, 844),
+        ] {
+            for seat in [0, 1] {
+                for dpi in [1.0, 2.0] {
+                    let (normal, _, _) = projected_hand_at_scale(size, seat, 3, dpi, 1.);
+                    for scale in [0.75, 1., 1.5, 2.5] {
+                        let (hand, camera, transform) =
+                            projected_hand_at_scale(size, seat, 3, dpi, scale);
+                        assert_eq!(hand.min, normal.min);
+                        assert_eq!(hand.max, normal.max);
+                        let viewport = camera.viewport.as_ref().unwrap();
+                        assert_eq!(
+                            viewport.physical_position.y + viewport.physical_size.y,
+                            size.y
+                        );
+                        let rect = hand.screen_rect(&camera, &transform).unwrap();
+                        for cursor in [rect.min, rect.center(), rect.max] {
+                            let ray = camera.viewport_to_world(&transform, cursor).unwrap();
+                            let distance = (hand.center.y - ray.origin.y) / ray.direction.y;
+                            let world = hand.to_world(ray.origin + *ray.direction * distance);
+                            assert!(hand.contains(world), "scale{scale} dpi{dpi} {world:?}");
+                            assert!(
+                                hand.to_world(hand.to_inset(world)).distance(world) < 0.000_001
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

@@ -8,7 +8,8 @@ use super::{
     ensure_deal, ensure_score_record, member, member_key, room_game, round_record, settle_if_paid,
 };
 use poche_money::{
-    CoinContainer, coin_rest_pose, first_free_coin_pose, initial_inventory, validate_transfer,
+    CoinContainer, coin_rest_pose, coin_stack_order, first_free_coin_pose, initial_inventory,
+    legacy_jar_relayout, validate_transfer,
 };
 
 pub(super) fn pot_cents(ctx: &ReducerContext, room: &str) -> u32 {
@@ -39,15 +40,12 @@ fn needs_legacy_ante(has_game: bool, has_inventory: bool) -> bool {
 /// existing charge from the newly allocated inventory once; never redeal cards
 /// or give a newly created lobby a free automatic ante.
 pub(super) fn migrate_legacy_room(ctx: &ReducerContext, room: &str) {
-    if ctx
+    let has_game = ctx
         .db
         .room_game()
         .room_id()
         .find(&room.to_string())
-        .is_none()
-    {
-        return;
-    }
+        .is_some();
     let seated = ctx
         .db
         .member()
@@ -57,16 +55,17 @@ pub(super) fn migrate_legacy_room(ctx: &ReducerContext, room: &str) {
         .collect::<Vec<_>>();
     let mut migrated = false;
     for member in seated {
+        let seat = member.seat.expect("filtered seated member");
+        normalize_resting_legacy_jar(ctx, room, member.identity, seat);
         let has_inventory = ctx
             .db
             .coin()
             .owner()
             .filter(member.identity)
             .any(|coin| coin.room_id == room);
-        if !needs_legacy_ante(true, has_inventory) {
+        if !needs_legacy_ante(has_game, has_inventory) {
             continue;
         }
-        let seat = member.seat.expect("filtered seated member");
         ensure_inventory(ctx, room, member.identity, seat);
         let mut quarter = ctx
             .db
@@ -97,6 +96,41 @@ pub(super) fn migrate_legacy_room(ctx: &ReducerContext, room: &str) {
         }
         append_activity(ctx,room,"legacy-ante-materialized",
             "The existing automatic antes are now represented by quarters from the players' coin inventories; the deal is unchanged".into());
+    }
+}
+
+fn normalize_resting_legacy_jar(ctx: &ReducerContext, room: &str, owner: Identity, seat: u8) {
+    let coins = ctx
+        .db
+        .coin()
+        .owner()
+        .filter(owner)
+        .filter(|coin| coin.room_id == room && coin.container == "jar")
+        .collect::<Vec<_>>();
+    let poses = coins
+        .iter()
+        .map(|coin| {
+            (
+                coin.coin_id.clone(),
+                coin.denomination_cents,
+                [coin.x_mm, coin.y_mm, coin.z_mm],
+            )
+        })
+        .collect::<Vec<_>>();
+    let Some(changes) = legacy_jar_relayout(seat, &poses) else {
+        return;
+    };
+    let changes = changes
+        .into_iter()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for mut coin in coins {
+        let Some(position) = changes.get(&coin.coin_id) else {
+            continue;
+        };
+        set_position(&mut coin, *position);
+        coin.sequence = coin.sequence.saturating_add(1);
+        coin.committed_at = ctx.timestamp;
+        ctx.db.coin().coin_key().update(coin);
     }
 }
 
@@ -156,7 +190,10 @@ pub(super) fn place_inventory(ctx: &ReducerContext, room: &str, owner: Identity,
         .filter(owner)
         .filter(|coin| coin.room_id == room && coin.container != "bowl")
         .collect::<Vec<_>>();
-    coins.sort_by(|a, b| a.coin_id.cmp(&b.coin_id));
+    coins.sort_by(|a, b| {
+        coin_stack_order(a.denomination_cents, &a.coin_id)
+            .cmp(&coin_stack_order(b.denomination_cents, &b.coin_id))
+    });
     let mut jar_index = 0;
     let mut lid_index = 0;
     for mut coin in coins {

@@ -16,11 +16,15 @@
 )]
 
 mod camera_inspection;
+mod contextual_diagnostics;
 pub mod file_control;
+mod hand_options;
 mod hand_view;
 pub mod identity_vault;
 mod money;
 pub mod observability;
+mod selection;
+mod sound_feedback;
 mod world_ui;
 
 use bevy::{
@@ -487,7 +491,10 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
             ..default()
         });
     if windowless {
-        plugins = plugins.disable::<WinitPlugin>().disable::<LogPlugin>();
+        plugins = plugins
+            .disable::<WinitPlugin>()
+            .disable::<LogPlugin>()
+            .disable::<bevy::audio::AudioPlugin>();
     }
 
     let control_root = options
@@ -516,6 +523,10 @@ pub fn run(options: LaunchOptions) -> Result<(), String> {
         hand_view::HandViewPlugin,
         world_ui::WorldUiPlugin,
         money::MoneyPlugin,
+        selection::SelectionPlugin,
+        sound_feedback::SoundFeedbackPlugin,
+        hand_options::HandOptionsPlugin,
+        contextual_diagnostics::ContextualDiagnosticsPlugin,
     ));
     if let Some(path) = &log_path {
         tracing::info!(log_file = %path.display(), "Poche durable logging initialized");
@@ -630,6 +641,7 @@ struct UiState {
     money_bowl_screen: Option<[f32; 2]>,
     money_jar_screen: Option<[f32; 2]>,
     money_lid_screen: Option<[f32; 2]>,
+    contextual: contextual_diagnostics::ContextualDiagnostics,
     room_scene_generation: u64,
 }
 
@@ -649,6 +661,7 @@ enum EscapeMenuPage {
     #[default]
     Main,
     Options,
+    Help,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -697,6 +710,7 @@ impl UiState {
             money_bowl_screen: None,
             money_jar_screen: None,
             money_lid_screen: None,
+            contextual: contextual_diagnostics::ContextualDiagnostics::default(),
             room_scene_generation: 0,
         }
     }
@@ -856,10 +870,13 @@ struct EscapeMainPanel;
 struct EscapeOptionsPanel;
 
 #[derive(Component)]
+struct EscapeHelpPanel;
+
+#[derive(Component)]
 struct InvertCameraYLabel;
 
 #[derive(Component)]
-struct LeaveButtonLabel;
+struct SoundFeedbackLabel;
 
 #[derive(Component, Clone, Copy, Eq, PartialEq)]
 enum Field {
@@ -892,8 +909,10 @@ enum UiAction {
     CycleRotationSnap,
     ResumeMenu,
     OpenOptions,
+    OpenHelp,
     CloseOptions,
     ToggleCameraYInversion,
+    ToggleSound,
 }
 
 #[derive(Message)]
@@ -1640,6 +1659,7 @@ fn handle_buttons(
     mut state: ResMut<UiState>,
     mut rotation_snap: ResMut<RotationSnap>,
     mut camera_options: ResMut<CameraOptions>,
+    mut sound_feedback: ResMut<sound_feedback::SoundFeedback>,
     authority: Res<AuthorityEndpoint>,
     mut vault: ResMut<IdentityVault>,
 ) {
@@ -1839,6 +1859,10 @@ fn handle_buttons(
                 state.confirm_leave = false;
                 state.status = "Camera options opened.".into();
             }
+            UiAction::OpenHelp => {
+                state.escape_menu_page = EscapeMenuPage::Help;
+                state.status = "Table controls opened.".into();
+            }
             UiAction::CloseOptions => {
                 state.escape_menu_page = EscapeMenuPage::Main;
                 state.status = "Returned to the table menu.".into();
@@ -1849,6 +1873,9 @@ fn handle_buttons(
                     "{}. This affects RMB vertical orbit.",
                     camera_options.invert_y_label()
                 );
+            }
+            UiAction::ToggleSound => {
+                sound_feedback.enabled = !sound_feedback.enabled;
             }
         }
     }
@@ -2107,7 +2134,7 @@ fn activate_leave(
     let room_id = room_id.ok_or_else(|| "Join a lobby before leaving it.".to_string())?;
     if !state.confirm_leave {
         state.confirm_leave = true;
-        state.status = "Leaving releases your seat. Choose Confirm leave lobby to continue.".into();
+        state.status = "Leaving releases your seat. Click the door again to leave.".into();
         return Ok(LeaveActivation::ConfirmationArmed);
     }
     bridge.send(BridgeIntent::Leave {
@@ -2126,7 +2153,7 @@ fn toggle_escape_menu(state: &mut UiState) {
         state.escape_menu_open = true;
         state.escape_menu_page = EscapeMenuPage::Main;
         state.status = "Table menu opened. The shared table remains live.".into();
-    } else if state.escape_menu_page == EscapeMenuPage::Options {
+    } else if state.escape_menu_page != EscapeMenuPage::Main {
         state.escape_menu_page = EscapeMenuPage::Main;
         state.status = "Returned to the table menu.".into();
     } else {
@@ -2487,25 +2514,8 @@ fn enter_room(
                         spawn_button(panel, "Take seat 1", UiAction::TakeSeat(0), false);
                         spawn_button(panel, "Take seat 2", UiAction::TakeSeat(1), false);
                         spawn_button(panel, "Play your card", UiAction::PlayFirstCard, false);
-                        spawn_button(panel, "Stand up", UiAction::ReleaseSeat, false);
                         spawn_button(panel, "Options", UiAction::OpenOptions, false);
-                        panel
-                            .spawn((
-                                Button,
-                                UiAction::Leave,
-                                Node {
-                                    min_width: px(150.),
-                                    padding: px(13.).all(),
-                                    justify_content: JustifyContent::Center,
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgb(0.40, 0.13, 0.12)),
-                            ))
-                            .with_child((
-                                LeaveButtonLabel,
-                                Text::new("Leave lobby"),
-                                TextFont::from_font_size(20.),
-                            ));
+                        spawn_button(panel, "Help", UiAction::OpenHelp, false);
                         panel.spawn((
                             Text::new("Press Esc to resume."),
                             TextFont::from_font_size(14.),
@@ -2539,13 +2549,6 @@ fn enter_room(
                             TextFont::from_font_size(15.),
                             TextColor(Color::srgb(0.72, 0.82, 0.8)),
                         ));
-                        panel.spawn((
-                            Text::new(
-                                "At the table\nClick an empty stool to sit. Click a notice to read it; click the room-code sign to copy. Use Speech → Bid to announce an allowed bid.\n\nCards\nDrag from your bottom-edge hand or the table. Hold Q/E to turn a held card. Hold Z to inspect zones without changing tools.\n\nCamera\nRMB orbit · MMB or WASD pan · wheel zoom\nI parallel/perspective projection · O top-down angle\nSpace reset · F3 frame statistics\nClick the score sheet to fill the view. Pan/zoom to inspect; click the paper again to return. Parallel projection at an oblique angle gives the isometric-style view.",
-                            ),
-                            TextFont::from_font_size(14.),
-                            TextColor(Color::srgb(0.80, 0.86, 0.81)),
-                        ));
                         panel
                             .spawn((
                                 Button,
@@ -2568,12 +2571,44 @@ fn enter_room(
                             TextFont::from_font_size(14.),
                             TextColor(Color::srgb(0.62, 0.72, 0.7)),
                         ));
+                        panel.spawn((
+                            Button,
+                            UiAction::ToggleSound,
+                            Node { padding: px(13.).all(), justify_content: JustifyContent::Center, ..default() },
+                            BackgroundColor(Color::srgb(0.13, 0.26, 0.27)),
+                            children![(SoundFeedbackLabel, Text::new("Pickup/drop sounds: On"), TextFont::from_font_size(20.))],
+                        ));
                         spawn_button(panel, "Back", UiAction::CloseOptions, true);
                         panel.spawn((
                             Text::new("Press Esc to return to the table menu."),
                             TextFont::from_font_size(14.),
                             TextColor(Color::srgb(0.62, 0.72, 0.7)),
                         ));
+                    });
+                overlay
+                    .spawn((
+                        EscapeHelpPanel,
+                        Node {
+                            display: Display::None,
+                            width: px(580.),
+                            max_width: percent(92.),
+                            padding: px(26.).all(),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(14.),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.035, 0.075, 0.08)),
+                    ))
+                    .with_children(|panel| {
+                        panel.spawn((Text::new("HELP"), TextFont::from_font_size(30.)));
+                        panel.spawn((
+                            Text::new(
+                                "At the table\nClick an empty stool to sit, or your own stool to stand. Click the door to leave. Click notices to read them; click the room-code sign to copy. Use Speech → Bid to announce a bid.\n\nCards and coins\nDrag from your bottom-edge hand or the table. Right-click a bottom-edge card to resize your private hand. Hold Q/E to turn a held card. Hold Z to inspect zones. Drag on empty space to count coins inside a selection box.\n\nCamera\nRMB orbit · MMB or WASD pan · wheel zoom\nI parallel/perspective projection · O top-down angle\nSpace reset · F3 frame statistics\nClick the score sheet to fill the view. Pan/zoom to inspect; click the paper again to return. Parallel projection at an oblique angle gives the isometric-style view.",
+                            ),
+                            TextFont::from_font_size(16.),
+                            TextColor(Color::srgb(0.80, 0.86, 0.81)),
+                        ));
+                        spawn_button(panel, "Back", UiAction::CloseOptions, true);
                     });
             });
         });
@@ -2582,12 +2617,14 @@ fn enter_room(
 fn sync_escape_menu(
     state: Res<UiState>,
     camera_options: Res<CameraOptions>,
+    sound_feedback: Res<sound_feedback::SoundFeedback>,
     mut menus: Query<
         &mut Node,
         (
             With<EscapeMenuRoot>,
             Without<EscapeMainPanel>,
             Without<EscapeOptionsPanel>,
+            Without<EscapeHelpPanel>,
         ),
     >,
     mut panels: Query<
@@ -2595,16 +2632,21 @@ fn sync_escape_menu(
             &mut Node,
             Option<&EscapeMainPanel>,
             Option<&EscapeOptionsPanel>,
+            Option<&EscapeHelpPanel>,
         ),
         (
-            Or<(With<EscapeMainPanel>, With<EscapeOptionsPanel>)>,
+            Or<(
+                With<EscapeMainPanel>,
+                With<EscapeOptionsPanel>,
+                With<EscapeHelpPanel>,
+            )>,
             Without<EscapeMenuRoot>,
         ),
     >,
-    mut leave_labels: Query<&mut Text, With<LeaveButtonLabel>>,
-    mut invert_y_labels: Query<&mut Text, (With<InvertCameraYLabel>, Without<LeaveButtonLabel>)>,
+    mut invert_y_labels: Query<&mut Text, (With<InvertCameraYLabel>, Without<SoundFeedbackLabel>)>,
+    mut sound_labels: Query<&mut Text, (With<SoundFeedbackLabel>, Without<InvertCameraYLabel>)>,
 ) {
-    if !(state.is_changed() || camera_options.is_changed()) {
+    if !(state.is_changed() || camera_options.is_changed() || sound_feedback.is_changed()) {
         return;
     }
     for mut node in &mut menus {
@@ -2614,24 +2656,24 @@ fn sync_escape_menu(
             Display::None
         };
     }
-    for (mut node, main, options) in &mut panels {
+    for (mut node, main, options, help) in &mut panels {
         let visible = (main.is_some() && state.escape_menu_page == EscapeMenuPage::Main)
-            || (options.is_some() && state.escape_menu_page == EscapeMenuPage::Options);
+            || (options.is_some() && state.escape_menu_page == EscapeMenuPage::Options)
+            || (help.is_some() && state.escape_menu_page == EscapeMenuPage::Help);
         node.display = if visible {
             Display::Flex
         } else {
             Display::None
         };
     }
-    for mut label in &mut leave_labels {
-        label.0 = if state.confirm_leave {
-            "Confirm leave lobby".into()
-        } else {
-            "Leave lobby".into()
-        };
-    }
     for mut label in &mut invert_y_labels {
         label.0 = camera_options.invert_y_label();
+    }
+    for mut label in &mut sound_labels {
+        label.0 = format!(
+            "Pickup/drop sounds: {}",
+            if sound_feedback.enabled { "On" } else { "Off" }
+        );
     }
 }
 
@@ -2882,8 +2924,10 @@ fn sync_room_labels(
                 | UiAction::CycleRotationSnap
                 | UiAction::ResumeMenu
                 | UiAction::OpenOptions
+                | UiAction::OpenHelp
                 | UiAction::CloseOptions
-                | UiAction::ToggleCameraYInversion => Display::Flex,
+                | UiAction::ToggleCameraYInversion
+                | UiAction::ToggleSound => Display::Flex,
                 UiAction::CreateIdentity
                 | UiAction::SelectIdentity(_)
                 | UiAction::RefreshIdentities
@@ -3309,7 +3353,9 @@ fn update_table_camera(
     layout: Res<CanonicalLayout>,
     mut state: ResMut<UiState>,
     camera_options: Res<CameraOptions>,
+    hand_options: Res<hand_options::HandViewOptions>,
     world_interaction: Res<world_ui::WorldInteraction>,
+    selection: Res<selection::SelectionState>,
     mut sheet_inspection: ResMut<world_ui::SheetInspectionRequest>,
     room: Query<(), With<RoomRoot>>,
     mut controller: ResMut<TableCameraController>,
@@ -3332,7 +3378,12 @@ fn update_table_camera(
         controller.inspect_sheet(sheet.center, sheet.size, aspect);
     }
     sheet_inspection.active = controller.inspecting_sheet();
-    if !state.escape_menu_open && !world_interaction.modal_open() && !room.is_empty() {
+    if !state.escape_menu_open
+        && !world_interaction.modal_open()
+        && !hand_options.blocks_pointer_input()
+        && !selection.selecting
+        && !room.is_empty()
+    {
         if keys.just_pressed(KeyCode::KeyI) {
             controller.toggle_projection();
         }
@@ -3547,6 +3598,7 @@ fn update_hand_camera(
     windows: Query<&Window, With<PrimaryWindow>>,
     model: Res<BridgeModel>,
     layout: Res<CanonicalLayout>,
+    options: Res<hand_options::HandViewOptions>,
     mut hand: ResMut<hand_view::HandProjection>,
     mut hand_cameras: Query<
         (&mut Camera, &mut Transform),
@@ -3565,7 +3617,8 @@ fn update_hand_camera(
         camera.viewport = None; // the table never loses space to a private-hand strip
     }
     let count = model.snapshot.hand.len();
-    let viewport_size = UVec2::new((size.x * 3 / 5).max(1), (size.y / 4).clamp(1, 190));
+    let dpi = windows.single().map_or(1.0, Window::scale_factor);
+    let viewport_size = hand_options::hand_viewport_size(size, dpi, options.scale());
     hand.configure(
         &layout.0,
         model.snapshot.own_seat(),
@@ -3624,6 +3677,7 @@ fn drag_cards(
     bridge: Res<BridgeHandle>,
     layout: Res<CanonicalLayout>,
     hand: Res<hand_view::HandProjection>,
+    hand_options: Res<hand_options::HandViewOptions>,
     world_interaction: Res<world_ui::WorldInteraction>,
     mut state: ResMut<UiState>,
     mut poses: ResMut<PoseDisplay>,
@@ -3654,7 +3708,10 @@ fn drag_cards(
         }
         drag.reset_rotation_repeat();
     }
-    if state.screen != UiScreen::Table || state.escape_menu_open {
+    if state.screen != UiScreen::Table
+        || state.escape_menu_open
+        || hand_options.blocks_pointer_input()
+    {
         return;
     }
     let Ok(window) = windows.single() else {
@@ -4380,6 +4437,20 @@ mod tests {
         assert!(state.escape_menu_open);
         assert_eq!(state.escape_menu_page, EscapeMenuPage::Main);
 
+        toggle_escape_menu(&mut state);
+        assert!(!state.escape_menu_open);
+    }
+
+    #[test]
+    fn escape_from_help_returns_to_menu_without_changing_camera_options() {
+        let mut state = UiState {
+            escape_menu_open: true,
+            escape_menu_page: EscapeMenuPage::Help,
+            ..default()
+        };
+        toggle_escape_menu(&mut state);
+        assert!(state.escape_menu_open);
+        assert_eq!(state.escape_menu_page, EscapeMenuPage::Main);
         toggle_escape_menu(&mut state);
         assert!(!state.escape_menu_open);
     }

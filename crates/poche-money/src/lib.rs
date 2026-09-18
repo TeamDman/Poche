@@ -180,6 +180,42 @@ pub fn first_free_coin_pose(
         .find(|position| !occupied.contains(position))
 }
 
+/// Put larger coins at the bottom; IDs only break ties within a denomination.
+/// A lexical ID sort instead puts every `d-*` dime below every `q-*` quarter.
+#[must_use]
+pub fn coin_stack_order(denomination: u8, id: &str) -> (std::cmp::Reverse<u8>, &str) {
+    (std::cmp::Reverse(denomination), id)
+}
+
+/// Repair the exact old lexical jar layout only. Any moved/raised coin makes
+/// the entire jar ineligible, so reconnecting cannot rearrange someone's drag.
+/// IDs, denominations and ownership are unchanged; this is pose-only repair.
+#[must_use]
+pub fn legacy_jar_relayout(
+    seat: u8,
+    coins: &[(String, u8, [i32; 3])],
+) -> Option<Vec<(String, [i32; 3])>> {
+    let mut ordered = coins.iter().collect::<Vec<_>>();
+    ordered.sort_by(|a, b| a.0.cmp(&b.0));
+    if ordered
+        .iter()
+        .enumerate()
+        .any(|(index, coin)| coin.2 != coin_rest_pose(seat, CoinContainer::Jar, index, coin.1))
+    {
+        return None;
+    }
+    ordered.sort_by(|a, b| coin_stack_order(a.1, &a.0).cmp(&coin_stack_order(b.1, &b.0)));
+    let changed = ordered
+        .iter()
+        .enumerate()
+        .filter_map(|(index, coin)| {
+            let position = coin_rest_pose(seat, CoinContainer::Jar, index, coin.1);
+            (position != coin.2).then(|| (coin.0.clone(), position))
+        })
+        .collect::<Vec<_>>();
+    (!changed.is_empty()).then_some(changed)
+}
+
 #[must_use]
 pub fn initial_inventory() -> Vec<(String, u8, CoinContainer)> {
     let mut coins = Vec::with_capacity(usize::from(QUARTERS_PER_PLAYER + DIMES_PER_PLAYER));
@@ -205,6 +241,89 @@ pub fn initial_inventory() -> Vec<(String, u8, CoinContainer)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn quarters_are_below_dimes_after_canonical_restack_for_both_seats() {
+        let mut coins = initial_inventory()
+            .into_iter()
+            .filter(|coin| coin.2 == CoinContainer::Jar)
+            .collect::<Vec<_>>();
+        // Reproduce the old path: initial placement was correct, but taking a
+        // seat immediately restacked IDs lexically and inverted denominations.
+        coins.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(coins[0].1, DIME_CENTS);
+        coins.sort_by(|a, b| coin_stack_order(a.1, &a.0).cmp(&coin_stack_order(b.1, &b.0)));
+        for seat in 0..2 {
+            let quarters = coins
+                .iter()
+                .enumerate()
+                .filter(|(_, coin)| coin.1 == QUARTER_CENTS)
+                .map(|(index, coin)| coin_rest_pose(seat, CoinContainer::Jar, index, coin.1)[1])
+                .collect::<Vec<_>>();
+            let dimes = coins
+                .iter()
+                .enumerate()
+                .filter(|(_, coin)| coin.1 == DIME_CENTS)
+                .map(|(index, coin)| coin_rest_pose(seat, CoinContainer::Jar, index, coin.1)[1])
+                .collect::<Vec<_>>();
+            assert!(quarters.iter().max().unwrap() <= dimes.iter().min().unwrap());
+        }
+    }
+
+    fn legacy_jar(seat: u8) -> Vec<(String, u8, [i32; 3])> {
+        let mut coins = initial_inventory()
+            .into_iter()
+            .filter(|coin| coin.2 == CoinContainer::Jar)
+            .collect::<Vec<_>>();
+        coins.sort_by(|a, b| a.0.cmp(&b.0));
+        coins
+            .into_iter()
+            .enumerate()
+            .map(|(index, (id, denomination, _))| {
+                (
+                    id,
+                    denomination,
+                    coin_rest_pose(seat, CoinContainer::Jar, index, denomination),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn existing_jar_pose_migration_conserves_coin_identity_and_value_and_is_idempotent() {
+        for seat in 0..2 {
+            let mut coins = legacy_jar(seat);
+            let identities = coins
+                .iter()
+                .map(|coin| (coin.0.clone(), coin.1))
+                .collect::<Vec<_>>();
+            let updates = legacy_jar_relayout(seat, &coins).expect("legacy layout is repaired");
+            for (id, position) in updates {
+                coins.iter_mut().find(|coin| coin.0 == id).unwrap().2 = position;
+            }
+            assert_eq!(
+                identities,
+                coins
+                    .iter()
+                    .map(|coin| (coin.0.clone(), coin.1))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                coins.iter().map(|coin| u32::from(coin.1)).sum::<u32>(),
+                INITIAL_BANKROLL_CENTS - INITIAL_LID_CENTS
+            );
+            assert!(legacy_jar_relayout(seat, &coins).is_none());
+        }
+    }
+
+    #[test]
+    fn legacy_jar_repair_does_not_interrupt_a_lift_or_a_preview_outside_the_jar() {
+        let mut lifted = legacy_jar(0);
+        lifted[0].2[1] += 24;
+        assert!(legacy_jar_relayout(0, &lifted).is_none());
+        let mut moved = legacy_jar(0);
+        moved[0].2[0] += 120;
+        assert!(legacy_jar_relayout(0, &moved).is_none());
+    }
     #[test]
     fn inventory_conserves_exact_bankroll_and_lid_allowance() {
         let coins = initial_inventory();

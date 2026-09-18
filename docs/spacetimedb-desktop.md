@@ -14,7 +14,9 @@ millimetres and millidegrees cross into metres and quaternions only at this
 rendering boundary. The table fills the window. Private cards peek from the
 bottom edge through a transparent hand camera. These are presentation copies
 of the same shared poses, not extra game objects. The hand view stays anchored
-to the player's physical hand zone as the world camera moves.
+to the player's physical hand zone as the world camera moves. Right-click an
+inset card to open its size slider. The 75% to 250% setting affects only this
+window's hand display, not shared card dimensions or positions.
 
 Room information lives on world signs and a score sheet. Click notices to
 read them close up. Clicking the ruled scoresheet instead moves the camera to
@@ -22,7 +24,8 @@ an orthographic view above the actual paper, fitted to the window with a small
 border. Pan and zoom to inspect details. Click the paper again to restore the
 preceding view. Wheel zoom can get close enough to inspect small objects.
 Click the room-code sign to copy its code. The compact
-Speech control and rotation snap remain on screen; Escape opens other controls.
+Speech control and rotation snap remain on screen. Escape opens Options and
+Help. Click your own seat to stand up; click the room's door to leave.
 
 The round engine follows the complete two-player schedule. Final pot payout,
 larger player counts and full transport/formal conformance remain unfinished.
@@ -44,9 +47,15 @@ in `poche-money`, not a rulebook requirement or cash balance.
 
 Drag a quarter from your lid into the shared bowl. The first deal waits until
 both seated players have paid 25¢. Replenish the lid by moving a coin from the
-jar, or return unused coins to the jar. The floating labels report actual
-shared container totals. Peers see the same coin moving; pickup and release
-height are eased locally too.
+jar, or return unused coins to the jar. Hover the jar, lid or bowl to inspect
+its shared coin count and value. Pointing at a coin shows its outline instead
+of the container total. Idle containers have no floating amount labels.
+Peers see the same coin moving; pickup and release height are eased locally too.
+
+Canonical jar stacks put quarters below dimes. Rejoining also repairs the exact
+older, dime-first resting layout without changing any coin's identity or value.
+That repair skips jars containing a moved or lifted coin. It does not rearrange
+an active drag or reset a custom layout merely to sort denominations.
 
 The table accepts exactly one quarter for an unpaid ante and one dime for each
 missed bid once the round has finished. It rejects overpayment, another
@@ -55,20 +64,41 @@ Coins are conserved across transfers and rejoining. Abandoning a deal refunds
 its bowl coins. Existing pre-coin deals retain their cards and materialize
 their already-paid automatic antes from the new inventory once.
 
-After the last trick, points are recorded once and the world notice names
-anyone who owes a dime. When those payments are complete, cards return to the
+An owing player's speech reminds them to pay their 25¢ ante. After the last
+trick, points are recorded once and speech identifies any outstanding dime.
+When those payments are complete, cards return to the
 deck and the dealer rotates. The new dealer clicks the deck to shuffle and
 deal the next round. The normal client renders only public trump on the deck,
 not undealt faces (see the prototype secrecy limitation below). The scoresheet
 retains completed rounds and
 updates bowl totals as coins move. Bidding speech is available only in the
-bidding phase. The final bowl remains reserved pending payout implementation.
+bidding phase. Hover the deck to see its card count and available action;
+there is no permanent deck-count label. The final bowl remains reserved pending
+payout implementation.
 
 Hover coins to see their silhouette outline. If a coin is dropped outside a
 valid container, it returns to its source; you can grab it during that return.
 Taken cards can be repositioned by the trick winner without replaying them.
 While holding a private card, the hint distinguishes a physical move from a
 drop fully inside PLAY. Follow-suit legality is still checked by the authority.
+
+## Count pieces without moving them
+
+Drag with the left mouse button from empty space to draw a selection rectangle.
+The preview counts coins, their combined value and card pieces before you release.
+A piece qualifies when its projected centre is inside the rectangle, including
+the boundary. Touching an edge of the piece alone does not select it.
+
+Release to keep the selection highlighted. Click empty space to clear it.
+Counting includes coin centres behind the jar's transparent glass. A card
+shown in both the world and your inset counts once; selection reveals no
+hidden faces. It is local inspection, not a bulk payment or group-movement tool.
+Starting on a draggable piece instead picks up that piece normally.
+
+Local card and coin pickup and release produce short sound cues. Network pose
+updates do not repeat them. Options contains the sound toggle; Help contains
+the interaction instructions. Windowless automation records cue events without
+opening an audio output device or playing sounds.
 
 ## Choose Maincloud or local development
 
@@ -196,8 +226,9 @@ title shows the selected account; its arrows switch accounts, and clicking
 the account name opens the identity screen.
 
 As Alice, choose **Create lobby** and copy the opaque `PCH-…` code. As Bob,
-paste the code and choose **Join lobby**. Click different stools to sit. The round-one oracle
-deal gives each player one private card while the peer sees an opaque `P` back.
+paste the code and choose **Join lobby**. Click different stools to sit, then
+each move a quarter into the bowl. The round-one oracle deal gives each player
+one private card while the peer sees an opaque `P` back.
 Open Speech and select “I bid 0 tricks” or “I bid 1 trick” when it is your turn.
 The dealer prompts the current bidder; accepted bids appear above the players.
 During play, drag
@@ -212,7 +243,9 @@ outside that physical hand region leave the inset, but remain logically yours
 until the authority accepts a play. Large hands compress card spacing without
 shrinking the faces. Opposite rank/suit corners keep turned cards readable.
 Hold Z to inspect zone volumes. These diagnostic shapes do not cast shadows.
-Right-drag orbits around the camera's focal point; middle-drag and WASD pan that
+Right-drag orbits around the camera's focal point, except when started on a
+private inset card. That gesture opens the hand-size slider instead and does
+not orbit. Middle-drag and WASD pan the focal
 point across a region twice the table-top extents. Space smoothly returns both
 camera and focus to the viewer's seat-relative home. All camera changes
 interpolate instead of teleporting. Local card motion is immediate while the
@@ -243,8 +276,10 @@ evidence.
 RMB vertical orbit is inverted by default, the opposite of the original
 prototype response. Open **Escape → Options** and activate **Invert camera Y:
 On/Off** to switch between the two signs. The setting is local to that running
-game window and does not alter shared table state. Escape from Options returns
-to the table menu; a second Escape resumes the table.
+game window and does not alter shared table state. Options also contains the
+sound toggle. Help is a separate table-menu entry, rather than instructions
+mixed into Options. Escape from either submenu returns to the table menu;
+a second Escape resumes the table.
 
 The player and Activity signs show the authoritative membership and newest public
 room actions: create/join/leave, seat changes, deal start, bids, and played
@@ -252,10 +287,11 @@ cards. It never records an unplayed card face or a private-hand snapshot.
 Only seated members have world avatars; unseated members remain visible in the
 roster without appearing in the middle of the table. The table notepad shows
 completed rounds and current bids in rulebook notation. Recorded totals remain
-authoritative; the nearby next-step notice explains payments and dealer handoff.
-Escape opens the table
-menu. **Stand up** and **Options** live there rather than in the frequent action
-bar. **Leave lobby** changes to **Confirm leave lobby** after the first click.
+authoritative; player speech and deck hover explain payments and dealer handoff.
+Hover your occupied seat for **Stand up**, then click it to stand. The action
+is no longer in the Escape menu. Hover the door for **Leave lobby**. The first
+click arms confirmation; click the door again to confirm leaving. This replaces
+the Escape-menu leave button, not its confirmation or authority checks.
 Successful leave clears the active-room
 projection and shows **You have left the lobby** with an explicit **Return to
 title** action while remaining peers see the roster update.
@@ -366,12 +402,22 @@ acceptance contract also requires rendered avatar/card counts to match that
 preloaded model before continuing. Between deals, an empty hand is the correct
 projection; loading must not wait for cards the dealer has not dealt.
 After it disconnects, Bob must still observe Alice online through her original
-connection. The puppet then captures the Escape table menu and armed leave
-confirmation. It also opens the nested Options menu, captures inverted-Y On,
-toggles and captures Off, and returns to the parent menu before explicitly
-leaving Alice. It verifies the terminal screen and requires Bob to observe the
+connection. The puppet also exercises the table menu and leave confirmation.
+It clicks Help and Options as distinct menu pages, captures inverted-Y On,
+toggles and captures Off, then clicks Alice's stool and the physical door.
+The door requires a second confirmation click. It verifies the terminal screen and requires Bob to observe the
 public leave event, one remaining member, no stranded game projection, and no
 orphaned card poses.
+
+The current v13 acceptance report has 24 checks. It also verifies exact container
+hover counts, coin-hover precedence, live marquee counting and retained selection.
+Actual right-click and slider gestures resize the hand without changing the
+camera or shared poses. Sound counters establish one local pickup/drop pair,
+no peer echo and no audio output during windowless tests. The final run on
+17 September 2026 passed all 24 checks. The inspected
+`contextual-inspection.png` shows the enlarged hand, readable hover total and
+selection preview. See [PLAN-11](../PLAN-11-CONTEXTUAL-TABLE.md) for evidence
+boundaries; older receipts do not cover these newer interactions.
 
 The same run also grabs an inset card using real Bevy pointer input, taps Q,
 moves it into the world, and brings it back. It checks the peer's exact angle,
@@ -432,7 +478,7 @@ reports the `resume_offer` surface.
 `menu ROOT`, `options ROOT`, `invert-camera-y ROOT`, and `back ROOT` expose the
 same nested menu path to ad-hoc windowless control and screenshot capture.
 
-File-control schema 9 also accepts real input. On a `--windowless` instance:
+File-control schema 10 also accepts real input. On a `--windowless` instance:
 
 ```powershell
 target\debug\poche-puppet.exe pointer target\live\alice 590 732 down
@@ -446,6 +492,8 @@ run through normal Bevy input and picking, not a pose reducer shortcut. Pointer
 injection is rejected for OS windows so tests cannot move your mouse. The
 observation includes the held card key and visible hand-copy count. Screenshots
 and semantic observations still work for both windowed and windowless instances.
+The `contextual` observations expose local selection, hover, hand display and
+sound-cue state. These inspect presentation without granting reducer authority.
 
 `camera-gesture ROOT DX DY middle|right|up` supplies windowless camera motion.
 It pans or orbits within scoresheet inspection just like the mouse; inspection
@@ -457,7 +505,7 @@ computed only when file control is enabled.
 The final `move` argument is rotation about table-up Y in millidegrees,
 matching the Q/E control and the card's visible orientation in the perspective
 scene. The two `leave` invocations exercise the same arm-then-confirm path as
-clicking the human-facing button twice.
+clicking the physical door twice.
 
 Requests are atomically claimed from `requests/`, archived to `processed/`,
 and answered in `responses/`. Every response includes a semantic observation

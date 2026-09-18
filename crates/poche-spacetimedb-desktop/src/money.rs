@@ -9,6 +9,7 @@ use super::{
     TabletopCamera, UiScreen, UiState, card_label_texture, drag_cards, mm_position, world_ui,
 };
 use bevy::{
+    ecs::system::SystemParam,
     light::{NotShadowCaster, NotShadowReceiver},
     prelude::*,
     render::render_resource::Face,
@@ -33,6 +34,12 @@ impl Plugin for MoneyPlugin {
                     .chain()
                     .after(world_ui::interact_with_world)
                     .before(drag_cards),
+            )
+            .add_systems(
+                Update,
+                draw_money_tooltip
+                    .after(animate_money)
+                    .after(super::selection::update_selection),
             );
     }
 }
@@ -118,9 +125,9 @@ pub(super) struct MoneyState {
     poses: BTreeMap<String, CoinPose>,
     drag: Option<CoinDrag>,
     hover_key: Option<String>,
+    hover_container: Option<ContainerTarget>,
     pending_commits: BTreeMap<String, PendingCoinCommit>,
     scene_key: String,
-    labels_key: String,
 }
 struct CoinPose {
     current: Vec3,
@@ -152,6 +159,15 @@ impl CoinPose {
 }
 
 impl MoneyState {
+    pub(super) fn hovered_coin_key(&self) -> Option<&str> {
+        self.hover_key.as_deref()
+    }
+
+    pub(super) fn container_hover_text(&self, snapshot: &ClientSnapshot) -> Option<String> {
+        self.hover_container
+            .map(|target| container_label(snapshot, target))
+    }
+
     pub(super) fn displayed_coin_position(&self, key: &str) -> Option<[f32; 3]> {
         self.poses.get(key).map(|pose| pose.current.to_array())
     }
@@ -254,8 +270,13 @@ struct CoinVisual(String);
 struct CoinOutline(String);
 #[derive(Component)]
 struct MoneyProp;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ContainerTarget {
+    seat: u8,
+    container: CoinContainer,
+}
 #[derive(Component)]
-struct MoneyLabel;
+struct MoneyTooltip;
 
 #[allow(clippy::too_many_arguments)]
 fn sync_money(
@@ -268,10 +289,7 @@ fn sync_money(
     mut notices: MessageReader<BridgeNotice>,
     coins: Query<(Entity, &CoinVisual)>,
     props: Query<Entity, With<MoneyProp>>,
-    labels: Query<Entity, With<MoneyLabel>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
 ) {
     let active = state.screen == UiScreen::Table;
     let context = format!(
@@ -282,6 +300,8 @@ fn sync_money(
     if money.context != context || !active {
         money.context = context;
         money.drag = None;
+        money.hover_key = None;
+        money.hover_container = None;
         money.pending_commits.clear();
         money.poses.clear();
     }
@@ -446,85 +466,40 @@ fn sync_money(
             }
         }
     }
-    // Pose previews must not rebuild text textures; only totals/membership do.
-    let labels_key = format!(
-        "{}:{:?}",
-        money.scene_key,
-        model
-            .snapshot
-            .coins
-            .iter()
-            .map(|c| (&c.coin_key, &c.container))
-            .collect::<Vec<_>>()
-    );
-    if money.labels_key != labels_key {
-        money.labels_key = labels_key;
-        for entity in &labels {
-            commands.entity(entity).despawn();
-        }
-        if active {
-            let total: u32 = model
-                .snapshot
-                .coins
-                .iter()
-                .filter(|c| c.container == "bowl")
-                .map(|c| u32::from(c.denomination_cents))
-                .sum();
-            let instruction = if model.snapshot.game.is_none() {
-                " · ante 25¢ each"
-            } else {
-                ""
-            };
-            spawn_label(
-                &mut commands,
-                &mut meshes,
-                &mut materials,
-                &mut images,
-                &format!("Bowl  ${}.{:02}{instruction}", total / 100, total % 100),
-                center(0, CoinContainer::Bowl) + Vec3::new(0., 0.08, -0.08),
-                0.23,
-            );
-            for member in &model.snapshot.members {
-                let Some(seat) = member.seat else {
-                    continue;
-                };
-                for container in [CoinContainer::Jar, CoinContainer::Lid] {
-                    let total: u32 = model
-                        .snapshot
-                        .coins
-                        .iter()
-                        .filter(|c| c.owner == member.identity && c.container == container.as_str())
-                        .map(|c| u32::from(c.denomination_cents))
-                        .sum();
-                    let label = format!(
-                        "{} · {}  ${}.{:02}",
-                        member.display_name,
-                        container.as_str(),
-                        total / 100,
-                        total % 100
-                    );
-                    let height = if container == CoinContainer::Jar {
-                        0.23
-                    } else {
-                        0.065
-                    };
-                    spawn_label(
-                        &mut commands,
-                        &mut meshes,
-                        &mut materials,
-                        &mut images,
-                        &label,
-                        center(seat, container) + Vec3::Y * height,
-                        0.22,
-                    );
-                }
-            }
-        }
-    }
 }
 
 fn center(seat: u8, container: CoinContainer) -> Vec3 {
     Vec3::from_array(container_center_mm(seat, container).map(|v| v as f32 * 0.001))
+}
+
+fn container_label(snapshot: &ClientSnapshot, target: ContainerTarget) -> String {
+    let member = snapshot
+        .members
+        .iter()
+        .find(|member| member.seat == Some(target.seat));
+    let coins = snapshot.coins.iter().filter(|coin| {
+        coin.container == target.container.as_str()
+            && (target.container == CoinContainer::Bowl
+                || member.is_some_and(|member| member.identity == coin.owner))
+    });
+    let (count, cents) = coins.fold((0, 0_u32), |(count, cents), coin| {
+        (count + 1, cents + u32::from(coin.denomination_cents))
+    });
+    let name = if target.container == CoinContainer::Bowl {
+        "Bowl".to_string()
+    } else {
+        format!(
+            "{}'s {}",
+            member.map_or("Player", |member| member.display_name.as_str()),
+            target.container.as_str()
+        )
+    };
+    let noun = if count == 1 { "coin" } else { "coins" };
+    format!(
+        "{name} · {count} {noun} · ${}.{:02}",
+        cents / 100,
+        cents % 100
+    )
 }
 fn jar_body_center(seat: u8) -> Vec3 {
     center(seat, CoinContainer::Jar)
@@ -544,49 +519,10 @@ fn spawn_prop(
         Transform::from_translation(position),
     ));
 }
-fn spawn_label(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    images: &mut Assets<Image>,
-    text: &str,
-    position: Vec3,
-    width: f32,
-) {
-    let (texture, aspect) = card_label_texture(images, text, [243, 239, 220]);
-    let ink = materials.add(StandardMaterial {
-        base_color_texture: Some(texture),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    });
-    let backing = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.025, 0.055, 0.045),
-        unlit: true,
-        ..default()
-    });
-    let height = width / aspect.max(1.0);
-    commands
-        .spawn((
-            MoneyLabel,
-            Transform::from_translation(position),
-            Visibility::default(),
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                Mesh3d(meshes.add(Rectangle::new(width + 0.012, height + 0.008))),
-                MeshMaterial3d(backing),
-                NotShadowCaster,
-                NotShadowReceiver,
-            ));
-            parent.spawn((
-                Mesh3d(meshes.add(Rectangle::new(width, height))),
-                MeshMaterial3d(ink),
-                Transform::from_xyz(0., 0., 0.0002),
-                NotShadowCaster,
-                NotShadowReceiver,
-            ));
-        });
+#[derive(SystemParam)]
+struct MoneyInputGuards<'w> {
+    selection: Option<Res<'w, super::selection::SelectionState>>,
+    hand_options: Option<Res<'w, super::hand_options::HandViewOptions>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -606,8 +542,10 @@ fn interact_money(
     card_poses: Res<super::PoseDisplay>,
     card_drag: Res<super::DragState>,
     hand_camera: Query<(&Camera, &GlobalTransform), With<super::HandCamera>>,
+    guards: MoneyInputGuards,
 ) {
     money.hover_key = None;
+    money.hover_container = None;
     if state.screen != UiScreen::Table {
         state.money_pick_targets.clear();
         state.money_bowl_screen = None;
@@ -618,11 +556,12 @@ fn interact_money(
     let Ok((camera, camera_transform)) = camera.single() else {
         return;
     };
-    let Some(seat) = model.snapshot.own_seat() else {
+    let own_seat = model.snapshot.own_seat();
+    if own_seat.is_none() {
         money.drag = None;
         state.money_pick_targets.clear();
-        return;
-    };
+    }
+    let seat = own_seat.unwrap_or(0);
     let project = |position| {
         camera
             .world_to_viewport(camera_transform, position)
@@ -669,6 +608,10 @@ fn interact_money(
     let enabled = state.screen == UiScreen::Table
         && !state.escape_menu_open
         && !inspection.active
+        && !guards
+            .hand_options
+            .as_ref()
+            .is_some_and(|options| options.blocks_pointer_input())
         && card_drag.card_key.is_none();
     let inset_card = cursor.is_some_and(|cursor| {
         hand_camera
@@ -701,8 +644,13 @@ fn interact_money(
                     })
             })
     });
+    let selecting = guards
+        .selection
+        .as_ref()
+        .is_some_and(|selection| selection.selecting);
     let candidate = if enabled
         && !inset_card
+        && !selecting
         && !interaction.blocks_card_input()
         && let Some(ray) = ray
     {
@@ -713,14 +661,38 @@ fn interact_money(
                 super::hand_view::card_hit(ray, mm_position(pose.current), pose.current_rotation)
             })
             .min_by(f32::total_cmp);
-        nearest_coin(&model, &money, ray).filter(|(distance, _, _)| {
-            nearest_card.is_none_or(|card_distance| *distance < card_distance)
+        let inspected_coin = model
+            .snapshot
+            .coins
+            .iter()
+            .filter_map(|coin| {
+                let pose = money.poses.get(&coin.coin_key)?;
+                let distance = coin_hit(ray, pose.current, coin.denomination_cents)?;
+                Some((distance, coin.coin_key.as_str()))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        // Transparent glass is not an occluder: a directly pointed-at coin
+        // takes precedence, including someone else's coins or locked payments.
+        if let Some((distance, key)) = inspected_coin
+            && nearest_card.is_none_or(|card| distance < card)
+        {
+            money.hover_key = Some(key.to_string());
+        }
+        if money.drag.is_none() {
+            money.hover_container =
+                container_under_cursor(&model.snapshot, ray, inspected_coin.is_some())
+                    .filter(|(distance, _)| nearest_card.is_none_or(|card| *distance < card))
+                    .map(|(_, target)| target);
+        }
+        nearest_coin(&model, &money, ray).filter(|(distance, key, _)| {
+            own_seat.is_some()
+                && inspected_coin.is_some_and(|(_, inspected)| key == inspected)
+                && nearest_card.is_none_or(|card_distance| *distance < card_distance)
         })
     } else {
         None
     };
-    if let Some((_, key, _)) = &candidate {
-        money.hover_key = Some(key.clone());
+    if candidate.is_some() {
         interaction.pointer_over_ui = true;
     }
     if mouse.just_pressed(MouseButton::Left)
@@ -865,7 +837,10 @@ fn coin_outline_shape(denomination: u8) -> Cylinder {
 /// Intersect the actual finite cylinder, including its narrow side. The hover
 /// hull is presentation only and must not make adjacent coins steal a click.
 fn coin_hit(ray: Ray3d, center: Vec3, denomination: u8) -> Option<f32> {
-    let shape = coin_shape(denomination);
+    cylinder_hit(ray, center, coin_shape(denomination))
+}
+
+fn cylinder_hit(ray: Ray3d, center: Vec3, shape: Cylinder) -> Option<f32> {
     let origin = ray.origin - center;
     let direction = *ray.direction;
     let mut nearest = f32::INFINITY;
@@ -892,20 +867,55 @@ fn coin_hit(ray: Ray3d, center: Vec3, denomination: u8) -> Option<f32> {
     nearest.is_finite().then_some(nearest)
 }
 
+fn container_under_cursor(
+    snapshot: &ClientSnapshot,
+    ray: Ray3d,
+    pointing_at_coin: bool,
+) -> Option<(f32, ContainerTarget)> {
+    if pointing_at_coin {
+        return None;
+    }
+    let targets = std::iter::once(ContainerTarget {
+        seat: 0,
+        container: CoinContainer::Bowl,
+    })
+    .chain(
+        snapshot
+            .members
+            .iter()
+            .filter_map(|member| member.seat)
+            .flat_map(|seat| {
+                [CoinContainer::Jar, CoinContainer::Lid]
+                    .map(|container| ContainerTarget { seat, container })
+            }),
+    );
+    targets
+        .filter_map(|target| {
+            let (position, shape) = match target.container {
+                CoinContainer::Jar => (
+                    jar_body_center(target.seat),
+                    Cylinder::new(JAR_RADIUS_MM as f32 * 0.001, JAR_HEIGHT_MM as f32 * 0.001),
+                ),
+                CoinContainer::Lid => (
+                    center(target.seat, target.container) + Vec3::Y * 0.004,
+                    Cylinder::new(0.044, 0.008),
+                ),
+                CoinContainer::Bowl => (
+                    center(0, target.container) + Vec3::Y * 0.008,
+                    Cylinder::new(0.077, 0.025),
+                ),
+            };
+            cylinder_hit(ray, position, shape).map(|distance| (distance, target))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+}
+
 fn animate_money(
     time: Res<Time>,
     mut money: ResMut<MoneyState>,
     mut coins: Query<(&CoinVisual, &mut Transform)>,
     mut outlines: Query<(&CoinOutline, &mut Visibility)>,
-    mut labels: Query<&mut Transform, (With<MoneyLabel>, Without<CoinVisual>)>,
-    camera: Query<
-        &Transform,
-        (
-            With<TabletopCamera>,
-            Without<CoinVisual>,
-            Without<MoneyLabel>,
-        ),
-    >,
+    selection: Option<Res<super::selection::SelectionState>>,
 ) {
     let alpha = 1. - (-18. * time.delta_secs()).exp();
     for (coin, mut transform) in &mut coins {
@@ -917,22 +927,180 @@ fn animate_money(
     for (coin, mut visible) in &mut outlines {
         *visible = if money.hover_key.as_deref() == Some(coin.0.as_str())
             || money.drag.as_ref().is_some_and(|drag| drag.key == coin.0)
+            || selection
+                .as_ref()
+                .is_some_and(|selection| selection.selected_coin_keys.contains(&coin.0))
         {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
     }
-    if let Ok(camera) = camera.single() {
-        for mut label in &mut labels {
-            label.rotation = camera.rotation;
+}
+
+/// Presentation text is measured in screen pixels, not metres. It remains
+/// legible while the camera is far from the actual cylinder being inspected.
+fn tooltip_rect(cursor: Vec2, viewport: Vec2, characters: usize, selection_visible: bool) -> Rect {
+    let reserve_bottom = if selection_visible { 90. } else { 0. };
+    let available = (viewport - Vec2::new(16., 16. + reserve_bottom)).max(Vec2::ONE);
+    let text_width = characters as f32 * 10.5;
+    let width = (text_width + 20.).clamp(160., 500.).min(available.x);
+    let lines = (text_width / (width - 16.).max(1.)).ceil().max(1.);
+    let size = Vec2::new(width, (lines * 23. + 16.).min(available.y));
+    let mut origin = cursor + Vec2::splat(16.);
+    if origin.x + size.x > viewport.x - 8. {
+        origin.x = cursor.x - size.x - 16.;
+    }
+    if origin.y + size.y > viewport.y - 8. - reserve_bottom {
+        origin.y = cursor.y - size.y - 16.;
+    }
+    let max = (viewport - Vec2::new(8., 8. + reserve_bottom) - size).max(Vec2::splat(8.));
+    origin = origin.clamp(Vec2::splat(8.), max);
+    Rect::from_corners(origin, origin + size)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_money_tooltip(
+    mut commands: Commands,
+    money: Res<MoneyState>,
+    model: Res<BridgeModel>,
+    state: Res<UiState>,
+    selection: Option<Res<super::selection::SelectionState>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    cameras: Query<Entity, With<super::PocheUiCamera>>,
+    mut tooltips: Query<(Entity, &mut Text, &mut Node), With<MoneyTooltip>>,
+) {
+    let content = (state.screen == UiScreen::Table
+        && !state.escape_menu_open
+        && !selection
+            .as_ref()
+            .is_some_and(|selection| selection.selecting))
+    .then(|| money.container_hover_text(&model.snapshot))
+    .flatten();
+    let current = content.and_then(|text| {
+        let window = windows.single().ok()?;
+        let cursor = window.cursor_position()?;
+        let camera = cameras.single().ok()?;
+        let rect = tooltip_rect(
+            cursor,
+            Vec2::new(window.width(), window.height()),
+            text.chars().count(),
+            selection
+                .as_ref()
+                .is_some_and(|selection| !selection.summary.is_empty()),
+        );
+        Some((text, rect, camera))
+    });
+    let Some((text, rect, camera)) = current else {
+        for (entity, _, _) in &tooltips {
+            commands.entity(entity).despawn();
         }
+        return;
+    };
+    let node = Node {
+        position_type: PositionType::Absolute,
+        left: px(rect.min.x),
+        top: px(rect.min.y),
+        width: px(rect.width()),
+        height: px(rect.height()),
+        padding: UiRect::all(px(8.)),
+        ..default()
+    };
+    if let Ok((_, mut existing, mut position)) = tooltips.single_mut() {
+        if existing.0 != text {
+            existing.0 = text;
+        }
+        *position = node;
+    } else {
+        commands.spawn((
+            MoneyTooltip,
+            Pickable::IGNORE,
+            UiTargetCamera(camera),
+            Text::new(text),
+            TextFont::from_font_size(17.),
+            TextColor(Color::srgb(0.95, 0.97, 0.89)),
+            node,
+            BackgroundColor(Color::srgb(0.02, 0.07, 0.06)),
+            GlobalZIndex(23),
+        ));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn money_tooltip_stays_on_screen_and_clear_of_the_selection_summary() {
+        for viewport in [Vec2::new(640., 480.), Vec2::new(1920., 1080.)] {
+            for cursor in [Vec2::ZERO, viewport, viewport * 0.5] {
+                for selection_visible in [false, true] {
+                    let rect = tooltip_rect(cursor, viewport, 52, selection_visible);
+                    assert!(rect.min.cmpge(Vec2::splat(8.)).all());
+                    assert!(rect.max.x <= viewport.x - 8.);
+                    let reserve = if selection_visible { 90. } else { 0. };
+                    assert!(rect.max.y <= viewport.y - 8. - reserve);
+                    assert!(rect.width() >= 160.);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn vessel_totals_require_hover_and_a_coin_hit_wins_through_glass() {
+        let snapshot = ClientSnapshot::default();
+        let bowl = center(0, CoinContainer::Bowl);
+        let ray = Ray3d::new(bowl + Vec3::Y, Dir3::NEG_Y);
+        assert_eq!(
+            container_under_cursor(&snapshot, ray, false)
+                .unwrap()
+                .1
+                .container,
+            CoinContainer::Bowl
+        );
+        assert!(container_under_cursor(&snapshot, ray, true).is_none());
+        assert!(
+            container_under_cursor(
+                &snapshot,
+                Ray3d::new(Vec3::new(2., 1., 2.), Dir3::NEG_Y),
+                false
+            )
+            .is_none()
+        );
+        assert!(
+            MoneyState::default()
+                .container_hover_text(&snapshot)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn contextual_bowl_total_counts_only_paid_coins_and_never_changes_the_ledger() {
+        let mut snapshot = coin_snapshot();
+        let mut paid = snapshot.coins[0].clone();
+        paid.coin_key = "paid-dime".into();
+        paid.coin_id = "d0".into();
+        paid.denomination_cents = 10;
+        paid.container = "bowl".into();
+        snapshot.coins.push(paid);
+        let label = container_label(
+            &snapshot,
+            ContainerTarget {
+                seat: 0,
+                container: CoinContainer::Bowl,
+            },
+        );
+        assert_eq!(label, "Bowl · 1 coin · $0.10");
+        assert_eq!(snapshot.coins.len(), 2);
+        assert_eq!(
+            snapshot
+                .coins
+                .iter()
+                .map(|coin| u32::from(coin.denomination_cents))
+                .sum::<u32>(),
+            35
+        );
+    }
 
     #[test]
     fn coin_outline_encloses_top_bottom_and_side_without_covering_the_face() {

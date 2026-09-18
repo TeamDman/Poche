@@ -333,6 +333,7 @@ struct AcceptanceReport {
     checks: AcceptanceChecks,
     peer_members_after_leave: usize,
     table_menu_capture: String,
+    help_capture: String,
     options_default_capture: String,
     options_toggled_capture: String,
     leave_confirmation_capture: String,
@@ -362,6 +363,12 @@ struct AcceptanceChecks {
     leave_showed_terminal: bool,
     same_identity_resume: bool,
     presence_survived_sibling_disconnect: bool,
+    contextual_money_hover_precedence: bool,
+    marquee_coin_count_without_transfers: bool,
+    private_hand_size_popup_preserves_camera_and_authority: bool,
+    local_pickup_drop_sound_once_without_peer_echo: bool,
+    own_seat_and_door_are_real_pointer_actions: bool,
+    help_and_options_are_separate_menu_pages: bool,
 }
 
 struct AcceptanceContext<'a> {
@@ -506,6 +513,11 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
 
     let seated_alice = capture(alice_root)?;
     let seated_bob = capture(bob_root)?;
+    let contextual_captures = verify_contextual_inspection(alice_root)?;
+    compose_contact_sheet(
+        &contextual_captures,
+        &output.with_file_name("contextual-inspection.png"),
+    )?;
     let interaction_captures = verify_hand_input(alice_root, bob_root)?;
     compose_contact_sheet(
         &interaction_captures,
@@ -735,7 +747,35 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
 
     send(alice_root, FileControlAction::ToggleTableMenu)?;
     let table_menu_capture = capture(alice_root)?;
-    send(alice_root, FileControlAction::OpenOptions)?;
+    let main_menu = observe(alice_root)?;
+    let [help_x, help_y] = main_menu
+        .contextual
+        .help_button_screen
+        .ok_or("Help has no visible button in the table menu")?;
+    click(alice_root, help_x, help_y)?;
+    wait_until(alice_root, |o| o.contextual.escape_menu_page == "help")?;
+    let help_capture = capture(alice_root)?;
+    send(
+        alice_root,
+        FileControlAction::Key {
+            key: "Escape".into(),
+            down: true,
+        },
+    )?;
+    send(
+        alice_root,
+        FileControlAction::Key {
+            key: "Escape".into(),
+            down: false,
+        },
+    )?;
+    let main_menu = wait_until(alice_root, |o| o.contextual.escape_menu_page == "main")?;
+    let [options_x, options_y] = main_menu
+        .contextual
+        .options_button_screen
+        .ok_or("Options has no visible button separate from Help")?;
+    click(alice_root, options_x, options_y)?;
+    wait_until(alice_root, |o| o.contextual.escape_menu_page == "options")?;
     let options_default_capture = capture(alice_root)?;
     let toggled_options = send(alice_root, FileControlAction::ToggleCameraYInversion)?.observation;
     if !toggled_options.status.contains("Invert camera Y: Off") {
@@ -743,9 +783,32 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     }
     let options_toggled_capture = capture(alice_root)?;
     send(alice_root, FileControlAction::CloseOptions)?;
-    send(alice_root, FileControlAction::ActivateLeave)?;
+    send(alice_root, FileControlAction::ToggleTableMenu)?;
+    let seated = observe(alice_root)?;
+    let [seat_x, seat_y] = seated
+        .contextual
+        .own_seat_screen
+        .ok_or("own stool was not projected for the stand-up action")?;
+    click(alice_root, seat_x, seat_y)?;
+    wait_until(alice_root, |o| o.own_seat.is_none() && o.room_id.is_some())?;
+    // Standing changes the camera home. Let that ordinary transition settle
+    // before sampling the door's current projected target.
+    std::thread::sleep(Duration::from_millis(600));
+    let standing = observe(alice_root)?;
+    let [door_x, door_y] = standing
+        .contextual
+        .door_screen
+        .ok_or("the exit door was not visible from the standing camera")?;
+    click(alice_root, door_x, door_y)?;
+    let armed = observe(alice_root)?;
+    if armed.room_id != standing.room_id || !armed.status.contains("again") {
+        return Err("the first door click did not arm a non-destructive leave confirmation".into());
+    }
     let leave_confirmation_capture = capture(alice_root)?;
-    let left = send(alice_root, FileControlAction::ActivateLeave)?.observation;
+    click(alice_root, door_x, door_y)?;
+    let left = wait_until(alice_root, |o| {
+        o.surface == "lobby_ended" && o.room_id.is_none()
+    })?;
     let leave_showed_terminal = left.surface == "lobby_ended" && left.room_id.is_none();
     if !leave_showed_terminal {
         return Err("leaving did not show the controlling device its lobby-ended screen".into());
@@ -766,7 +829,7 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
     let menu_after_leave = capture(alice_root)?;
 
     let report = AcceptanceReport {
-        schema: "poche-spacetimedb-multi-device-acceptance-v12",
+        schema: "poche-spacetimedb-multi-device-acceptance-v13",
         completed_unix_ms: unix_millis()?,
         authority_profile: authority.profile.clone(),
         authority_uri: authority.uri.clone(),
@@ -822,9 +885,16 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
             leave_showed_terminal,
             same_identity_resume: true,
             presence_survived_sibling_disconnect,
+            contextual_money_hover_precedence: true,
+            marquee_coin_count_without_transfers: true,
+            private_hand_size_popup_preserves_camera_and_authority: true,
+            local_pickup_drop_sound_once_without_peer_echo: true,
+            own_seat_and_door_are_real_pointer_actions: true,
+            help_and_options_are_separate_menu_pages: true,
         },
         peer_members_after_leave: bob_after_leave.members.len(),
         table_menu_capture: table_menu_capture.to_string_lossy().into_owned(),
+        help_capture: help_capture.to_string_lossy().into_owned(),
         options_default_capture: options_default_capture.to_string_lossy().into_owned(),
         options_toggled_capture: options_toggled_capture.to_string_lossy().into_owned(),
         leave_confirmation_capture: leave_confirmation_capture.to_string_lossy().into_owned(),
@@ -832,6 +902,7 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
         screenshots: captures
             .iter()
             .chain(interaction_captures.iter())
+            .chain(contextual_captures.iter())
             .chain(sheet_captures.iter())
             .chain(money_captures.iter())
             .chain(penalty_captures.iter())
@@ -843,6 +914,7 @@ fn acceptance_inner(context: AcceptanceContext<'_>) -> Result<(), String> {
                 &resume_offer_capture,
             ])
             .chain(std::iter::once(&table_menu_capture))
+            .chain(std::iter::once(&help_capture))
             .chain(std::iter::once(&options_default_capture))
             .chain(std::iter::once(&options_toggled_capture))
             .chain(std::iter::once(&leave_confirmation_capture))
@@ -935,6 +1007,7 @@ fn verify_hand_input(owner: &Path, peer: &Path) -> Result<Vec<PathBuf>, String> 
         },
     )?
     .observation;
+    let peer_before = observe(peer)?;
     let key = initial
         .own_hand
         .first()
@@ -1056,7 +1129,311 @@ fn verify_hand_input(owner: &Path, peer: &Path) -> Result<Vec<PathBuf>, String> 
         },
     )?;
     std::thread::sleep(Duration::from_millis(600));
+    let finished = observe(owner)?;
+    let peer_finished = observe(peer)?;
+    if finished.contextual.sound_pickup_count != initial.contextual.sound_pickup_count + 1
+        || finished.contextual.sound_release_count != initial.contextual.sound_release_count + 1
+        || finished.contextual.sound_audible_count != 0
+        || peer_finished.contextual.sound_pickup_count != peer_before.contextual.sound_pickup_count
+        || peer_finished.contextual.sound_release_count
+            != peer_before.contextual.sound_release_count
+        || peer_finished.contextual.sound_audible_count != 0
+    {
+        return Err(
+            "card gesture feedback repeated, echoed on the observer, or made windowless audio"
+                .into(),
+        );
+    }
     Ok(vec![hover, rotated, world, returned, low_angle])
+}
+
+fn observe(root: &Path) -> Result<FileControlObservation, String> {
+    Ok(send(
+        root,
+        FileControlAction::Observe {
+            include_join_code: false,
+        },
+    )?
+    .observation)
+}
+
+fn verify_contextual_inspection(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let before = observe(root)?;
+    let camera = before
+        .camera
+        .as_ref()
+        .ok_or("contextual inspection has no camera")?;
+    // The existing input test uses the same visible private card. This is real
+    // RMB input, not a semantic 'open popup' shortcut.
+    send(
+        root,
+        FileControlAction::Pointer {
+            x: 590.,
+            y: 732.,
+            primary_down: false,
+        },
+    )?;
+    send(
+        root,
+        FileControlAction::CameraGesture {
+            delta: [0., 0.],
+            middle_down: false,
+            right_down: true,
+        },
+    )?;
+    let opened = wait_until(root, |o| o.contextual.hand_popup)?;
+    let [min_x, min_y, max_x, max_y] = opened
+        .contextual
+        .hand_slider
+        .ok_or("hand size popup did not expose its actual slider rectangle")?;
+    let slider_y = (min_y + max_y) * 0.5;
+    let scale_x = |scale: f32| min_x + (scale - 0.75) / (2.5 - 0.75) * (max_x - min_x);
+    click(root, scale_x(2.0), slider_y)?;
+    wait_until(root, |o| (o.contextual.hand_scale - 2.0).abs() < 0.01)?;
+    let enlarged = capture(root)?;
+    click(root, scale_x(1.0), slider_y)?;
+    wait_until(root, |o| (o.contextual.hand_scale - 1.0).abs() < 0.01)?;
+    // Dismiss while RMB remains held, then move it. It must not become orbit
+    // halfway through the gesture that began as a hand context-menu request.
+    send(
+        root,
+        FileControlAction::Key {
+            key: "Escape".into(),
+            down: true,
+        },
+    )?;
+    send(
+        root,
+        FileControlAction::Key {
+            key: "Escape".into(),
+            down: false,
+        },
+    )?;
+    send(
+        root,
+        FileControlAction::CameraGesture {
+            delta: [40., 20.],
+            middle_down: false,
+            right_down: true,
+        },
+    )?;
+    send(
+        root,
+        FileControlAction::CameraGesture {
+            delta: [0., 0.],
+            middle_down: false,
+            right_down: false,
+        },
+    )?;
+    let resized = observe(root)?;
+    let after_camera = resized
+        .camera
+        .as_ref()
+        .ok_or("camera missing after hand resize")?;
+    if resized.contextual.hand_popup
+        || resized.contextual.escape_menu_page != "closed"
+        || (after_camera.yaw - camera.yaw).abs() > 0.001
+        || (after_camera.pitch - camera.pitch).abs() > 0.001
+        || (after_camera.distance - camera.distance).abs() > 0.001
+        || resized.card_poses != before.card_poses
+        || resized.coins != before.coins
+        || resized.held_card_key.is_some()
+        || resized.held_coin.is_some()
+    {
+        return Err(
+            "hand popup changed camera/shared pieces, opened Esc, or started a drag".into(),
+        );
+    }
+
+    let container_hover = verify_container_hover(root, &resized)?;
+    let target = resized
+        .money_pick_targets
+        .iter()
+        .filter(|target| target.container == "lid")
+        .min_by(|a, b| a.screen[1].total_cmp(&b.screen[1]))
+        .ok_or("hover precedence needs a visible coin on the player's lid")?;
+    let coin = resized
+        .coins
+        .iter()
+        .find(|c| c.is_own && c.coin_id == target.coin_id)
+        .ok_or("hover coin is absent from the inventory")?;
+    send(
+        root,
+        FileControlAction::PointerAtCoin {
+            coin_key: coin.coin_key.clone(),
+            primary_down: false,
+        },
+    )?;
+    wait_until(root, |o| {
+        o.contextual.hovered_coin_key.as_deref() == Some(coin.coin_key.as_str())
+            && o.contextual.money_hover.is_none()
+    })?;
+    let coin_hover = capture(root)?;
+
+    // Screen-space centroid selection is independently evaluated here using
+    // the diagnostics' projected public centres, including overlapping coins.
+    // The corners are empty floor, not an object on the shared table.
+    let start = [8., 170.];
+    let end = [1172., 675.];
+    let empty = send(
+        root,
+        FileControlAction::Pointer {
+            x: start[0],
+            y: start[1],
+            primary_down: false,
+        },
+    )?
+    .observation;
+    if empty.contextual.hovered_coin_key.is_some() || empty.contextual.world_hover.is_some() {
+        return Err("marquee starting point is not empty space".into());
+    }
+    let expected: std::collections::HashSet<_> = empty
+        .contextual
+        .projected_coins
+        .iter()
+        .filter(|(_, p)| p[0] >= start[0] && p[0] <= end[0] && p[1] >= start[1] && p[1] <= end[1])
+        .map(|(key, _)| key.clone())
+        .collect();
+    if expected.is_empty() {
+        return Err("marquee test rectangle contains no projected coin centres".into());
+    }
+    let expected_cents: u32 = empty
+        .coins
+        .iter()
+        .filter(|coin| expected.contains(&coin.coin_key))
+        .map(|coin| u32::from(coin.denomination_cents))
+        .sum();
+    send(
+        root,
+        FileControlAction::Pointer {
+            x: start[0],
+            y: start[1],
+            primary_down: true,
+        },
+    )?;
+    send(
+        root,
+        FileControlAction::Pointer {
+            x: end[0],
+            y: end[1],
+            primary_down: true,
+        },
+    )?;
+    let selected = wait_until(root, |o| {
+        o.contextual.selecting && o.contextual.selected_cents == expected_cents
+    })?;
+    let selected_keys: std::collections::HashSet<_> = selected
+        .contextual
+        .selected_coin_keys
+        .iter()
+        .cloned()
+        .collect();
+    if selected_keys != expected || selected.held_card_key.is_some() || selected.held_coin.is_some()
+    {
+        return Err(
+            "marquee preview differs from projected-centre selection or picked up an object".into(),
+        );
+    }
+    let preview = capture(root)?;
+    send(
+        root,
+        FileControlAction::Pointer {
+            x: end[0],
+            y: end[1],
+            primary_down: false,
+        },
+    )?;
+    let retained = observe(root)?;
+    if retained.contextual.selecting
+        || retained.contextual.selected_coin_keys != selected.contextual.selected_coin_keys
+        || retained.contextual.selected_cents != expected_cents
+        || retained.coins != before.coins
+        || retained.card_poses != before.card_poses
+    {
+        return Err(
+            "selection did not persist on release, or changed authoritative money/cards".into(),
+        );
+    }
+    let selected_capture = capture(root)?;
+    click(root, start[0], start[1])?;
+    wait_until(root, |o| {
+        o.contextual.selected_coin_keys.is_empty()
+            && o.contextual.selected_card_keys.is_empty()
+            && o.contextual.selected_cents == 0
+    })?;
+    Ok(vec![
+        enlarged,
+        container_hover,
+        coin_hover,
+        preview,
+        selected_capture,
+    ])
+}
+
+fn verify_container_hover(
+    root: &Path,
+    snapshot: &FileControlObservation,
+) -> Result<PathBuf, String> {
+    let member = snapshot
+        .members
+        .iter()
+        .find(|m| m.is_self)
+        .ok_or("container hover needs the local player's name")?;
+    // At most twenty ordinary pointer samples. The projected base centre may
+    // land on a coin; sample exposed glass/rim beside it, never bypass picking.
+    for (container, screen) in [
+        ("jar", snapshot.money_jar_screen),
+        ("lid", snapshot.money_lid_screen),
+    ] {
+        let Some([center_x, center_y]) = screen else {
+            continue;
+        };
+        let coins: Vec<_> = snapshot
+            .coins
+            .iter()
+            .filter(|c| c.is_own && c.container == container)
+            .collect();
+        let cents: u32 = coins.iter().map(|c| u32::from(c.denomination_cents)).sum();
+        let expected = format!(
+            "{}'s {container} · {} {} · ${}.{:02}",
+            member.display_name,
+            coins.len(),
+            if coins.len() == 1 { "coin" } else { "coins" },
+            cents / 100,
+            cents % 100
+        );
+        for [dx, dy] in [
+            [-18., -12.],
+            [18., -12.],
+            [-24., -25.],
+            [24., -25.],
+            [-12., -40.],
+            [12., -40.],
+            [0., -55.],
+            [-20., 0.],
+            [20., 0.],
+            [0., 8.],
+        ] {
+            let observation = send(
+                root,
+                FileControlAction::Pointer {
+                    x: center_x + dx,
+                    y: center_y + dy,
+                    primary_down: false,
+                },
+            )?
+            .observation;
+            if observation.contextual.money_hover.as_deref() == Some(expected.as_str()) {
+                if observation.contextual.hovered_coin_key.is_some() {
+                    return Err(
+                        "container total is visible while its coin has hover priority".into(),
+                    );
+                }
+                return capture(root);
+            }
+        }
+    }
+    Err("no exposed jar/lid hover showed the exact public coin count and dollar total".into())
 }
 
 fn bowl_cents(observation: &FileControlObservation) -> u32 {

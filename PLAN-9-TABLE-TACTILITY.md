@@ -7,6 +7,8 @@
 
 Follow-up: [PLAN-10-ROUND-CONTINUITY.md](PLAN-10-ROUND-CONTINUITY.md) extends this slice with round progression and revised camera controls. Its R6 supersedes T11: pan/zoom now remains in inspection, and clicking the scoresheet again restores the saved view. The completed evidence below records the earlier behavior, not the current controls.
 
+[PLAN-11](PLAN-11-CONTEXTUAL-TABLE.md) makes money/deck totals contextual, adds local selection and hand sizing, and moves infrequent actions onto the seat and door. It preserves the coin-payment rules while replacing this slice's always-visible money labels.
+
 ## How to update this plan
 
 Use `[ ]` not started, `[~]` active, `[x]` complete and `[!]` blocked. Keep evidence below the affected task. Parallel work is intentional: pickup prediction, inset geometry/outline, world text, and camera inspection. Money follows its decision gate. Do not silently replace an unfinished requirement with a smaller feature.

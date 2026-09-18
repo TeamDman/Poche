@@ -34,7 +34,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u16 = 9;
+pub const SCHEMA_VERSION: u16 = 10;
+pub use super::contextual_diagnostics::ContextualDiagnostics;
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 const APP_REQUEST_TIMEOUT: Duration = Duration::from_secs(18);
@@ -199,6 +200,7 @@ pub struct FileControlObservation {
     pub money_bowl_screen: Option<[f32; 2]>,
     pub money_jar_screen: Option<[f32; 2]>,
     pub money_lid_screen: Option<[f32; 2]>,
+    pub contextual: ContextualDiagnostics,
     pub rendered_card_count: usize,
     pub rendered_player_count: usize,
     pub held_card_key: Option<String>,
@@ -1681,6 +1683,7 @@ fn observation(
         money_bowl_screen: state.money_bowl_screen,
         money_jar_screen: state.money_jar_screen,
         money_lid_screen: state.money_lid_screen,
+        contextual: state.contextual.clone(),
         held_card_key: state.held_card_key.clone(),
         held_coin: endpoint.held_coin.clone(),
         visible_hand_copies: state.visible_hand_copies,

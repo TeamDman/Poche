@@ -6,8 +6,8 @@
 //! owns game state: a chair click and a spoken bid use the ordinary UI intents.
 
 use super::{
-    CanonicalLayout, HandCamera, PoseDisplay, TabletopCamera, UiAction, UiScreen, UiState,
-    card_label_texture, drag_cards, hand_view, may_bid, mm_position, point_to_world,
+    ButtonActivation, CanonicalLayout, HandCamera, PoseDisplay, TabletopCamera, UiAction, UiScreen,
+    UiState, card_label_texture, drag_cards, hand_view, may_bid, mm_position, point_to_world,
     sync_player_entities, update_table_camera,
 };
 use bevy::{
@@ -30,6 +30,7 @@ impl Plugin for WorldUiPlugin {
             .init_resource::<PresentationCache>()
             .add_message::<WorldUiCommand>()
             .add_observer(activate_world_ui)
+            .add_systems(Startup, spawn_world_action_relays)
             .add_systems(
                 Update,
                 (
@@ -96,6 +97,10 @@ pub(super) fn deck_inspection_center(snapshot: &ClientSnapshot) -> Vec3 {
 }
 
 impl WorldInteraction {
+    pub(super) fn hover_hint(&self) -> Option<&str> {
+        self.hovered.as_deref()
+    }
+
     pub(super) fn blocks_card_input(&self) -> bool {
         self.reading.is_some() || self.pointer_over_ui
     }
@@ -111,8 +116,8 @@ enum PanelKind {
     Players,
     Activity,
     ScoreSheet,
-    NextStep,
     Deck,
+    Door,
 }
 
 impl PanelKind {
@@ -122,8 +127,8 @@ impl PanelKind {
             Self::Players => "PLAYERS",
             Self::Activity => "ACTIVITY · newest first",
             Self::ScoreSheet => "POCHE · SCORE SHEET",
-            Self::NextStep => "WHAT HAPPENS NEXT",
             Self::Deck => "DECK · click to deal",
+            Self::Door => "EXIT",
         }
     }
 }
@@ -151,6 +156,35 @@ struct FaceCamera;
 pub(super) struct WorldPanel {
     kind: PanelKind,
     half_size: Vec2,
+}
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+enum WorldActionRelay {
+    TakeSeat(u8),
+    ReleaseSeat,
+    Leave,
+}
+
+fn spawn_world_action_relays(mut commands: Commands) {
+    // These entities outlive presentation rebuilds. A click queued just before
+    // an authority update must still reach the ordinary button handler.
+    for (relay, action) in [
+        (WorldActionRelay::TakeSeat(0), UiAction::TakeSeat(0)),
+        (WorldActionRelay::TakeSeat(1), UiAction::TakeSeat(1)),
+        (WorldActionRelay::ReleaseSeat, UiAction::ReleaseSeat),
+        (WorldActionRelay::Leave, UiAction::Leave),
+    ] {
+        commands.spawn((relay, action));
+    }
+}
+
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct WorldActionRouter<'w, 's> {
+    panels: Query<'w, 's, (&'static WorldPanel, &'static GlobalTransform)>,
+    relays: Query<'w, 's, (Entity, &'static WorldActionRelay)>,
+    activations: MessageWriter<'w, ButtonActivation>,
+    hand_options: Res<'w, super::hand_options::HandViewOptions>,
+    selection: Option<Res<'w, super::selection::SelectionState>>,
 }
 
 #[derive(Component)]
@@ -203,7 +237,7 @@ pub(super) fn interact_with_world(
         (&Camera, &GlobalTransform, Option<&HandCamera>),
         Or<(With<TabletopCamera>, With<HandCamera>)>,
     >,
-    panels: Query<(&WorldPanel, &GlobalTransform)>,
+    mut router: WorldActionRouter,
     buttons: Query<&Interaction, Or<(With<WorldUiElement>, With<UiAction>)>>,
     layout: Res<CanonicalLayout>,
     model: Res<BridgeModel>,
@@ -234,7 +268,15 @@ pub(super) fn interact_with_world(
         state.escape_menu_open = false;
         return;
     }
-    if interaction.reading.is_some() || state.escape_menu_open || interaction.pointer_over_ui {
+    if interaction.reading.is_some()
+        || state.escape_menu_open
+        || interaction.pointer_over_ui
+        || router.hand_options.blocks_pointer_input()
+        || router
+            .selection
+            .as_ref()
+            .is_some_and(|selection| selection.selecting)
+    {
         return;
     }
     let Ok(window) = windows.single() else { return };
@@ -277,32 +319,64 @@ pub(super) fn interact_with_world(
     };
 
     let mut closest: Option<(f32, WorldHit)> = None;
-    for (panel, transform) in &panels {
+    for (panel, transform) in &router.panels {
         if inspection.active && panel.kind != PanelKind::ScoreSheet {
             continue;
         }
-        if let Some(distance) = intersect_panel(ray, transform, panel.half_size) {
+        let distance = if panel.kind == PanelKind::Door {
+            intersect_box(
+                ray,
+                transform,
+                Vec3::new(panel.half_size.x, panel.half_size.y, 0.0225),
+            )
+        } else {
+            intersect_panel(ray, transform, panel.half_size)
+        };
+        if let Some(distance) = distance {
             choose_nearest(&mut closest, distance, WorldHit::Panel(panel.kind));
         }
     }
-    if !inspection.active && model.snapshot.own_seat().is_none() {
+    if !inspection.active {
         for placement in layout.0.seats() {
             let seat = placement.seat.get();
-            if model
-                .snapshot
-                .members
-                .iter()
-                .any(|member| member.seat == Some(seat))
-            {
+            let Some(action) = seat_action(&model.snapshot, seat) else {
                 continue;
-            }
+            };
+            let relay = if matches!(action, UiAction::ReleaseSeat) {
+                WorldActionRelay::ReleaseSeat
+            } else {
+                WorldActionRelay::TakeSeat(seat)
+            };
+            let Some((entity, _)) = router
+                .relays
+                .iter()
+                .find(|(_, candidate)| **candidate == relay)
+            else {
+                continue;
+            };
             let center = point_to_world(placement.seat_pose.translation);
-            let distance =
-                ray.intersect_plane(center + Vec3::Y * 0.06, InfinitePlane3d::new(Vec3::Y));
+            let pick_center = seat_pick_center(&layout.0, seat).unwrap_or(center);
+            let distance = ray.intersect_plane(pick_center, InfinitePlane3d::new(Vec3::Y));
             if let Some(distance) = distance {
                 let at = ray.get_point(distance) - center;
-                if Vec2::new(at.x, at.z).length_squared() <= 0.22_f32.powi(2) {
-                    choose_nearest(&mut closest, distance, WorldHit::Seat(seat));
+                let occluded = model
+                    .snapshot
+                    .members
+                    .iter()
+                    .filter_map(|member| member.seat)
+                    .filter_map(|seat| {
+                        layout
+                            .0
+                            .seats()
+                            .iter()
+                            .find(|placement| placement.seat.get() == seat)
+                    })
+                    .any(|placement| {
+                        avatar_hit(ray, point_to_world(placement.player_pose.translation))
+                            .is_some_and(|hit| hit < distance)
+                    });
+                if Vec2::new(at.x, at.z).length_squared() <= 0.22_f32.powi(2) && !occluded {
+                    choose_nearest(&mut closest, distance, WorldHit::Seat(seat, entity));
                 }
             }
         }
@@ -331,9 +405,10 @@ pub(super) fn interact_with_world(
     };
     interaction.pointer_over_ui = true;
     interaction.hovered = Some(match target {
-        WorldHit::Seat(seat) => format!("Take seat {}", seat + 1),
+        WorldHit::Seat(seat, _) => seat_hover(&model.snapshot, seat),
         WorldHit::Panel(PanelKind::RoomCode) => "Copy room code".into(),
-        WorldHit::Panel(PanelKind::Deck) => next_step(&model.snapshot).join("\n"),
+        WorldHit::Panel(PanelKind::Deck) => deck_hover(&model.snapshot),
+        WorldHit::Panel(PanelKind::Door) => door_hover(state.confirm_leave).into(),
         WorldHit::Panel(PanelKind::ScoreSheet) if inspection.active => {
             "Click paper again to restore camera · wheel zoom · MMB pan".into()
         }
@@ -343,15 +418,18 @@ pub(super) fn interact_with_world(
         return;
     }
     match target {
-        WorldHit::Seat(seat) => {
-            if let Some(room_id) = model.snapshot.room_id() {
-                state.status = format!("Requesting seat {}…", seat + 1);
-                if let Err(error) = bridge.send(BridgeIntent::TakeSeat {
-                    room_id: room_id.into(),
-                    seat,
-                }) {
-                    state.status = error;
-                }
+        WorldHit::Seat(_, entity) => {
+            // Physical affordances use exactly the same typed UI actions as
+            // menus and puppets, including the two-activation leave guard.
+            router.activations.write(ButtonActivation(entity));
+        }
+        WorldHit::Panel(PanelKind::Door) => {
+            if let Some((entity, _)) = router
+                .relays
+                .iter()
+                .find(|(_, relay)| **relay == WorldActionRelay::Leave)
+            {
+                router.activations.write(ButtonActivation(entity));
             }
         }
         WorldHit::Panel(PanelKind::RoomCode) => {
@@ -401,8 +479,120 @@ fn open_panel(
 
 #[derive(Clone, Copy)]
 enum WorldHit {
-    Seat(u8),
+    Seat(u8, Entity),
     Panel(PanelKind),
+}
+
+fn seat_action(snapshot: &ClientSnapshot, seat: u8) -> Option<UiAction> {
+    if snapshot.own_seat() == Some(seat) {
+        return Some(UiAction::ReleaseSeat);
+    }
+    (snapshot.own_seat().is_none()
+        && !snapshot
+            .members
+            .iter()
+            .any(|member| member.seat == Some(seat)))
+    .then_some(UiAction::TakeSeat(seat))
+}
+
+fn seat_hover(snapshot: &ClientSnapshot, seat: u8) -> String {
+    if snapshot.own_seat() == Some(seat) {
+        "Stand up · releases your seat".into()
+    } else {
+        format!("Take seat {}", seat + 1)
+    }
+}
+
+fn door_hover(confirm_leave: bool) -> &'static str {
+    if confirm_leave {
+        "Click the door again to leave lobby · your seat will be released"
+    } else {
+        "Leave lobby · click the door"
+    }
+}
+
+fn deck_hover(snapshot: &ClientSnapshot) -> String {
+    let mut lines = vec![format!("{} cards in deck", deck_count(snapshot))];
+    if let Some(trump) = snapshot.game.as_ref().and_then(|game| game.trump) {
+        lines.push(format!("Trump: {}", public_card_label(trump)));
+    }
+    lines.extend(next_step(snapshot));
+    lines.join("\n")
+}
+
+pub(super) fn door_center() -> Vec3 {
+    Vec3::new(-0.82, 0.39, 0.95)
+}
+
+pub(super) fn seat_pick_center(layout: &SpatialLayout, seat: u8) -> Option<Vec3> {
+    layout
+        .seats()
+        .iter()
+        .find(|placement| placement.seat.get() == seat)
+        .map(|placement| {
+            let center = point_to_world(placement.seat_pose.translation);
+            let outward = Vec3::new(center.x, 0., center.z).normalize_or_zero();
+            center + outward * 0.19 + Vec3::Y * 0.06
+        })
+}
+
+fn intersect_box(ray: Ray3d, transform: &GlobalTransform, half_size: Vec3) -> Option<f32> {
+    let inverse = transform.affine().inverse();
+    let origin = inverse.transform_point3(ray.origin);
+    let direction = inverse.transform_vector3(*ray.direction);
+    let mut entry = 0.0_f32;
+    let mut exit = f32::INFINITY;
+    for axis in 0..3 {
+        if direction[axis].abs() < 0.000_001 {
+            if origin[axis].abs() > half_size[axis] {
+                return None;
+            }
+        } else {
+            let near = (-half_size[axis] - origin[axis]) / direction[axis];
+            let far = (half_size[axis] - origin[axis]) / direction[axis];
+            entry = entry.max(near.min(far));
+            exit = exit.min(near.max(far));
+            if entry > exit {
+                return None;
+            }
+        }
+    }
+    Some(entry)
+}
+
+fn avatar_hit(ray: Ray3d, center: Vec3) -> Option<f32> {
+    // Match the renderer's upright Capsule3d::new(0.12, 0.24).
+    let relative = ray.origin - center;
+    let direction = *ray.direction;
+    let mut hits = Vec::with_capacity(6);
+    let a = direction.x * direction.x + direction.z * direction.z;
+    let b = relative.x * direction.x + relative.z * direction.z;
+    let c = relative.x * relative.x + relative.z * relative.z - 0.12_f32.powi(2);
+    let discriminant = b * b - a * c;
+    if a > 0.000_001 && discriminant >= 0.0 {
+        for distance in [
+            (-b - discriminant.sqrt()) / a,
+            (-b + discriminant.sqrt()) / a,
+        ] {
+            if distance >= 0.0 && (relative.y + direction.y * distance).abs() <= 0.12 {
+                hits.push(distance);
+            }
+        }
+    }
+    for y in [-0.12, 0.12] {
+        let from_cap = relative - Vec3::Y * y;
+        let b = from_cap.dot(direction);
+        let c = from_cap.length_squared() - 0.12_f32.powi(2);
+        let discriminant = b * b - c;
+        if discriminant >= 0.0 {
+            for distance in [-b - discriminant.sqrt(), -b + discriminant.sqrt()] {
+                if distance >= 0.0 {
+                    hits.push(distance);
+                }
+            }
+        }
+    }
+    hits.into_iter().min_by(f32::total_cmp)
 }
 
 fn choose_nearest(closest: &mut Option<(f32, WorldHit)>, distance: f32, hit: WorldHit) {
@@ -486,11 +676,12 @@ fn sync_world_presentation(
         && model.snapshot.room_id().is_some();
     let surface_content = if room_visible {
         format!(
-            "{:?}|{:?}|{:?}|{:?}|{}|{}",
+            "{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}",
             model.snapshot.members,
             model.snapshot.game,
             model.snapshot.activity,
             model.snapshot.rounds,
+            [model.snapshot.payment_due(0), model.snapshot.payment_due(1)],
             state
                 .capability
                 .as_ref()
@@ -586,17 +777,13 @@ fn sync_world_presentation(
             Vec3::new(1.02, 0.29, 0.33),
             Vec2::new(0.72, 0.38),
         ),
-        (
-            PanelKind::NextStep,
-            Vec3::new(-0.72, 0.50, -0.82),
-            Vec2::new(0.74, 0.24),
-        ),
     ] {
         let lines = panel_lines(kind, &model.snapshot, state.capability.as_ref());
         painter.panel(kind, anchor, size, &lines, true);
     }
     painter.score_sheet(sheet_inspection_target(&layout.0), &model.snapshot);
     painter.deck(&model.snapshot);
+    painter.door();
 
     for placement in layout.0.seats() {
         let seat = placement.seat.get();
@@ -659,6 +846,87 @@ struct WorldPainter<'a, 'w, 's> {
 }
 
 impl WorldPainter<'_, '_, '_> {
+    fn door(&mut self) {
+        let center = door_center();
+        let root = self
+            .commands
+            .spawn((
+                WorldPresentation,
+                WorldPanel {
+                    kind: PanelKind::Door,
+                    half_size: Vec2::new(0.20, 0.44),
+                },
+                Pickable::IGNORE,
+                Transform::from_translation(center),
+                Visibility::default(),
+            ))
+            .id();
+        // A tangible door with a jamb and knob, not another floating notice.
+        // The full front/back rectangle is pickable from either player view.
+        for (position, size, color) in [
+            (
+                Vec3::ZERO,
+                Vec3::new(0.40, 0.88, 0.045),
+                Color::srgb(0.11, 0.24, 0.20),
+            ),
+            (
+                Vec3::new(-0.22, 0.0, 0.0),
+                Vec3::new(0.045, 0.94, 0.075),
+                Color::srgb(0.23, 0.19, 0.14),
+            ),
+            (
+                Vec3::new(0.22, 0.0, 0.0),
+                Vec3::new(0.045, 0.94, 0.075),
+                Color::srgb(0.23, 0.19, 0.14),
+            ),
+            (
+                Vec3::new(0.0, 0.46, 0.0),
+                Vec3::new(0.485, 0.045, 0.075),
+                Color::srgb(0.23, 0.19, 0.14),
+            ),
+        ] {
+            let piece = self
+                .commands
+                .spawn((
+                    Mesh3d(self.meshes.add(Cuboid::from_size(size))),
+                    MeshMaterial3d(self.materials.add(StandardMaterial {
+                        base_color: color,
+                        perceptual_roughness: 0.85,
+                        ..default()
+                    })),
+                    Transform::from_translation(position),
+                    Pickable::IGNORE,
+                    RenderLayers::layer(0),
+                ))
+                .id();
+            self.commands.entity(root).add_child(piece);
+        }
+        for facing in [-1.0, 1.0] {
+            let knob = self
+                .commands
+                .spawn((
+                    Mesh3d(self.meshes.add(Sphere::new(0.022))),
+                    MeshMaterial3d(self.materials.add(StandardMaterial {
+                        base_color: Color::srgb(0.72, 0.59, 0.27),
+                        metallic: 0.8,
+                        ..default()
+                    })),
+                    Transform::from_xyz(0.13, -0.04, facing * 0.041),
+                    Pickable::IGNORE,
+                    RenderLayers::layer(0),
+                ))
+                .id();
+            self.commands.entity(root).add_child(knob);
+        }
+        self.text(
+            root,
+            "EXIT",
+            Vec3::new(0.0, 0.25, 0.025),
+            Vec2::new(0.27, 0.07),
+            [240, 238, 211],
+        );
+    }
+
     fn deck(&mut self, snapshot: &ClientSnapshot) {
         let active = snapshot
             .game
@@ -726,19 +994,6 @@ impl WorldPainter<'_, '_, '_> {
                 0,
             );
         }
-        self.label(
-            center + Vec3::new(0.0, height + 0.075, 0.0),
-            &format!(
-                "{count} in deck{}",
-                if active {
-                    " · trump on top"
-                } else {
-                    " · click to deal"
-                }
-            ),
-            0.36,
-            NAME_TAG_FOREGROUND,
-        );
     }
 
     fn score_sheet(&mut self, target: SheetInspectionTarget, snapshot: &ClientSnapshot) {
@@ -885,6 +1140,7 @@ impl WorldPainter<'_, '_, '_> {
                 Transform::from_xyz(center.x, center.y, 0.00045),
                 NotShadowCaster,
                 NotShadowReceiver,
+                Pickable::IGNORE,
                 RenderLayers::layer(0),
             ))
             .id();
@@ -1052,6 +1308,7 @@ impl WorldPainter<'_, '_, '_> {
                 Transform::from_translation(position)
                     .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2))
                     .with_scale(Vec3::new(height * aspect, 1.0, height)),
+                Pickable::IGNORE,
                 NotShadowCaster,
                 NotShadowReceiver,
                 RenderLayers::layer(0),
@@ -1134,7 +1391,8 @@ fn panel_lines(
         PanelKind::ScoreSheet => {
             lines.extend(score_sheet_lines(snapshot));
         }
-        PanelKind::NextStep | PanelKind::Deck => lines.extend(next_step(snapshot)),
+        PanelKind::Deck => lines.extend(next_step(snapshot)),
+        PanelKind::Door => lines.push("Click the door twice to leave lobby.".into()),
     }
     lines
 }
@@ -1329,7 +1587,29 @@ fn score_cell(bid: u8, tricks: u8, hand_size: u8) -> String {
 }
 
 fn player_speech(snapshot: &ClientSnapshot, seat: u8) -> Option<String> {
+    if !snapshot
+        .members
+        .iter()
+        .any(|member| member.seat == Some(seat))
+    {
+        return None;
+    }
+    let due = snapshot.payment_due(seat);
+    if snapshot.game.is_none() {
+        return (due > 0).then(|| format!("I still owe my {due}¢ ante. Into the bowl!"));
+    }
     let game = snapshot.game.as_ref()?;
+    if game.phase == "scoring" {
+        return (due > 0).then(|| format!("I missed my bid. I owe {due}¢ to the bowl."));
+    }
+    if game.phase == "awaiting-deal" {
+        return (game.dealer_seat == Some(seat)).then(|| "My deal! I'll click the deck.".into());
+    }
+    if game.phase == "finished" {
+        return (game.dealer_seat == Some(seat)).then(|| {
+            "The game is over. The scores are on the sheet; payout is still pending.".into()
+        });
+    }
     if game.phase == "playing" {
         return (game.actor_seat == Some(seat)).then(|| "Hmm, which card should I play?".into());
     }
@@ -1535,7 +1815,7 @@ fn small_button(parent: &mut ChildSpawnerCommands, label: &str, action: WorldUiA
 #[cfg(test)]
 mod tests {
     use super::*;
-    use poche_spacetimedb_client::{GameView, HandCardView, MemberView, RoomView};
+    use poche_spacetimedb_client::{CoinView, GameView, HandCardView, MemberView, RoomView};
     use poche_spatial::{LayoutId, TableId, registered_layout};
 
     fn snapshot() -> ClientSnapshot {
@@ -1579,7 +1859,175 @@ mod tests {
                 card_id: "secret-id".into(),
                 face: "A♠".into(),
             }],
+            coins: vec![ante_coin(0), ante_coin(1)],
             ..default()
+        }
+    }
+
+    fn ante_coin(seat: u8) -> CoinView {
+        CoinView {
+            coin_key: format!("quarter-{seat}"),
+            coin_id: "quarter".into(),
+            owner: if seat == 0 { "one" } else { "two" }.into(),
+            owner_seat: Some(seat),
+            is_own: seat == 0,
+            denomination_cents: 25,
+            container: "bowl".into(),
+            position_mm: [0, 25, 0],
+            sequence: 1,
+        }
+    }
+
+    #[test]
+    fn seated_players_voice_only_their_own_unpaid_ante_or_penalty() {
+        let mut snapshot = snapshot();
+        snapshot.game = None;
+        snapshot.coins.clear();
+        assert_eq!(
+            player_speech(&snapshot, 0).as_deref(),
+            Some("I still owe my 25¢ ante. Into the bowl!")
+        );
+        assert_eq!(
+            player_speech(&snapshot, 1).as_deref(),
+            Some("I still owe my 25¢ ante. Into the bowl!")
+        );
+        snapshot.coins.push(ante_coin(0));
+        assert_eq!(player_speech(&snapshot, 0), None);
+        assert!(player_speech(&snapshot, 1).unwrap().contains("25¢ ante"));
+        snapshot.members[1].seat = None;
+        assert_eq!(player_speech(&snapshot, 1), None);
+
+        let mut snapshot = self::snapshot();
+        let game = snapshot.game.as_mut().unwrap();
+        game.phase = "scoring".into();
+        game.bids = [Some(0), Some(0)];
+        game.tricks_won = [1, 0];
+        assert_eq!(
+            player_speech(&snapshot, 0).as_deref(),
+            Some("I missed my bid. I owe 10¢ to the bowl.")
+        );
+        assert_eq!(player_speech(&snapshot, 1), None);
+        let mut dime = ante_coin(0);
+        dime.coin_key = "dime-0".into();
+        dime.denomination_cents = 10;
+        snapshot.coins.push(dime);
+        assert_eq!(player_speech(&snapshot, 0), None);
+        snapshot.game.as_mut().unwrap().phase = "awaiting-deal".into();
+        snapshot.game.as_mut().unwrap().dealer_seat = Some(1);
+        assert_eq!(player_speech(&snapshot, 0), None);
+        assert_eq!(
+            player_speech(&snapshot, 1).as_deref(),
+            Some("My deal! I'll click the deck.")
+        );
+    }
+
+    #[test]
+    fn deck_quantity_is_hover_context_not_an_always_present_name_tag() {
+        let mut snapshot = snapshot();
+        assert!(deck_hover(&snapshot).contains("49 cards in deck"));
+        assert!(deck_hover(&snapshot).contains("Trump: 4♣"));
+        assert!(!deck_hover(&snapshot).contains("secret-"));
+        snapshot.game = None;
+        assert!(deck_hover(&snapshot).starts_with("52 cards in deck"));
+        let mut app = presentation_app(snapshot);
+        app.update();
+        let mut names = app
+            .world_mut()
+            .query_filtered::<Entity, With<NameTagBackdrop>>();
+        assert_eq!(names.iter(app.world()).count(), 2);
+    }
+
+    #[test]
+    fn only_your_own_seat_can_stand_you_up_and_only_empty_seats_can_seat_you() {
+        let mut snapshot = snapshot();
+        assert!(matches!(
+            seat_action(&snapshot, 0),
+            Some(UiAction::ReleaseSeat)
+        ));
+        assert_eq!(seat_hover(&snapshot, 0), "Stand up · releases your seat");
+        assert!(seat_action(&snapshot, 1).is_none());
+        snapshot.members[0].seat = None;
+        assert!(matches!(
+            seat_action(&snapshot, 0),
+            Some(UiAction::TakeSeat(0))
+        ));
+        assert!(seat_action(&snapshot, 1).is_none());
+        assert_eq!(seat_hover(&snapshot, 0), "Take seat 1");
+    }
+
+    #[test]
+    fn physical_door_uses_shared_leave_action_and_changes_confirmation_hint() {
+        let mut app = presentation_app(snapshot());
+        app.update();
+        let mut doors = app.world_mut().query::<(&WorldActionRelay, &UiAction)>();
+        let door_actions = doors
+            .iter(app.world())
+            .filter(|(relay, _)| **relay == WorldActionRelay::Leave)
+            .collect::<Vec<_>>();
+        assert_eq!(door_actions.len(), 1);
+        assert!(matches!(door_actions[0].1, UiAction::Leave));
+        assert_eq!(door_hover(false), "Leave lobby · click the door");
+        assert!(door_hover(true).contains("again"));
+        assert!(door_hover(true).contains("seat will be released"));
+    }
+
+    #[test]
+    fn queued_world_actions_survive_a_public_surface_rebuild() {
+        let mut app = presentation_app(snapshot());
+        app.update();
+        let mut relays = app
+            .world_mut()
+            .query_filtered::<Entity, With<WorldActionRelay>>();
+        let queued = relays.iter(app.world()).collect::<Vec<_>>();
+        assert_eq!(queued.len(), 4);
+        let mut panels = app.world_mut().query_filtered::<Entity, With<WorldPanel>>();
+        let old_panels = panels.iter(app.world()).collect::<Vec<_>>();
+        app.world_mut()
+            .resource_mut::<BridgeModel>()
+            .snapshot
+            .game
+            .as_mut()
+            .unwrap()
+            .bids[1] = Some(0);
+        app.update();
+        assert_ne!(panels.iter(app.world()).collect::<Vec<_>>(), old_panels);
+        assert_eq!(relays.iter(app.world()).collect::<Vec<_>>(), queued);
+        for entity in queued {
+            assert!(app.world().get::<UiAction>(entity).is_some());
+        }
+    }
+
+    #[test]
+    fn top_down_door_pick_hits_its_actual_thickness_not_a_parallel_plane() {
+        let transform = GlobalTransform::from_translation(door_center());
+        let ray = Ray3d::new(door_center() + Vec3::Y, Dir3::NEG_Y);
+        let half_size = Vec3::new(0.20, 0.44, 0.0225);
+        assert!(intersect_panel(ray, &transform, half_size.truncate()).is_none());
+        assert!((intersect_box(ray, &transform, half_size).unwrap() - 0.56).abs() < 0.000_001);
+        let front = Ray3d::new(door_center() + Vec3::Z, Dir3::NEG_Z);
+        let back = Ray3d::new(door_center() - Vec3::Z, Dir3::Z);
+        assert!(intersect_box(front, &transform, half_size).is_some());
+        assert!(intersect_box(back, &transform, half_size).is_some());
+        let miss = Ray3d::new(door_center() + Vec3::new(0.201, 1., 0.), Dir3::NEG_Y);
+        assert!(intersect_box(miss, &transform, half_size).is_none());
+    }
+
+    #[test]
+    fn avatar_blocks_the_hidden_stool_centre_but_not_its_exposed_rim() {
+        let layout = registered_layout(TableId::new(1), LayoutId::new(2, 2).unwrap()).unwrap();
+        for seat in layout.seats() {
+            let center = point_to_world(seat.seat_pose.translation);
+            let avatar = point_to_world(seat.player_pose.translation);
+            let centre_ray = Ray3d::new(center + Vec3::Y, Dir3::NEG_Y);
+            let seat_distance = centre_ray
+                .intersect_plane(center + Vec3::Y * 0.06, InfinitePlane3d::new(Vec3::Y))
+                .unwrap();
+            assert!(avatar_hit(centre_ray, avatar).unwrap() < seat_distance);
+            let rim = seat_pick_center(&layout, seat.seat.get()).unwrap();
+            assert!(
+                (Vec2::new(rim.x - center.x, rim.z - center.z).length() - 0.19).abs() < 0.000_001
+            );
+            assert!(avatar_hit(Ray3d::new(rim + Vec3::Y, Dir3::NEG_Y), avatar).is_none());
         }
     }
 
@@ -1606,6 +2054,7 @@ mod tests {
         .init_resource::<Assets<Mesh>>()
         .init_resource::<Assets<StandardMaterial>>()
         .init_resource::<Assets<Image>>()
+        .add_systems(Startup, spawn_world_action_relays)
         .add_systems(Update, sync_world_presentation);
         app
     }
@@ -1747,7 +2196,9 @@ mod tests {
             player_speech(&snapshot, 1).as_deref(),
             Some("Hmm, which card should I play?")
         );
-        snapshot.game.as_mut().unwrap().phase = "scoring".into();
+        let game = snapshot.game.as_mut().unwrap();
+        game.phase = "scoring".into();
+        game.tricks_won = [0, 1];
         assert_eq!(player_speech(&snapshot, 0), None);
         assert_eq!(player_speech(&snapshot, 1), None);
     }
@@ -1850,8 +2301,8 @@ mod tests {
         let mut backgrounds = app
             .world_mut()
             .query_filtered::<&MeshMaterial3d<StandardMaterial>, With<NameTagBackdrop>>();
-        // Two name tags and the public deck-count tag use the same backing.
-        assert_eq!(backgrounds.iter(app.world()).count(), 3);
+        // Counts are hover context; only the two player names stay visible.
+        assert_eq!(backgrounds.iter(app.world()).count(), 2);
         let materials = app.world().resource::<Assets<StandardMaterial>>();
         for handle in backgrounds.iter(app.world()) {
             let material = materials.get(&handle.0).unwrap();
@@ -1928,7 +2379,7 @@ mod tests {
         let mut panels = app.world_mut().query_filtered::<Entity, With<WorldPanel>>();
         let before = panels.iter(app.world()).collect::<Vec<_>>();
         let images_before = app.world().resource::<Assets<Image>>().len();
-        assert_eq!(before.len(), 6); // four notices, paper and clickable deck
+        assert_eq!(before.len(), 6); // three notices, paper, deck and door
         let mut buttons = app
             .world_mut()
             .query_filtered::<Entity, With<WorldUiElement>>();

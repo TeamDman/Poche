@@ -5,6 +5,8 @@
 **Last updated:** 2026-09-16
 **Intent audit:** Passed against the latest resumed-match playtest report.
 
+Follow-up: [PLAN-11](PLAN-11-CONTEXTUAL-TABLE.md) replaces permanent money/deck labels and the next-step notice with contextual inspection and player speech. It adds local selection, hand sizing and sounds, and moves Stand up and Leave from the Escape menu onto the seat and door. The evidence below records this earlier slice; its round rules and scoresheet camera behavior remain in effect.
+
 ## How to update this plan
 
 Use `[ ]` not started, `[~]` active, `[x]` complete and `[!]` blocked. Keep decisions and validation beside their task. Parallel owners: authority/round flow, camera, coins, and root world presentation/integration. Generated test identities and captures stay ignored. No OS clipboard or visible automation windows.
