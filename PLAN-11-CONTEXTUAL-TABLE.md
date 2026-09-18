@@ -1,6 +1,6 @@
 # Contextual table information and direct interaction
 
-**Plan status:** Active
+**Plan status:** Complete
 **Primary implementation root:** `spacetimedb`, following completed PLAN-10
 **Last updated:** 2026-09-17
 **Intent audit:** Passed against the latest quiet-table, selection, sound and resizable-hand request.
@@ -82,9 +82,9 @@ Source limitation: none for the latest message. Earlier behavior is documented i
 
 **Completion criterion:** Counting is an intentional inspectable action, and ordinary pickup/drop gives restrained sound feedback without network-echo repeats.
 
-## [~] E — Integrate, validate and release
+## [x] E — Integrate, validate and release
 
-**Completion notes:** File-control schema 10 adds contextual diagnostics, projected targets, actual menu button centres and silent sound counters. Final integration passed 119 desktop tests, three puppet tests, nine money tests, four native round-flow tests and strict changed-crate Clippy. Native module `--lib` tests cannot link SpacetimeDB host imports on Windows; use the native `round_flow` integration target plus the actual Wasm build/publication. Final Maincloud windowless report v13 passed all 24 checks, two full rounds, rejoin/sibling presence and new direct input paths (72.39 ms authority, 171.25 ms peer for its measured pose). These are one-run observations, not latency guarantees. Inspected the final contextual contact sheet; the hand popup no longer obscures card ranks and container totals are readable. No error/panic/warning entries matched the test client stderr logs. Commit and push remain the final release step.
+**Completion notes:** File-control schema 10 adds contextual diagnostics, projected targets, actual menu button centres and silent sound counters. Final integration passed 119 desktop tests, three puppet tests, nine money tests, four native round-flow tests and strict changed-crate Clippy. Native module `--lib` tests cannot link SpacetimeDB host imports on Windows; use the native `round_flow` integration target plus the actual Wasm build/publication. Final Maincloud windowless report v13 passed all 24 checks, two full rounds, rejoin/sibling presence and new direct input paths (72.39 ms authority, 171.25 ms peer for its measured pose). These are one-run observations, not latency guarantees. Inspected the final contextual contact sheet; the hand popup no longer obscures card ranks and container totals are readable. No error/panic/warning entries matched the test client stderr logs. Implementation commit `f40194c` was pushed to `origin/spacetimedb`; the module was published to the existing Maincloud database without a reset. This documentation follow-up records release completion.
 
 Validation commands run from the repository root:
 
